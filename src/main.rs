@@ -210,11 +210,20 @@ fn run() -> eframe::Result<()> {
             single_instance::Outcome::Surfaced => {
                 eprintln!(
                     "ZapFast or FastsApp is already running; asked it to {}",
-                    if target.is_some() || invite.is_some() {
+                    if target.is_some() {
                         "open the chat"
+                    } else if invite.is_some() {
+                        "show the group invite"
                     } else {
                         "show its window"
                     }
+                );
+                return Ok(());
+            }
+            single_instance::Outcome::Outdated => {
+                eprintln!(
+                    "ZapFast is already running, but that copy is too old to open the link; \
+                     asked it to show its window instead. Quit it and try again to open the link."
                 );
                 return Ok(());
             }

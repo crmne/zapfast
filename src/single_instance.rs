@@ -36,6 +36,10 @@ pub enum Outcome {
     Only(Guard),
     /// Another instance is running and received the request.
     Surfaced,
+    /// Another instance is running but could not take the request (an older
+    /// copy that does not know the verb), so it was asked to show its window
+    /// instead.
+    Outdated,
     /// Another instance holds the lock but did not answer.
     Unanswered,
 }
@@ -78,33 +82,63 @@ fn slot(dir: &Path) -> fastframe_instance::Slot {
 }
 
 /// Becomes the running instance, or hands `verb` to the one already running.
+///
+/// Whatever the running copy makes of `verb`, a launch that finds one never
+/// runs beside it on the same archive and linked device: a copy too old to
+/// know the verb is asked to show its window instead.
 pub fn acquire(dir: &Path, waker: &crate::backend::Waker, verb: &str) -> Outcome {
     let commands = Queue::default();
     let claim = match claim(dir, verb, &commands, waker) {
         fastframe_instance::Claim::First(claim) => claim,
         fastframe_instance::Claim::Running(_) => return Outcome::Surfaced,
-        // A copy that refuses the verb is reported as before, when it
-        // simply did not answer.
+        // The copy declined the verb, or ignored it as copies from before
+        // `fastframe-instance` ignore what they do not know: it holds the
+        // slot either way, so it is at most brought forward.
         fastframe_instance::Claim::Unanswered | fastframe_instance::Claim::Declined => {
-            return Outcome::Unanswered;
+            return fall_back(verb, || send(dir, "show").is_ok());
         }
     };
-    // A copy from before the lock only knows `show` and `ping`. A chat asked
-    // of one surfaces its window rather than running a second ZapFast beside
-    // it on the same archive and linked device.
-    let legacy = if verb.starts_with("open ") {
-        "show"
-    } else {
-        verb
-    };
+    // A copy from before the lock only knows `show` and `ping`. Anything else
+    // asked of one surfaces its window rather than running a second ZapFast
+    // beside it.
+    let legacy = legacy_verb(verb);
     if legacy_instance_answers(legacy) {
-        return Outcome::Surfaced;
+        return if legacy == verb {
+            Outcome::Surfaced
+        } else {
+            Outcome::Outdated
+        };
     }
     listen_legacy(Arc::clone(&commands), waker.clone());
     Outcome::Only(Guard {
         commands,
         _claim: claim,
     })
+}
+
+/// What a launch reports when the copy holding the slot did not take `verb`.
+/// A request beyond showing the window is retried as `show`, which every
+/// copy answers; `show` and `ping` themselves are not, as their answer is
+/// already the one being waited for.
+fn fall_back(verb: &str, show: impl FnOnce() -> bool) -> Outcome {
+    if matches!(verb, "show" | "ping") {
+        return Outcome::Unanswered;
+    }
+    // One more try, without waiting for a copy that may still be starting:
+    // the first request already waited for it.
+    if show() {
+        Outcome::Outdated
+    } else {
+        Outcome::Unanswered
+    }
+}
+
+/// The verb a copy from before the lock understands in place of `verb`.
+fn legacy_verb(verb: &str) -> &str {
+    match verb {
+        "ping" => "ping",
+        _ => "show",
+    }
 }
 
 /// Takes the slot, queueing what later launches ask for, or hands `verb` to
@@ -295,6 +329,96 @@ mod tests {
         assert_eq!(parse("GET / HTTP/1.1"), None);
         assert_eq!(parse("frobnicate"), None);
         assert_eq!(parse(""), None);
+    }
+
+    const INVITE: &str = "invite AbCdEf1234567890XyZ";
+
+    /// What a copy holding the slot was asked for.
+    type Seen = Arc<Mutex<Vec<String>>>;
+
+    /// A copy from before `invite` declines it. The launch must not start
+    /// beside it, so the copy is asked to show its window instead.
+    #[test]
+    fn a_copy_that_declines_the_verb_is_brought_forward() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("runtime");
+        let seen = Seen::default();
+        let record = Arc::clone(&seen);
+        let fastframe_instance::Claim::First(older) = slot(&dir).claim("show", move |request| {
+            record.lock().unwrap().push(request.to_owned());
+            (request == "show").then(|| OK.to_owned())
+        }) else {
+            panic!("the older copy takes the slot");
+        };
+        let outcome = acquire(&dir, &crate::backend::Waker::default(), INVITE);
+        assert!(matches!(outcome, Outcome::Outdated));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![INVITE.to_owned(), "show".to_owned()]
+        );
+        drop(older);
+    }
+
+    /// A copy that closes the connection on a verb it does not know, without
+    /// a reply, is still running: it is asked to show its window too.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_ignores_the_verb_is_brought_forward() {
+        use std::io::BufRead;
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("runtime");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = std::fs::File::create(dir.join("instance.lock")).unwrap();
+        lock.try_lock().expect("the older copy's lock");
+        let listener = std::os::unix::net::UnixListener::bind(dir.join("instance.sock")).unwrap();
+        let seen = Seen::default();
+        let record = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut line = String::new();
+                let mut reader = std::io::BufReader::new(&stream);
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                let line = line.trim_end().to_owned();
+                if line == "fastsapp:show" {
+                    let _ = (&stream).write_all(b"fastsapp:ok\n");
+                }
+                record.lock().unwrap().push(line);
+            }
+        });
+        let outcome = acquire(&dir, &crate::backend::Waker::default(), INVITE);
+        assert!(matches!(outcome, Outcome::Outdated));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.last().map(String::as_str), Some("fastsapp:show"));
+        assert!(seen.iter().any(|line| line == &format!("{PREFIX}{INVITE}")));
+        drop(lock);
+    }
+
+    /// Showing the window is the fallback, so a copy that does not take
+    /// `show` or `ping` is not asked again, and one that answers nothing at
+    /// all is reported as before.
+    #[test]
+    fn only_requests_beyond_the_window_fall_back_to_showing_it() {
+        let never = || -> bool { panic!("not asked again") };
+        assert!(matches!(fall_back("show", never), Outcome::Unanswered));
+        assert!(matches!(fall_back("ping", never), Outcome::Unanswered));
+        assert!(matches!(fall_back(INVITE, || true), Outcome::Outdated));
+        assert!(matches!(fall_back(INVITE, || false), Outcome::Unanswered));
+        assert!(matches!(
+            fall_back("open 20123456789@s.whatsapp.net", || true),
+            Outcome::Outdated
+        ));
+    }
+
+    /// A copy from before the lock knows only `show` and `ping`, so anything
+    /// else is sent to it as `show`.
+    #[test]
+    fn older_copies_are_asked_only_what_they_know() {
+        assert_eq!(legacy_verb("show"), "show");
+        assert_eq!(legacy_verb("ping"), "ping");
+        assert_eq!(legacy_verb(INVITE), "show");
+        assert_eq!(legacy_verb("open 20123456789@s.whatsapp.net"), "show");
     }
 
     fn connect(port: u16) -> TcpStream {
