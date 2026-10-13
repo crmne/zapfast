@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:47+0200\n"
+"POT-Creation-Date: 2026-10-13 21:45+0200\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -224,12 +224,12 @@ msgid "Add to favorites"
 msgstr "添加到收藏"
 
 #: src/ui/chats.rs:1326 src/ui/chats.rs:1711 src/ui/conversation.rs:244
-#: src/ui/dialogs.rs:1233 src/ui/dialogs.rs:1771
+#: src/ui/dialogs.rs:1233 src/ui/dialogs.rs:1779
 msgid "Leave group"
 msgstr "退出群组"
 
 #: src/ui/chats.rs:1327 src/ui/chats.rs:1709 src/ui/conversation.rs:242
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1769
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1777
 msgid "Leave channel"
 msgstr "退出频道"
 
@@ -463,10 +463,6 @@ msgstr "取消静音"
 msgid "Mute"
 msgstr "静音"
 
-#: src/ui/conversation.rs:7765
-msgid "Audio"
-msgstr "音频"
-
 #: src/ui/dialogs.rs:683
 msgid "Show shortcut hints under the message box"
 msgstr "在消息输入框下显示快捷键提示"
@@ -576,41 +572,45 @@ msgstr "频道"
 msgid "Contact"
 msgstr "联系人"
 
-#: src/ui/dialogs.rs:1585
+#: src/ui/dialogs.rs:1593
 msgid "Edit group name"
 msgstr "编辑群组名称"
 
-#: src/ui/dialogs.rs:1715
+#: src/ui/dialogs.rs:1723
 msgid "Saving…"
 msgstr "正在保存…"
 
-#: src/ui/dialogs.rs:1725
+#: src/ui/dialogs.rs:1733
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} 位成员"
 
-#: src/ui/dialogs.rs:2060
+#: src/ui/dialogs.rs:1809
+msgid "Description"
+msgstr ""
+
+#: src/ui/dialogs.rs:2094
 msgid "Change group photo"
 msgstr "更换群组头像"
 
-#: src/ui/dialogs.rs:2066
+#: src/ui/dialogs.rs:2100
 msgid "Change photo"
 msgstr "更换头像"
 
-#: src/ui/dialogs.rs:2067
+#: src/ui/dialogs.rs:2101
 msgid "Remove photo"
 msgstr "移除头像"
 
-#: src/ui/dialogs.rs:2107
+#: src/ui/dialogs.rs:2141
 msgid "Group name"
 msgstr "群组名称"
 
-#: src/ui/dialogs.rs:2150
+#: src/ui/dialogs.rs:2184
 msgid "Save name (Enter)"
 msgstr "保存名称（Enter）"
 
-#: src/ui/dialogs.rs:2162
+#: src/ui/dialogs.rs:2196
 msgid "Cancel (Escape)"
 msgstr "取消（Esc）"
 
@@ -1418,22 +1418,22 @@ msgid ""
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:5748
+#: src/app.rs:5743
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:5823
+#: src/app.rs:5818
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:6122 src/ui/labels.rs:247
+#: src/app.rs:6114 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6622
+#: src/app.rs:6614
 #, rust-format
 msgid "{}: {}"
 msgstr ""
@@ -1446,15 +1446,15 @@ msgstr "应用锁密码已保存"
 msgid "App lock turned off"
 msgstr "应用锁已关闭"
 
-#: src/app.rs:7068
+#: src/app.rs:7060
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:7541
+#: src/app.rs:7492
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:7544 src/app.rs:7549
+#: src/app.rs:7495 src/app.rs:7500
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
@@ -1867,3 +1867,7 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+
+#: src/ui/conversation.rs:7765
+msgid "Audio"
+msgstr "音频"
