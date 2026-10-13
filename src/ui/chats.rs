@@ -1984,11 +1984,12 @@ mod tests {
         );
     }
 
-    /// Both chip rows overflow in a narrow window. Each must show a scroll
-    /// bar, the bar must sit clear of the chips, dragging the bar must scroll
-    /// the row, and so must a plain vertical wheel over it.
+    /// Both chip rows overflow in a narrow window (#444). Their scroll bars
+    /// are the app's floating ones: hidden at rest, shown over the bottom of
+    /// the hovered row's chips without taking a strip of their own.
+    /// Dragging the bar scrolls the row, and so does a plain vertical wheel.
     #[test]
-    fn narrow_chip_rows_show_a_scroll_bar_clear_of_the_chips_and_follow_the_wheel() {
+    fn narrow_chip_rows_show_a_scroll_bar_on_hover_and_follow_the_wheel() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
             App::headless(AppDirs::under(directory.path()), Settings::default());
@@ -2016,69 +2017,74 @@ mod tests {
             output.shapes
         };
         frame(vec![]);
-        let chips = |ctx: &egui::Context| {
-            let mut rects: Vec<Rect> = ChatFilter::EVERY
-                .iter()
-                .filter_map(|filter| {
-                    ctx.data(|data| data.get_temp::<Rect>(filter_chip_id(*filter)))
-                })
-                .collect();
-            rects.extend((0..8).filter_map(|index| {
-                ctx.data(|data| data.get_temp::<Rect>(super::labels::chip_id(&index.to_string())))
-            }));
-            rects
-        };
         let all = |ctx: &egui::Context| {
             ctx.data(|data| data.get_temp::<Rect>(filter_chip_id(ChatFilter::All)))
                 .expect("the filter chips are drawn")
         };
-        let labels = ctx
-            .data(|data| data.get_temp::<Rect>(super::labels::chip_row_id()))
-            .expect("the label chips are drawn");
+        let first_label = ctx
+            .data(|data| data.get_temp::<Rect>(super::labels::chip_id("0")))
+            .expect("the first label chip is drawn");
 
-        /// Collects every thin rectangle in `shape` into `bars`. A scroll
-        /// bar is a thin rectangle; chips are taller.
+        /// Collects every visible thin rectangle in `shape` into `bars`. A
+        /// scroll bar is a thin rectangle; chips are taller.
         fn thin_rects(shape: &egui::Shape, bars: &mut Vec<Rect>) {
             match shape {
                 egui::Shape::Vec(shapes) => {
                     shapes.iter().for_each(|shape| thin_rects(shape, bars));
                 }
                 egui::Shape::Rect(rect)
-                    if rect.rect.height() < 12.0 && rect.rect.width() > 12.0 =>
+                    if rect.rect.height() < 12.0
+                        && rect.rect.width() > 12.0
+                        && rect.fill.a() > 0 =>
                 {
                     bars.push(rect.rect);
                 }
                 _ => {}
             }
         }
+        let bars = |shapes: &[egui::epaint::ClippedShape]| {
+            let mut bars = Vec::new();
+            for clipped in shapes {
+                thin_rects(&clipped.shape, &mut bars);
+            }
+            bars
+        };
+
+        // At rest, away from the rows, neither shows a bar.
+        let mut shapes = Vec::new();
+        for _ in 0..5 {
+            shapes = frame(vec![egui::Event::PointerMoved(egui::pos2(110.0, 380.0))]);
+        }
+        let resting = bars(&shapes);
+        assert!(
+            resting.is_empty(),
+            "the chip rows show bars at rest: {resting:?}"
+        );
+
         let mut filter_bar = None;
-        for (row, pointer) in [("filter", all(&ctx).center()), ("label", labels.center())] {
+        for (row, pointer, chip) in [
+            ("filter", all(&ctx).center(), all(&ctx)),
+            ("label", first_label.center(), first_label),
+        ] {
             let mut shapes = Vec::new();
             for _ in 0..5 {
                 shapes = frame(vec![egui::Event::PointerMoved(pointer)]);
             }
-            let mut bars = Vec::new();
-            for clipped in &shapes {
-                thin_rects(&clipped.shape, &mut bars);
-            }
+            let shown = bars(&shapes);
+            let bar = shown
+                .iter()
+                .copied()
+                .find(|bar| bar.center().y > chip.top() && bar.center().y < chip.bottom())
+                .unwrap_or_else(|| {
+                    panic!("hovering the {row} row showed no bar over its chips: {shown:?}")
+                });
+            // The bar lies over the chips, so the row is no taller for it.
             assert!(
-                bars.len() >= 2,
-                "hovering the {row} row showed {} scroll bars, not one per row",
-                bars.len()
+                bar.bottom() <= chip.bottom() + 0.5,
+                "the {row} row's bar at {bar:?} reaches below its chips at {chip:?}"
             );
             if row == "filter" {
-                filter_bar = bars
-                    .iter()
-                    .copied()
-                    .min_by(|a, b| a.top().total_cmp(&b.top()));
-            }
-            for bar in &bars {
-                for chip in chips(&ctx) {
-                    assert!(
-                        !bar.intersects(chip.shrink(0.5)),
-                        "hovering the {row} row drew a scroll bar at {bar:?} over {chip:?}"
-                    );
-                }
+                filter_bar = Some(bar);
             }
         }
 

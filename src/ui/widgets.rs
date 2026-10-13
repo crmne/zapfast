@@ -959,24 +959,17 @@ pub fn fade_left(ui: &Ui, rect: Rect, width: f32, color: Color32) {
 }
 
 /// A horizontal row of chips that scrolls when it overflows. The scroll bar
-/// sits in its own strip under the chips, because a bar drawn over them hid
-/// them. A plain mouse wheel scrolls the row too, since most mice
-/// have no sideways wheel.
+/// is the app's floating one: hidden at rest, it shows over the bottom of the
+/// chips only while the pointer is on the row, and takes no room of its own.
+/// A plain mouse wheel scrolls the row too, since most mice have no sideways
+/// wheel.
 pub fn chip_scroll_row<R>(
     ui: &mut Ui,
     id_salt: &str,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::scroll_area::ScrollAreaOutput<R> {
     ui.scope(|ui| {
-        let style = ui.style_mut();
-        style.always_scroll_the_only_direction = true;
-        // Floating, so the handle can rest faintly and brighten on hover, but
-        // with its own strip allocated so it never lies over the chips.
-        style.spacing.scroll = egui::style::ScrollStyle {
-            floating_allocated_width: 14.0,
-            dormant_handle_opacity: 0.25,
-            ..style.spacing.scroll
-        };
+        ui.style_mut().always_scroll_the_only_direction = true;
         egui::ScrollArea::horizontal()
             .id_salt(id_salt)
             .animated(false)

@@ -332,6 +332,9 @@ archived chats. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything,
 and it resets when ZapFast restarts.
+When the chips do not fit the chat list's width, the row fades at its edge:
+scroll it with the mouse wheel or a touchpad, or drag the scroll bar that
+appears while the pointer is over the row. The label row scrolls the same way.
 
 Right-click a chat to pin, favorite, archive, mark as unread, or mute it for
 eight hours, one week, or indefinitely. These changes also apply on your
