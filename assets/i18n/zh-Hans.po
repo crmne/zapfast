@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:59+0200\n"
+"POT-Creation-Date: 2026-10-13 20:01+0200\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -165,54 +165,54 @@ msgstr "11月"
 msgid "December"
 msgstr "12月"
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:307 src/ui/settings.rs:398
+#: src/ui/chats.rs:170 src/ui/chats.rs:404 src/ui/settings.rs:398
 msgid "Chats"
 msgstr "聊天"
 
-#: src/ui/chats.rs:239 src/ui/chats.rs:351 src/ui/pane.rs:169
+#: src/ui/chats.rs:192 src/ui/chats.rs:423 src/ui/pane.rs:169
 msgid "Search"
 msgstr "搜索"
 
-#: src/ui/chats.rs:451
+#: src/ui/chats.rs:523
 msgid "Archived"
 msgstr "已归档"
 
-#: src/ui/chats.rs:468
+#: src/ui/chats.rs:540
 msgid "Locked"
 msgstr "已锁定"
 
-#: src/ui/chats.rs:526
+#: src/ui/chats.rs:598
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:933 src/app.rs:2065
+#: src/ui/chats.rs:1005 src/app.rs:2065
 msgid "Message yourself"
 msgstr "给自己发消息"
 
-#: src/ui/chats.rs:1116
+#: src/ui/chats.rs:1188
 msgid "Draft:"
 msgstr "草稿："
 
-#: src/ui/chats.rs:1203 src/ui/chats.rs:1569 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1275 src/ui/chats.rs:1641 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1205 src/ui/chats.rs:1571 src/ui/conversation.rs:4392
+#: src/ui/chats.rs:1277 src/ui/chats.rs:1643 src/ui/conversation.rs:4392
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "添加到收藏"
 
-#: src/ui/chats.rs:1215 src/ui/chats.rs:1595 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1287 src/ui/chats.rs:1667 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "退出群组"
 
-#: src/ui/chats.rs:1216 src/ui/chats.rs:1593 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1288 src/ui/chats.rs:1665 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "退出频道"
 
-#: src/ui/chats.rs:1231 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1303 src/ui/labels.rs:166 src/ui/labels.rs:213
 msgid "Labels"
 msgstr "标签"
 

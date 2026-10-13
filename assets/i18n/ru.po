@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:59+0200\n"
+"POT-Creation-Date: 2026-10-13 20:01+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Russian\n"
@@ -166,54 +166,54 @@ msgstr "Ноябрь"
 msgid "December"
 msgstr "Декабрь"
 
-#: src/ui/chats.rs:168 src/ui/chats.rs:307 src/ui/settings.rs:398
+#: src/ui/chats.rs:170 src/ui/chats.rs:404 src/ui/settings.rs:398
 msgid "Chats"
 msgstr "Чаты"
 
-#: src/ui/chats.rs:239 src/ui/chats.rs:351 src/ui/pane.rs:169
+#: src/ui/chats.rs:192 src/ui/chats.rs:423 src/ui/pane.rs:169
 msgid "Search"
 msgstr "Поиск"
 
-#: src/ui/chats.rs:451
+#: src/ui/chats.rs:523
 msgid "Archived"
 msgstr "Архив"
 
-#: src/ui/chats.rs:468
+#: src/ui/chats.rs:540
 msgid "Locked"
 msgstr "Заблокированные"
 
-#: src/ui/chats.rs:526
+#: src/ui/chats.rs:598
 msgid "No favorites yet"
 msgstr "Пока нет избранных"
 
-#: src/ui/chats.rs:933 src/app.rs:2065
+#: src/ui/chats.rs:1005 src/app.rs:2065
 msgid "Message yourself"
 msgstr "Написать себе"
 
-#: src/ui/chats.rs:1116
+#: src/ui/chats.rs:1188
 msgid "Draft:"
 msgstr "Черновик:"
 
-#: src/ui/chats.rs:1203 src/ui/chats.rs:1569 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1275 src/ui/chats.rs:1641 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Убрать из избранного"
 
-#: src/ui/chats.rs:1205 src/ui/chats.rs:1571 src/ui/conversation.rs:4392
+#: src/ui/chats.rs:1277 src/ui/chats.rs:1643 src/ui/conversation.rs:4392
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Добавить в избранное"
 
-#: src/ui/chats.rs:1215 src/ui/chats.rs:1595 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1287 src/ui/chats.rs:1667 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Покинуть группу"
 
-#: src/ui/chats.rs:1216 src/ui/chats.rs:1593 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1288 src/ui/chats.rs:1665 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Покинуть канал"
 
-#: src/ui/chats.rs:1231 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1303 src/ui/labels.rs:166 src/ui/labels.rs:213
 msgid "Labels"
 msgstr "Метки"
 
