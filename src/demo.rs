@@ -8918,7 +8918,7 @@ mod tests {
                     app.conversations[&chat]
                         .messages
                         .iter()
-                        .all(|message| !matches!(message.content, Content::Revoked))
+                        .all(|message| matches!(message.content, Content::Revoked))
                 );
             } else {
                 assert_eq!(
@@ -10125,9 +10125,9 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(content) if !matches!(content, crate::model::Content::Revoked)
+                        Some(crate::model::Content::Revoked)
                     ),
-                    "{page}: original content stays until the worker confirms deletion"
+                    "{page}: a revoked message stays as a tombstone"
                 );
             } else {
                 assert!(
@@ -10195,9 +10195,9 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(content) if !matches!(content, crate::model::Content::Revoked)
+                        Some(crate::model::Content::Revoked)
                     ),
-                    "{page}: original content stays in its own chat until deletion succeeds"
+                    "{page}: the message is revoked in its own chat"
                 );
             } else {
                 assert!(row.is_some(), "{page}: the message waits in its own chat");

@@ -62,8 +62,7 @@ without another network request. Neither deletion can be undone.
 
 With several messages selected, right-click any selected message to delete
 the complete selection. The confirmation shows its count and offers the
-available deletion scopes. Messages stay visible until WhatsApp accepts each
-request; a failed deletion reports an error and preserves the message.
+available deletion scopes. Each message is deleted as it would be on its own.
 
 **Delete chat** and **Clear chat** already sync in 0.19.0, as described under
 [Chats](#chats).
