@@ -3712,18 +3712,24 @@ impl App {
         }
         match unsent {
             Unsent::Text(text) => self.restore_text(&chat, text),
-            // The composer cannot hold a spot, so the dialog takes it back.
+            // The dialog takes the spot back while its chat is on screen and
+            // nothing has opened since. Otherwise the coordinates go to that
+            // chat's composer or draft as text, like a refused message, so a
+            // late refusal never replaces a newer dialog and is never lost.
             Unsent::Location {
                 latitude,
                 longitude,
             } => {
-                if open {
-                    self.location_draft = crate::geo::Spot {
-                        latitude,
-                        longitude,
-                    }
-                    .text();
+                let spot = crate::geo::Spot {
+                    latitude,
+                    longitude,
+                }
+                .text();
+                if open && self.dialog.is_none() {
+                    self.location_draft = spot;
                     self.dialog = Some(Dialog::SendLocation(chat));
+                } else {
+                    self.restore_text(&chat, spot);
                 }
             }
             Unsent::Voice(samples) => {
@@ -12477,6 +12483,54 @@ mod tests {
         app.handle_events();
         assert_eq!(app.dialog, Some(Dialog::SendLocation(chat.into())));
         assert_eq!(app.location_draft, "-23.55050, -46.63330");
+    }
+
+    /// A refusal that arrives late never replaces a dialog opened since, and
+    /// never drops the spot: it goes to the chat's composer or draft as text.
+    #[test]
+    fn a_late_location_refusal_keeps_newer_state_and_the_spot() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let chat = "fixture@s.whatsapp.net";
+        let other = "other@s.whatsapp.net";
+        let spot = Unsent::Location {
+            latitude: -23.5505,
+            longitude: -46.6333,
+        };
+
+        // The reader opened a second location dialog and typed another spot.
+        app.open_chat = Some(chat.into());
+        app.dialog = Some(Dialog::SendLocation(chat.into()));
+        app.location_draft = "51.5074, -0.1278".into();
+        events
+            .send(refused(chat, None, spot.clone(), Refusal::Offline))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.dialog, Some(Dialog::SendLocation(chat.into())));
+        assert_eq!(
+            app.location_draft, "51.5074, -0.1278",
+            "the newer spot stays"
+        );
+        assert_eq!(
+            app.composer, "-23.55050, -46.63330",
+            "the refused one waits"
+        );
+
+        // The reader moved to another chat: the spot waits in its own draft.
+        app.dialog = None;
+        app.composer.clear();
+        app.open_chat = Some(other.into());
+        events
+            .send(refused(chat, None, spot, Refusal::Offline))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.dialog, None);
+        assert_eq!(
+            app.drafts.get(chat).map(String::as_str),
+            Some("-23.55050, -46.63330")
+        );
     }
 
     #[test]
