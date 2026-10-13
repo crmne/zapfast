@@ -74,6 +74,10 @@ Use `--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 `--demo-page motion` shows a motion photo, `motion-playing` plays its clip in
 the bubble, and `motion-preview` opens its preview.
+`--demo-page private-reply-menu` shows a group message's menu with **Reply
+privately**, `private-reply` the sender's chat with the group quote in the
+composer, and `private-reply-locked-source` the same quote while its group is
+locked.
 `--demo-page video` shows a video and round video messages,
 `--demo-page video-expanded` the video over the whole window, and
 `video-playing` or `note-playing` starts one of them, silently.

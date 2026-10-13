@@ -1460,9 +1460,6 @@ impl App {
     fn park_composer(&mut self) {
         if let Some(previous) = self.open_chat.clone() {
             self.save_attachment_draft(&previous);
-            if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
-                self.private_reply_drafts.insert(previous.clone(), target);
-            }
             let draft = std::mem::take(&mut self.composer);
             if self.is_untouched_prefill(&previous, &draft) {
                 // A link's text is not the reader's, so the draft they wrote
@@ -1501,9 +1498,6 @@ impl App {
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
             self.reply_to = attachments.quoting;
-            if self.reply_to.is_none() {
-                self.reply_to = self.private_reply_drafts.remove(&id);
-            }
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
@@ -2124,17 +2118,6 @@ impl App {
     /// locked chat this discards the draft, because there is nothing left to
     /// send it to, and it clears `last_chat` so a restart does not reopen it.
     fn forget_chat(&mut self, id: &str) {
-        let generation = self
-            .private_reply_generations
-            .get(id)
-            .copied()
-            .unwrap_or(self.private_reply_generation);
-        self.private_reply_generations.insert(
-            id.to_owned(),
-            generation
-                .checked_add(1)
-                .expect("private reply destination generation exhausted"),
-        );
         self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
         self.conversations.remove(id);
@@ -2144,7 +2127,6 @@ impl App {
             self.nav_history.forget(id);
         }
         self.drafts.remove(id);
-        self.private_reply_drafts.remove(id);
         self.draft_mentions.remove(id);
         self.attachment_drafts.remove(id);
         self.typing.remove(id);
@@ -2204,7 +2186,6 @@ impl App {
             self.composer_mentions.clear();
             self.pending.clear();
             self.forget_unstaged_pictures();
-            self.private_reply_drafts.remove(id);
             self.reply_to = None;
             self.editing = None;
             self.picker = None;
@@ -2862,7 +2843,10 @@ impl App {
             self.drafts
                 .get(chat)
                 .is_some_and(|text| !text.trim().is_empty())
-                || self.attachment_drafts.contains_key(chat)
+                || self
+                    .attachment_drafts
+                    .get(chat)
+                    .is_some_and(|draft| !draft.pending.is_empty())
         }
     }
 
@@ -3922,15 +3906,6 @@ impl App {
                 }
                 // Unsent text belongs to the account that was unlinked.
                 self.drafts.clear();
-                self.private_reply_drafts.clear();
-                self.private_reply_generation = self
-                    .private_reply_generations
-                    .values()
-                    .copied()
-                    .fold(self.private_reply_generation, u64::max)
-                    .checked_add(1)
-                    .expect("private reply account generation exhausted");
-                self.private_reply_generations.clear();
                 self.draft_mentions.clear();
                 self.attachment_drafts.clear();
                 if live {
@@ -4079,7 +4054,6 @@ impl App {
         self.clear_chat_notifications(id);
         // Clearing a chat also removes its stored draft.
         self.drafts.remove(id);
-        self.private_reply_drafts.remove(id);
         self.draft_mentions.remove(id);
         self.attachment_drafts.remove(id);
         self.search_hits
@@ -4248,17 +4222,11 @@ impl App {
         unsent: Unsent,
         reason: Refusal,
     ) {
-        // Removing the destination also discards recovery of its private replies.
-        if quoting.as_ref().is_some_and(|target| {
-            target.chat.is_some()
-                && (self.chat(&chat).is_none()
-                    || target.destination_generation
-                        != self
-                            .private_reply_generations
-                            .get(&chat)
-                            .copied()
-                            .unwrap_or(self.private_reply_generation))
-        }) {
+        // A private reply quotes another chat, so its recovery needs the
+        // destination chat to still exist.
+        if quoting.as_ref().is_some_and(|target| target.chat.is_some())
+            && self.chat(&chat).is_none()
+        {
             return;
         }
         let open = !self.events_hidden && self.open_chat.as_deref() == Some(chat.as_str());
@@ -4269,9 +4237,13 @@ impl App {
                 self.reply_to = Some(target);
                 self.focus_composer = true;
             } else if !open && target.chat.is_some() {
-                self.private_reply_drafts
+                // The private quote waits in the chat's draft, like a
+                // refused attachment's reply.
+                self.attachment_drafts
                     .entry(chat.clone())
-                    .or_insert(target);
+                    .or_default()
+                    .quoting
+                    .get_or_insert(target);
             }
         }
         match unsent {
@@ -4724,11 +4696,6 @@ impl App {
                     let mentions = std::mem::take(&mut self.composer_mentions);
                     self.draft_mentions.insert(previous.clone(), mentions);
                 }
-                if let Some(target) = self.reply_to.take().filter(|target| target.chat.is_some()) {
-                    self.private_reply_drafts.insert(previous.clone(), target);
-                } else {
-                    self.private_reply_drafts.remove(&previous);
-                }
                 self.stop_composing(&previous);
                 let draft = self.drafts.get(&previous).cloned().unwrap_or_default();
                 self.store_draft(&previous, &draft);
@@ -4749,9 +4716,7 @@ impl App {
             self.pending = attachments.pending;
             // A search belongs to the chat it was typed in.
             self.close_chat_search();
-            self.reply_to = attachments
-                .quoting
-                .or_else(|| self.private_reply_drafts.remove(&id));
+            self.reply_to = attachments.quoting;
             self.editing = None;
             // A starred row's pending quote belongs to its own chat too.
             if self
@@ -4996,9 +4961,15 @@ impl App {
     }
 
     /// Parks staged attachments, and the reply they carry, before leaving a
-    /// chat or account. A reply without attachments is not kept, as before.
+    /// chat or account. A reply without attachments is not kept, as before,
+    /// except a private reply: its quote comes from a group and cannot be
+    /// picked again in this chat.
     fn save_attachment_draft(&mut self, chat: &str) {
-        if self.pending.is_empty() {
+        let private = self
+            .reply_to
+            .as_ref()
+            .is_some_and(|target| target.chat.is_some());
+        if self.pending.is_empty() && !private {
             self.attachment_drafts.remove(chat);
         } else {
             let draft = AttachmentDraft {
@@ -5044,7 +5015,10 @@ impl App {
             return;
         };
         if account != active || target.open_chat.as_deref() != Some(chat.as_str()) {
-            if target.attachment_drafts.contains_key(&chat)
+            if target
+                .attachment_drafts
+                .get(&chat)
+                .is_some_and(|draft| !draft.pending.is_empty())
                 && !caption.trim().is_empty()
                 && target
                     .drafts
@@ -5697,13 +5671,6 @@ impl App {
             }
             Action::CloseChat => {
                 if let Some(chat) = self.open_chat.take() {
-                    if let Some(target) =
-                        self.reply_to.take().filter(|target| target.chat.is_some())
-                    {
-                        self.private_reply_drafts.insert(chat.clone(), target);
-                    } else {
-                        self.private_reply_drafts.remove(&chat);
-                    }
                     self.save_attachment_draft(&chat);
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
@@ -6089,11 +6056,6 @@ impl App {
                     self.reply_to = Some(crate::model::ReplyTarget {
                         id: message,
                         chat: Some(chat),
-                        destination_generation: self
-                            .private_reply_generations
-                            .get(&recipient)
-                            .copied()
-                            .unwrap_or(self.private_reply_generation),
                     });
                     self.focus_composer = true;
                 }
@@ -10335,7 +10297,6 @@ mod tests {
         let quote = crate::model::ReplyTarget {
             id: "source-message".into(),
             chat: Some("source@g.us".into()),
-            destination_generation: 0,
         };
         events
             .send(Event::SendRefused {
@@ -15870,9 +15831,7 @@ mod tests {
     /// Late refusals cannot restore a deleted recipient's private quote, text or voice.
     #[test]
     fn private_reply_refusals_do_not_recreate_deleted_destination_drafts() {
-        for (voice, recreate_before_refusal) in
-            [(false, false), (true, false), (false, true), (true, true)]
-        {
+        for voice in [false, true] {
             let mut app = app();
             let (backend, mut commands) = Backend::recording();
             app.backend = backend;
@@ -15915,25 +15874,16 @@ mod tests {
             assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
                 Command::SendText { quoting: Some(quote), .. } | Command::SendVoice { quoting: Some(quote), .. } if quote == target
             )));
-            let target_generation = target.destination_generation;
             app.forget_chat(recipient);
-            if recreate_before_refusal {
-                app.chats.push(Chat::new(
-                    recipient.into(),
-                    "Replacement recipient fixture".into(),
-                ));
-            }
             app.send_refused(recipient.into(), Some(target), unsent, Refusal::Offline);
-            assert!(!app.private_reply_drafts.contains_key(recipient));
+            assert!(!app.attachment_drafts.contains_key(recipient));
             assert!(!app.drafts.contains_key(recipient));
             assert!(app.reply_to.is_none());
             assert!(app.unsent_voice.is_none());
-            if !recreate_before_refusal {
-                app.chats.push(Chat::new(
-                    recipient.into(),
-                    "Recreated recipient fixture".into(),
-                ));
-            }
+            app.chats.push(Chat::new(
+                recipient.into(),
+                "Recreated recipient fixture".into(),
+            ));
             app.open_chat(recipient.into());
             assert!(app.reply_to.is_none());
             assert!(app.composer.is_empty());
@@ -15947,7 +15897,6 @@ mod tests {
                 &ctx,
             );
             let replacement = app.reply_to.take().unwrap();
-            assert_ne!(replacement.destination_generation, target_generation);
             app.send_refused(
                 recipient.into(),
                 Some(replacement.clone()),
@@ -15957,6 +15906,34 @@ mod tests {
             assert_eq!(app.reply_to, Some(replacement));
             assert_eq!(app.composer, "Replacement draft");
         }
+    }
+
+    /// A private quote with nothing typed waits in the chat's attachment
+    /// draft, without making the chat list show a draft.
+    #[test]
+    fn a_bare_private_quote_is_kept_without_a_list_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let recipient = "15550003333@s.whatsapp.net";
+        let other = "15550004444@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(recipient.into(), "Recipient fixture".into()));
+        app.chats
+            .push(Chat::new(other.into(), "Other fixture".into()));
+        app.open_chat(recipient.into());
+        let target = ReplyTarget {
+            id: "original".into(),
+            chat: Some("12345@g.us".into()),
+        };
+        app.reply_to = Some(target.clone());
+        app.open_chat(other.into());
+        assert!(app.reply_to.is_none());
+        assert!(!app.has_draft(recipient));
+        assert!(app.draft_preview(recipient).is_none());
+        app.apply(Action::CloseChat, &ctx);
+        app.open_chat(recipient.into());
+        assert_eq!(app.reply_to, Some(target));
+        assert!(app.pending.is_empty());
     }
 
     /// Closing and reopening a recipient restores its private quote, while cancel removes it.
@@ -15971,20 +15948,24 @@ mod tests {
         let target = ReplyTarget {
             id: "original".into(),
             chat: Some("12345@g.us".into()),
-            destination_generation: 0,
         };
         app.reply_to = Some(target.clone());
         app.composer = "Private draft".into();
         app.apply(Action::CloseChat, &ctx);
         assert!(app.open_chat.is_none());
         assert!(app.reply_to.is_none());
-        assert_eq!(app.private_reply_drafts.get(recipient), Some(&target));
+        assert_eq!(
+            app.attachment_drafts
+                .get(recipient)
+                .and_then(|draft| draft.quoting.as_ref()),
+            Some(&target)
+        );
         app.open_chat(recipient.into());
         assert_eq!(app.reply_to, Some(target));
         assert_eq!(app.composer, "Private draft");
         app.reply_to = None;
         app.apply(Action::CloseChat, &ctx);
-        assert!(!app.private_reply_drafts.contains_key(recipient));
+        assert!(!app.attachment_drafts.contains_key(recipient));
         app.open_chat(recipient.into());
         assert!(app.reply_to.is_none());
     }
@@ -15999,7 +15980,6 @@ mod tests {
             let quote = ReplyTarget {
                 id: "original".into(),
                 chat: Some("12345@g.us".into()),
-                destination_generation: 0,
             };
             app.chats
                 .push(Chat::new(left.into(), "Left fixture".into()));
@@ -16007,8 +15987,13 @@ mod tests {
                 .push(Chat::new(other.into(), "Other fixture".into()));
             app.open_chat = Some(left.into());
             app.reply_to = Some(quote.clone());
-            app.private_reply_drafts.insert(left.into(), quote.clone());
-            app.private_reply_drafts.insert(other.into(), quote.clone());
+            app.attachment_drafts.insert(
+                other.into(),
+                AttachmentDraft {
+                    pending: Vec::new(),
+                    quoting: Some(quote.clone()),
+                },
+            );
             if delete {
                 app.forget_chat(left);
             } else {
@@ -16016,8 +16001,8 @@ mod tests {
             }
             assert!(app.open_chat.is_none());
             assert!(app.reply_to.is_none());
-            assert!(!app.private_reply_drafts.contains_key(left));
-            assert_eq!(app.private_reply_drafts.get(other), Some(&quote));
+            assert!(!app.attachment_drafts.contains_key(left));
+            assert!(app.attachment_drafts.contains_key(other));
             app.open_chat(other.into());
             assert_eq!(app.reply_to, Some(quote));
         }
@@ -16149,7 +16134,6 @@ mod tests {
                 let target = ReplyTarget {
                     id: "original".into(),
                     chat: Some(group.into()),
-                    destination_generation: 0,
                 };
                 app.reply_to = Some(target.clone());
                 app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
