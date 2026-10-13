@@ -3555,6 +3555,10 @@ impl App {
         let mut chat = chat;
         if chat.unread == 0 {
             self.clear_chat_notifications(&chat.id);
+            // Read on another device: the chat's next message may notify at once.
+            if self.chat(&chat.id).is_some_and(|known| known.unread > 0) {
+                self.reset_notification_throttle(&chat.id);
+            }
         }
         if is_open
             && (!chat.locked || self.locked_folder_open())
@@ -15929,6 +15933,36 @@ mod app_lock_tests {
         app.chats[0].unread = 1;
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 2, "opening reset the wait");
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 2);
+    }
+
+    #[test]
+    fn a_chat_read_on_another_device_notifies_again() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        // An update that leaves the chat unread keeps the wait.
+        let still_unread = app.chats[0].clone();
+        app.handle_chat_updated(still_unread, true);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        // The phone reads the chat, and the sync drops its unread count to 0.
+        let mut read = app.chats[0].clone();
+        read.unread = 0;
+        app.handle_chat_updated(read, true);
+        app.chats[0].unread = 1;
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(
+            app.notifications.shown.len(),
+            2,
+            "reading elsewhere reset the wait"
+        );
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 2);
     }

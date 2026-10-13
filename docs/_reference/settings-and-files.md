@@ -145,8 +145,8 @@ name or description, in the interface language or in English.
   you make a sound in groups.
 - **Limit repeat notifications**: off by default. Choose **Direct messages**,
   **Groups**, or **Direct messages and groups**. A limited chat sends one
-  notification (and its sound), then stays quiet for 10 minutes. Opening the
-  chat starts over. In groups, a mention of you or a reply to you always
+  notification (and its sound), then stays quiet for 10 minutes. Reading the
+  chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
 **Privacy**
