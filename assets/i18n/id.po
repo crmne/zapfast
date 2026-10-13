@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:28+0200\n"
+"POT-Creation-Date: 2026-10-13 21:06+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -206,34 +206,34 @@ msgstr "Terkunci"
 msgid "No favorites yet"
 msgstr "Belum ada favorit"
 
-#: src/ui/chats.rs:1044 src/app.rs:2150
+#: src/ui/chats.rs:1029 src/app.rs:2152
 msgid "Message yourself"
 msgstr "Kirim pesan ke diri sendiri"
 
-#: src/ui/chats.rs:1227
+#: src/ui/chats.rs:1212
 msgid "Draft:"
 msgstr "Draft:"
 
-#: src/ui/chats.rs:1314 src/ui/chats.rs:1685 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1299 src/ui/chats.rs:1665 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Hapus dari favorit"
 
-#: src/ui/chats.rs:1316 src/ui/chats.rs:1687 src/ui/conversation.rs:4627
+#: src/ui/chats.rs:1301 src/ui/chats.rs:1667 src/ui/conversation.rs:4491
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Tambah ke favorit"
 
-#: src/ui/chats.rs:1326 src/ui/chats.rs:1711 src/ui/conversation.rs:243
+#: src/ui/chats.rs:1311 src/ui/chats.rs:1691 src/ui/conversation.rs:243
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1769
 msgid "Leave group"
 msgstr "Keluar dari grup"
 
-#: src/ui/chats.rs:1327 src/ui/chats.rs:1709 src/ui/conversation.rs:241
+#: src/ui/chats.rs:1312 src/ui/chats.rs:1689 src/ui/conversation.rs:241
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1767
 msgid "Leave channel"
 msgstr "Keluar dari saluran"
 
-#: src/ui/chats.rs:1342 src/ui/labels.rs:166 src/ui/labels.rs:213
+#: src/ui/chats.rs:1327 src/ui/labels.rs:166 src/ui/labels.rs:213
 msgid "Labels"
 msgstr "Label"
 
@@ -250,12 +250,12 @@ msgstr "Cari pesan"
 msgid "Hang up"
 msgstr "Akhiri panggilan"
 
-#: src/ui/conversation.rs:362 src/ui/conversation.rs:3425 src/ui/calls.rs:84
+#: src/ui/conversation.rs:362 src/ui/conversation.rs:3289 src/ui/calls.rs:84
 #: src/ui/calls.rs:261
 msgid "Voice call"
 msgstr "Panggilan suara"
 
-#: src/ui/conversation.rs:381 src/ui/conversation.rs:3433 src/ui/calls.rs:85
+#: src/ui/conversation.rs:381 src/ui/conversation.rs:3297 src/ui/calls.rs:85
 #: src/ui/calls.rs:248
 msgid "Video call"
 msgstr "Panggilan video"
@@ -328,153 +328,153 @@ msgstr "Pesan suara ({duration}) gagal terkirim"
 msgid "Discard voice message"
 msgstr "Hapus pesan suara"
 
-#: src/ui/conversation.rs:2244 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2172 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} pesan belum dibaca"
 msgstr[1] "{} pesan belum dibaca"
 
-#: src/ui/conversation.rs:2396 src/app.rs:2132 src/app.rs:2151
+#: src/ui/conversation.rs:2324 src/app.rs:2134 src/app.rs:2153
 msgid "You"
 msgstr "Anda"
 
-#: src/ui/conversation.rs:2407
+#: src/ui/conversation.rs:2335
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr ""
 
-#: src/ui/conversation.rs:3416
+#: src/ui/conversation.rs:3280
 msgid "Group calls happen on the phone"
 msgstr "Panggilan grup dilakukan di ponsel"
 
-#: src/ui/conversation.rs:3747 src/ui/conversation.rs:4636
+#: src/ui/conversation.rs:3611 src/ui/conversation.rs:4500
 msgid "Open in system player"
 msgstr "Buka di pemutar sistem"
 
-#: src/ui/conversation.rs:3748 src/ui/conversation.rs:4258
-#: src/ui/conversation.rs:4700 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3612 src/ui/conversation.rs:4122
+#: src/ui/conversation.rs:4564 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info pesan"
 
-#: src/ui/conversation.rs:3749 src/ui/conversation.rs:4712
+#: src/ui/conversation.rs:3613 src/ui/conversation.rs:4576
 msgid "Reload earlier messages"
 msgstr "Muat ulang pesan sebelumnya"
 
-#: src/ui/conversation.rs:4648 src/ui/image_preview.rs:77
-#: src/ui/image_preview.rs:236
+#: src/ui/conversation.rs:4512 src/ui/image_preview.rs:77
+#: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Salin gambar"
 
-#: src/ui/conversation.rs:5093
+#: src/ui/conversation.rs:4957
 msgid "Location"
 msgstr "Lokasi"
 
-#: src/ui/conversation.rs:5127
+#: src/ui/conversation.rs:4991
 msgid "Live location ended"
 msgstr "Lokasi terkini berakhir"
 
-#: src/ui/conversation.rs:5129 src/ui/conversation.rs:5371
+#: src/ui/conversation.rs:4993 src/ui/conversation.rs:5235
 msgid "Live location"
 msgstr "Lokasi terkini"
 
-#: src/ui/conversation.rs:5139
+#: src/ui/conversation.rs:5003
 #, rust-format
 msgid "Updated {time}"
 msgstr "Diperbarui {time}"
 
-#: src/ui/conversation.rs:5154 src/ui/conversation.rs:5379
+#: src/ui/conversation.rs:5018 src/ui/conversation.rs:5243
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Buka WhatsApp di ponselmu untuk mengikuti ini."
 
-#: src/ui/conversation.rs:5198
+#: src/ui/conversation.rs:5062
 msgid "Chat"
 msgstr "Chat"
 
-#: src/ui/conversation.rs:5212
+#: src/ui/conversation.rs:5076
 msgid "Add"
 msgstr "Tambah"
 
-#: src/ui/conversation.rs:5260
+#: src/ui/conversation.rs:5124
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} stiker"
 msgstr[1] "{} stiker"
 
-#: src/ui/conversation.rs:5273
+#: src/ui/conversation.rs:5137
 msgid "View stickers"
 msgstr "Lihat stiker"
 
-#: src/ui/conversation.rs:5397
+#: src/ui/conversation.rs:5261
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Foto sekali lihat. Untuk privasi Anda, foto ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5401
+#: src/ui/conversation.rs:5265
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Video sekali lihat. Untuk privasi Anda, video ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5405
+#: src/ui/conversation.rs:5269
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Pesan suara sekali lihat. Untuk privasi Anda, pesan suara ini hanya dapat "
 "dibuka melalui aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5409
+#: src/ui/conversation.rs:5273
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Audio sekali lihat. Untuk privasi Anda, audio ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5413
+#: src/ui/conversation.rs:5277
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Pesan sekali lihat. Untuk privasi Anda, pesan ini hanya dapat dibuka melalui "
 "aplikasi WhatsApp di ponsel."
 
-#: src/ui/conversation.rs:5415
+#: src/ui/conversation.rs:5279
 msgid "This message can only be seen on your phone."
 msgstr "Pesan ini hanya dapat dilihat melalui ponsel anda."
 
-#: src/ui/conversation.rs:6178
+#: src/ui/conversation.rs:6040
 #, fuzzy
 msgid "Message"
 msgstr "Info pesan"
 
-#: src/ui/conversation.rs:6179
+#: src/ui/conversation.rs:6041
 #, fuzzy
 msgid "Copy number"
 msgstr "Salin gambar"
 
-#: src/ui/conversation.rs:6415
+#: src/ui/conversation.rs:6277
 msgid "Open in a map"
 msgstr "Buka di map"
 
-#: src/ui/conversation.rs:7102
+#: src/ui/conversation.rs:6964
 msgid "Pause"
 msgstr "Jeda"
 
-#: src/ui/conversation.rs:7104 src/ui/settings.rs:1746
+#: src/ui/conversation.rs:6966 src/ui/settings.rs:1746
 msgid "Play"
 msgstr "Mulai"
 
-#: src/ui/conversation.rs:7131
+#: src/ui/conversation.rs:6993
 msgid "Back to the message (Esc)"
 msgstr "Kembali ke pesan (Esc)"
 
-#: src/ui/conversation.rs:7133
+#: src/ui/conversation.rs:6995
 msgid "Fill the window"
 msgstr "Penuhi jendela"
 
-#: src/ui/conversation.rs:7163 src/ui/call.rs:469
+#: src/ui/conversation.rs:7025 src/ui/call.rs:469
 msgid "Unmute"
 msgstr "Batalkan bisu"
 
-#: src/ui/conversation.rs:7165 src/ui/call.rs:476
+#: src/ui/conversation.rs:7027 src/ui/call.rs:476
 msgid "Mute"
 msgstr "Bisukan"
 
@@ -674,7 +674,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Wallpaper"
 
-#: src/ui/settings.rs:348 src/app.rs:2623
+#: src/ui/settings.rs:348 src/app.rs:2625
 msgid "Image"
 msgstr "Gambar"
 
@@ -1199,7 +1199,7 @@ msgstr "Tidak dapat terhubung"
 msgid "No answer"
 msgstr "Tidak ada jawaban"
 
-#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3354
+#: src/ui/call.rs:358 src/ui/calls.rs:106 src/app.rs:3344
 msgid "Connection lost"
 msgstr "Koneksi terputus"
 
@@ -1411,37 +1411,37 @@ msgstr[1] "tersisa {}"
 msgid "No one yet"
 msgstr "Belum ada siapa pun"
 
-#: src/app.rs:1537
+#: src/app.rs:1536
 msgid "Could not delete the removed account's files"
 msgstr "Tidak dapat menghapus file akun yang dihapus"
 
-#: src/app.rs:2052
+#: src/app.rs:2054
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Label bernama “{name}” sudah ada."
 
-#: src/app.rs:2131
+#: src/app.rs:2133
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Anda)"
 
-#: src/app.rs:3064
+#: src/app.rs:3054
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3158
+#: src/app.rs:3148
 msgid "Could not use this image"
 msgstr "Tidak dapat menggunakan gambar ini"
 
-#: src/app.rs:3364
+#: src/app.rs:3354
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3739
+#: src/app.rs:3729
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
 
-#: src/app.rs:3743
+#: src/app.rs:3733
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1449,22 +1449,22 @@ msgstr ""
 "Tidak terkirim: pesan yang Anda balas tidak tersedia di komputer ini. "
 "Batalkan balasan untuk mengirim tanpa kutipan."
 
-#: src/app.rs:5679
+#: src/app.rs:5652
 msgid "Added to favorites"
 msgstr "Ditambahkan ke favorit"
 
-#: src/app.rs:5754
+#: src/app.rs:5727
 msgid "Sending the sticker pack…"
 msgstr "Mengirim paket stiker…"
 
-#: src/app.rs:6047 src/ui/labels.rs:247
+#: src/app.rs:6020 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6547
+#: src/app.rs:6520
 #, rust-format
 msgid "{}: {}"
 msgstr ""
@@ -1477,15 +1477,15 @@ msgstr "Kata sandi kunci aplikasi disimpan"
 msgid "App lock turned off"
 msgstr "Kunci aplikasi dinonaktifkan"
 
-#: src/app.rs:6967
+#: src/app.rs:6966
 msgid "This video opens in your system player"
 msgstr "Video ini dibuka di pemutar media sistem"
 
-#: src/app.rs:7399
+#: src/app.rs:7398
 msgid "Copied image"
 msgstr "Gambar disalin"
 
-#: src/app.rs:7402 src/app.rs:7407
+#: src/app.rs:7401 src/app.rs:7406
 msgid "Failed to copy image"
 msgstr "Gagal menyalin gambar"
 
@@ -1819,11 +1819,11 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Bisukan penelepon tidak dikenal"
 
-#: src/ui/image_preview.rs:238
+#: src/ui/image_preview.rs:234
 msgid "Save as…"
 msgstr "Simpan sebagai…"
 
-#: src/ui/image_preview.rs:241
+#: src/ui/image_preview.rs:236
 msgid "Open in another app"
 msgstr "Buka di aplikasi lain"
 
