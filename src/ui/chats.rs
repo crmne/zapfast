@@ -131,6 +131,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                 vec2(ui.available_width(), super::conversation::HEADER_ROW),
                 Layout::left_to_right(Align::Center),
                 |ui| {
+                    let buttons = header_buttons(ui.ctx(), false);
                     if app.show_archived || app.locked_folder {
                         if theme::icon_button(
                             ui,
@@ -157,7 +158,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             },
                             theme::bold(20.0),
                             palette.text,
-                            header_buttons(ui.ctx(), true),
+                            header_buttons_width(ui, &buttons),
                         );
                     } else {
                         // Our avatar opens the account switcher, with the
@@ -169,61 +170,11 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             &crate::i18n::gettext(app.locale, "Chats"),
                             theme::bold(20.0),
                             palette.text,
-                            header_buttons(ui.ctx(), true),
+                            header_buttons_width(ui, &buttons),
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Settings,
-                            18.0,
-                            if app.page == Page::Settings {
-                                palette.accent
-                            } else {
-                                palette.secondary
-                            },
-                            palette.text,
-                            // Same as the avatar: the label says what the click
-                            // does now, not what it opened.
-                            if app.page == Page::Settings {
-                                "Close settings (Ctrl+,)"
-                            } else {
-                                "Settings (Ctrl+,)"
-                            },
-                        )
-                        .tab_stop(Stop::Settings)
-                        .clicked()
-                        {
-                            app.actions.push(Action::ToggleSettings);
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::SquarePen,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "New chat",
-                        )
-                        .tab_stop(Stop::NewChat)
-                        .clicked()
-                        {
-                            app.actions
-                                .push(Action::ShowDialog(crate::model::Dialog::NewChat));
-                        }
-                        if !super::narrow(ui.ctx())
-                            && theme::icon_button(
-                                ui,
-                                Icon::PanelLeft,
-                                18.0,
-                                palette.secondary,
-                                palette.text,
-                                "Hide the chat list (Ctrl+B)",
-                            )
-                            .tab_stop(Stop::Sidebar)
-                            .clicked()
-                        {
-                            app.actions.push(Action::ToggleSidebar);
-                        }
+                        header_button_row(app, ui, &buttons, false);
                     });
                 },
             );
@@ -254,22 +205,130 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-/// How many buttons follow the chat list header's title on the right: New
-/// chat, Settings (but on macOS, where the menu has it), and Hide the chat
-/// list unless the window is narrow.
-fn header_buttons(ctx: &egui::Context, settings: bool) -> usize {
-    1 + usize::from(settings) + usize::from(!super::narrow(ctx))
+/// A button on the right of the chat list header's first row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeaderButton {
+    Settings,
+    NewChat,
+    HideList,
 }
 
-/// Draws the chat list header's title when it fits before the `buttons`
-/// that follow it on the right, and leaves it out otherwise: in a narrow
-/// list it ran under them. The avatar or Back before it says where you are.
+/// The size of the header buttons' icons.
+const HEADER_ICON: f32 = 18.0;
+
+/// The buttons on the right of the chat list header, rightmost first, as
+/// `header_button_row` draws them: Settings (but in the macOS chrome, where
+/// the menu has it), New chat, and Hide the chat list unless the window is
+/// narrow. The title before them measures its room from the same list.
+fn header_buttons(ctx: &egui::Context, macos: bool) -> Vec<HeaderButton> {
+    let mut buttons = Vec::with_capacity(3);
+    if !macos {
+        buttons.push(HeaderButton::Settings);
+    }
+    buttons.push(HeaderButton::NewChat);
+    if !super::narrow(ctx) {
+        buttons.push(HeaderButton::HideList);
+    }
+    buttons
+}
+
+/// Draws `buttons` in a right-to-left layout, with the macOS shortcuts in
+/// their tooltips when `macos`.
+fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton], macos: bool) {
+    let palette = app.palette;
+    for button in buttons {
+        match button {
+            HeaderButton::Settings => {
+                let open = app.page == Page::Settings;
+                if theme::icon_button(
+                    ui,
+                    Icon::Settings,
+                    HEADER_ICON,
+                    if open {
+                        palette.accent
+                    } else {
+                        palette.secondary
+                    },
+                    palette.text,
+                    // Same as the avatar: the label says what the click
+                    // does now, not what it opened.
+                    if open {
+                        "Close settings (Ctrl+,)"
+                    } else {
+                        "Settings (Ctrl+,)"
+                    },
+                )
+                .tab_stop(Stop::Settings)
+                .clicked()
+                {
+                    app.actions.push(Action::ToggleSettings);
+                }
+            }
+            HeaderButton::NewChat => {
+                if theme::icon_button(
+                    ui,
+                    Icon::SquarePen,
+                    HEADER_ICON,
+                    palette.secondary,
+                    palette.text,
+                    if macos { "New chat (⌘N)" } else { "New chat" },
+                )
+                .tab_stop(Stop::NewChat)
+                .clicked()
+                {
+                    app.actions.push(Action::ShowDialog(Dialog::NewChat));
+                }
+            }
+            HeaderButton::HideList => {
+                if theme::icon_button(
+                    ui,
+                    Icon::PanelLeft,
+                    HEADER_ICON,
+                    palette.secondary,
+                    palette.text,
+                    if macos {
+                        "Hide the chat list (⌘B)"
+                    } else {
+                        "Hide the chat list (Ctrl+B)"
+                    },
+                )
+                .tab_stop(Stop::Sidebar)
+                .clicked()
+                {
+                    app.actions.push(Action::ToggleSidebar);
+                }
+            }
+        }
+    }
+}
+
+/// How wide `buttons` are drawn, with the spacing between them.
+fn header_buttons_width(ui: &egui::Ui, buttons: &[HeaderButton]) -> f32 {
+    row_width(
+        buttons.len(),
+        HEADER_ICON + theme::ICON_BUTTON_PAD,
+        ui.spacing().item_spacing.x,
+    )
+}
+
+/// How wide `count` items `edge` points wide are with `spacing` between them.
+fn row_width(count: usize, edge: f32, spacing: f32) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    count as f32 * edge + (count - 1) as f32 * spacing
+}
+
+/// Draws the chat list header's title when it fits before the buttons that
+/// follow it on the right, `buttons` points wide, and leaves it out
+/// otherwise: in a narrow list it ran under them. The avatar or Back before
+/// it says where you are.
 fn header_title(
     ui: &mut egui::Ui,
     text: &str,
     font: egui::FontId,
     color: egui::Color32,
-    buttons: usize,
+    buttons: f32,
 ) {
     let width = ui
         .painter()
@@ -282,10 +341,10 @@ fn header_title(
     }
 }
 
-/// Whether a title `width` points wide fits in `available` beside `buttons`
-/// icon buttons and the `spacing` between each of them.
-fn title_fits(width: f32, available: f32, buttons: usize, spacing: f32) -> bool {
-    width + buttons as f32 * (theme::ICON_BUTTON + spacing) + spacing <= available
+/// Whether a title `width` points wide fits in `available` beside a row of
+/// buttons `buttons` points wide, with `spacing` between the two.
+fn title_fits(width: f32, available: f32, buttons: f32, spacing: f32) -> bool {
+    width + spacing + buttons <= available
 }
 
 /// Where the chat list header's first row was laid out, for layout tests.
@@ -306,6 +365,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             let row = ui.horizontal(|ui| {
                 ui.set_min_height(super::conversation::HEADER_ROW);
                 ui.add_space((inset - 14.0).max(0.0));
+                let buttons = header_buttons(ui.ctx(), true);
                 if app.show_archived || app.locked_folder {
                     if theme::icon_button(
                         ui,
@@ -332,7 +392,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         },
                         theme::bold(16.0),
                         palette.text,
-                        header_buttons(ui.ctx(), false),
+                        header_buttons_width(ui, &buttons),
                     );
                 } else {
                     // Our avatar opens the account switcher here as on the
@@ -344,37 +404,11 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         &crate::i18n::gettext(app.locale, "Chats"),
                         theme::bold(20.0),
                         palette.text,
-                        header_buttons(ui.ctx(), false),
+                        header_buttons_width(ui, &buttons),
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if theme::icon_button(
-                        ui,
-                        Icon::SquarePen,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        "New chat (⌘N)",
-                    )
-                    .tab_stop(Stop::NewChat)
-                    .clicked()
-                    {
-                        app.actions.push(Action::ShowDialog(Dialog::NewChat));
-                    }
-                    if !super::narrow(ui.ctx())
-                        && theme::icon_button(
-                            ui,
-                            Icon::PanelLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "Hide the chat list (⌘B)",
-                        )
-                        .tab_stop(Stop::Sidebar)
-                        .clicked()
-                    {
-                        app.actions.push(Action::ToggleSidebar);
-                    }
+                    header_button_row(app, ui, &buttons, true);
                 });
             });
             ui.ctx()
@@ -1752,13 +1786,47 @@ mod tests {
     #[test]
     fn header_titles_make_way_for_their_buttons() {
         let spacing = 8.0;
-        // Two buttons take 2 * (30 + 8) + 8 = 84 points.
-        assert!(title_fits(100.0, 184.0, 2, spacing));
-        assert!(!title_fits(100.0, 183.0, 2, spacing));
+        // Two 30-point buttons take 30 + 8 + 30 = 68 points, and the title
+        // keeps 8 from them.
+        let two = row_width(2, 30.0, spacing);
+        assert_eq!(two, 68.0);
+        assert!(title_fits(100.0, 176.0, two, spacing));
+        assert!(!title_fits(100.0, 175.0, two, spacing));
         // A third button, the Settings one off macOS, needs 38 more.
-        assert!(!title_fits(100.0, 184.0, 3, spacing));
-        assert!(title_fits(100.0, 222.0, 3, spacing));
+        let three = row_width(3, 30.0, spacing);
+        assert!(!title_fits(100.0, 176.0, three, spacing));
+        assert!(title_fits(100.0, 214.0, three, spacing));
+        assert_eq!(row_width(0, 30.0, spacing), 0.0);
     }
+
+    /// The title measures its room from the list the header draws: Settings
+    /// only outside the macOS chrome, Hide the chat list only when the
+    /// window is wide enough to show the list beside a chat.
+    #[test]
+    fn header_buttons_follow_the_chrome_and_width() {
+        use HeaderButton::{HideList, NewChat, Settings};
+        let buttons = |width: f32, macos: bool| {
+            let ctx = egui::Context::default();
+            let mut buttons = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(width, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| buttons = header_buttons(ui.ctx(), macos),
+            );
+            output.textures_delta.clear();
+            buttons
+        };
+        assert_eq!(buttons(1000.0, false), [Settings, NewChat, HideList]);
+        assert_eq!(buttons(1000.0, true), [NewChat, HideList]);
+        assert_eq!(buttons(400.0, false), [Settings, NewChat]);
+        assert_eq!(buttons(400.0, true), [NewChat]);
+    }
+
     use crate::paths::AppDirs;
     use crate::settings::Settings;
 
