@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:58+0200\n"
+"POT-Creation-Date: 2026-10-13 19:59+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -173,46 +173,46 @@ msgstr "Chats"
 msgid "Search"
 msgstr "Suchen"
 
-#: src/ui/chats.rs:457
+#: src/ui/chats.rs:451
 msgid "Archived"
 msgstr "Archiviert"
 
-#: src/ui/chats.rs:474
+#: src/ui/chats.rs:468
 msgid "Locked"
 msgstr "Gesperrt"
 
-#: src/ui/chats.rs:532
+#: src/ui/chats.rs:526
 msgid "No favorites yet"
 msgstr "Noch keine Favoriten"
 
-#: src/ui/chats.rs:939 src/app.rs:2065
+#: src/ui/chats.rs:933 src/app.rs:2065
 msgid "Message yourself"
 msgstr "Nachricht an dich selbst"
 
-#: src/ui/chats.rs:1122
+#: src/ui/chats.rs:1116
 msgid "Draft:"
 msgstr "Entwurf:"
 
-#: src/ui/chats.rs:1209 src/ui/chats.rs:1575 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1203 src/ui/chats.rs:1569 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Aus Favoriten entfernen"
 
-#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4392
+#: src/ui/chats.rs:1205 src/ui/chats.rs:1571 src/ui/conversation.rs:4392
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Zu Favoriten hinzufügen"
 
-#: src/ui/chats.rs:1221 src/ui/chats.rs:1601 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1215 src/ui/chats.rs:1595 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Gruppe verlassen"
 
-#: src/ui/chats.rs:1222 src/ui/chats.rs:1599 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1216 src/ui/chats.rs:1593 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Kanal verlassen"
 
-#: src/ui/chats.rs:1237 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1231 src/ui/labels.rs:166 src/ui/labels.rs:213
 msgid "Labels"
 msgstr "Labels"
 
@@ -455,7 +455,7 @@ msgstr "Pack wird heruntergeladen…"
 msgid "Add to my stickers"
 msgstr "Zu meinen Stickern hinzufügen"
 
-#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:230
+#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:224
 msgid "Close"
 msgstr "Schließen"
 
@@ -1192,7 +1192,7 @@ msgstr "Zu Favoriten hinzugefügt"
 msgid "Sending the sticker pack…"
 msgstr "Sticker-Pack wird gesendet…"
 
-#: src/app.rs:5811 src/ui/labels.rs:253
+#: src/app.rs:5811 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
@@ -1272,15 +1272,15 @@ msgctxt "label colour"
 msgid "Colour"
 msgstr "Farbe"
 
-#: src/ui/labels.rs:157
+#: src/ui/labels.rs:151
 msgid "Manage labels"
 msgstr "Labels verwalten"
 
-#: src/ui/labels.rs:206
+#: src/ui/labels.rs:200
 msgid "Manage labels…"
 msgstr "Labels verwalten …"
 
-#: src/ui/labels.rs:242
+#: src/ui/labels.rs:236
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
@@ -1288,15 +1288,15 @@ msgstr ""
 "Labels bleiben auf diesem Computer. Sie erreichen weder dein Telefon noch "
 "deine Chatpartner."
 
-#: src/ui/labels.rs:263
+#: src/ui/labels.rs:257
 msgid "New label"
 msgstr "Neues Label"
 
-#: src/ui/labels.rs:277
+#: src/ui/labels.rs:271
 msgid "Create"
 msgstr "Erstellen"
 
-#: src/ui/labels.rs:307
+#: src/ui/labels.rs:301
 msgid ""
 "No labels yet. Create one above, then add chats to it from their right-click "
 "menu."
@@ -1304,22 +1304,22 @@ msgstr ""
 "Noch keine Labels. Erstelle oben eins und füge Chats über ihr "
 "Rechtsklickmenü hinzu."
 
-#: src/ui/labels.rs:342
+#: src/ui/labels.rs:336
 msgid "Next colour"
 msgstr "Nächste Farbe"
 
-#: src/ui/labels.rs:391
+#: src/ui/labels.rs:385
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
 msgstr[0] "{} Chat"
 msgstr[1] "{} Chats"
 
-#: src/ui/labels.rs:412
+#: src/ui/labels.rs:406
 msgid "Rename or recolour"
 msgstr "Umbenennen oder umfärben"
 
-#: src/ui/labels.rs:437
+#: src/ui/labels.rs:431
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Dieses Label löschen. Seine Chats behalten ihre Nachrichten."
 

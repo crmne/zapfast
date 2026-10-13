@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 19:58+0200\n"
+"POT-Creation-Date: 2026-10-13 19:59+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Indonesian\n"
@@ -173,46 +173,46 @@ msgstr "Pesan"
 msgid "Search"
 msgstr "Cari"
 
-#: src/ui/chats.rs:457
+#: src/ui/chats.rs:451
 msgid "Archived"
 msgstr "Arsip"
 
-#: src/ui/chats.rs:474
+#: src/ui/chats.rs:468
 msgid "Locked"
 msgstr "Terkunci"
 
-#: src/ui/chats.rs:532
+#: src/ui/chats.rs:526
 msgid "No favorites yet"
 msgstr "Belum ada favorit"
 
-#: src/ui/chats.rs:939 src/app.rs:2065
+#: src/ui/chats.rs:933 src/app.rs:2065
 msgid "Message yourself"
 msgstr "Kirim pesan ke diri sendiri"
 
-#: src/ui/chats.rs:1122
+#: src/ui/chats.rs:1116
 msgid "Draft:"
 msgstr "Draft:"
 
-#: src/ui/chats.rs:1209 src/ui/chats.rs:1575 src/ui/picker.rs:1615
+#: src/ui/chats.rs:1203 src/ui/chats.rs:1569 src/ui/picker.rs:1615
 msgid "Remove from favorites"
 msgstr "Hapus dari favorit"
 
-#: src/ui/chats.rs:1211 src/ui/chats.rs:1577 src/ui/conversation.rs:4392
+#: src/ui/chats.rs:1205 src/ui/chats.rs:1571 src/ui/conversation.rs:4392
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Tambah ke favorit"
 
-#: src/ui/chats.rs:1221 src/ui/chats.rs:1601 src/ui/conversation.rs:234
+#: src/ui/chats.rs:1215 src/ui/chats.rs:1595 src/ui/conversation.rs:234
 #: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
 msgid "Leave group"
 msgstr "Keluar dari grup"
 
-#: src/ui/chats.rs:1222 src/ui/chats.rs:1599 src/ui/conversation.rs:232
+#: src/ui/chats.rs:1216 src/ui/chats.rs:1593 src/ui/conversation.rs:232
 #: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
 msgid "Leave channel"
 msgstr "Keluar dari saluran"
 
-#: src/ui/chats.rs:1237 src/ui/labels.rs:172 src/ui/labels.rs:219
+#: src/ui/chats.rs:1231 src/ui/labels.rs:166 src/ui/labels.rs:213
 msgid "Labels"
 msgstr "Label"
 
@@ -455,7 +455,7 @@ msgstr "Mengunduh paket…"
 msgid "Add to my stickers"
 msgstr "Tambahkan ke stiker saya"
 
-#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:230
+#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:224
 msgid "Close"
 msgstr "Tutup"
 
@@ -1189,7 +1189,7 @@ msgstr "Ditambahkan ke favorit"
 msgid "Sending the sticker pack…"
 msgstr "Mengirim paket stiker…"
 
-#: src/app.rs:5811 src/ui/labels.rs:253
+#: src/app.rs:5811 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
@@ -1269,15 +1269,15 @@ msgctxt "label colour"
 msgid "Colour"
 msgstr "Warna"
 
-#: src/ui/labels.rs:157
+#: src/ui/labels.rs:151
 msgid "Manage labels"
 msgstr "Kelola label"
 
-#: src/ui/labels.rs:206
+#: src/ui/labels.rs:200
 msgid "Manage labels…"
 msgstr "Kelola label…"
 
-#: src/ui/labels.rs:242
+#: src/ui/labels.rs:236
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
@@ -1285,15 +1285,15 @@ msgstr ""
 "Label hanya tersimpan di komputer ini. Label tidak dikirim ke ponsel Anda "
 "atau siapa pun yang Anda ajak chat."
 
-#: src/ui/labels.rs:263
+#: src/ui/labels.rs:257
 msgid "New label"
 msgstr "Label baru"
 
-#: src/ui/labels.rs:277
+#: src/ui/labels.rs:271
 msgid "Create"
 msgstr "Buat"
 
-#: src/ui/labels.rs:307
+#: src/ui/labels.rs:301
 msgid ""
 "No labels yet. Create one above, then add chats to it from their right-click "
 "menu."
@@ -1301,22 +1301,22 @@ msgstr ""
 "Belum ada label. Buat label baru di atas, lalu tambahkan chat dari menu klik "
 "kanan."
 
-#: src/ui/labels.rs:342
+#: src/ui/labels.rs:336
 msgid "Next colour"
 msgstr "Warna berikutnya"
 
-#: src/ui/labels.rs:391
+#: src/ui/labels.rs:385
 #, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
 msgstr[0] "{} chat"
 msgstr[1] "{} chat"
 
-#: src/ui/labels.rs:412
+#: src/ui/labels.rs:406
 msgid "Rename or recolour"
 msgstr "Ganti nama atau warna"
 
-#: src/ui/labels.rs:437
+#: src/ui/labels.rs:431
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Hapus label ini. Pesan dalam chat-nya tetap ada."
 
