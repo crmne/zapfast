@@ -136,7 +136,7 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if super::dialogs::danger_button(ui, app, &gettext(locale, "Unlink")) {
+            if super::dialogs::danger_button(ui, app, &gettext(locale, "Unlink")).clicked() {
                 app.actions.push(Action::UnlinkLockedApp);
             }
             if theme::pill_button(ui, &palette, &gettext(locale, "Cancel"), false).clicked() {

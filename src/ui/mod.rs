@@ -9,6 +9,7 @@ pub mod dialogs;
 pub(crate) mod focus;
 pub mod image_editor;
 pub mod image_preview;
+pub mod info;
 pub mod keys;
 pub mod labels;
 pub mod locations;
@@ -34,6 +35,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
     track_keyboard_focus(ctx);
+    info::release_thumbnails(app, ctx);
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
     // no toasts, and no shortcut reaches them.
     if app.app_lock.is_locked() {
@@ -64,6 +66,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && !app.chat_search_calendar
         // The call screen covers the chats.
         && (app.call.is_none() || app.call_surface_hidden)
+        // A name typed in the info panel keeps Tab between its fields.
+        && !(app.info_visible() && (app.contact_edit.is_some() || app.group_name_edit.is_some()))
         && !egui::Popup::is_any_open(ctx);
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
@@ -135,6 +139,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         }
     }
     let search_overlay = pane::show(app, ui);
+    let info_overlay = info::show(app, ui);
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| match app.page {
@@ -145,6 +150,9 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         });
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ui.ctx(), region);
+    }
+    if let Some(region) = info_overlay {
+        info::show_overlay(app, ui.ctx(), region);
     }
 }
 

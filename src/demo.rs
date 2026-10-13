@@ -10,8 +10,8 @@ use crate::backend::LinkStatus;
 use crate::calls::{CallPhase, CallUpdate};
 use crate::model::CallDirection;
 use crate::model::{
-    Chat, Contact, Content, Delivery, Dialog, LinkPreview, Media, MentionRef, Message, Page,
-    Quoted, Reaction,
+    Chat, ChatMedia, Contact, Content, Delivery, Dialog, InfoPanel, InfoView, LinkPreview, Media,
+    MediaTab, MentionRef, Message, Page, Quoted, Reaction,
 };
 use crate::settings::ThemeChoice;
 
@@ -1758,6 +1758,25 @@ fn chat_search_sample(app: &mut App, query: &str) {
     app.chat_search_hits = hits;
 }
 
+/// Opens the info panel on `chat`, listed from the sample's own messages:
+/// the demo has no worker to answer for the archive.
+fn info_sample(app: &mut App, chat: &str, view: InfoView) {
+    let rows = app
+        .conversations
+        .get(chat)
+        .map(|conversation| conversation.messages.clone())
+        .unwrap_or_default();
+    app.info = Some(InfoPanel {
+        chat: chat.to_owned(),
+        view,
+    });
+    app.set_info_media(ChatMedia::collect(
+        chat.to_owned(),
+        rows,
+        crate::model::MEDIA_LIST_LIMIT,
+    ));
+}
+
 /// Three local labels worn by some of the sample chats.
 fn labels_sample(app: &mut App) {
     let label = |id: &str, name: &str, color_hex: &str, created_at| crate::model::Label {
@@ -2498,8 +2517,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     message.status = crate::model::Delivery::Failed;
                 }
             }
-            "info" => {
-                app.dialog = app.open_chat.clone().map(Dialog::ChatInfo);
+            "info" | "info-media" | "info-docs" | "info-links" => {
+                let view = match part {
+                    "info-media" => InfoView::Media(MediaTab::Media),
+                    "info-docs" => InfoView::Media(MediaTab::Docs),
+                    "info-links" => InfoView::Media(MediaTab::Links),
+                    _ => InfoView::Overview,
+                };
+                if let Some(chat) = app.open_chat.clone() {
+                    info_sample(app, &chat, view);
+                }
             }
             "group-info" | "group-info-rename" | "group-info-locked" | "group-info-saving" => {
                 // A group whose name and photo we may change, the same with its
@@ -2510,7 +2537,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     SAMPLES[1].id
                 };
                 app.open_chat = Some(group.to_owned());
-                app.dialog = Some(Dialog::ChatInfo(group.to_owned()));
+                info_sample(app, group, InfoView::Overview);
                 if part == "group-info-rename" {
                     app.group_name_edit = Some("Rust Berlin 🦀".to_owned());
                 }
@@ -5581,6 +5608,9 @@ mod tests {
             "about",
             "failed",
             "info",
+            "info-media",
+            "info-docs",
+            "info-links",
             "group-info",
             "group-info-rename",
             "group-info-locked",
@@ -6241,11 +6271,98 @@ mod tests {
         }
     }
 
+    /// The panel says when a contact was last seen as the chat header does:
+    /// with the day and the time, in the reader's language.
+    #[test]
+    fn the_panel_says_when_a_contact_was_last_seen_as_the_header_does() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut app = app();
+        apply_flags(&mut app, Some("info"));
+        let chat = app.open_chat.clone().expect("a chat");
+        let seen = jiff::Timestamp::now().as_second() - 86_400;
+        app.presence.insert(
+            chat,
+            crate::app::Presence {
+                online: false,
+                last_seen: Some(seen),
+            },
+        );
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let mut drawn = Vec::new();
+        for clipped in &shapes {
+            texts(&clipped.shape, &mut drawn);
+        }
+        let line = crate::util::last_seen(app.locale, seen);
+        assert_eq!(
+            drawn.iter().filter(|text| **text == line).count(),
+            2,
+            "the header and the panel both say {line:?}"
+        );
+    }
+
+    /// The info pages open the panel on the sample chat, listed from the
+    /// sample's own messages: the overview, and each tab of the media view,
+    /// with something to show on every one.
+    #[test]
+    fn info_pages_open_the_panel_on_each_view_with_content() {
+        use crate::model::{InfoView, MediaTab};
+        for (page, view) in [
+            ("info", InfoView::Overview),
+            ("info-media", InfoView::Media(MediaTab::Media)),
+            ("info-docs", InfoView::Media(MediaTab::Docs)),
+            ("info-links", InfoView::Media(MediaTab::Links)),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            let info = app
+                .info
+                .as_ref()
+                .unwrap_or_else(|| panic!("{page} opens the panel"));
+            assert_eq!(info.view, view, "{page}");
+            assert_eq!(info.chat, app.open_chat.clone().expect("a chat"), "{page}");
+            let listing = app.info_media.as_ref().expect("the sample is listed");
+            assert!(listing.media.len() >= 3, "{page}: pictures and a video");
+            assert!(
+                listing
+                    .media
+                    .iter()
+                    .any(|row| matches!(row.content, Content::Video { .. })),
+                "{page}: a video"
+            );
+            assert!(!listing.docs.is_empty(), "{page}: a document");
+            assert!(!listing.links.is_empty(), "{page}: a link");
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            assert_eq!(
+                ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id())),
+                Some(true),
+                "{page}: the panel is drawn beside the chat"
+            );
+        }
+        // The group has media of its own to show.
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let listing = app.info_media.as_ref().expect("the group is listed");
+        assert!(!listing.media.is_empty(), "the group's photo");
+    }
+
     /// The group dialog offers the pencil and the photo menu only when we may
     /// change the group's info, and not while a change is on its way.
     #[test]
     fn group_info_offers_editing_only_when_allowed() {
-        use crate::ui::dialogs::{group_name_button_id, group_photo_id};
+        use crate::ui::info::{group_name_button_id, group_photo_id};
         for (page, offered) in [
             ("group-info", true),
             ("group-info-locked", false),
@@ -6331,9 +6448,9 @@ mod tests {
             Some("Disappearing messages: Off".to_owned())
         );
 
-        // The same dialog, now a chat whose timer nobody has mentioned.
-        app.dialog = Some(Dialog::ChatInfo(SAMPLES[3].id.to_owned()));
+        // The same panel, now a chat whose timer nobody has mentioned.
         app.open_chat = Some(SAMPLES[3].id.to_owned());
+        info_sample(&mut app, SAMPLES[3].id, InfoView::Overview);
         render(&mut app, &ctx);
 
         assert!(
@@ -6427,27 +6544,6 @@ mod tests {
                         "{page}, {width}x{height}"
                     );
                     if description.is_some_and(|text| !text.is_empty()) {
-                        fn dialog_frame(shape: &egui::Shape) -> Option<egui::Rect> {
-                            match shape {
-                                egui::Shape::Rect(rect)
-                                    if rect.rect.width() > 360.0
-                                        && rect.rect.width() < 430.0
-                                        && rect.rect.height() > 300.0 =>
-                                {
-                                    Some(rect.rect)
-                                }
-                                egui::Shape::Vec(shapes) => shapes.iter().find_map(dialog_frame),
-                                _ => None,
-                            }
-                        }
-                        let frame = shapes
-                            .iter()
-                            .find_map(|shape| dialog_frame(&shape.shape))
-                            .expect("the group dialog frame is drawn");
-                        assert!(
-                            frame.top() >= 16.0 && frame.bottom() <= height - 16.0,
-                            "the dialog leaves space at both window edges: {page}, {width}x{height}: {frame:?}"
-                        );
                         fn footer(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
                             match shape {
                                 egui::Shape::Text(text) if text.galley.text() == "Archive" => {
@@ -6460,11 +6556,11 @@ mod tests {
                         let footer = shapes
                             .iter()
                             .find_map(|shape| footer(&shape.shape))
-                            .expect("the dialog actions are drawn");
+                            .expect("the panel actions are drawn");
                         assert!(
                             footer.pos.y >= 0.0
                                 && footer.pos.y + footer.galley.rect.max.y <= height,
-                            "the dialog actions stay on screen: {page}, {width}x{height}"
+                            "the panel actions stay on screen: {page}, {width}x{height}"
                         );
                         let (clipped, text) = shapes
                             .iter()
@@ -6586,7 +6682,7 @@ mod tests {
     #[test]
     fn a_group_is_renamed_from_its_info_dialog() {
         use crate::backend::Command;
-        use crate::ui::dialogs::{group_name_button_id, group_photo_id};
+        use crate::ui::info::{group_name_button_id, group_photo_id};
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -6657,10 +6753,7 @@ mod tests {
         );
         render(&mut app, &ctx);
         assert!(app.group_name_edit.is_none(), "Escape cancels the rename");
-        assert!(
-            matches!(app.dialog, Some(Dialog::ChatInfo(_))),
-            "and keeps the dialog"
-        );
+        assert!(app.info.is_some(), "and keeps the panel");
 
         click(&mut app, group_photo_id());
         assert!(egui::Popup::is_any_open(&ctx), "the photo opens its menu");

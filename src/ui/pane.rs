@@ -39,14 +39,55 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
     if !app.chat_search_visible() {
         return None;
     }
+    let wanted = app.settings.search_pane_width;
+    match dock(app, ui, "chat-search-pane", wanted, |app, ui| {
+        search(app, ui, false)
+    }) {
+        Docking::Docked { width, wanted } => {
+            // Only a drag moves the edge off the width asked for.
+            if (width - wanted).abs() > 1.0 {
+                app.settings.search_pane_width = width;
+                app.actions.push(Action::SettingsChanged);
+            }
+            None
+        }
+        Docking::Overlay(region) => Some(region),
+    }
+}
+
+/// The pane over the right of a conversation too narrow to share.
+pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
+    let width = app.settings.search_pane_width;
+    overlay(app, ctx, "chat-search-overlay", width, region, |app, ui| {
+        search(app, ui, true)
+    });
+}
+
+/// Where [`dock`] put a pane: docked at the right, at the width it took
+/// and the width it was asked for, or left for an overlay over `region`.
+pub(super) enum Docking {
+    Docked { width: f32, wanted: f32 },
+    Overlay(Rect),
+}
+
+/// Docks a right-hand pane beside the conversation when the window has room
+/// for both, drawing `contents` in it. The info panel shares this with the
+/// search pane, so the two dock and float the same way.
+pub(super) fn dock(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    id: &str,
+    wanted: f32,
+    contents: impl FnOnce(&mut App, &mut egui::Ui),
+) -> Docking {
     let region = ui.available_rect_before_wrap();
     if region.width() < MIN_WIDTH + CONVERSATION_MIN {
-        return Some(region);
+        return Docking::Overlay(region);
     }
     let palette = app.palette;
     let max = (region.width() - CONVERSATION_MIN).clamp(MIN_WIDTH, MAX_WIDTH);
-    let wanted = app.settings.search_pane_width.clamp(MIN_WIDTH, max);
-    let id = egui::Id::new("chat-search-pane");
+    let wanted = wanted.clamp(MIN_WIDTH, max);
+    let id = egui::Id::new(id);
     // egui would remember a width a narrow window squeezed; the saved width
     // is the reader's, so it comes back when the window widens again.
     ui.ctx()
@@ -57,31 +98,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         .size_range(MIN_WIDTH..=max)
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
-        .show(ui, |ui| search(app, ui, false));
+        .show(ui, |ui| contents(app, ui));
     let rect = response.response.rect;
     ui.painter().vline(
         rect.left(),
         rect.y_range(),
         Stroke::new(1.0, palette.outline),
     );
-    // Only a drag moves the edge off the width asked for.
-    if (rect.width() - wanted).abs() > 1.0 {
-        app.settings.search_pane_width = rect.width();
-        app.actions.push(Action::SettingsChanged);
+    Docking::Docked {
+        width: rect.width(),
+        wanted,
     }
-    None
 }
 
-/// The pane over the right of a conversation too narrow to share.
-pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
+/// A pane over the right of a conversation too narrow to share.
+pub(super) fn overlay(
+    app: &mut App,
+    ctx: &egui::Context,
+    id: &str,
+    width: f32,
+    region: Rect,
+    contents: impl FnOnce(&mut App, &mut egui::Ui),
+) {
     let palette = app.palette;
-    let width = app
-        .settings
-        .search_pane_width
-        .clamp(MIN_WIDTH, MAX_WIDTH)
-        .min(region.width());
+    let width = width.clamp(MIN_WIDTH, MAX_WIDTH).min(region.width());
     let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
-    egui::Area::new(egui::Id::new("chat-search-overlay"))
+    egui::Area::new(egui::Id::new(id))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)
         .constrain(false)
@@ -98,7 +140,7 @@ pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
                 .show(ui, |ui| {
                     ui.set_min_size(rect.size());
                     ui.set_max_size(rect.size());
-                    search(app, ui, true);
+                    contents(app, ui);
                 });
             ui.painter().vline(
                 rect.left(),

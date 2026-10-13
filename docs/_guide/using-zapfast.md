@@ -562,13 +562,22 @@ history replay leave archived chats in place.
 The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
 chat's matches, newest first. Its calendar narrows them to one day.
 
-Click the chat header to see its picture, number, and group members. When
-WhatsApp lets you edit a group's info, rename it with the pencil beside its
-name and click its photo to change it. Clicking a `chat.whatsapp.com` invite
-link shows the group and joins it without leaving ZapFast.
+Click the chat header, or choose **Info** in its menu, to open the info panel
+beside the chat. It shows the picture, the number or the members, and the
+chat's actions. When WhatsApp lets you edit a group's info, rename it with the
+pencil beside its name and click its photo to change it. Clicking a
+`chat.whatsapp.com` invite link shows the group and joins it without leaving
+ZapFast.
 
-**Development builds** also show a group's description above its members. You
-can select and copy its text, and a long description scrolls. To change the
+**Media, links and docs** in the panel lists the photos and videos, the
+documents, and the links shared in the chat, newest first: click a photo or a
+document to go to its message, or a link to open it in the browser. Press
+Escape to go back to the overview, and again to close the panel. Drag its edge
+to change its width. In a narrow window the panel lies over the chat. A locked
+chat's media is listed only while the locked folder is open.
+
+**Development builds** also show a group's description in the panel. You can
+select and copy its text, and a long description scrolls. To change the
 description, use your phone.
 
 ## Links
