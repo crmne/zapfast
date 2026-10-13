@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 20:01+0200\n"
+"POT-Creation-Date: 2026-10-13 20:04+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -49,7 +49,7 @@ msgstr ""
 msgid "Channels"
 msgstr ""
 
-#: src/util.rs:226 src/util.rs:323
+#: src/util.rs:226 src/util.rs:346
 msgid "Yesterday"
 msgstr ""
 
@@ -68,103 +68,123 @@ msgstr ""
 msgid "{date} at {time}"
 msgstr ""
 
-#: src/util.rs:293
+#: src/util.rs:286
+msgid "Off"
+msgstr ""
+
+#: src/util.rs:287
+msgid "24 hours"
+msgstr ""
+
+#: src/util.rs:288
+msgid "7 days"
+msgstr ""
+
+#: src/util.rs:289
+msgid "90 days"
+msgstr ""
+
+#: src/util.rs:292
+msgid "Disappearing messages"
+msgstr ""
+
+#: src/util.rs:316
 #, rust-format
 msgid "last seen today at {time}"
 msgstr ""
 
-#: src/util.rs:294
+#: src/util.rs:317
 #, rust-format
 msgid "last seen yesterday at {time}"
 msgstr ""
 
-#: src/util.rs:302
+#: src/util.rs:325
 #, rust-format
 msgid "last seen {weekday} at {time}"
 msgstr ""
 
-#: src/util.rs:306
+#: src/util.rs:329
 #, rust-format
 msgid "last seen {date}"
 msgstr ""
 
-#: src/util.rs:322
+#: src/util.rs:345
 msgid "Today"
 msgstr ""
 
-#: src/util.rs:358
+#: src/util.rs:381
 msgid "Monday"
 msgstr ""
 
-#: src/util.rs:359
+#: src/util.rs:382
 msgid "Tuesday"
 msgstr ""
 
-#: src/util.rs:360
+#: src/util.rs:383
 msgid "Wednesday"
 msgstr ""
 
-#: src/util.rs:361
+#: src/util.rs:384
 msgid "Thursday"
 msgstr ""
 
-#: src/util.rs:362
+#: src/util.rs:385
 msgid "Friday"
 msgstr ""
 
-#: src/util.rs:363
+#: src/util.rs:386
 msgid "Saturday"
 msgstr ""
 
-#: src/util.rs:364
+#: src/util.rs:387
 msgid "Sunday"
 msgstr ""
 
-#: src/util.rs:372
+#: src/util.rs:395
 msgid "January"
 msgstr ""
 
-#: src/util.rs:373
+#: src/util.rs:396
 msgid "February"
 msgstr ""
 
-#: src/util.rs:374
+#: src/util.rs:397
 msgid "March"
 msgstr ""
 
-#: src/util.rs:375
+#: src/util.rs:398
 msgid "April"
 msgstr ""
 
-#: src/util.rs:376
+#: src/util.rs:399
 msgid "May"
 msgstr ""
 
-#: src/util.rs:377
+#: src/util.rs:400
 msgid "June"
 msgstr ""
 
-#: src/util.rs:378
+#: src/util.rs:401
 msgid "July"
 msgstr ""
 
-#: src/util.rs:379
+#: src/util.rs:402
 msgid "August"
 msgstr ""
 
-#: src/util.rs:380
+#: src/util.rs:403
 msgid "September"
 msgstr ""
 
-#: src/util.rs:381
+#: src/util.rs:404
 msgid "October"
 msgstr ""
 
-#: src/util.rs:382
+#: src/util.rs:405
 msgid "November"
 msgstr ""
 
-#: src/util.rs:383
+#: src/util.rs:406
 msgid "December"
 msgstr ""
 
@@ -206,12 +226,12 @@ msgid "Add to favorites"
 msgstr ""
 
 #: src/ui/chats.rs:1287 src/ui/chats.rs:1667 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1769
 msgid "Leave group"
 msgstr ""
 
 #: src/ui/chats.rs:1288 src/ui/chats.rs:1665 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1767
 msgid "Leave channel"
 msgstr ""
 
@@ -548,27 +568,27 @@ msgid_plural "{} members"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/dialogs.rs:1986
+#: src/ui/dialogs.rs:2058
 msgid "Change group photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:1992
+#: src/ui/dialogs.rs:2064
 msgid "Change photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:1993
+#: src/ui/dialogs.rs:2065
 msgid "Remove photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:2033
+#: src/ui/dialogs.rs:2105
 msgid "Group name"
 msgstr ""
 
-#: src/ui/dialogs.rs:2076
+#: src/ui/dialogs.rs:2148
 msgid "Save name (Enter)"
 msgstr ""
 
-#: src/ui/dialogs.rs:2088
+#: src/ui/dialogs.rs:2160
 msgid "Cancel (Escape)"
 msgstr ""
 
