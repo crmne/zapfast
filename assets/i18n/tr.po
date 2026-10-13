@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-09 11:56+0200\n"
+"POT-Creation-Date: 2026-10-13 17:29+0200\n"
 "PO-Revision-Date: 2026-10-02 03:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
@@ -14,6 +14,12 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. Translators: one word, no spaces. The word after @ that mentions everyone.
+#: src/mentions.rs:70
+msgctxt "mention"
+msgid "all"
+msgstr "herkes"
 
 #: src/model.rs:113
 msgid "All"
@@ -178,7 +184,7 @@ msgstr "Kilitli"
 msgid "No favorites yet"
 msgstr "Henüz favori yok"
 
-#: src/ui/chats.rs:939 src/app.rs:2010
+#: src/ui/chats.rs:939 src/app.rs:2052
 msgid "Message yourself"
 msgstr "Kendinize mesaj gönderin"
 
@@ -190,7 +196,7 @@ msgstr "Taslak:"
 msgid "Remove from favorites"
 msgstr "Favorilerden kaldır"
 
-#: src/ui/chats.rs:1201 src/ui/chats.rs:1567 src/ui/conversation.rs:4319
+#: src/ui/chats.rs:1201 src/ui/chats.rs:1567 src/ui/conversation.rs:4346
 #: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Favorilere ekle"
@@ -221,31 +227,31 @@ msgstr "Mesajları seç"
 msgid "Search messages"
 msgstr "Mesajlarda ara"
 
-#: src/ui/conversation.rs:863
+#: src/ui/conversation.rs:887
 msgid "You left this channel"
 msgstr "Bu kanaldan ayrıldınız"
 
-#: src/ui/conversation.rs:867
+#: src/ui/conversation.rs:891
 msgid "Channels are read-only in ZapFast"
 msgstr "ZapFast'te kanallar salt okunurdur"
 
-#: src/ui/conversation.rs:896
+#: src/ui/conversation.rs:920
 msgid "You left this group"
 msgstr "Bu gruptan ayrıldınız"
 
-#: src/ui/conversation.rs:1044
+#: src/ui/conversation.rs:1068
 msgid "Attach"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:1140
+#: src/ui/conversation.rs:1164
 msgid "Type a message"
 msgstr "Bir mesaj yazın"
 
-#: src/ui/conversation.rs:1143
+#: src/ui/conversation.rs:1167
 msgid "Add a caption"
 msgstr "Açıklama ekleyin"
 
-#: src/ui/conversation.rs:1340
+#: src/ui/conversation.rs:1366
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
@@ -253,179 +259,179 @@ msgstr ""
 "Enter gönderir · Yeni satır için Shift+Enter · *kalın* _italik_ ~üstü "
 "çizili~ · Ctrl+V görsel yapıştırır"
 
-#: src/ui/conversation.rs:1342
+#: src/ui/conversation.rs:1368
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr ""
 "Ctrl+Enter gönderir · *kalın* _italik_ ~üstü çizili~ · Ctrl+V görsel "
 "yapıştırır"
 
-#: src/ui/conversation.rs:1353
+#: src/ui/conversation.rs:1379
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
 msgstr "Kısayol ipuçlarını gizle (Klavye kısayollarından tekrar açabilirsiniz)"
 
-#: src/ui/conversation.rs:1368
+#: src/ui/conversation.rs:1394
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "Tüm kısayollar ({})"
 
-#: src/ui/conversation.rs:1498
+#: src/ui/conversation.rs:1524
 msgid "Send files"
 msgstr "Dosya gönder"
 
-#: src/ui/conversation.rs:1502
+#: src/ui/conversation.rs:1528
 msgid "Create poll"
 msgstr "Anket oluştur"
 
-#: src/ui/conversation.rs:1564
+#: src/ui/conversation.rs:1590
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "Sesli mesaj ({duration}) gönderilemedi"
 
-#: src/ui/conversation.rs:1566
+#: src/ui/conversation.rs:1592
 msgid "Discard voice message"
 msgstr "Sesli mesajı iptal et"
 
-#: src/ui/conversation.rs:2086 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2112 src/notify/badge_windows.rs:255
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} okunmamış mesaj"
 msgstr[1] "{} okunmamış mesaj"
 
-#: src/ui/conversation.rs:2238 src/app.rs:1992 src/app.rs:2011
+#: src/ui/conversation.rs:2264 src/app.rs:2034 src/app.rs:2053
 msgid "You"
 msgstr "Siz"
 
-#: src/ui/conversation.rs:2249
+#: src/ui/conversation.rs:2275
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "{sender} tarafından {time} tarihinde gönderilen mesajı seç: {summary}"
 
-#: src/ui/conversation.rs:3478 src/ui/conversation.rs:4328
+#: src/ui/conversation.rs:3505 src/ui/conversation.rs:4355
 msgid "Open in system player"
 msgstr "Sistem oynatıcısında aç"
 
-#: src/ui/conversation.rs:3479 src/ui/conversation.rs:3954
-#: src/ui/conversation.rs:4392 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:3506 src/ui/conversation.rs:3981
+#: src/ui/conversation.rs:4419 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Mesaj bilgisi"
 
-#: src/ui/conversation.rs:3480 src/ui/conversation.rs:4404
+#: src/ui/conversation.rs:3507 src/ui/conversation.rs:4431
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:4340 src/ui/image_preview.rs:76
-#: src/ui/image_preview.rs:222
+#: src/ui/conversation.rs:4367 src/ui/image_preview.rs:77
+#: src/ui/image_preview.rs:233
 msgid "Copy image"
 msgstr "Görseli kopyala"
 
-#: src/ui/conversation.rs:4786
+#: src/ui/conversation.rs:4812
 msgid "Location"
 msgstr "Konum"
 
-#: src/ui/conversation.rs:4820
+#: src/ui/conversation.rs:4846
 msgid "Live location ended"
 msgstr "Canlı konum sona erdi"
 
-#: src/ui/conversation.rs:4822 src/ui/conversation.rs:5024
+#: src/ui/conversation.rs:4848 src/ui/conversation.rs:5050
 msgid "Live location"
 msgstr "Canlı konum"
 
-#: src/ui/conversation.rs:4832
+#: src/ui/conversation.rs:4858
 #, rust-format
 msgid "Updated {time}"
 msgstr "Güncellendi: {time}"
 
-#: src/ui/conversation.rs:4847 src/ui/conversation.rs:5032
+#: src/ui/conversation.rs:4873 src/ui/conversation.rs:5058
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Takip etmek için telefonunuzda WhatsApp'ı açın."
 
-#: src/ui/conversation.rs:4891
+#: src/ui/conversation.rs:4917
 msgid "Chat"
 msgstr "Sohbet"
 
-#: src/ui/conversation.rs:4905
+#: src/ui/conversation.rs:4931
 msgid "Add"
 msgstr "Ekle"
 
-#: src/ui/conversation.rs:4953
+#: src/ui/conversation.rs:4979
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} çıkartma"
 msgstr[1] "{} çıkartma"
 
-#: src/ui/conversation.rs:4966
+#: src/ui/conversation.rs:4992
 msgid "View stickers"
 msgstr "Çıkartmaları görüntüle"
 
-#: src/ui/conversation.rs:5050
+#: src/ui/conversation.rs:5076
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen fotoğraf. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5054
+#: src/ui/conversation.rs:5080
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen video. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5058
+#: src/ui/conversation.rs:5084
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen sesli mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5062
+#: src/ui/conversation.rs:5088
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez dinlenebilen ses kaydı. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5066
+#: src/ui/conversation.rs:5092
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Bir kez görüntülenebilen mesaj. Gizliliğiniz için yalnızca telefonunuzda "
 "açılır."
 
-#: src/ui/conversation.rs:5068
+#: src/ui/conversation.rs:5094
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:5829
+#: src/ui/conversation.rs:5855
 msgid "Message"
 msgstr "Mesaj gönder"
 
-#: src/ui/conversation.rs:5830
+#: src/ui/conversation.rs:5856
 msgid "Copy number"
 msgstr "Numarayı kopyala"
 
-#: src/ui/conversation.rs:6066
+#: src/ui/conversation.rs:6092
 msgid "Open in a map"
 msgstr "Haritada aç"
 
-#: src/ui/conversation.rs:6753
+#: src/ui/conversation.rs:6779
 msgid "Pause"
 msgstr "Duraklat"
 
-#: src/ui/conversation.rs:6755 src/ui/settings.rs:1738
+#: src/ui/conversation.rs:6781 src/ui/settings.rs:1738
 msgid "Play"
 msgstr "Oynat"
 
-#: src/ui/conversation.rs:6782
+#: src/ui/conversation.rs:6808
 msgid "Back to the message (Esc)"
 msgstr "Mesaja geri dön (Esc)"
 
-#: src/ui/conversation.rs:6784
+#: src/ui/conversation.rs:6810
 msgid "Fill the window"
 msgstr "Pencereyi kapla"
 
-#: src/ui/conversation.rs:6814
+#: src/ui/conversation.rs:6840
 msgid "Unmute"
 msgstr "Sesi aç"
 
-#: src/ui/conversation.rs:6816
+#: src/ui/conversation.rs:6842
 msgid "Mute"
 msgstr "Sessize al"
 
@@ -619,7 +625,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Sohbet duvar kâğıdı"
 
-#: src/ui/settings.rs:348
+#: src/ui/settings.rs:348 src/app.rs:2525
 msgid "Image"
 msgstr "Görsel"
 
@@ -1071,7 +1077,7 @@ msgid "Choose a file…"
 msgstr "Dosya seç…"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:730
+#: src/ui/widgets.rs:843
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "{name} tarafından sevgiyle geliştirildi"
@@ -1139,29 +1145,29 @@ msgstr[1] "{} kaldı"
 msgid "No one yet"
 msgstr "Henüz kimse yok"
 
-#: src/app.rs:1422
+#: src/app.rs:1450
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1915
+#: src/app.rs:1954
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "“{name}” adında bir etiket zaten var."
 
-#: src/app.rs:1991
+#: src/app.rs:2033
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Siz)"
 
-#: src/app.rs:2914
+#: src/app.rs:3011
 msgid "Could not use this image"
 msgstr "Bu görsel kullanılamadı"
 
-#: src/app.rs:3455
+#: src/app.rs:3561
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
 
-#: src/app.rs:3459
+#: src/app.rs:3565
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1169,36 +1175,36 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
-#: src/app.rs:5178
+#: src/app.rs:5408
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
 
-#: src/app.rs:5253
+#: src/app.rs:5483
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:5546 src/ui/labels.rs:253
+#: src/app.rs:5776 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
-#: src/app.rs:6268
+#: src/app.rs:6531
 msgid "App lock password saved"
 msgstr "Uygulama kilidi parolası kaydedildi"
 
-#: src/app.rs:6276
+#: src/app.rs:6539
 msgid "App lock turned off"
 msgstr "Uygulama kilidi kapatıldı"
 
-#: src/app.rs:6390
+#: src/app.rs:6663
 msgid "This video opens in your system player"
 msgstr "Bu video sistem oynatıcınızda açılır"
 
-#: src/app.rs:6824
+#: src/app.rs:7089
 msgid "Copied image"
 msgstr "Görsel kopyalandı"
 
-#: src/app.rs:6827 src/app.rs:6832
+#: src/app.rs:7092 src/app.rs:7097
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
 
@@ -1534,11 +1540,11 @@ msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Bilinmeyen numaraları sessize al"
 
-#: src/ui/image_preview.rs:223
+#: src/ui/image_preview.rs:234
 msgid "Save as…"
 msgstr "Farklı kaydet…"
 
-#: src/ui/image_preview.rs:225
+#: src/ui/image_preview.rs:236
 msgid "Open in another app"
 msgstr "Başka bir uygulamada aç"
 
@@ -1589,7 +1595,7 @@ msgstr ""
 msgid "Unlink"
 msgstr "Bağlantıyı kaldır"
 
-#: src/notify.rs:280
+#: src/notify.rs:263
 msgid "New message"
 msgstr "Yeni mesaj"
 
@@ -1605,7 +1611,7 @@ msgstr "15 dakika sonra"
 msgid "After 1 hour"
 msgstr "1 saat sonra"
 
-#: src/account.rs:214
+#: src/account.rs:217
 #, fuzzy, rust-format
 msgid "Account {id}"
 msgstr "Hesap"
@@ -1622,9 +1628,3 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-#. Translators: one word, no spaces. The word after @ that mentions everyone.
-#: src/mentions.rs:68
-msgctxt "mention"
-msgid "all"
-msgstr "herkes"
