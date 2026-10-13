@@ -5959,6 +5959,9 @@ impl App {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
             }
+            Action::SaveAttachments { files } => {
+                self.backend.send(Command::SaveAttachments { files });
+            }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
                     if let Err(error) = open::that_detached(&path) {
@@ -12167,6 +12170,7 @@ mod tests {
             std::fs::write(path, b"fixture").unwrap();
         }
         let media = |path: Option<PathBuf>| Media {
+            album: None,
             mime: "image/png".into(),
             size: 7,
             width: None,
@@ -12292,6 +12296,7 @@ mod tests {
                         motion: None,
                         caption: None,
                         media: Media {
+                            album: None,
                             mime: "image/png".into(),
                             size: 7,
                             width: None,
@@ -14487,6 +14492,7 @@ mod tests {
         );
     }
 
+    /// Builds a synthetic voice message fixture without reading the user archive.
     fn voice(chat: &str, id: &str, timestamp: i64, path: Option<&str>) -> Message {
         let mut row = message(chat, id, timestamp);
         row.content = Content::Audio {
@@ -14495,6 +14501,7 @@ mod tests {
                 size: 1,
                 width: None,
                 height: None,
+                album: None,
                 path: path.map(PathBuf::from),
                 state: MediaState::Idle,
             },
@@ -14692,6 +14699,7 @@ mod tests {
         }
     }
 
+    /// Checks that incoming replacements retain local downloaded media paths and transfer state.
     #[test]
     fn merge_keeps_a_downloaded_medias_path_and_state() {
         let mut conversation = Conversation::default();
@@ -14705,6 +14713,7 @@ mod tests {
                     size: 100,
                     width: None,
                     height: None,
+                    album: None,
                     path,
                     state,
                 },
@@ -14747,6 +14756,7 @@ mod tests {
         assert_eq!(media.state, MediaState::Idle);
     }
 
+    /// Checks that clicking a pending video note resumes playback only after its download arrives.
     #[test]
     fn a_video_note_clicked_before_download_plays_once_it_arrives() {
         let mut app = app();
@@ -14760,6 +14770,7 @@ mod tests {
                 size: 100,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: MediaState::Idle,
             },
@@ -14870,6 +14881,7 @@ mod tests {
         assert_eq!(app.video.side(), bubble);
     }
 
+    /// Checks that repeated media clicks do not duplicate an active download command.
     #[test]
     fn repeated_download_clicks_do_not_queue_more_requests() {
         let mut app = app();
@@ -14885,6 +14897,7 @@ mod tests {
                 size: 100,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: MediaState::Idle,
             },
@@ -14937,6 +14950,7 @@ mod tests {
         assert!(matches!(commands.try_recv(), Ok(Command::Download { .. })));
     }
 
+    /// Checks that carousel download results update only the requested card.
     #[test]
     fn carousel_downloads_track_each_card_separately() {
         let mut app = app();
@@ -14949,6 +14963,7 @@ mod tests {
                 size: 100,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: MediaState::Idle,
             }),
@@ -16364,6 +16379,7 @@ mod tests {
         ));
     }
 
+    /// Checks that oversized attachment clicks are refused before a download command is queued.
     #[test]
     fn only_a_click_downloads_an_oversized_attachment() {
         let mut app = app();
@@ -16379,6 +16395,7 @@ mod tests {
                 size: crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1,
                 width: None,
                 height: None,
+                album: None,
                 path: None,
                 state: MediaState::Idle,
             },
@@ -18028,6 +18045,7 @@ mod name_tests {
         );
     }
 
+    /// Checks that mention names and preview tokens resolve consistently in synthetic messages.
     #[test]
     fn mentions_use_our_own_name_and_previews_resolve_tokens() {
         let app = app();
@@ -18076,6 +18094,7 @@ mod name_tests {
                     height: None,
                     path: None,
                     state: MediaState::Idle,
+                    album: None,
                 },
             },
             mentions: vec![MentionRef {

@@ -409,6 +409,7 @@ mod tests {
                 motion: None,
                 caption: None,
                 media: Media {
+                    album: None,
                     mime: "image/png".into(),
                     size: 0,
                     width: None,
