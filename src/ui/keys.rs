@@ -525,6 +525,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Ctrl+V",
         "Paste text, or stage a picture from the clipboard",
     ),
+    ("Ctrl+C", "Copy the selected messages"),
     ("Ctrl+B", "Collapse or expand the chat list"),
     ("Ctrl+End", "Jump to the newest message"),
     ("PgUp / PgDn", "Scroll the open chat by a page"),
