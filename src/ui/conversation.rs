@@ -2900,9 +2900,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                         &view,
                                         message,
                                         album,
-                                        show_sender,
-                                        show_avatar,
-                                        tailed,
+                                        RunPlace {
+                                            show_sender,
+                                            show_avatar,
+                                            tailed,
+                                        },
                                         &mut actions,
                                     )
                                 })
@@ -2915,9 +2917,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                 &view,
                                 message,
                                 album,
-                                show_sender,
-                                show_avatar,
-                                tailed,
+                                RunPlace {
+                                    show_sender,
+                                    show_avatar,
+                                    tailed,
+                                },
                                 &mut actions,
                             )
                         };
@@ -3731,17 +3735,29 @@ fn reaction_affordance(
     }
 }
 
+/// Where a message sits in its sender's run: whether it names the sender,
+/// shows their picture, and carries the bubble's tail.
+#[derive(Clone, Copy)]
+struct RunPlace {
+    show_sender: bool,
+    show_avatar: bool,
+    tailed: bool,
+}
+
 /// Draws a message row and returns its bubble response for scrolling.
 fn bubble(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     album: Option<&[Message]>,
-    show_sender: bool,
-    show_avatar: bool,
-    tailed: bool,
+    place: RunPlace,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    let RunPlace {
+        show_sender,
+        show_avatar,
+        tailed,
+    } = place;
     let own = message.from_me;
     // Greys that read on the panel can vanish on the bubble; use its own.
     let view = &View {

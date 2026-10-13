@@ -236,7 +236,7 @@ msgstr "Bozza:"
 msgid "Remove from favorites"
 msgstr "Rimuovi dai preferiti"
 
-#: src/ui/chats.rs:1629 src/ui/chats.rs:2020 src/ui/conversation.rs:5766
+#: src/ui/chats.rs:1629 src/ui/chats.rs:2020 src/ui/conversation.rs:5782
 #: src/ui/dialogs.rs:1226 src/ui/picker.rs:1622
 msgid "Add to favorites"
 msgstr "Aggiungi ai preferiti"
@@ -272,12 +272,12 @@ msgstr "Seleziona messaggi"
 msgid "Hang up"
 msgstr "Riaggancia"
 
-#: src/ui/conversation.rs:698 src/ui/conversation.rs:4124 src/ui/calls.rs:84
+#: src/ui/conversation.rs:698 src/ui/conversation.rs:4140 src/ui/calls.rs:84
 #: src/ui/calls.rs:261
 msgid "Voice call"
 msgstr "Chiamata vocale"
 
-#: src/ui/conversation.rs:726 src/ui/conversation.rs:4132 src/ui/calls.rs:85
+#: src/ui/conversation.rs:726 src/ui/conversation.rs:4148 src/ui/calls.rs:85
 #: src/ui/calls.rs:248
 msgid "Video call"
 msgstr "Videochiamata"
@@ -384,173 +384,173 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} messaggio non letto"
 msgstr[1] "{} messaggi non letti"
 
-#: src/ui/conversation.rs:3016 src/app.rs:2444 src/app.rs:2463
+#: src/ui/conversation.rs:3020 src/app.rs:2444 src/app.rs:2463
 msgid "You"
 msgstr "Tu"
 
-#: src/ui/conversation.rs:3027
+#: src/ui/conversation.rs:3031
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "Seleziona il messaggio di {sender} ({time}): {summary}"
 
-#: src/ui/conversation.rs:4115
+#: src/ui/conversation.rs:4131
 msgid "Group calls happen on the phone"
 msgstr "Le chiamate di gruppo si fanno dal telefono"
 
-#: src/ui/conversation.rs:5130 src/ui/conversation.rs:5378
-#: src/ui/conversation.rs:5840 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:5146 src/ui/conversation.rs:5394
+#: src/ui/conversation.rs:5856 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "Info messaggio"
 
-#: src/ui/conversation.rs:5377 src/ui/conversation.rs:5775
+#: src/ui/conversation.rs:5393 src/ui/conversation.rs:5791
 msgid "Open in system player"
 msgstr "Apri nel lettore di sistema"
 
-#: src/ui/conversation.rs:5379 src/ui/conversation.rs:5852
+#: src/ui/conversation.rs:5395 src/ui/conversation.rs:5868
 msgid "Reload earlier messages"
 msgstr ""
 
-#: src/ui/conversation.rs:5380 src/ui/conversation.rs:5658
+#: src/ui/conversation.rs:5396 src/ui/conversation.rs:5674
 msgid "Unstar"
 msgstr "Rimuovi contrassegno"
 
-#: src/ui/conversation.rs:5381 src/ui/conversation.rs:5660
+#: src/ui/conversation.rs:5397 src/ui/conversation.rs:5676
 msgid "Star"
 msgstr "Contrassegna"
 
-#: src/ui/conversation.rs:5648
+#: src/ui/conversation.rs:5664
 msgid "Reply privately"
 msgstr "Rispondi in privato"
 
-#: src/ui/conversation.rs:5674
+#: src/ui/conversation.rs:5690
 msgid "Unpin message"
 msgstr "Rimuovi fissaggio"
 
-#: src/ui/conversation.rs:5676
+#: src/ui/conversation.rs:5692
 msgid "Pin message"
 msgstr "Fissa messaggio"
 
-#: src/ui/conversation.rs:5787 src/ui/image_preview.rs:77
+#: src/ui/conversation.rs:5803 src/ui/image_preview.rs:77
 #: src/ui/image_preview.rs:236
 msgid "Copy image"
 msgstr "Copia immagine"
 
-#: src/ui/conversation.rs:6233
+#: src/ui/conversation.rs:6249
 #, fuzzy
 msgid "Location"
 msgstr "Posizione in tempo reale"
 
-#: src/ui/conversation.rs:6278
+#: src/ui/conversation.rs:6294
 msgid "Live location ended"
 msgstr "Posizione in tempo reale terminata"
 
-#: src/ui/conversation.rs:6280 src/ui/conversation.rs:6523
+#: src/ui/conversation.rs:6296 src/ui/conversation.rs:6539
 msgid "Live location"
 msgstr "Posizione in tempo reale"
 
-#: src/ui/conversation.rs:6290
+#: src/ui/conversation.rs:6306
 #, rust-format
 msgid "Updated {time}"
 msgstr "Aggiornata alle {time}"
 
-#: src/ui/conversation.rs:6305 src/ui/conversation.rs:6531
+#: src/ui/conversation.rs:6321 src/ui/conversation.rs:6547
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Apri WhatsApp sul telefono per seguirla."
 
-#: src/ui/conversation.rs:6349
+#: src/ui/conversation.rs:6365
 #, fuzzy
 msgid "Chat"
 msgstr "Chat"
 
-#: src/ui/conversation.rs:6364
+#: src/ui/conversation.rs:6380
 msgid "Add"
 msgstr ""
 
-#: src/ui/conversation.rs:6412
+#: src/ui/conversation.rs:6428
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} sticker"
 msgstr[1] "{} sticker"
 
-#: src/ui/conversation.rs:6425
+#: src/ui/conversation.rs:6441
 msgid "View stickers"
 msgstr "Vedi sticker"
 
-#: src/ui/conversation.rs:6549
+#: src/ui/conversation.rs:6565
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr ""
 "Foto visualizzabile una volta. Per la tua privacy, si apre solo sul telefono."
 
-#: src/ui/conversation.rs:6553
+#: src/ui/conversation.rs:6569
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr ""
 "Video visualizzabile una volta. Per la tua privacy, si apre solo sul "
 "telefono."
 
-#: src/ui/conversation.rs:6557
+#: src/ui/conversation.rs:6573
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr ""
 "Messaggio vocale ascoltabile una volta. Per la tua privacy, si apre solo sul "
 "telefono."
 
-#: src/ui/conversation.rs:6561
+#: src/ui/conversation.rs:6577
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr ""
 "Audio ascoltabile una volta. Per la tua privacy, si apre solo sul telefono."
 
-#: src/ui/conversation.rs:6565
+#: src/ui/conversation.rs:6581
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr ""
 "Messaggio visualizzabile una volta. Per la tua privacy, si apre solo sul "
 "telefono."
 
-#: src/ui/conversation.rs:6567
+#: src/ui/conversation.rs:6583
 msgid "This message can only be seen on your phone."
 msgstr "Questo messaggio si può vedere solo sul telefono."
 
-#: src/ui/conversation.rs:6904
+#: src/ui/conversation.rs:6920
 #, fuzzy
 msgid "Save all…"
 msgstr "Salva con nome…"
 
-#: src/ui/conversation.rs:7594
+#: src/ui/conversation.rs:7610
 msgid "Message"
 msgstr "Invia messaggio"
 
-#: src/ui/conversation.rs:7595
+#: src/ui/conversation.rs:7611
 msgid "Copy number"
 msgstr "Copia numero"
 
-#: src/ui/conversation.rs:7831 src/ui/locations.rs:45
+#: src/ui/conversation.rs:7847 src/ui/locations.rs:45
 msgid "Open in a map"
 msgstr "Apri in una mappa"
 
-#: src/ui/conversation.rs:8530
+#: src/ui/conversation.rs:8546
 msgid "Pause"
 msgstr "Pausa"
 
-#: src/ui/conversation.rs:8532 src/ui/settings.rs:1924
+#: src/ui/conversation.rs:8548 src/ui/settings.rs:1924
 msgid "Play"
 msgstr "Riproduci"
 
-#: src/ui/conversation.rs:8559
+#: src/ui/conversation.rs:8575
 msgid "Back to the message (Esc)"
 msgstr "Torna al messaggio (Esc)"
 
-#: src/ui/conversation.rs:8561
+#: src/ui/conversation.rs:8577
 msgid "Fill the window"
 msgstr "Riempi la finestra"
 
-#: src/ui/conversation.rs:8591 src/ui/call.rs:469
+#: src/ui/conversation.rs:8607 src/ui/call.rs:469
 msgid "Unmute"
 msgstr "Riattiva audio"
 
-#: src/ui/conversation.rs:8593 src/ui/call.rs:476
+#: src/ui/conversation.rs:8609 src/ui/call.rs:476
 msgid "Mute"
 msgstr "Disattiva audio"
 
-#: src/ui/conversation.rs:9185
+#: src/ui/conversation.rs:9201
 msgid "Audio"
 msgstr "Audio"
 
@@ -2455,6 +2455,10 @@ msgstr "Apri all'esterno"
 msgid "Play or pause the video"
 msgstr "Riproduci o metti in pausa il video"
 
+#, fuzzy
+#~ msgid "New message"
+#~ msgstr "Scrivi un messaggio"
+
 #~ msgid "Group"
 #~ msgstr "Gruppo"
 
@@ -2463,10 +2467,6 @@ msgstr "Riproduci o metti in pausa il video"
 
 #~ msgid "Contact"
 #~ msgstr "Contatto"
-
-#, fuzzy
-#~ msgid "New message"
-#~ msgstr "Scrivi un messaggio"
 
 #, rust-format
 #~ msgid "Pinned message: {}"
