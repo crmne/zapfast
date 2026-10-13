@@ -2410,15 +2410,38 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     app.group_saving.insert(group.to_owned());
                 }
             }
-            "forward" | "forward-selected" | "forward-review" => {
+            "forward" | "forward-selected" | "forward-review" | "forward-full" | "forward-once" => {
                 app.dialog = app.open_chat.clone().map(|chat| Dialog::Forward {
                     chat,
                     messages: vec!["ada-format".to_owned()],
                 });
-                if part != "forward" {
-                    app.forward_recipients =
-                        vec![SAMPLES[0].id.to_owned(), SAMPLES[1].id.to_owned()];
-                    app.forward_reviewing = part == "forward-review";
+                app.forward_limit = crate::model::FORWARD_LIMIT;
+                match part {
+                    "forward-selected" | "forward-review" => {
+                        app.forward_recipients =
+                            vec![SAMPLES[0].id.to_owned(), SAMPLES[1].id.to_owned()];
+                        app.forward_reviewing = part == "forward-review";
+                    }
+                    // As many recipients as WhatsApp allows, with the note
+                    // saying so.
+                    "forward-full" => {
+                        let writable: Vec<_> = app
+                            .chats
+                            .iter()
+                            .filter(|chat| chat.can_send())
+                            .map(|chat| chat.id.clone())
+                            .collect();
+                        app.forward_recipients = writable
+                            .into_iter()
+                            .take(crate::model::FORWARD_LIMIT)
+                            .collect();
+                    }
+                    // A message forwarded many times, which goes to one chat.
+                    "forward-once" => {
+                        app.forward_limit = 1;
+                        app.forward_recipients = vec![SAMPLES[0].id.to_owned()];
+                    }
+                    _ => {}
                 }
             }
             "unlink" => app.dialog = Some(Dialog::ConfirmUnlink),
@@ -5155,6 +5178,8 @@ mod tests {
             "forward",
             "forward-selected",
             "forward-review",
+            "forward-full",
+            "forward-once",
             "unlink",
             "leave-group",
             "left-group",

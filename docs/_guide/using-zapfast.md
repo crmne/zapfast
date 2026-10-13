@@ -36,11 +36,13 @@ Editing uses the composer. Press Escape to cancel.
 **Development builds** also show when your message was delivered and read when
 you click its time or ticks, as on WhatsApp.
 
-Forwarding opens a recipient picker. Select one or more writable chats, then
-review the selected recipients before confirming. **Back** returns to the
-picker without losing the selection. If a destination becomes locked or
-read-only, ZapFast returns to selection instead of sending a partial batch.
-Switching accounts discards the open forwarding selection.
+Forwarding opens a recipient picker. Select up to five writable chats, as on
+WhatsApp; a message labelled as forwarded many times goes to one chat at a
+time. With one chat selected, **Forward** sends it straight away. With
+several, **Review recipients** lists them for you to confirm, and **Back**
+returns to the picker without losing the selection. If a destination becomes
+locked or read-only, ZapFast returns to selection instead of sending a partial
+batch. Switching accounts discards the open forwarding selection.
 
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.

@@ -5505,7 +5505,11 @@ impl Worker {
             | Command::SendGif { chat, .. }
             | Command::SendLocation { chat, .. }
             | Command::CreatePoll { chat, .. } => Some(chat),
-            Command::Forward { to_chat, .. } => Some(to_chat),
+            // A batch goes to every recipient or to none of them.
+            Command::Forward { to_chats, .. } => to_chats
+                .iter()
+                .find(|chat| !self.destination_writable(chat))
+                .or_else(|| to_chats.first()),
             _ => None,
         };
         if let Some(chat) = destination
@@ -5589,8 +5593,19 @@ impl Worker {
             Command::Forward {
                 from_chat,
                 messages,
-                to_chat,
-            } => self.forward_messages(from_chat, messages, to_chat),
+                to_chats,
+            } => self.forward_to_chats(from_chat, messages, to_chats),
+            Command::ForwardLimit {
+                from_chat,
+                messages,
+            } => {
+                let limit = self.forward_limit(&from_chat, &messages);
+                self.emit(Event::ForwardLimit {
+                    from_chat,
+                    messages,
+                    limit,
+                });
+            }
             // Stores the open chat's unsent text, or clears it when empty.
             Command::SaveDraft { chat, text } => {
                 let at = std::time::SystemTime::now()
@@ -7478,6 +7493,42 @@ impl Worker {
             message,
             expiration,
         ));
+    }
+
+    /// How many chats these archived messages may go to at once. The
+    /// forwarding score lives in the raw protobuf, so messages archived before
+    /// the limit existed are judged the same way.
+    fn forward_limit(&self, from_chat: &str, messages: &[String]) -> usize {
+        crate::model::forward_limit(messages.iter().any(|id| {
+            self.archive
+                .raw(from_chat, id)
+                .ok()
+                .flatten()
+                .and_then(|raw| wa::Message::decode_from_slice(&raw).ok())
+                .is_some_and(|message| frequently_forwarded(message.get_base_message()))
+        }))
+    }
+
+    /// Forwards a batch to each recipient in turn, or refuses all of it when
+    /// it names more chats than WhatsApp allows for these messages.
+    fn forward_to_chats(
+        &mut self,
+        from_chat: ChatId,
+        messages: Vec<String>,
+        to_chats: Vec<ChatId>,
+    ) {
+        let limit = self.forward_limit(&from_chat, &messages);
+        if to_chats.len() > limit {
+            self.emit(Event::Error(if limit == 1 {
+                "Messages forwarded many times can be forwarded to only one chat".to_owned()
+            } else {
+                format!("Messages can be forwarded to up to {limit} chats at once")
+            }));
+            return;
+        }
+        for to_chat in to_chats {
+            self.forward_messages(from_chat.clone(), messages.clone(), to_chat);
+        }
     }
 
     /// Prepares archived copies and queues each destination behind active sends.
@@ -9780,6 +9831,16 @@ fn recorded_mention_ids(base: &wa::Message) -> Vec<String> {
         crate::mentions::push_everyone_id(&mut ids);
     }
     ids
+}
+
+/// Whether WhatsApp shows this message as forwarded many times. whatsapp-rust
+/// raises the score of a forward to its frequently-forwarded sentinel (127)
+/// once it reaches 5, the threshold WhatsApp Web uses.
+fn frequently_forwarded(base: &wa::Message) -> bool {
+    const FREQUENTLY_FORWARDED_SCORE: u32 = 5;
+    context_of(base)
+        .and_then(|context| context.forwarding_score)
+        .is_some_and(|score| score >= FREQUENTLY_FORWARDED_SCORE)
 }
 
 fn forwarded_of(base: &wa::Message) -> bool {
@@ -15008,6 +15069,99 @@ mod receipt_tests {
         );
     }
 
+    /// Stores a text whose raw protobuf carries `score`, or none at all.
+    fn store_forwarded(worker: &Worker, id: &str, score: Option<u32>) {
+        let raw = score.map(|score| {
+            let mut context = wa::ContextInfo::default();
+            context.is_forwarded = Some(true);
+            context.forwarding_score = Some(score);
+            wa::Message::text_with_context("Forwarded fixture", context).encode_to_vec()
+        });
+        worker
+            .archive
+            .insert_message(&own_message(id, 1), raw.as_deref())
+            .unwrap();
+    }
+
+    /// WhatsApp lets a message forwarded many times go to one chat at a time,
+    /// judged from the score in the archived protobuf.
+    #[test]
+    fn the_forwarding_limit_follows_the_forwarding_score() {
+        let (worker, _events, _inbox, _wa) = worker();
+        store_forwarded(&worker, "plain", None);
+        store_forwarded(&worker, "twice", Some(4));
+        store_forwarded(&worker, "many", Some(5));
+        store_forwarded(&worker, "sentinel", Some(127));
+        let limit = |ids: &[&str]| {
+            worker.forward_limit(
+                PEER,
+                &ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(limit(&["plain"]), 5);
+        assert_eq!(limit(&["twice"]), 5);
+        assert_eq!(limit(&["missing"]), 5);
+        assert_eq!(limit(&["many"]), 1);
+        assert_eq!(limit(&["sentinel"]), 1);
+        assert_eq!(
+            limit(&["plain", "sentinel"]),
+            1,
+            "one such message is enough"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_batch_over_the_forwarding_limit_is_refused_whole() {
+        for (score, recipients) in [(Some(127), 2), (None, 6)] {
+            let (mut worker, events, _inbox, _wa) = worker();
+            worker.privacy_ready = true;
+            store_forwarded(&worker, "source", score);
+            let to_chats: Vec<ChatId> = (0..recipients)
+                .map(|index| format!("1555000{index:04}@s.whatsapp.net"))
+                .collect();
+            worker
+                .handle_command(Command::Forward {
+                    from_chat: PEER.into(),
+                    messages: vec!["source".into()],
+                    to_chats: to_chats.clone(),
+                })
+                .await;
+            let errors: Vec<String> = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::Error(error) => Some(error),
+                    _ => None,
+                })
+                .collect();
+            let expected = if score.is_some() {
+                "Messages forwarded many times can be forwarded to only one chat"
+            } else {
+                "Messages can be forwarded to up to 5 chats at once"
+            };
+            assert_eq!(errors, [expected]);
+            for chat in &to_chats {
+                assert!(worker.archive.messages(chat, None, 10).unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_forwarding_limit_is_answered_for_the_dialog() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        store_forwarded(&worker, "many", Some(127));
+        worker
+            .handle_command(Command::ForwardLimit {
+                from_chat: PEER.into(),
+                messages: vec!["many".into()],
+            })
+            .await;
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::ForwardLimit { from_chat, messages, limit: 1 }
+                if from_chat == PEER && messages == ["many"]
+        )));
+    }
+
     /// A batch belongs to the session that was sending it. The proxy-change
     /// reconnect stops the bot and starts another, and every send is its own
     /// task, so one can report its tick after the stop, inside the window the
@@ -18084,7 +18238,7 @@ mod receipt_tests {
             .handle_command(Command::Forward {
                 from_chat: PEER.into(),
                 messages: vec!["original".into()],
-                to_chat: PEER.into(),
+                to_chats: vec![PEER.into()],
             })
             .await;
         assert!(

@@ -176,11 +176,19 @@ pub enum Command {
         button: usize,
         choice: Option<usize>,
     },
-    /// Forwards archived messages to another chat, oldest first.
+    /// Forwards archived messages to each chat in `to_chats`, oldest first.
+    /// The whole batch is refused when it names more chats than
+    /// [`forward_limit`](crate::model::forward_limit) allows for these messages.
     Forward {
         from_chat: ChatId,
         messages: Vec<String>,
-        to_chat: ChatId,
+        to_chats: Vec<ChatId>,
+    },
+    /// Asks how many chats these messages may be forwarded to at once,
+    /// answered with [`Event::ForwardLimit`].
+    ForwardLimit {
+        from_chat: ChatId,
+        messages: Vec<String>,
     },
     /// Updates our typing state in a chat.
     Composing {
@@ -875,6 +883,13 @@ pub enum Event {
     PollCreated {
         chat: ChatId,
         error: Option<String>,
+    },
+    /// How many chats these messages may be forwarded to at once: one when
+    /// any of them was forwarded many times, as on WhatsApp.
+    ForwardLimit {
+        from_chat: ChatId,
+        messages: Vec<String>,
+        limit: usize,
     },
     PollVoted {
         chat: ChatId,

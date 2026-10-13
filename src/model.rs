@@ -1487,6 +1487,19 @@ pub enum Scroll {
     Bottom,
 }
 
+/// How many chats a message may be forwarded to at once, as on WhatsApp.
+pub const FORWARD_LIMIT: usize = 5;
+
+/// The forwarding limit for messages: one chat when any of them was
+/// forwarded many times, [`FORWARD_LIMIT`] otherwise.
+pub fn forward_limit(frequently_forwarded: bool) -> usize {
+    if frequently_forwarded {
+        1
+    } else {
+        FORWARD_LIMIT
+    }
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -1702,18 +1715,17 @@ pub enum Action {
     /// Starts a reply to a message in the open chat.
     Reply(String),
     CancelReply,
-    /// Forwards archived messages to one destination chosen by the caller.
-    Forward {
-        from_chat: ChatId,
-        messages: Vec<String>,
-        to_chat: ChatId,
-    },
     /// Starts selecting messages in the open chat with none picked yet.
     StartSelection,
-    /// Changes the forwarding selection without sending anything.
+    /// Adds a chat to the forwarding dialog's recipients or removes it,
+    /// within the forwarding limit. Nothing is sent.
     ToggleForwardRecipient(ChatId),
+    /// Shows the chosen recipients for confirmation (two or more).
     ReviewForward,
+    /// Returns from the confirmation to the recipient list, keeping it.
     BackToForwardSelection,
+    /// Forwards to the chosen recipients: one at once, several after
+    /// their confirmation.
     ConfirmForward,
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),

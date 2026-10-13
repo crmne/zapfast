@@ -459,7 +459,8 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-/// Draws recipient selection or the review step; forwarding requires explicit confirmation.
+/// Draws recipient selection or, for two or more recipients, their
+/// confirmation. A single recipient is forwarded to without one.
 fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     let palette = app.palette;
     let heading = if messages.len() == 1 {
@@ -546,6 +547,9 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
 
     let row_height = 52.0;
     let max_height = (ui.ctx().content_rect().height() - 220.0).clamp(row_height * 3.0, 420.0);
+    // With room for one recipient a click swaps it; otherwise a full list
+    // takes no more.
+    let full = app.forward_limit > 1 && app.forward_recipients.len() >= app.forward_limit;
 
     egui::ScrollArea::vertical()
         .id_salt("forward-chats")
@@ -570,9 +574,10 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(egui::Id::new(("forward-recipient", &chat.id)), rect)
                 });
+                let selected = app.forward_recipients.contains(&chat.id);
+                let blocked = full && !selected;
                 if ui.is_rect_visible(rect) {
-                    let selected = app.forward_recipients.contains(&chat.id);
-                    if response.hovered() || selected {
+                    if (response.hovered() && !blocked) || selected {
                         super::widgets::dialog_row_highlight(ui, rect, palette.surface_hover);
                     }
                     let check = egui::Rect::from_center_size(
@@ -589,7 +594,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                             &title,
                         )
                     });
-                    if checked != selected {
+                    if checked != selected && !blocked {
                         app.actions
                             .push(Action::ToggleForwardRecipient(chat.id.clone()));
                     }
@@ -614,16 +619,23 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                         rect.width() - 90.0,
                         1,
                     );
+                    let colour = if blocked {
+                        palette.secondary
+                    } else {
+                        palette.text
+                    };
                     line.paint(
                         ui,
                         pos2(rect.left() + 50.0, rect.center().y - line.size().y / 2.0),
-                        palette.text,
+                        colour,
                     );
                 }
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
+                let response = if blocked {
+                    response
+                } else {
+                    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                };
+                if response.clicked() && !blocked {
                     app.actions
                         .push(Action::ToggleForwardRecipient(chat.id.clone()));
                 }
@@ -643,6 +655,40 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
         ui.add_space(12.0);
     }
     ui.add_space(12.0);
+    // Says why no more chats can be picked, as WhatsApp does.
+    let limit = if app.forward_limit == 1 {
+        Some(
+            crate::i18n::gettext(
+                app.locale,
+                "Messages forwarded many times can be sent to one chat at a time",
+            )
+            .into_owned(),
+        )
+    } else if full {
+        Some(
+            crate::i18n::ngettext(
+                app.locale,
+                "You can forward to up to {count} chat",
+                "You can forward to up to {count} chats",
+                app.forward_limit as u32,
+            )
+            .replace("{count}", &app.forward_limit.to_string()),
+        )
+    } else {
+        None
+    };
+    if let Some(limit) = limit {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(limit)
+                    .font(theme::regular(13.0))
+                    .color(palette.secondary),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+    }
+    let count = app.forward_recipients.len();
     ui.horizontal(|ui| {
         theme::text(
             ui,
@@ -650,24 +696,31 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                 app.locale,
                 "{count} recipient selected",
                 "{count} recipients selected",
-                app.forward_recipients.len() as u32,
+                count as u32,
             )
-            .replace("{count}", &app.forward_recipients.len().to_string()),
+            .replace("{count}", &count.to_string()),
             theme::regular(13.5),
             palette.secondary,
         );
-        let review = ui
-            .add_enabled_ui(!app.forward_recipients.is_empty(), |ui| {
-                theme::pill_button(
-                    ui,
-                    &palette,
-                    &crate::i18n::gettext(app.locale, "Review recipients"),
-                    true,
-                )
+        // One recipient is sent to at once; several are confirmed first.
+        let (label, action) = if count > 1 {
+            (
+                crate::i18n::gettext(app.locale, "Review recipients"),
+                Action::ReviewForward,
+            )
+        } else {
+            (
+                crate::i18n::gettext(app.locale, "Forward"),
+                Action::ConfirmForward,
+            )
+        };
+        let button = ui
+            .add_enabled_ui(count > 0, |ui| {
+                theme::pill_button(ui, &palette, &label, true)
             })
             .inner;
-        if review.clicked() {
-            app.actions.push(Action::ReviewForward);
+        if button.clicked() {
+            app.actions.push(action);
         }
     });
 }

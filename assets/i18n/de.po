@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 17:29+0200\n"
+"POT-Creation-Date: 2026-10-13 19:43+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: German\n"
@@ -185,7 +185,7 @@ msgstr "Gesperrt"
 msgid "No favorites yet"
 msgstr "Noch keine Favoriten"
 
-#: src/ui/chats.rs:939 src/app.rs:2052
+#: src/ui/chats.rs:939 src/app.rs:2078
 msgid "Message yourself"
 msgstr "Nachricht an dich selbst"
 
@@ -198,17 +198,17 @@ msgid "Remove from favorites"
 msgstr "Aus Favoriten entfernen"
 
 #: src/ui/chats.rs:1201 src/ui/chats.rs:1567 src/ui/conversation.rs:4346
-#: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
+#: src/ui/dialogs.rs:1215 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Zu Favoriten hinzufügen"
 
 #: src/ui/chats.rs:1211 src/ui/chats.rs:1591 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1749
+#: src/ui/dialogs.rs:1389 src/ui/dialogs.rs:1907
 msgid "Leave group"
 msgstr "Gruppe verlassen"
 
 #: src/ui/chats.rs:1212 src/ui/chats.rs:1589 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1747
+#: src/ui/dialogs.rs:1387 src/ui/dialogs.rs:1905
 msgid "Leave channel"
 msgstr "Kanal verlassen"
 
@@ -300,7 +300,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} ungelesene Nachricht"
 msgstr[1] "{} ungelesene Nachrichten"
 
-#: src/ui/conversation.rs:2264 src/app.rs:2034 src/app.rs:2053
+#: src/ui/conversation.rs:2264 src/app.rs:2060 src/app.rs:2079
 msgid "You"
 msgstr "Du"
 
@@ -439,52 +439,99 @@ msgstr "Ton an"
 msgid "Mute"
 msgstr "Stumm"
 
-#: src/ui/dialogs.rs:681
+#
+#: src/ui/dialogs.rs:461
+msgid "Forward message"
+msgstr "Nachricht weiterleiten"
+
+#: src/ui/dialogs.rs:465
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "Weiterleiten: {count} Nachricht"
+msgstr[1] "Weiterleiten: {count} Nachrichten"
+
+#: src/ui/dialogs.rs:475
+msgid "Forward to these chats?"
+msgstr "An diese Chats weiterleiten?"
+
+#: src/ui/dialogs.rs:494
+msgid "Back"
+msgstr "Zurück"
+
+#: src/ui/dialogs.rs:504 src/ui/dialogs.rs:707
+msgid "Forward"
+msgstr "Weiterleiten"
+
+#: src/ui/dialogs.rs:657
+msgid "Messages forwarded many times can be sent to one chat at a time"
+msgstr ""
+
+#: src/ui/dialogs.rs:665
+#, rust-format
+msgid "You can forward to up to {count} chat"
+msgid_plural "You can forward to up to {count} chats"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/dialogs.rs:691
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "{count} Empfänger ausgewählt"
+msgstr[1] "{count} Empfänger ausgewählt"
+
+#
+#: src/ui/dialogs.rs:702
+msgid "Review recipients"
+msgstr "Empfänger überprüfen"
+
+#: src/ui/dialogs.rs:839
 msgid "Show shortcut hints under the message box"
 msgstr "Tastenkürzel-Hinweise unter dem Eingabefeld anzeigen"
 
-#: src/ui/dialogs.rs:883
+#: src/ui/dialogs.rs:1041
 msgid "Sticker pack"
 msgstr "Sticker-Pack"
 
-#: src/ui/dialogs.rs:888
+#: src/ui/dialogs.rs:1046
 msgid "Downloading the pack…"
 msgstr "Pack wird heruntergeladen…"
 
-#: src/ui/dialogs.rs:912
+#: src/ui/dialogs.rs:1070
 msgid "Add to my stickers"
 msgstr "Zu meinen Stickern hinzufügen"
 
-#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:230
+#: src/ui/dialogs.rs:1077 src/ui/message_info.rs:28 src/ui/labels.rs:230
 msgid "Close"
 msgstr "Schließen"
 
-#: src/ui/dialogs.rs:936
+#: src/ui/dialogs.rs:1094
 msgid "Make a sticker"
 msgstr "Sticker erstellen"
 
-#: src/ui/dialogs.rs:1000
+#: src/ui/dialogs.rs:1158
 msgid "Size"
 msgstr "Größe"
 
-#: src/ui/dialogs.rs:1015
+#: src/ui/dialogs.rs:1173
 msgid "Keep the transparent background"
 msgstr "Transparenten Hintergrund behalten"
 
-#: src/ui/dialogs.rs:1032
+#: src/ui/dialogs.rs:1190
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Passende Emojis, etwa 😂 oder ❤️"
 
-#: src/ui/dialogs.rs:1049
+#: src/ui/dialogs.rs:1207
 msgid "Send"
 msgstr "Senden"
 
-#: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197 src/ui/dialogs.rs:1259
+#: src/ui/dialogs.rs:1222 src/ui/dialogs.rs:1355 src/ui/dialogs.rs:1417
 #: src/ui/settings.rs:961 src/ui/settings.rs:1524 src/ui/lock.rs:142
 msgid "Cancel"
 msgstr "Abbrechen"
 
-#: src/ui/dialogs.rs:1116
+#: src/ui/dialogs.rs:1274
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
@@ -492,7 +539,7 @@ msgstr ""
 "Alle in diesem Chat sehen stattdessen „Diese Nachricht wurde gelöscht“. Dies "
 "kann nicht rückgängig gemacht werden."
 
-#: src/ui/dialogs.rs:1124
+#: src/ui/dialogs.rs:1282
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
@@ -501,11 +548,11 @@ msgstr ""
 "entfernt. Andere Personen behalten ihre Kopie. Verbinde dich mit WhatsApp, "
 "um sie zu löschen. Dies kann nicht rückgängig gemacht werden."
 
-#: src/ui/dialogs.rs:1178
+#: src/ui/dialogs.rs:1336
 msgid "Remove this account?"
 msgstr "Dieses Konto entfernen?"
 
-#: src/ui/dialogs.rs:1184
+#: src/ui/dialogs.rs:1342
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
@@ -513,85 +560,85 @@ msgstr ""
 "Dadurch wird die Nummer auf diesem Computer getrennt und die lokalen Chats "
 "gelöscht. Andere Konten bleiben."
 
-#: src/ui/dialogs.rs:1193
+#: src/ui/dialogs.rs:1351
 msgid "Remove"
 msgstr "Entfernen"
 
-#: src/ui/dialogs.rs:1213
+#: src/ui/dialogs.rs:1371
 msgid "Leave this channel?"
 msgstr "Diesen Kanal verlassen?"
 
-#: src/ui/dialogs.rs:1215
+#: src/ui/dialogs.rs:1373
 msgid "Leave this group?"
 msgstr "Diese Gruppe verlassen?"
 
-#: src/ui/dialogs.rs:1222
+#: src/ui/dialogs.rs:1380
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr ""
 "Du erhältst keine neuen Nachrichten mehr. Der lokale Verlauf bleibt auf "
 "diesem Computer."
 
-#: src/ui/dialogs.rs:1242
+#: src/ui/dialogs.rs:1400
 msgid "Leave channel and archive"
 msgstr "Kanal verlassen und archivieren"
 
-#: src/ui/dialogs.rs:1244
+#: src/ui/dialogs.rs:1402
 msgid "Leave group and archive"
 msgstr "Gruppe verlassen und archivieren"
 
-#: src/ui/dialogs.rs:1469
+#: src/ui/dialogs.rs:1627
 msgid "Also save to your phone's contacts"
 msgstr "Auch in den Kontakten deines Telefons speichern"
 
-#: src/ui/dialogs.rs:1534
+#: src/ui/dialogs.rs:1692
 msgid "Group"
 msgstr "Gruppe"
 
-#: src/ui/dialogs.rs:1536
+#: src/ui/dialogs.rs:1694
 msgid "Channel"
 msgstr "Kanal"
 
-#: src/ui/dialogs.rs:1538
+#: src/ui/dialogs.rs:1696
 msgid "Contact"
 msgstr "Kontakt"
 
-#: src/ui/dialogs.rs:1583
+#: src/ui/dialogs.rs:1741
 msgid "Edit group name"
 msgstr "Gruppennamen bearbeiten"
 
-#: src/ui/dialogs.rs:1713
+#: src/ui/dialogs.rs:1871
 msgid "Saving…"
 msgstr "Wird gespeichert…"
 
-#: src/ui/dialogs.rs:1723
+#: src/ui/dialogs.rs:1881
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} Mitglied"
 msgstr[1] "{} Mitglieder"
 
-#: src/ui/dialogs.rs:1986
+#: src/ui/dialogs.rs:2144
 msgid "Change group photo"
 msgstr "Gruppenbild ändern"
 
-#: src/ui/dialogs.rs:1992
+#: src/ui/dialogs.rs:2150
 msgid "Change photo"
 msgstr "Bild ändern"
 
-#: src/ui/dialogs.rs:1993
+#: src/ui/dialogs.rs:2151
 msgid "Remove photo"
 msgstr "Bild entfernen"
 
-#: src/ui/dialogs.rs:2033
+#: src/ui/dialogs.rs:2191
 msgid "Group name"
 msgstr "Gruppenname"
 
-#: src/ui/dialogs.rs:2076
+#: src/ui/dialogs.rs:2234
 msgid "Save name (Enter)"
 msgstr "Namen speichern (Enter)"
 
-#: src/ui/dialogs.rs:2088
+#: src/ui/dialogs.rs:2246
 msgid "Cancel (Escape)"
 msgstr "Abbrechen (Escape)"
 
@@ -636,7 +683,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Hintergrund"
 
-#: src/ui/settings.rs:348 src/app.rs:2525
+#: src/ui/settings.rs:348 src/app.rs:2551
 msgid "Image"
 msgstr "Bild"
 
@@ -1154,29 +1201,29 @@ msgstr[1] "{} ausstehend"
 msgid "No one yet"
 msgstr "Noch niemand"
 
-#: src/app.rs:1450
+#: src/app.rs:1476
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:1954
+#: src/app.rs:1980
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Ein Label namens „{name}“ gibt es schon."
 
-#: src/app.rs:2033
+#: src/app.rs:2059
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Du)"
 
-#: src/app.rs:3011
+#: src/app.rs:3058
 msgid "Could not use this image"
 msgstr "Dieses Bild kann nicht verwendet werden"
 
-#: src/app.rs:3561
+#: src/app.rs:3608
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Nicht gesendet: ZapFast ist nicht mit WhatsApp verbunden."
 
-#: src/app.rs:3565
+#: src/app.rs:3612
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1184,36 +1231,42 @@ msgstr ""
 "Nicht gesendet: Die Nachricht, auf die du antwortest, ist auf diesem "
 "Computer nicht verfügbar. Brich die Antwort ab, um ohne Zitat zu senden."
 
-#: src/app.rs:5408
+#
+#: src/app.rs:5087
+msgid "A selected chat is no longer writable"
+msgstr ""
+"In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
+
+#: src/app.rs:5530
 msgid "Added to favorites"
 msgstr "Zu Favoriten hinzugefügt"
 
-#: src/app.rs:5483
+#: src/app.rs:5605
 msgid "Sending the sticker pack…"
 msgstr "Sticker-Pack wird gesendet…"
 
-#: src/app.rs:5776 src/ui/labels.rs:253
+#: src/app.rs:5909 src/ui/labels.rs:253
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 
-#: src/app.rs:6531
+#: src/app.rs:6664
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6539
+#: src/app.rs:6672
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:6663
+#: src/app.rs:6796
 msgid "This video opens in your system player"
 msgstr "Dieses Video öffnet sich im Systemplayer"
 
-#: src/app.rs:7089
+#: src/app.rs:7222
 msgid "Copied image"
 msgstr "Bild kopiert"
 
-#: src/app.rs:7092 src/app.rs:7097
+#: src/app.rs:7225 src/app.rs:7230
 msgid "Failed to copy image"
 msgstr "Bild konnte nicht kopiert werden"
 
@@ -1639,48 +1692,6 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-#
-#: src/app.rs:4538
-msgid "A selected chat is no longer writable"
-msgstr ""
-"In einen ausgewählten Chat können keine Nachrichten mehr gesendet werden"
-
-#: src/ui/dialogs.rs:493
-msgid "Back"
-msgstr "Zurück"
-
-#: src/ui/dialogs.rs:503
-msgid "Forward"
-msgstr "Weiterleiten"
-
-#
-#: src/ui/dialogs.rs:460
-msgid "Forward message"
-msgstr "Nachricht weiterleiten"
-
-#: src/ui/dialogs.rs:474
-msgid "Forward to these chats?"
-msgstr "An diese Chats weiterleiten?"
-
-#: src/ui/dialogs.rs:464
-#, rust-format
-msgid "Forward {count} message"
-msgid_plural "Forward {count} messages"
-msgstr[0] "Weiterleiten: {count} Nachricht"
-msgstr[1] "Weiterleiten: {count} Nachrichten"
-
-#
-#: src/ui/dialogs.rs:658
-msgid "Review recipients"
-msgstr "Empfänger überprüfen"
-
-#: src/ui/dialogs.rs:645
-#, rust-format
-msgid "{count} recipient selected"
-msgid_plural "{count} recipients selected"
-msgstr[0] "{count} Empfänger ausgewählt"
-msgstr[1] "{count} Empfänger ausgewählt"
 
 #: src/util.rs:286 src/settings.rs:373
 msgid "Off"
