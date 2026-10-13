@@ -17464,6 +17464,7 @@ mod tests {
                 motion: None,
                 caption: None,
                 media: Media {
+                    album: None,
                     mime: "image/jpeg".into(),
                     size: 1,
                     width: None,
@@ -17797,6 +17798,7 @@ mod tests {
                 motion: None,
                 caption: None,
                 media: Media {
+                    album: None,
                     mime: "image/jpeg".into(),
                     size: 1,
                     width: None,

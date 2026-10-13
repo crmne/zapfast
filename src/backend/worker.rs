@@ -17352,6 +17352,7 @@ mod receipt_tests {
                 motion: None,
                 caption: None,
                 media: Media {
+                    album: None,
                     mime: "image/jpeg".into(),
                     size: 1,
                     width: None,
@@ -20249,6 +20250,7 @@ mod chat_removal_tests {
             motion: None,
             caption: None,
             media: crate::model::Media {
+                album: None,
                 mime: "image/jpeg".into(),
                 size: 1,
                 width: None,

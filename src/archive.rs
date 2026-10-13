@@ -5177,6 +5177,7 @@ mod media_path_tests {
         archive.ensure_chat(chat, "Ada").expect("chat");
         archive.ensure_chat(other, "Grace").expect("chat");
         let media = || crate::model::Media {
+            album: None,
             mime: "image/jpeg".into(),
             size: 1,
             width: None,
