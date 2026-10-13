@@ -70,13 +70,14 @@ EXEC_PATH="$installed" awk '
     }
     return out "\""
   }
-  # The field codes stay: `%U` is what hands a `whatsapp://` link to the
-  # binary, so dropping it with the command name would break the scheme the
-  # MimeType line claims.
+  # Everything after the command name stays: `%U` is what hands a
+  # `whatsapp://` link to the binary, so dropping it would break the scheme
+  # the MimeType line claims, and the Quit action keeps the `quit` it asks
+  # the running copy for.
   /^Exec=/ {
     rest = $0
     sub(/^Exec=[^ ]*[ ]*/, "", rest)
-    print "Exec=" quote(ENVIRON["EXEC_PATH"]) (rest ~ /%/ ? " " rest : "")
+    print "Exec=" quote(ENVIRON["EXEC_PATH"]) (rest != "" ? " " rest : "")
     next
   }
   { print }

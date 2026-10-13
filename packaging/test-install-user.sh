@@ -51,9 +51,12 @@ check_prefix() {
     exit 1
   }
   # The Quit action keeps its argument after the quoted path.
-  grep -qxF "$expected quit" "$entry" || {
+  local quit
+  quit=$(printf 'Exec="%s" quit' "$(escape_exec "${prefix}/bin/zapfast")")
+  grep -qxF "$quit" "$entry" || {
     echo "unexpected Quit action Exec for prefix: $prefix" >&2
     grep '^Exec=' "$entry" >&2
+    echo "expected: $quit" >&2
     exit 1
   }
 
