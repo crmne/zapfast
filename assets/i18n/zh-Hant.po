@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:45+0200\n"
+"POT-Creation-Date: 2026-10-13 21:49+0200\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -463,6 +463,10 @@ msgstr "取消靜音"
 #: src/ui/conversation.rs:7184 src/ui/call.rs:476
 msgid "Mute"
 msgstr "靜音"
+
+#: src/ui/conversation.rs:7765
+msgid "Audio"
+msgstr "音訊"
 
 #: src/ui/dialogs.rs:683
 msgid "Show shortcut hints under the message box"
@@ -1421,43 +1425,43 @@ msgid ""
 msgstr ""
 "未送出：您要回覆的訊息在這部電腦上無法使用。取消回覆即可不附帶引用內容送出。"
 
-#: src/app.rs:5743
+#: src/app.rs:5748
 msgid "Added to favorites"
 msgstr "已加入最愛"
 
-#: src/app.rs:5818
+#: src/app.rs:5823
 msgid "Sending the sticker pack…"
 msgstr "正在傳送貼圖集…"
 
-#: src/app.rs:6114 src/ui/labels.rs:247
+#: src/app.rs:6122 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6614
+#: src/app.rs:6622
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6928
+#: src/app.rs:6936
 msgid "App lock password saved"
 msgstr "已儲存應用程式鎖密碼"
 
-#: src/app.rs:6936
+#: src/app.rs:6944
 msgid "App lock turned off"
 msgstr "已關閉應用程式鎖"
 
-#: src/app.rs:7060
+#: src/app.rs:7068
 msgid "This video opens in your system player"
 msgstr "此影片會在您的系統播放器中開啟"
 
-#: src/app.rs:7492
+#: src/app.rs:7541
 msgid "Copied image"
 msgstr "已複製圖片"
 
-#: src/app.rs:7495 src/app.rs:7500
+#: src/app.rs:7544 src/app.rs:7549
 msgid "Failed to copy image"
 msgstr "複製圖片失敗"
 
@@ -1865,7 +1869,3 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-#: src/ui/conversation.rs:7765
-msgid "Audio"
-msgstr "音訊"

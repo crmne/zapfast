@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:45+0200\n"
+"POT-Creation-Date: 2026-10-13 21:49+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: French\n"
@@ -479,6 +479,10 @@ msgstr "Réactiver le son"
 #: src/ui/conversation.rs:7184 src/ui/call.rs:476
 msgid "Mute"
 msgstr "Couper le son"
+
+#: src/ui/conversation.rs:7765
+msgid "Audio"
+msgstr "Audio"
 
 #: src/ui/dialogs.rs:683
 msgid "Show shortcut hints under the message box"
@@ -1472,43 +1476,43 @@ msgstr ""
 "Non envoyé : le message auquel vous répondez n’est pas disponible sur cet "
 "ordinateur. Annulez la réponse pour l’envoyer sans citation."
 
-#: src/app.rs:5743
+#: src/app.rs:5748
 msgid "Added to favorites"
 msgstr "Ajouté aux favoris"
 
-#: src/app.rs:5818
+#: src/app.rs:5823
 msgid "Sending the sticker pack…"
 msgstr "Envoi du pack de stickers…"
 
-#: src/app.rs:6114 src/ui/labels.rs:247
+#: src/app.rs:6122 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6614
+#: src/app.rs:6622
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6928
+#: src/app.rs:6936
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:6936
+#: src/app.rs:6944
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:7060
+#: src/app.rs:7068
 msgid "This video opens in your system player"
 msgstr "Cette vidéo s'ouvre dans le lecteur du système"
 
-#: src/app.rs:7492
+#: src/app.rs:7541
 msgid "Copied image"
 msgstr "Image copiée"
 
-#: src/app.rs:7495 src/app.rs:7500
+#: src/app.rs:7544 src/app.rs:7549
 msgid "Failed to copy image"
 msgstr "Impossible de copier l'image"
 
@@ -1934,7 +1938,3 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
-
-#: src/ui/conversation.rs:7765
-msgid "Audio"
-msgstr "Audio"

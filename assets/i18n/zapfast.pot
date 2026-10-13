@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-13 21:47+0200\n"
+"POT-Creation-Date: 2026-10-13 21:49+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -226,12 +226,12 @@ msgid "Add to favorites"
 msgstr ""
 
 #: src/ui/chats.rs:1326 src/ui/chats.rs:1711 src/ui/conversation.rs:244
-#: src/ui/dialogs.rs:1233 src/ui/dialogs.rs:1771
+#: src/ui/dialogs.rs:1233 src/ui/dialogs.rs:1779
 msgid "Leave group"
 msgstr ""
 
 #: src/ui/chats.rs:1327 src/ui/chats.rs:1709 src/ui/conversation.rs:242
-#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1769
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1777
 msgid "Leave channel"
 msgstr ""
 
@@ -580,42 +580,46 @@ msgstr ""
 msgid "Contact"
 msgstr ""
 
-#: src/ui/dialogs.rs:1585
+#: src/ui/dialogs.rs:1593
 msgid "Edit group name"
 msgstr ""
 
-#: src/ui/dialogs.rs:1715
+#: src/ui/dialogs.rs:1723
 msgid "Saving…"
 msgstr ""
 
-#: src/ui/dialogs.rs:1725
+#: src/ui/dialogs.rs:1733
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/dialogs.rs:2060
+#: src/ui/dialogs.rs:1809
+msgid "Description"
+msgstr ""
+
+#: src/ui/dialogs.rs:2094
 msgid "Change group photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:2066
+#: src/ui/dialogs.rs:2100
 msgid "Change photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:2067
+#: src/ui/dialogs.rs:2101
 msgid "Remove photo"
 msgstr ""
 
-#: src/ui/dialogs.rs:2107
+#: src/ui/dialogs.rs:2141
 msgid "Group name"
 msgstr ""
 
-#: src/ui/dialogs.rs:2150
+#: src/ui/dialogs.rs:2184
 msgid "Save name (Enter)"
 msgstr ""
 
-#: src/ui/dialogs.rs:2162
+#: src/ui/dialogs.rs:2196
 msgid "Cancel (Escape)"
 msgstr ""
 
