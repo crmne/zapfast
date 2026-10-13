@@ -55,6 +55,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.image_preview.is_none()
         && !app.video_expanded
         && app.picture_edit.is_none()
+        && app.sticker_view.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
         // Selection keeps egui's order so Tab can reach message checkboxes.
@@ -102,6 +103,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     picker::show(app, ctx);
     dialogs::show(app, ctx);
     image_preview::show(app, ctx);
+    image_preview::show_sticker(app, ctx);
     video_preview::show(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);

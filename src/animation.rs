@@ -46,6 +46,10 @@ struct Playing {
     started: Instant,
     last_drawn: Instant,
     animating: bool,
+    /// The last pass that drew it playing. A paused draw of the same file in
+    /// another place, such as a chat bubble behind the sticker viewer, must
+    /// not restart it from the first frame on every pass.
+    played_in: u64,
     /// Whether every frame is decoded. A paused animation decodes only its
     /// poster: a picker full of animated stickers would otherwise hold more
     /// frames than the budget, and each decode would evict a visible tile that
@@ -156,6 +160,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete,
                     upgrading: false,
                 })
@@ -217,10 +222,14 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
+            let pass = ctx.cumulative_frame_nr();
             if !animate {
-                playing.animating = false;
+                if playing.played_in + 1 < pass {
+                    playing.animating = false;
+                }
                 return Frame::Ready(playing.frames[0].0.clone());
             }
+            playing.played_in = pass;
             if !playing.complete {
                 // Keep showing the poster while the other frames decode.
                 if !playing.upgrading {
@@ -922,6 +931,7 @@ mod tests {
                     started: Instant::now() - Duration::from_secs(90),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -997,6 +1007,7 @@ mod tests {
                     // event-driven repaints it can go this long without a frame.
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1060,6 +1071,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1077,6 +1089,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now(),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1181,6 +1194,7 @@ mod tests {
                     started: Instant::now(),
                     last_drawn: Instant::now() - Duration::from_secs(1),
                     animating: false,
+                    played_in: 0,
                     complete: true,
                     upgrading: false,
                 }),
@@ -1307,6 +1321,49 @@ mod tests {
         );
         output.textures_delta.clear();
         shown
+    }
+
+    /// A sticker playing in one place keeps playing while the same file is
+    /// drawn paused elsewhere in the same pass, as a chat bubble is behind the
+    /// sticker viewer.
+    #[test]
+    fn a_paused_copy_does_not_hold_a_playing_one_on_its_first_frame() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = animated_webp(dir.path(), "shared.webp", 4);
+        let ctx = egui::Context::default();
+        let pass = || {
+            let mut playing = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let (bubble, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        let _ = frame(ui, &path, bubble, false);
+                        let (viewer, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        if let Frame::Ready(texture) = frame(ui, &path, viewer, true) {
+                            playing = Some(texture.id());
+                        }
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            playing
+        };
+        let mut seen = HashSet::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while seen.len() < 3 && Instant::now() < deadline {
+            seen.extend(pass());
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        assert!(seen.len() >= 3, "the viewer showed {} frames", seen.len());
     }
 
     /// Draws until every path shows a frame, or panics after a few seconds.
@@ -1438,6 +1495,7 @@ mod tests {
                         started: Instant::now(),
                         last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
                         animating: false,
+                        played_in: 0,
                         complete: true,
                         upgrading: false,
                     }),

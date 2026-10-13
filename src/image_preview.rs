@@ -1,4 +1,4 @@
-//! State and routing for the in-app image preview.
+//! State and routing for the in-app image and sticker previews.
 
 use std::path::{Path, PathBuf};
 
@@ -350,6 +350,46 @@ impl PreviewState {
     }
 }
 
+/// A sticker from the conversation shown large on its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickerPreview {
+    path: PathBuf,
+    animated: bool,
+    /// The content hash, which names the favorite copy of the same sticker.
+    hash: Option<String>,
+}
+
+impl StickerPreview {
+    /// Whether it moves comes from the file: phones often leave the
+    /// message's `is_animated` flag out.
+    pub fn new(path: PathBuf) -> Self {
+        let bytes = std::fs::read(&path).ok();
+        Self {
+            animated: bytes.as_deref().is_some_and(crate::animation::webp_moves),
+            hash: bytes
+                .as_deref()
+                .map(crate::backend::sticker_store::content_hash),
+            path,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn animated(&self) -> bool {
+        self.animated
+    }
+
+    /// The favorite copy of this sticker among the saved ones, if any.
+    pub fn favorite<'a>(&self, saved: &'a [PathBuf]) -> Option<&'a PathBuf> {
+        let hash = self.hash.as_deref()?;
+        saved
+            .iter()
+            .find(|path| path.file_stem().is_some_and(|stem| stem == hash))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +533,39 @@ mod tests {
                 assert_eq!(preview.path(), expected_path);
             }
         }
+    }
+
+    #[test]
+    fn a_sticker_preview_finds_its_favorite_copy_by_content() {
+        let dir = tempfile::tempdir().expect("temp");
+        let received = dir.path().join("msg-1.webp");
+        std::fs::write(&received, b"sun").expect("writes");
+        let preview = StickerPreview::new(received);
+        assert!(!preview.animated());
+        let other = dir.path().join("saved").join("0000.webp");
+        assert_eq!(preview.favorite(std::slice::from_ref(&other)), None);
+        let copy = dir.path().join("saved").join(format!(
+            "{}.webp",
+            crate::backend::sticker_store::content_hash(b"sun")
+        ));
+        let saved = vec![other, copy.clone()];
+        assert_eq!(preview.favorite(&saved), Some(&copy));
+        let missing = StickerPreview::new(dir.path().join("gone.webp"));
+        assert_eq!(missing.favorite(&saved), None);
+        assert!(!missing.animated());
+    }
+
+    #[test]
+    fn a_sticker_moves_when_its_file_says_so_whatever_the_message_claimed() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = dir.path().join("moving.webp");
+        // A colour profile ahead of the animation chunk, as other apps write.
+        let mut moving = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\x22\0\0\0\0\0\0\0\0\0".to_vec();
+        moving.extend_from_slice(b"ICCP\x00\x01\0\0");
+        moving.extend(std::iter::repeat_n(0u8, 256));
+        moving.extend_from_slice(b"ANIM");
+        std::fs::write(&path, &moving).expect("writes");
+        assert!(StickerPreview::new(path).animated());
     }
 
     #[test]
