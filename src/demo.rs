@@ -1919,6 +1919,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     sender_name: Some("Alex".into()),
                     summary: "A reference for the album".into(),
                     mentions: Vec::new(),
+                    chat: None,
                 });
             }
             "media-album-oversized" => {
