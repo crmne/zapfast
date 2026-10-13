@@ -742,59 +742,45 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn confirm_delete_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
-    let palette = app.palette;
-    let name = app
-        .chat(id)
-        .map_or_else(|| "this chat".to_owned(), |chat| chat.name.clone());
-    title(ui, app, "Delete chat?");
-    theme::paragraph(
-        ui,
-        format!(
-            "This deletes your chat with {name}, including all messages, on this computer and on your phone. It cannot be undone."
-        ),
-        theme::regular(13.5),
-        palette.text,
+    let locale = app.locale;
+    let name = app.chat(id).map_or_else(
+        || crate::i18n::gettext(locale, "this chat").into_owned(),
+        |chat| chat.name.clone(),
     );
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Delete") {
-                app.actions.push(Action::DeleteChat(id.to_owned()));
-                app.actions.push(Action::CloseDialog);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
+    let body = crate::i18n::gettext(
+        locale,
+        "This deletes your chat with {name}, including all messages, on this computer and on your phone. It cannot be undone.",
+    )
+    .replace("{name}", &name);
+    confirm_destructive(
+        app,
+        ui,
+        &crate::i18n::gettext(locale, "Delete chat?"),
+        &[&body],
+        &crate::i18n::gettext(locale, "Delete"),
+        Action::DeleteChat(id.to_owned()),
+    );
 }
 
 fn confirm_clear_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
-    let palette = app.palette;
-    let name = app
-        .chat(id)
-        .map_or_else(|| "this chat".to_owned(), |chat| chat.name.clone());
-    title(ui, app, "Clear chat?");
-    theme::paragraph(
-        ui,
-        format!(
-            "This clears every message in your chat with {name}, including downloaded media, on this computer and on your phone. The chat itself stays. It cannot be undone."
-        ),
-        theme::regular(13.5),
-        palette.text,
+    let locale = app.locale;
+    let name = app.chat(id).map_or_else(
+        || crate::i18n::gettext(locale, "this chat").into_owned(),
+        |chat| chat.name.clone(),
     );
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Clear chat") {
-                app.actions.push(Action::ClearChat(id.to_owned()));
-                app.actions.push(Action::CloseDialog);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
+    let body = crate::i18n::gettext(
+        locale,
+        "This clears every message in your chat with {name}, including downloaded media, on this computer and on your phone. The chat itself stays. It cannot be undone.",
+    )
+    .replace("{name}", &name);
+    confirm_destructive(
+        app,
+        ui,
+        &crate::i18n::gettext(locale, "Clear chat?"),
+        &[&body],
+        &crate::i18n::gettext(locale, "Clear chat"),
+        Action::ClearChat(id.to_owned()),
+    );
 }
 
 fn join_group(app: &mut App, ui: &mut egui::Ui) {
@@ -1077,31 +1063,24 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn confirm_start_over(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    title(ui, app, "Start over?");
-    theme::paragraph(
+    let locale = app.locale;
+    confirm_destructive(
+        app,
         ui,
-        "ZapFast keeps your unreadable archive as a separate file, creates a new one, and asks you to link again. Linking again brings back recent history from your phone. Afterwards, remove the old ZapFast entry under Linked devices on your phone.",
-        theme::regular(13.5),
-        palette.text,
+        &crate::i18n::gettext(locale, "Start over?"),
+        &[
+            &crate::i18n::gettext(
+                locale,
+                "ZapFast keeps your unreadable archive as a separate file, creates a new one, and asks you to link again. Linking again brings back recent history from your phone. Afterwards, remove the old ZapFast entry under Linked devices on your phone.",
+            ),
+            &crate::i18n::gettext(
+                locale,
+                "If you can restore the original keyring instead, choose Cancel and Try again: nothing is lost that way.",
+            ),
+        ],
+        &crate::i18n::gettext(locale, "Start over"),
+        Action::StartOverArchive,
     );
-    theme::paragraph(
-        ui,
-        "If you can restore the original keyring instead, choose Cancel and Try again: nothing is lost that way.",
-        theme::regular(13.0),
-        palette.secondary,
-    );
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Start over") {
-                app.actions.push(Action::StartOverArchive);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
 }
 
 /// Confirms deleting one message. Enter is deliberately not bound here: a
@@ -1113,44 +1092,35 @@ fn confirm_delete_message(
     id: &str,
     for_everyone: bool,
 ) {
-    let palette = app.palette;
-    let (heading, body) = if for_everyone {
+    let locale = app.locale;
+    let (chat, id) = (chat.to_owned(), id.to_owned());
+    let (heading, body, action) = if for_everyone {
         (
-            "Delete for everyone?",
+            crate::i18n::gettext(locale, "Delete for everyone?"),
             crate::i18n::gettext(
-                app.locale,
+                locale,
                 "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone.",
             ),
+            Action::DeleteForEveryone { chat, id },
         )
     } else {
         (
-            "Delete for me?",
+            crate::i18n::gettext(locale, "Delete for me?"),
             crate::i18n::gettext(
-                app.locale,
+                locale,
                 "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone.",
             ),
+            Action::DeleteForMe { chat, id },
         )
     };
-    title(ui, app, heading);
-    theme::paragraph(ui, body.into_owned(), theme::regular(13.5), palette.text);
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Delete") {
-                let (chat, id) = (chat.to_owned(), id.to_owned());
-                let action = if for_everyone {
-                    Action::DeleteForEveryone { chat, id }
-                } else {
-                    Action::DeleteForMe { chat, id }
-                };
-                app.actions.push(action);
-                app.actions.push(Action::CloseDialog);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
+    confirm_destructive(
+        app,
+        ui,
+        &heading,
+        &[&body],
+        &crate::i18n::gettext(locale, "Delete"),
+        action,
+    );
 }
 
 fn confirm_remove_sticker_pack(
@@ -1159,82 +1129,84 @@ fn confirm_remove_sticker_pack(
     name: &str,
     dir: std::path::PathBuf,
 ) {
-    let palette = app.palette;
-    title(ui, app, "Remove sticker pack?");
-    theme::paragraph(
+    let locale = app.locale;
+    let body = crate::i18n::gettext(
+        locale,
+        "This deletes \"{name}\" and its stickers from this computer. To use it again, import it again.",
+    )
+    .replace("{name}", name);
+    confirm_destructive(
+        app,
         ui,
-        crate::i18n::gettext(
-            app.locale,
-            "This deletes \"{}\" and its stickers from this computer. To use it again, import it again.",
-        )
-        .replace("{}", name),
-        theme::regular(13.5),
-        palette.text,
+        &crate::i18n::gettext(locale, "Remove sticker pack?"),
+        &[&body],
+        &crate::i18n::gettext(locale, "Remove"),
+        Action::DeleteStickerPack(dir),
     );
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Remove") {
-                app.actions.push(Action::DeleteStickerPack(dir));
-                app.actions.push(Action::CloseDialog);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
 }
 
 fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    title(ui, app, "Unlink this computer?");
-    theme::paragraph(
+    let locale = app.locale;
+    confirm_destructive(
+        app,
         ui,
-        "This removes the device from WhatsApp and deletes the chats stored here. You can link again with a new code.",
-        theme::regular(13.5),
-        palette.text,
+        &crate::i18n::gettext(locale, "Unlink this computer?"),
+        &[&crate::i18n::gettext(
+            locale,
+            "This removes the device from WhatsApp and deletes the chats stored here. You can link again with a new code.",
+        )],
+        &crate::i18n::gettext(locale, "Unlink"),
+        Action::Unlink,
     );
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, "Unlink") {
-                app.actions.push(Action::Unlink);
-            }
-            if theme::pill_button(ui, &palette, "Cancel", false).clicked() {
-                app.actions.push(Action::CloseDialog);
-            }
-        });
-    });
 }
 
 fn confirm_remove(app: &mut App, ui: &mut egui::Ui, id: crate::model::AccountId) {
-    let palette = app.palette;
     let locale = app.locale;
-    title(
-        ui,
+    confirm_destructive(
         app,
-        &crate::i18n::gettext(locale, "Remove this account?"),
-    );
-    theme::paragraph(
         ui,
-        crate::i18n::gettext(
+        &crate::i18n::gettext(locale, "Remove this account?"),
+        &[&crate::i18n::gettext(
             locale,
             "This unlinks the number on this computer and deletes its local chats. Other accounts stay.",
-        )
-        .as_ref(),
-        theme::regular(13.5),
-        palette.text,
+        )],
+        &crate::i18n::gettext(locale, "Remove"),
+        Action::RemoveAccount(id),
     );
+}
+
+/// A confirmation for something that cannot be undone: the question, what it
+/// destroys (the first paragraph in the text colour, any after it as a smaller
+/// note), then Cancel and a red button that queues `action` and closes the
+/// dialog. Callers pass translated text. Enter is deliberately not bound: a
+/// stray keypress must not destroy anything.
+fn confirm_destructive(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    heading: &str,
+    body: &[&str],
+    button: &str,
+    action: Action,
+) {
+    let palette = app.palette;
+    title(ui, app, heading);
+    for (index, paragraph) in body.iter().enumerate() {
+        let (font, colour) = if index == 0 {
+            (theme::regular(13.5), palette.text)
+        } else {
+            (theme::regular(13.0), palette.secondary)
+        };
+        theme::paragraph(ui, *paragraph, font, colour);
+    }
     ui.add_space(10.0);
+    let cancel = crate::i18n::gettext(app.locale, "Cancel");
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if danger_button(ui, app, &crate::i18n::gettext(locale, "Remove")) {
-                app.actions.push(Action::RemoveAccount(id));
+            if danger_button(ui, app, button) {
+                app.actions.push(action);
                 app.actions.push(Action::CloseDialog);
             }
-            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Cancel"), false)
-                .clicked()
-            {
+            if theme::pill_button(ui, &palette, &cancel, false).clicked() {
                 app.actions.push(Action::CloseDialog);
             }
         });
