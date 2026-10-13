@@ -81,7 +81,8 @@ Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
 `app-lock-forgot`, `app-lock-settings`, and `app-lock-setup`. `new-chat`,
-`unnamed-group`, and `react-picker` show those dialogs; `group-info`,
+`new-contact`, `unnamed-group`, and `react-picker` show those dialogs
+(`new-contact-number` with a formatted number and no name); `group-info`,
 `group-info-rename`, `group-info-saving`, and `group-info-locked` a group's
 editable info; `meta-ai` a Meta AI reply with code and a table.
 The editable group includes a multiline description; the locked group has none.

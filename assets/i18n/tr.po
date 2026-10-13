@@ -205,7 +205,7 @@ msgstr "Kilitli"
 msgid "No favorites yet"
 msgstr "Henüz favori yok"
 
-#: src/ui/chats.rs:1006 src/app.rs:2105
+#: src/ui/chats.rs:1006 src/app.rs:2102
 msgid "Message yourself"
 msgstr "Kendinize mesaj gönderin"
 
@@ -218,17 +218,17 @@ msgid "Remove from favorites"
 msgstr "Favorilerden kaldır"
 
 #: src/ui/chats.rs:1278 src/ui/chats.rs:1644 src/ui/conversation.rs:4392
-#: src/ui/dialogs.rs:1145 src/ui/picker.rs:1616
+#: src/ui/dialogs.rs:1057 src/ui/picker.rs:1616
 msgid "Add to favorites"
 msgstr "Favorilere ekle"
 
 #: src/ui/chats.rs:1288 src/ui/chats.rs:1668 src/ui/conversation.rs:234
-#: src/ui/dialogs.rs:1319 src/ui/dialogs.rs:1858
+#: src/ui/dialogs.rs:1231 src/ui/dialogs.rs:1764
 msgid "Leave group"
 msgstr "Gruptan ayrıl"
 
 #: src/ui/chats.rs:1289 src/ui/chats.rs:1666 src/ui/conversation.rs:232
-#: src/ui/dialogs.rs:1317 src/ui/dialogs.rs:1856
+#: src/ui/dialogs.rs:1229 src/ui/dialogs.rs:1762
 msgid "Leave channel"
 msgstr "Kanaldan ayrıl"
 
@@ -319,7 +319,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} okunmamış mesaj"
 msgstr[1] "{} okunmamış mesaj"
 
-#: src/ui/conversation.rs:2268 src/app.rs:2087 src/app.rs:2106
+#: src/ui/conversation.rs:2268 src/app.rs:2084 src/app.rs:2103
 msgid "You"
 msgstr "Siz"
 
@@ -420,7 +420,7 @@ msgstr ""
 msgid "This message can only be seen on your phone."
 msgstr "Bu mesaj yalnızca telefonunuzda görülebilir."
 
-#: src/ui/conversation.rs:5902 src/ui/dialogs.rs:516
+#: src/ui/conversation.rs:5902
 msgid "Message"
 msgstr "Mesaj gönder"
 
@@ -456,68 +456,50 @@ msgstr "Sesi aç"
 msgid "Mute"
 msgstr "Sessize al"
 
-#
-#: src/ui/dialogs.rs:395 src/ui/dialogs.rs:475
-msgid "Message a number"
-msgstr "Bir numaraya mesaj gönder"
-
-#: src/ui/dialogs.rs:481
-msgid ""
-"Enter a phone number with its country code. You do not need to save it as a "
-"contact."
-msgstr ""
-"Ülke koduyla birlikte bir telefon numarası girin. Kişi olarak kaydetmeniz "
-"gerekmez."
-
-#: src/ui/dialogs.rs:505
-msgid "Checking the number…"
-msgstr "Numara kontrol ediliyor…"
-
-#: src/ui/dialogs.rs:533 src/ui/dialogs.rs:1152 src/ui/dialogs.rs:1285
-#: src/ui/dialogs.rs:1347 src/ui/settings.rs:969 src/ui/settings.rs:1532
-#: src/ui/lock.rs:142
-msgid "Cancel"
-msgstr "İptal"
-
-#: src/ui/dialogs.rs:769
+#: src/ui/dialogs.rs:681
 msgid "Show shortcut hints under the message box"
 msgstr "Mesaj kutusunun altında kısayol ipuçlarını göster"
 
-#: src/ui/dialogs.rs:971
+#: src/ui/dialogs.rs:883
 msgid "Sticker pack"
 msgstr "Çıkartma paketi"
 
-#: src/ui/dialogs.rs:976
+#: src/ui/dialogs.rs:888
 msgid "Downloading the pack…"
 msgstr "Paket indiriliyor…"
 
-#: src/ui/dialogs.rs:1000
+#: src/ui/dialogs.rs:912
 msgid "Add to my stickers"
 msgstr "Çıkartmalarıma ekle"
 
-#: src/ui/dialogs.rs:1007 src/ui/message_info.rs:28 src/ui/labels.rs:224
+#: src/ui/dialogs.rs:919 src/ui/message_info.rs:28 src/ui/labels.rs:224
 msgid "Close"
 msgstr "Kapat"
 
-#: src/ui/dialogs.rs:1024
+#: src/ui/dialogs.rs:936
 msgid "Make a sticker"
 msgstr "Çıkartma yap"
 
-#: src/ui/dialogs.rs:1088
+#: src/ui/dialogs.rs:1000
 msgid "Size"
 msgstr "Boyut"
 
-#: src/ui/dialogs.rs:1103
+#: src/ui/dialogs.rs:1015
 msgid "Keep the transparent background"
 msgstr "Saydam arka planı koru"
 
-#: src/ui/dialogs.rs:1120
+#: src/ui/dialogs.rs:1032
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Bunu tanımlayan emojiler (ör. 😂 veya ❤️)"
 
-#: src/ui/dialogs.rs:1137
+#: src/ui/dialogs.rs:1049
 msgid "Send"
 msgstr "Gönder"
+
+#: src/ui/dialogs.rs:1064 src/ui/dialogs.rs:1197 src/ui/dialogs.rs:1259
+#: src/ui/settings.rs:969 src/ui/settings.rs:1532 src/ui/lock.rs:142
+msgid "Cancel"
+msgstr "İptal"
 
 #: src/ui/dialogs.rs:1268
 msgid ""
@@ -536,95 +518,95 @@ msgstr ""
 "kişiler kendi kopyalarını saklar. Silmek için WhatsApp'a bağlanın. Bu işlem "
 "geri alınamaz."
 
-#: src/ui/dialogs.rs:1266
+#: src/ui/dialogs.rs:1178
 #, fuzzy
 msgid "Remove this account?"
 msgstr "Bu paketi kaldır"
 
-#: src/ui/dialogs.rs:1272
+#: src/ui/dialogs.rs:1184
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
 msgstr ""
 
-#: src/ui/dialogs.rs:1281
+#: src/ui/dialogs.rs:1193
 #, fuzzy
 msgid "Remove"
 msgstr "Fotoğrafı kaldır"
 
-#: src/ui/dialogs.rs:1301
+#: src/ui/dialogs.rs:1213
 msgid "Leave this channel?"
 msgstr "Bu kanaldan ayrılmak istiyor musunuz?"
 
-#: src/ui/dialogs.rs:1303
+#: src/ui/dialogs.rs:1215
 msgid "Leave this group?"
 msgstr "Bu gruptan ayrılmak istiyor musunuz?"
 
-#: src/ui/dialogs.rs:1310
+#: src/ui/dialogs.rs:1222
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr "Yeni mesaj almayacaksınız. Yerel geçmiş bu bilgisayarda kalır."
 
-#: src/ui/dialogs.rs:1330
+#: src/ui/dialogs.rs:1242
 msgid "Leave channel and archive"
 msgstr "Kanaldan ayrıl ve arşivle"
 
-#: src/ui/dialogs.rs:1332
+#: src/ui/dialogs.rs:1244
 msgid "Leave group and archive"
 msgstr "Gruptan ayrıl ve arşivle"
 
-#: src/ui/dialogs.rs:1557
+#: src/ui/dialogs.rs:1464
 msgid "Also save to your phone's contacts"
 msgstr "Telefonunuzdaki kişilere de kaydet"
 
-#: src/ui/dialogs.rs:1623
+#: src/ui/dialogs.rs:1529
 msgid "Group"
 msgstr "Grup"
 
-#: src/ui/dialogs.rs:1625
+#: src/ui/dialogs.rs:1531
 msgid "Channel"
 msgstr "Kanal"
 
-#: src/ui/dialogs.rs:1627
+#: src/ui/dialogs.rs:1533
 msgid "Contact"
 msgstr "Kişi"
 
-#: src/ui/dialogs.rs:1672
+#: src/ui/dialogs.rs:1578
 msgid "Edit group name"
 msgstr "Grup adını düzenle"
 
-#: src/ui/dialogs.rs:1802
+#: src/ui/dialogs.rs:1708
 msgid "Saving…"
 msgstr "Kaydediliyor…"
 
-#: src/ui/dialogs.rs:1812
+#: src/ui/dialogs.rs:1718
 #, rust-format
 msgid "{} member"
 msgid_plural "{} members"
 msgstr[0] "{} üye"
 msgstr[1] "{} üye"
 
-#: src/ui/dialogs.rs:2148
+#: src/ui/dialogs.rs:2054
 msgid "Change group photo"
 msgstr "Grup fotoğrafını değiştir"
 
-#: src/ui/dialogs.rs:2154
+#: src/ui/dialogs.rs:2060
 msgid "Change photo"
 msgstr "Fotoğrafı değiştir"
 
-#: src/ui/dialogs.rs:2155
+#: src/ui/dialogs.rs:2061
 msgid "Remove photo"
 msgstr "Fotoğrafı kaldır"
 
-#: src/ui/dialogs.rs:2195
+#: src/ui/dialogs.rs:2101
 msgid "Group name"
 msgstr "Grup adı"
 
-#: src/ui/dialogs.rs:2238
+#: src/ui/dialogs.rs:2144
 msgid "Save name (Enter)"
 msgstr "Adı kaydet (Enter)"
 
-#: src/ui/dialogs.rs:2250
+#: src/ui/dialogs.rs:2156
 msgid "Cancel (Escape)"
 msgstr "İptal (Escape)"
 
@@ -669,7 +651,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Sohbet duvar kâğıdı"
 
-#: src/ui/settings.rs:348 src/app.rs:2578
+#: src/ui/settings.rs:348 src/app.rs:2575
 msgid "Image"
 msgstr "Görsel"
 
@@ -1199,42 +1181,42 @@ msgstr[1] "{} kaldı"
 msgid "No one yet"
 msgstr "Henüz kimse yok"
 
-#: src/app.rs:709
+#: src/app.rs:708
 msgid "Could not check the number. Please try again."
 msgstr "Numara kontrol edilemedi. Lütfen tekrar deneyin."
 
-#: src/app.rs:713
+#: src/app.rs:712
 msgid "This number is not on WhatsApp"
 msgstr "Bu numara WhatsApp'ta kayıtlı değil"
 
 #
-#: src/app.rs:716
+#: src/app.rs:715
 msgid "Not connected to WhatsApp"
 msgstr "WhatsApp'a bağlı değil"
 
-#: src/app.rs:719 src/app.rs:5902
+#: src/app.rs:718 src/app.rs:5888
 msgid "Enter a valid international phone number"
 msgstr "Geçerli bir uluslararası telefon numarası girin"
 
-#: src/app.rs:1502
+#: src/app.rs:1499
 msgid "Could not delete the removed account's files"
 msgstr ""
 
-#: src/app.rs:2007
+#: src/app.rs:2004
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "“{name}” adında bir etiket zaten var."
 
-#: src/app.rs:2086
+#: src/app.rs:2083
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Siz)"
 
-#: src/app.rs:2992
+#: src/app.rs:2988
 msgid "Loading chat history"
 msgstr ""
 
-#: src/app.rs:3086
+#: src/app.rs:3082
 msgid "Could not use this image"
 msgstr "Bu görsel kullanılamadı"
 
@@ -1242,15 +1224,15 @@ msgstr "Bu görsel kullanılamadı"
 msgid "Connection lost"
 msgstr "Bağlantı koptu"
 
-#: src/app.rs:3315
+#: src/app.rs:3306
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:3694
+#: src/app.rs:3684
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
 
-#: src/app.rs:3698
+#: src/app.rs:3688
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1258,43 +1240,43 @@ msgstr ""
 "Gönderilmedi: Yanıtladığınız mesaj bu bilgisayarda mevcut değil. Alıntısız "
 "göndermek için yanıtı iptal edin."
 
-#: src/app.rs:5608
+#: src/app.rs:5595
 msgid "Added to favorites"
 msgstr "Favorilere eklendi"
 
-#: src/app.rs:5683
+#: src/app.rs:5670
 msgid "Sending the sticker pack…"
 msgstr "Çıkartma paketi gönderiliyor…"
 
-#: src/app.rs:5998 src/ui/labels.rs:247
+#: src/app.rs:5981 src/ui/labels.rs:247
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:6498
+#: src/app.rs:6481
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:6784
+#: src/app.rs:6767
 msgid "App lock password saved"
 msgstr "Uygulama kilidi parolası kaydedildi"
 
-#: src/app.rs:6792
+#: src/app.rs:6775
 msgid "App lock turned off"
 msgstr "Uygulama kilidi kapatıldı"
 
-#: src/app.rs:6916
+#: src/app.rs:6899
 msgid "This video opens in your system player"
 msgstr "Bu video sistem oynatıcınızda açılır"
 
-#: src/app.rs:7348
+#: src/app.rs:7331
 msgid "Copied image"
 msgstr "Görsel kopyalandı"
 
-#: src/app.rs:7351 src/app.rs:7356
+#: src/app.rs:7334 src/app.rs:7339
 msgid "Failed to copy image"
 msgstr "Görsel kopyalanamadı"
 
@@ -2267,3 +2249,17 @@ msgstr "Mesajları seç"
 #: src/settings.rs:376
 msgid "Direct messages and groups"
 msgstr ""
+
+#
+#~ msgid "Message a number"
+#~ msgstr "Bir numaraya mesaj gönder"
+
+#~ msgid ""
+#~ "Enter a phone number with its country code. You do not need to save it as "
+#~ "a contact."
+#~ msgstr ""
+#~ "Ülke koduyla birlikte bir telefon numarası girin. Kişi olarak kaydetmeniz "
+#~ "gerekmez."
+
+#~ msgid "Checking the number…"
+#~ msgstr "Numara kontrol ediliyor…"

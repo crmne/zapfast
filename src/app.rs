@@ -579,7 +579,6 @@ pub struct App {
     pub forward_limit: usize,
     /// The group name being typed in the group info dialog.
     pub group_name_edit: Option<String>,
-
     /// The new-contact dialog's "Save to phone" box.
     pub new_contact_to_phone: bool,
     pub sidebar_visible: bool,
@@ -1155,7 +1154,6 @@ impl App {
         }
     }
 
-    /// Constructs application state around the supplied backend and persisted settings.
     #[cfg_attr(not(test), expect(dead_code))]
     fn with_backend(dirs: AppDirs, settings: Settings, backend: Backend, waker: Waker) -> Self {
         let (account, _) = {
@@ -1178,7 +1176,7 @@ impl App {
         };
         Self::with_accounts(dirs, settings, roster, vec![account], 0, waker)
     }
-    /// Builds the window state with the supplied accounts and selected account.
+
     fn with_accounts(
         dirs: AppDirs,
         settings: Settings,
@@ -1315,7 +1313,6 @@ impl App {
             forward_reviewing: false,
             forward_limit: crate::model::FORWARD_LIMIT,
             group_name_edit: None,
-
             new_contact_to_phone: true,
             sidebar_visible: true,
             #[cfg(any(test, feature = "demo"))]
@@ -2890,7 +2887,6 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Drains backend events into interface state and queues follow-up actions.
     fn handle_events(&mut self) {
         let mut removed = Vec::new();
         let mut deferred = Vec::new();
@@ -2922,7 +2918,7 @@ impl App {
             self.finish_removed(index);
         }
     }
-    /// Applies an event to its owning account while protecting other accounts' visible state.
+
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
             Event::Link(status) => self.handle_link(status, live),
@@ -3618,12 +3614,7 @@ impl App {
                 self.new_contact_request = None;
                 self.new_contact_pending = false;
                 if live {
-                    if owned_by_dialog
-                        && matches!(
-                            self.dialog,
-                            Some(Dialog::NewContact | Dialog::MessageNumber)
-                        )
-                    {
+                    if owned_by_dialog && matches!(self.dialog, Some(Dialog::NewContact)) {
                         self.dialog = None;
                     }
                     let name = name
@@ -3885,7 +3876,6 @@ impl App {
                 self.new_contact_dialog_request = None;
                 self.new_contact_pending = false;
                 let account = self.account().id.clone();
-
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
@@ -5436,10 +5426,7 @@ impl App {
                 if page != Page::Settings && !self.app_lock.checking() {
                     self.app_lock.form = None;
                 }
-                if matches!(
-                    self.dialog,
-                    Some(Dialog::NewContact | Dialog::MessageNumber)
-                ) {
+                if matches!(self.dialog, Some(Dialog::NewContact)) {
                     self.cancel_contact_dialog_request();
                 }
                 self.page = page;
@@ -6839,9 +6826,8 @@ impl App {
                 if dialog == Dialog::PairWithPhone {
                     self.pair_phone.clear();
                 }
-                if matches!(dialog, Dialog::NewContact | Dialog::MessageNumber) {
+                if dialog == Dialog::NewContact {
                     self.new_contact_to_phone = self.account().settings.save_contacts_to_phone;
-
                     self.new_contact_phone.clear();
                     self.new_contact_name.clear();
                     self.new_contact_last.clear();
@@ -6900,11 +6886,8 @@ impl App {
                 self.new_contact_sequence = self.new_contact_sequence.wrapping_add(1);
                 let request = self.new_contact_sequence;
                 self.new_contact_request = Some(request);
-                self.new_contact_dialog_request = matches!(
-                    self.dialog,
-                    Some(Dialog::NewContact | Dialog::MessageNumber)
-                )
-                .then_some(request);
+                self.new_contact_dialog_request =
+                    matches!(self.dialog, Some(Dialog::NewContact)).then_some(request);
                 let (full_name, first_name) = compose_name(&first, &last);
                 // The dialog's choice starts the next one.
                 if let Some(to_phone) = to_phone
@@ -9809,7 +9792,7 @@ mod tests {
             let request = app.new_contact_request.unwrap();
             app.apply(Action::ShowDialog(Dialog::Shortcuts), &ctx);
             app.apply(Action::CloseDialog, &ctx);
-            app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+            app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
             assert_eq!(app.new_contact_request, Some(request));
             events
                 .send(if success {
@@ -9829,7 +9812,7 @@ mod tests {
             app.apply_actions(&ctx);
             assert_eq!(
                 app.dialog,
-                Some(Dialog::MessageNumber),
+                Some(Dialog::NewContact),
                 "independent completion does not dismiss the new dialog"
             );
             assert!(app.new_contact_request.is_none());
@@ -9849,7 +9832,7 @@ mod tests {
         let (backend, _commands, events) = Backend::recording_with_events();
         app.backend = backend;
         let ctx = egui::Context::default();
-        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
         app.apply(
             Action::NewContact {
                 phone: "15550000001".into(),
@@ -9885,7 +9868,7 @@ mod tests {
     /// Settings cancel number-entry lookups while shared-contact requests remain active.
     #[test]
     fn opening_settings_invalidates_dialog_lookups_but_keeps_shared_contacts() {
-        for dialog in [Some(Dialog::MessageNumber), Some(Dialog::NewContact), None] {
+        for dialog in [Some(Dialog::NewContact), Some(Dialog::NewContact), None] {
             let mut app = app();
             let (backend, _commands, events) = Backend::recording_with_events();
             app.backend = backend;
@@ -9957,11 +9940,11 @@ mod tests {
             last: String::new(),
             to_phone: None,
         };
-        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
         app.apply(lookup("15550000001"), &ctx);
         let first = app.new_contact_request.unwrap();
         app.apply(Action::CloseDialog, &ctx);
-        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
         app.apply(lookup("15550000002"), &ctx);
         let second = app.new_contact_request.unwrap();
         events
@@ -9978,7 +9961,7 @@ mod tests {
             })
             .unwrap();
         app.handle_events();
-        assert_eq!(app.dialog, Some(Dialog::MessageNumber));
+        assert_eq!(app.dialog, Some(Dialog::NewContact));
         assert_eq!(app.new_contact_request, Some(second));
         assert!(app.new_contact_pending);
         assert!(
@@ -9994,7 +9977,7 @@ mod tests {
             })
             .unwrap();
         app.handle_events();
-        assert_eq!(app.dialog, Some(Dialog::MessageNumber));
+        assert_eq!(app.dialog, Some(Dialog::NewContact));
         assert!(!app.new_contact_pending);
         assert!(app.new_contact_request.is_none());
         app.apply(lookup("15550000002"), &ctx);
@@ -10037,11 +10020,11 @@ mod tests {
                 last: String::new(),
                 to_phone: None,
             };
-            app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+            app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
             app.apply(lookup(), &ctx);
             let first_request = app.new_contact_request.unwrap();
             app.switch_account(&second_id);
-            app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+            app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
             app.apply(lookup(), &ctx);
             let visible_request = app.new_contact_request.unwrap();
             events
@@ -10060,7 +10043,7 @@ mod tests {
                 .unwrap();
             app.handle_events();
             assert_eq!(app.account().id, second_id);
-            assert_eq!(app.dialog, Some(Dialog::MessageNumber));
+            assert_eq!(app.dialog, Some(Dialog::NewContact));
             assert_eq!(app.new_contact_request, Some(visible_request));
             assert!(app.new_contact_pending);
             assert!(app.toasts.is_empty());
@@ -10092,7 +10075,7 @@ mod tests {
             last: String::new(),
             to_phone: None,
         };
-        app.apply(Action::ShowDialog(Dialog::MessageNumber), &ctx);
+        app.apply(Action::ShowDialog(Dialog::NewContact), &ctx);
         app.apply(lookup(), &ctx);
         let old_request = app.new_contact_request.unwrap();
         app.handle_link(LinkStatus::LoggedOut, true);
@@ -10113,7 +10096,7 @@ mod tests {
         app.handle_events();
         assert_eq!(app.new_contact_request, Some(retry));
         assert!(app.new_contact_pending);
-        assert_eq!(app.dialog, Some(Dialog::MessageNumber));
+        assert_eq!(app.dialog, Some(Dialog::NewContact));
         assert!(
             !app.actions
                 .iter()
