@@ -467,8 +467,10 @@ whether to join.
 
 When ZapFast is already running the link brings its window forward on that
 chat rather than starting a second copy, and when it is not it starts and
-opens the chat. While the app lock is up the link waits for the unlock rather
-than opening anything the lock hides.
+opens the chat. A running copy of an older ZapFast that cannot open the link
+only brings its window forward, and the command says so: quit it and run the
+command again. While the app lock is up links wait for the unlock rather than
+opening anything the lock hides, and then open in the order they arrived.
 
 A `https://wa.me/...` link opened in a browser still opens WhatsApp Web: the
 desktop decides what a web link means, and a browser cannot be told to hand

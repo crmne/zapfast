@@ -1679,7 +1679,8 @@ impl App {
             // Behind the app lock nothing changes yet: the message, with its
             // account, opens once unlocked.
             if self.app_lock.is_locked() {
-                self.app_lock.deferred = Some(target);
+                self.app_lock
+                    .defer(crate::app_lock::Deferred::Message(target));
                 self.actions.push(Action::ShowWindow);
                 continue;
             }
@@ -4761,37 +4762,37 @@ impl App {
             // what the lock hides.
             match action {
                 Action::OpenMessage { chat, message } => {
-                    self.app_lock.deferred = Some(crate::notify::NotificationTarget {
-                        account: self.account().id.clone(),
-                        chat,
-                        message: Some(message),
-                    });
+                    let account = self.account().id.clone();
+                    self.app_lock.defer(crate::app_lock::Deferred::Message(
+                        crate::notify::NotificationTarget {
+                            account,
+                            chat,
+                            message: Some(message),
+                        },
+                    ));
                 }
                 Action::StartChat { id, name: _ } => {
                     // The name is the number, which the chat carries, so
                     // nothing extra has to be kept for the replay.
-                    self.app_lock.deferred_request = Some(crate::target::Request {
-                        chat: id,
-                        text: None,
-                    });
+                    self.app_lock
+                        .defer(crate::app_lock::Deferred::Chat(crate::target::Request {
+                            chat: id,
+                            text: None,
+                        }));
                 }
                 Action::OpenUrl(url) => {
                     // Only an invite link is held: it is what a launch
                     // argument may carry. A link from a message stays
                     // unreachable while locked.
                     if let Some(code) = crate::safety::group_invite_code(&url) {
-                        self.app_lock.deferred_invite = Some(code);
+                        self.app_lock.defer(crate::app_lock::Deferred::Invite(code));
                     }
                 }
                 Action::PrefillComposer { chat, text } => {
                     // The chat it belongs to arrives in the request the
                     // StartChat above is holding; a template without its
                     // chat has nowhere to go.
-                    if let Some(request) = self.app_lock.deferred_request.as_mut()
-                        && request.chat == chat
-                    {
-                        request.text = Some(text);
-                    }
+                    self.app_lock.defer_text(&chat, text);
                 }
                 _ => {}
             }
@@ -6797,6 +6798,47 @@ impl App {
             .clear();
     }
 
+    /// Queues what a request held by the app lock asked for, in its own
+    /// account: a notification's, or `here` for a link. The switch is queued
+    /// too, so each request lands in its account after the ones before it.
+    fn replay_deferred(&mut self, request: crate::app_lock::Deferred, here: &AccountId) {
+        use crate::app_lock::Deferred;
+        let account = match &request {
+            Deferred::Message(target) => target.account.clone(),
+            Deferred::Chat(_) | Deferred::Invite(_) => here.clone(),
+        };
+        self.actions.push(Action::SwitchAccount(account));
+        match request {
+            Deferred::Message(target) => {
+                // A call's notification has no message: switching to its
+                // account is all it asked for.
+                if let Some(message) = target.message {
+                    self.actions.push(Action::OpenMessage {
+                        chat: target.chat,
+                        message,
+                    });
+                }
+            }
+            Deferred::Chat(request) => {
+                self.actions.push(Action::ShowWindow);
+                self.actions.push(Action::StartChat {
+                    name: request.display_name(),
+                    id: request.chat.clone(),
+                });
+                if let Some(text) = request.text {
+                    self.actions.push(Action::PrefillComposer {
+                        chat: request.chat,
+                        text,
+                    });
+                }
+            }
+            Deferred::Invite(code) => {
+                self.actions
+                    .push(Action::OpenUrl(format!("https://chat.whatsapp.com/{code}")));
+            }
+        }
+    }
+
     /// Applies what the password thread worked out.
     fn app_lock_outcome(&mut self, outcome: crate::app_lock::Outcome) {
         use crate::app_lock::{FormError, Outcome};
@@ -6807,31 +6849,13 @@ impl App {
                 }
                 self.app_lock.unlocked(matched);
                 if matched {
-                    if let Some(target) = self.app_lock.deferred.take() {
-                        self.switch_account(&target.account);
-                        if let Some(message) = target.message {
-                            self.actions.push(Action::OpenMessage {
-                                chat: target.chat,
-                                message,
-                            });
-                        }
-                    }
-                    if let Some(code) = self.app_lock.deferred_invite.take() {
-                        self.actions
-                            .push(Action::OpenUrl(format!("https://chat.whatsapp.com/{code}")));
-                    }
-                    if let Some(request) = self.app_lock.deferred_request.take() {
-                        self.actions.push(Action::ShowWindow);
-                        self.actions.push(Action::StartChat {
-                            name: request.display_name(),
-                            id: request.chat.clone(),
-                        });
-                        if let Some(text) = request.text {
-                            self.actions.push(Action::PrefillComposer {
-                                chat: request.chat,
-                                text,
-                            });
-                        }
+                    // In the order they were asked for, so the last one is
+                    // what the reader finds on screen. Nothing switches
+                    // accounts while locked, so a link was meant for the
+                    // account on screen now.
+                    let here = self.account().id.clone();
+                    for request in std::mem::take(&mut self.app_lock.deferred) {
+                        self.replay_deferred(request, &here);
                     }
                 }
             }
@@ -6865,9 +6889,7 @@ impl App {
     /// when nothing is left behind it.
     fn forget_app_lock(&mut self) {
         self.app_lock.form = None;
-        self.app_lock.deferred = None;
-        self.app_lock.deferred_request = None;
-        self.app_lock.deferred_invite = None;
+        self.app_lock.deferred.clear();
         self.app_lock.release();
         if self.settings.app_lock_hash.take().is_some() {
             self.save_settings();
@@ -8657,13 +8679,10 @@ mod tests {
             AccountId::first(),
             "nothing changes while locked"
         );
-        assert_eq!(
-            app.app_lock
-                .deferred
-                .as_ref()
-                .map(|target| target.account.as_str()),
-            Some("2")
-        );
+        assert!(matches!(
+            app.app_lock.deferred.as_slice(),
+            [crate::app_lock::Deferred::Message(target)] if target.account.as_str() == "2"
+        ));
     }
 
     #[test]
@@ -14491,11 +14510,11 @@ mod app_lock_tests {
             app.composer
         );
         assert_eq!(
-            app.app_lock.deferred_request,
-            Some(crate::target::Request {
+            app.app_lock.deferred,
+            vec![crate::app_lock::Deferred::Chat(crate::target::Request {
                 chat: CHAT.into(),
                 text: Some("Invoice 123 is attached".into()),
-            }),
+            })],
             "the request is kept whole"
         );
 
@@ -14507,7 +14526,7 @@ mod app_lock_tests {
             "the unlock opens what the link asked for"
         );
         assert_eq!(app.composer, "Invoice 123 is attached");
-        assert_eq!(app.app_lock.deferred_request, None, "and forgets it");
+        assert!(app.app_lock.deferred.is_empty(), "and forgets it");
     }
 
     /// A group invite from the command line waits for the unlock too, while
@@ -14519,10 +14538,7 @@ mod app_lock_tests {
         assert!(app.app_lock.is_locked());
 
         app.apply(Action::OpenUrl("https://example.com/".into()), &ctx);
-        assert_eq!(
-            app.app_lock.deferred_invite, None,
-            "other links are dropped"
-        );
+        assert!(app.app_lock.deferred.is_empty(), "other links are dropped");
 
         app.apply(
             Action::OpenUrl("https://chat.whatsapp.com/AbCdEf1234567890XyZ".into()),
@@ -14530,8 +14546,10 @@ mod app_lock_tests {
         );
         assert!(app.invite.is_none(), "the lock hides the invite");
         assert_eq!(
-            app.app_lock.deferred_invite.as_deref(),
-            Some("AbCdEf1234567890XyZ")
+            app.app_lock.deferred,
+            vec![crate::app_lock::Deferred::Invite(
+                "AbCdEf1234567890XyZ".into()
+            )]
         );
 
         try_password(&mut app, &ctx, PASSWORD);
@@ -14541,7 +14559,75 @@ mod app_lock_tests {
             Some("AbCdEf1234567890XyZ"),
             "the unlock shows the invite"
         );
-        assert_eq!(app.app_lock.deferred_invite, None, "and forgets it");
+        assert!(app.app_lock.deferred.is_empty(), "and forgets it");
+    }
+
+    /// An invite and a chat asked for while locked open in the order they
+    /// arrived, so the later one is what the unlock leaves on screen.
+    #[test]
+    fn requests_held_by_the_lock_replay_in_the_order_they_arrived() {
+        const INVITE: &str = "https://chat.whatsapp.com/AbCdEf1234567890XyZ";
+        let ctx = egui::Context::default();
+
+        // The invite first, then the chat: the chat ends up open.
+        let mut app = app_with(settings(Some(PASSWORD)));
+        app.chats = vec![Chat::new(CHAT.into(), "Ada Lovelace".into())];
+        app.apply(Action::OpenUrl(INVITE.into()), &ctx);
+        app.apply(
+            Action::StartChat {
+                id: CHAT.into(),
+                name: "+1 555 000 0000".into(),
+            },
+            &ctx,
+        );
+        try_password(&mut app, &ctx, PASSWORD);
+        assert_eq!(app.open_chat.as_deref(), Some(CHAT));
+        assert!(app.dialog.is_none(), "the chat came after the invite");
+
+        // The chat first, then the invite: the invite stays up over it.
+        let mut app = app_with(settings(Some(PASSWORD)));
+        app.chats = vec![Chat::new(CHAT.into(), "Ada Lovelace".into())];
+        app.apply(
+            Action::StartChat {
+                id: CHAT.into(),
+                name: "+1 555 000 0000".into(),
+            },
+            &ctx,
+        );
+        app.apply(Action::OpenUrl(INVITE.into()), &ctx);
+        try_password(&mut app, &ctx, PASSWORD);
+        assert_eq!(app.open_chat.as_deref(), Some(CHAT));
+        assert_eq!(
+            app.invite.as_ref().map(|invite| invite.code.as_str()),
+            Some("AbCdEf1234567890XyZ")
+        );
+        assert!(
+            app.dialog == Some(Dialog::JoinGroup),
+            "the invite came after the chat"
+        );
+
+        // A second request of a kind replaces the first, keeping its turn
+        // after everything asked for in between.
+        let mut app = app_with(settings(Some(PASSWORD)));
+        app.apply(Action::OpenUrl(INVITE.into()), &ctx);
+        app.apply(
+            Action::StartChat {
+                id: CHAT.into(),
+                name: "+1 555 000 0000".into(),
+            },
+            &ctx,
+        );
+        app.apply(Action::OpenUrl(INVITE.into()), &ctx);
+        assert_eq!(
+            app.app_lock.deferred,
+            vec![
+                crate::app_lock::Deferred::Chat(crate::target::Request {
+                    chat: CHAT.into(),
+                    text: None,
+                }),
+                crate::app_lock::Deferred::Invite("AbCdEf1234567890XyZ".into()),
+            ]
+        );
     }
 
     /// Without a password there is nothing to wait for: the link opens.
@@ -14583,11 +14669,11 @@ mod app_lock_tests {
             },
             &ctx,
         );
-        assert!(app.app_lock.deferred_request.is_some());
+        assert!(!app.app_lock.deferred.is_empty());
 
         app.forget_app_lock();
 
-        assert_eq!(app.app_lock.deferred_request, None);
+        assert!(app.app_lock.deferred.is_empty());
     }
 
     fn incoming(app: &mut App) -> Message {

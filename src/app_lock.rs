@@ -220,6 +220,17 @@ fn run(work: Work) -> Outcome {
     }
 }
 
+/// One request the app lock holds until it is unlocked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Deferred {
+    /// A clicked notification's message, with its account.
+    Message(crate::notify::NotificationTarget),
+    /// A chat a link named, with the text it carried.
+    Chat(crate::target::Request),
+    /// The code of a group invite a link named.
+    Invite(String),
+}
+
 /// The lock's state while the app runs.
 pub struct AppLock {
     clock: Clock,
@@ -233,15 +244,12 @@ pub struct AppLock {
     /// The last try was wrong.
     pub wrong: bool,
     pub forgetting: Forgetting,
-    /// A notification clicked while locked, opened once unlocked.
-    pub deferred: Option<crate::notify::NotificationTarget>,
-    /// A chat a link asked for while locked, opened once unlocked. A link
-    /// names a chat the lock would otherwise hide, so it waits rather than
-    /// being dropped: the reader asked for it from outside.
-    pub deferred_request: Option<crate::target::Request>,
-    /// The code of a group invite a link asked for while locked, shown once
-    /// unlocked for the same reason.
-    pub deferred_invite: Option<String>,
+    /// What was asked for from outside while locked, in the order it
+    /// arrived, replayed once unlocked: a clicked notification's message, a
+    /// chat a link named, or a group invite. Each names something the lock
+    /// would otherwise hide, so it waits rather than being dropped, and the
+    /// last one asked for ends up on screen.
+    pub deferred: Vec<Deferred>,
     /// The Settings password form, when open.
     pub form: Option<Form>,
 }
@@ -269,9 +277,7 @@ impl AppLock {
             entry: String::new(),
             wrong: false,
             forgetting: Forgetting::No,
-            deferred: None,
-            deferred_request: None,
-            deferred_invite: None,
+            deferred: Vec::new(),
             form: None,
         }
     }
@@ -288,6 +294,29 @@ impl AppLock {
 
     pub fn is_locked(&self) -> bool {
         self.locked
+    }
+
+    /// Holds `request` until the unlock, after everything asked for before
+    /// it. A newer request of the same kind replaces the older one, which
+    /// would only be covered by it.
+    pub fn defer(&mut self, request: Deferred) {
+        let kind = std::mem::discriminant(&request);
+        self.deferred
+            .retain(|held| std::mem::discriminant(held) != kind);
+        self.deferred.push(request);
+    }
+
+    /// Adds a link's text to the chat request it came with, when that
+    /// request is the one waiting for the unlock.
+    pub fn defer_text(&mut self, chat: &str, text: String) {
+        if let Some(Deferred::Chat(request)) = self
+            .deferred
+            .iter_mut()
+            .find(|held| matches!(held, Deferred::Chat(_)))
+            && request.chat == chat
+        {
+            request.text = Some(text);
+        }
     }
 
     /// Someone used the window: the inactivity count starts again.
