@@ -1831,6 +1831,69 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
     chat.is_group()
 }
 
+/// How long the sticky date stays after the transcript stops moving.
+const STICKY_DATE_HOLD: f64 = 1.0;
+/// How long the sticky date takes to fade out.
+const STICKY_DATE_FADE: f32 = 0.25;
+
+/// Keeps the first visible message's date at the top of the transcript once
+/// its day separator has scrolled away, while the reader scrolls: it fades
+/// out a moment after the transcript stops moving, as on the phone.
+/// Following new messages at the bottom does not count as scrolling.
+fn sticky_date<R>(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    locale: crate::i18n::Locale,
+    chat: &Chat,
+    output: &egui::scroll_area::ScrollAreaOutput<R>,
+    visible_day: Option<(i64, f32)>,
+) {
+    let id = egui::Id::new(("visible-message-date", &chat.id));
+    let ctx = ui.ctx().clone();
+    let now = ui.input(|input| input.time);
+    let offset = output.state.offset.y;
+    let viewport = output.inner_rect;
+    let at_bottom = offset + viewport.height() >= output.content_size.y - 24.0;
+    let (last_offset, was_at_bottom, mut moved_at) = ctx
+        .data(|data| data.get_temp::<(f32, bool, f64)>(id))
+        .unwrap_or((offset, at_bottom, f64::NEG_INFINITY));
+    if (offset - last_offset).abs() > 0.5 && !(at_bottom && was_at_bottom) {
+        moved_at = now;
+    }
+    ctx.data_mut(|data| data.insert_temp(id, (offset, at_bottom, moved_at)));
+    let since = now - moved_at;
+    let scrolling = since < STICKY_DATE_HOLD;
+    if scrolling {
+        // One wake-up for the moment the fade begins; the fade itself
+        // repaints through `animate_bool` and stops once it is done.
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(STICKY_DATE_HOLD - since));
+    }
+    // It appears at once when scrolling starts and fades only on the way out.
+    let fade = if scrolling { 0.0 } else { STICKY_DATE_FADE };
+    let opacity = ctx.animate_bool_with_time(id, scrolling, fade);
+    let Some((timestamp, separator_top)) = visible_day else {
+        return;
+    };
+    if opacity <= 0.0 || separator_top >= viewport.top() {
+        return;
+    }
+    // Paint after the scroll contents, inside their clip, without changing
+    // their height or taking clicks away from the messages underneath.
+    let mut overlay = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id)
+            .max_rect(viewport.shrink2(vec2(0.0, 8.0)))
+            .layout(Layout::top_down(Align::Center)),
+    );
+    overlay.set_clip_rect(viewport);
+    overlay.multiply_opacity(opacity);
+    widgets::chip(
+        &mut overlay,
+        palette,
+        &crate::util::day_label(locale, timestamp),
+    );
+}
+
 /// Draws virtualized transcript rows and records selection, scrolling and message actions.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
@@ -2490,24 +2553,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         });
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
-    if let Some((timestamp, separator_top)) = visible_day
-        && separator_top < output.inner_rect.top()
-    {
-        // Paint after the scroll contents, inside their clip, without changing
-        // their height or taking clicks away from the messages underneath.
-        let mut overlay = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("visible-message-date", &chat.id))
-                .max_rect(output.inner_rect.shrink2(vec2(0.0, 8.0)))
-                .layout(Layout::top_down(Align::Center)),
-        );
-        overlay.set_clip_rect(output.inner_rect);
-        widgets::chip(
-            &mut overlay,
-            &palette,
-            &crate::util::day_label(app.locale, timestamp),
-        );
-    }
+    sticky_date(ui, &palette, app.locale, chat, &output, visible_day);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
     ui.ctx().data_mut(|data| {

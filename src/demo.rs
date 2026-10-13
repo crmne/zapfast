@@ -5987,9 +5987,41 @@ mod tests {
         }
     }
 
+    /// Scrolling within a day keeps its date at the top of the transcript,
+    /// and the date fades away once the transcript stops moving.
     #[test]
-    /// Checks that scrolling within a day retains the visible transcript date label.
     fn scrolling_inside_a_day_keeps_its_date_visible() {
+        fn shapes_at(
+            app: &mut App,
+            ctx: &egui::Context,
+            time: f64,
+        ) -> Vec<egui::epaint::ClippedShape> {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        }
+        fn date_on_top(shapes: &[egui::epaint::ClippedShape], label: &str) -> bool {
+            shapes.iter().any(|shape| {
+                matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.text() == label
+                    && text.pos.y >= shape.clip_rect.top()
+                    && text.pos.y < shape.clip_rect.top() + 40.0)
+            })
+        }
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -6013,15 +6045,43 @@ mod tests {
             });
             render(&mut app, &ctx);
             render(&mut app, &ctx);
-            let timestamp = app.conversations[&chat].messages[index].timestamp;
-            let label = crate::util::day_label(app.locale, timestamp);
+            // Jumping to a message is not scrolling; turning the wheel is.
+            let label = crate::util::day_label(
+                app.locale,
+                app.conversations[&chat].messages[index].timestamp,
+            );
+            let still = ctx.input(|input| input.time) + 2.0;
+            assert!(!date_on_top(&shapes_at(&mut app, &ctx, still), &label));
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(800.0, 400.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, 60.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+            );
+            render(&mut app, &ctx);
             let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
             assert!(
-                shapes.iter().any(|shape| matches!(&shape.shape,
-                egui::Shape::Text(text) if text.galley.text() == label
-                    && text.pos.y >= shape.clip_rect.top()
-                    && text.pos.y < shape.clip_rect.top() + 40.0)),
+                date_on_top(&shapes, &label),
                 "the date remains at the top when its separator is off screen: {label}"
+            );
+            let now = ctx.input(|input| input.time);
+            assert!(
+                date_on_top(&shapes_at(&mut app, &ctx, now + 0.5), &label),
+                "the date stays a moment after scrolling stops"
+            );
+            // The wheel's easing may still move the view on the frames above.
+            shapes_at(&mut app, &ctx, now + 1.1);
+            shapes_at(&mut app, &ctx, now + 2.2);
+            assert!(
+                !date_on_top(&shapes_at(&mut app, &ctx, now + 3.0), &label),
+                "the date fades once the transcript has been still"
             );
         }
     }
