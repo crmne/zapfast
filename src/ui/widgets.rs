@@ -517,7 +517,25 @@ pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
         .fold(0.0, f32::max);
     // Text padding, then `menu_frame`'s margin and its 1-point stroke on each
     // side: without the stroke the widest label lost its last letters.
-    widest + if icons { 26.0 } else { 0.0 } + 20.0 + 12.0 + 2.0
+    widest + if icons { 26.0 } else { 0.0 } + 20.0 + MENU_FRAME_EXTRA
+}
+
+/// What `menu_frame` adds to a menu's width: its 6-point margin and its
+/// 1-point stroke, on each side.
+const MENU_FRAME_EXTRA: f32 = 2.0 * (6.0 + 1.0);
+
+/// The room a submenu leaves between itself and the window's edges.
+const SUBMENU_WINDOW_GAP: f32 = 8.0;
+
+/// The width of a submenu's rows: as wide as the widest of `items`, but
+/// never wider than the window, where a long label (a custom sound's file
+/// name) ends in an ellipsis instead of running off screen.
+fn submenu_width(ui: &Ui, items: &[&str]) -> f32 {
+    // `menu_width` counts `menu_frame`'s margin and stroke, and the submenu
+    // brings its own frame around the rows.
+    let fit = menu_width(ui, items, true) - MENU_FRAME_EXTRA;
+    let room = ui.ctx().content_rect().width() - MENU_FRAME_EXTRA - 2.0 * SUBMENU_WINDOW_GAP;
+    fit.min(room.max(0.0))
 }
 
 /// A context-menu entry that opens a submenu, drawn like the plain entries
@@ -576,9 +594,7 @@ pub fn submenu<R>(
             palette.text,
         );
     }
-    // `menu_width` counts `menu_frame`'s margin and stroke, and the submenu
-    // brings its own frame around the rows.
-    let width = menu_width(ui, items, true) - 14.0;
+    let width = submenu_width(ui, items);
     egui::containers::menu::SubMenu::new().show(ui, &response, |ui| {
         ui.set_width(width);
         add_contents(ui)
@@ -1593,26 +1609,23 @@ mod tests {
         assert_eq!(at(14.0).0, 40.0);
     }
 
-    /// A submenu is as wide as its labels, not egui's whole `menu_width`,
-    /// which left a wide blank strip after "Notification sound" and
-    /// "Labels" rows.
-    #[test]
-    fn a_submenu_is_as_wide_as_its_labels() {
+    /// Opens a submenu of `items` in a window `window` points wide, and
+    /// returns its rows' rect with what `menu_width` asks for them.
+    fn shown_submenu(items: &[&str], window: f32) -> (Rect, f32) {
         let palette = Palette::dark();
         let ctx = egui::Context::default();
-        let items = ["Default", "Choose a file…"];
         let row = pos2(60.0, 60.0);
         let frame = |events| {
             let mut shown = None;
             let mut expected = 0.0;
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1600.0, 800.0))),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(window, 800.0))),
                     events,
                     ..Default::default()
                 },
                 |ui| {
-                    expected = menu_width(ui, &items, true);
+                    expected = menu_width(ui, items, true);
                     let button = ui.button("Menu");
                     egui::Popup::menu(&button)
                         .open_memory(Some(egui::SetOpenCommand::Bool(true)))
@@ -1620,7 +1633,7 @@ mod tests {
                         .width(200.0)
                         .frame(menu_frame(&palette))
                         .show(|ui| {
-                            shown = submenu(ui, &palette, Icon::Volume2, "Sound", &items, |ui| {
+                            shown = submenu(ui, &palette, Icon::Volume2, "Sound", items, |ui| {
                                 for item in items {
                                     menu_item(ui, &palette, None, item);
                                 }
@@ -1637,10 +1650,39 @@ mod tests {
         for _ in 0..4 {
             shown = frame(vec![egui::Event::PointerMoved(row)]);
         }
-        let (rect, expected) = shown.expect("the submenu opens on hover");
+        shown.expect("the submenu opens on hover")
+    }
+
+    /// A submenu is as wide as its labels, not egui's whole `menu_width`,
+    /// which left a wide blank strip after "Notification sound" and
+    /// "Labels" rows.
+    #[test]
+    fn a_submenu_is_as_wide_as_its_labels() {
+        let items = ["Default", "Choose a file…"];
+        let (rect, expected) = shown_submenu(&items, 1600.0);
         assert!(
             (rect.width() - expected).abs() <= 4.0,
             "a submenu for {items:?} is {} points wide, not about {expected}",
+            rect.width()
+        );
+    }
+
+    /// A label wider than the window, such as a custom sound's long file
+    /// name, leaves the submenu inside the window.
+    #[test]
+    fn a_submenu_never_outgrows_the_window() {
+        let long = "a very long notification sound file name ".repeat(12) + ".ogg";
+        let items = ["Default", long.as_str()];
+        let window = 500.0;
+        let (rect, expected) = shown_submenu(&items, window);
+        assert!(expected > window, "the label is wider than the window");
+        assert!(
+            rect.left() >= 0.0 && rect.right() <= window,
+            "a submenu at {rect:?} runs off a {window}-point window"
+        );
+        assert!(
+            rect.width() + 2.0 * SUBMENU_WINDOW_GAP <= window + 0.5,
+            "a submenu {} points wide leaves no gap in a {window}-point window",
             rect.width()
         );
     }
