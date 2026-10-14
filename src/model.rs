@@ -737,6 +737,14 @@ pub enum Content {
     },
     /// "This message was deleted."
     Revoked,
+    /// A disappearing-message timer change, drawn as a centred system row
+    /// rather than a bubble. The message's `from_me` and `sender` say who
+    /// changed it.
+    #[serde(rename = "disappearing_timer")]
+    DisappearingTimer {
+        /// The new duration in seconds; `0` means the timer was turned off.
+        seconds: u32,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -1219,6 +1227,10 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::DisappearingTimer { seconds } => {
+                crate::util::disappearing_line(crate::i18n::Locale::English, Some(*seconds))
+                    .unwrap_or_else(|| "Disappearing messages changed".to_owned())
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {

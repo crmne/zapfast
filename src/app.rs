@@ -334,6 +334,7 @@ pub(crate) fn can_select(content: &Content) -> bool {
             | Content::Poll { .. }
             | Content::Interactive { .. }
             | Content::Call { .. }
+            | Content::DisappearingTimer { .. }
     )
 }
 

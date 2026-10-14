@@ -2313,6 +2313,7 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         Content::Document { caption, .. } => 70.0 + caption_rows(caption),
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
+        Content::DisappearingTimer { .. } => 0.0,
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
@@ -3794,6 +3795,21 @@ struct RunPlace {
     tailed: bool,
 }
 
+/// The system row a disappearing-message timer change leaves in the
+/// transcript: a centred chip naming who changed it and to what, as the
+/// phone shows it. It is not a message, so nothing selects or copies it.
+fn timer_notice(ui: &mut egui::Ui, view: &View<'_>, message: &Message, seconds: u32) {
+    let name = if message.from_me {
+        crate::i18n::gettext(view.locale, "You").into_owned()
+    } else {
+        (view.names_or)(&message.sender, message.sender_name.as_deref())
+    };
+    let text = crate::util::disappearing_change(view.locale, &name, seconds);
+    ui.vertical_centered(|ui| {
+        widgets::chip(ui, &view.palette, &text);
+    });
+}
+
 /// Draws a message row and returns its bubble response for scrolling.
 fn bubble(
     ui: &mut egui::Ui,
@@ -3803,6 +3819,12 @@ fn bubble(
     place: RunPlace,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // A timer change is a system row, not a message: a centred chip naming
+    // who changed it and to what, with no bubble, avatar, or selection.
+    if let Content::DisappearingTimer { seconds } = &message.content {
+        timer_notice(ui, view, message, *seconds);
+        return None;
+    }
     let RunPlace {
         show_sender,
         show_avatar,
@@ -6769,6 +6791,11 @@ fn content(
                     );
                 },
             );
+            None
+        }
+        Content::DisappearingTimer { .. } => {
+            // Drawn as a centred system row by `bubble`, which returns before
+            // the bubble is built. This arm only keeps the match exhaustive.
             None
         }
     }

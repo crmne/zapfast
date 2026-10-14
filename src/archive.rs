@@ -3505,6 +3505,35 @@ pub(crate) mod tests {
         assert_eq!(loaded.disappearing_timer(), Some(86_400));
     }
 
+    /// The system row a timer change leaves is stored as structured content
+    /// and reloads as the same variant, not as prose; search never matches it.
+    #[test]
+    fn a_timer_notice_round_trips_and_stays_out_of_search() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let mut notice = message(chat, "timer", 100, false);
+        notice.content = Content::DisappearingTimer { seconds: 604_800 };
+        archive.insert_message(&notice, None).expect("insert");
+
+        let loaded = archive
+            .message(chat, "timer")
+            .expect("reads")
+            .expect("exists");
+        assert_eq!(
+            loaded.content,
+            Content::DisappearingTimer { seconds: 604_800 }
+        );
+        assert_eq!(loaded.summary(), "Disappearing messages: 7 days");
+        assert!(
+            archive
+                .search_messages("Disappearing", 10)
+                .expect("search")
+                .is_empty(),
+            "a timer notice is not searchable"
+        );
+    }
+
     /// An archive from before group editing learns who may edit a group's
     /// info: its rows start as unknown, not as open to everyone, and the
     /// metadata's answer and later lock notices are kept.

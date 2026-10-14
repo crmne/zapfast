@@ -2300,6 +2300,24 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "disappearing-notice" => {
+                // A chat showing the in-conversation notice a timer change
+                // leaves, as the phone files it: a centred system row.
+                let chat = SAMPLES[0].id.to_owned();
+                let now = crate::util::now();
+                if let Some(conversation) = app.conversations.get_mut(&chat) {
+                    conversation.messages.push(message(
+                        &chat,
+                        "zapfast-timer-demo",
+                        false,
+                        now - 30,
+                        Content::DisappearingTimer { seconds: 604_800 },
+                    ));
+                }
+                app.open_chat = Some(chat);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "arabic-reply" => {
                 let chat = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -5914,6 +5932,7 @@ mod tests {
             "disappearing",
             "disappearing-direct",
             "disappearing-off",
+            "disappearing-notice",
             "disappearing,group-info",
             "disappearing-direct,info",
             "disappearing-off,info",
