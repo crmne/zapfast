@@ -50,18 +50,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
     // Everything below the title scrolls together, and only once the dialog
     // is as tall as poll results can grow, so a short list shows in full.
     let height = widgets::dialog_scroll_height(ui);
-    let area = egui::ScrollArea::vertical()
-        .id_salt(("message-info", chat, id))
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-        .max_height(height)
-        .min_scrolled_height(height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    let area = crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("message-info", chat, id))
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .max_height(height)
+            .min_scrolled_height(height)
+            .auto_shrink([false, true]),
+        |ui| {
             ui.add_space(8.0);
             receipts(app, ui, chat, id, &message);
             // The list ends clear of the dialog's edge rather than on it.
             ui.add_space(8.0);
-        });
+        },
+    );
     let bubble = super::conversation::bubble_id(chat, id);
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble.with("message-info-viewport"), area.inner_rect);

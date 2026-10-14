@@ -728,7 +728,7 @@ fn emoji_grid(
     ui.ctx().data_mut(|data| {
         data.insert_temp(egui::Id::new(("emoji-visible", scroll_salt)), visible_label);
     });
-    grid.show_rows(ui, row_height, rows.len(), |ui, range| {
+    crate::autoscroll::show_rows(ui, grid, row_height, rows.len(), |ui, range| {
         for row in &rows[range] {
             match row {
                 Row::Header(label) => {
@@ -1030,10 +1030,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let gap = 6.0;
     let tile_width = (ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32;
     let mut picked = None;
-    egui::ScrollArea::vertical()
-        .id_salt("gif-grid")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("gif-grid")
+            .auto_shrink([false, false]),
+        |ui| {
             ui.spacing_mut().item_spacing = vec2(gap, gap);
             for row in results.chunks(columns) {
                 ui.horizontal(|ui| {
@@ -1079,7 +1081,8 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     );
                 });
             }
-        });
+        },
+    );
     if let Some(gif) = picked {
         app.actions.push(Action::SendGif(gif));
     }
@@ -1266,12 +1269,15 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 &gettext(locale, "No stickers match your search."),
             );
         } else {
-            egui::ScrollArea::vertical()
-                .id_salt("sticker-results")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
+            crate::autoscroll::show(
+                ui,
+                egui::ScrollArea::vertical()
+                    .id_salt("sticker-results")
+                    .auto_shrink([false, false]),
+                |ui| {
                     sticker_grid(ui, palette, &found, Shelf::Pack, &grid, &mut choices);
-                });
+                },
+            );
         }
     } else {
         match &shelf {
@@ -1341,10 +1347,12 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         ),
                     );
                 } else {
-                    egui::ScrollArea::vertical()
-                        .id_salt(("sticker-pack", &pack.dir))
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
+                    crate::autoscroll::show(
+                        ui,
+                        egui::ScrollArea::vertical()
+                            .id_salt(("sticker-pack", &pack.dir))
+                            .auto_shrink([false, false]),
+                        |ui| {
                             sticker_grid(
                                 ui,
                                 palette,
@@ -1353,7 +1361,8 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                                 &grid,
                                 &mut choices,
                             );
-                        });
+                        },
+                    );
                 }
             }
             StickerShelf::Recent | StickerShelf::Favorites | StickerShelf::Received => {
@@ -1362,12 +1371,15 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     StickerShelf::Favorites => (&app.stickers_saved, Shelf::Favorites),
                     _ => (&app.stickers_received, Shelf::Pack),
                 };
-                egui::ScrollArea::vertical()
-                    .id_salt(("sticker-shelf", &shelf))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                crate::autoscroll::show(
+                    ui,
+                    egui::ScrollArea::vertical()
+                        .id_salt(("sticker-shelf", &shelf))
+                        .auto_shrink([false, false]),
+                    |ui| {
                         sticker_grid(ui, palette, stickers, kind, &grid, &mut choices);
-                    });
+                    },
+                );
             }
             StickerShelf::Add => {}
         }
@@ -1407,10 +1419,12 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 /// sticker from a picture.
 fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let locale = app.locale;
-    egui::ScrollArea::vertical()
-        .id_salt("sticker-add")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("sticker-add")
+            .auto_shrink([false, false]),
+        |ui| {
             ui.add_space(4.0);
             theme::text(
                 ui,
@@ -1459,7 +1473,8 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             {
                 app.actions.push(Action::PickStickerPicture);
             }
-        });
+        },
+    );
 }
 
 /// Names and creates a local pack.

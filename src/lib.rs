@@ -9,6 +9,7 @@ pub mod app_lock;
 pub mod appearance;
 pub mod archive;
 pub mod audio;
+pub mod autoscroll;
 pub mod autostart;
 pub mod backdrop;
 pub mod backend;

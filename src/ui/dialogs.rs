@@ -171,12 +171,14 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
     }
     ui.add_space(8.0);
     let height = (ui.ctx().content_rect().height() - 200.0).clamp(100.0, 420.0);
-    egui::ScrollArea::vertical()
-        .id_salt(("interactive-list", chat, message, button))
-        .max_height(height)
-        .min_scrolled_height(height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("interactive-list", chat, message, button))
+            .max_height(height)
+            .min_scrolled_height(height)
+            .auto_shrink([false, true]),
+        |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let mut section = "";
@@ -210,7 +212,8 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
                     }
                 }
             });
-        });
+        },
+    );
 }
 
 /// List choices preserve emoji and wrap their descriptions without clipping.
@@ -418,11 +421,13 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     }
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let contacts = contact_choices(app, &needle);
-    egui::ScrollArea::vertical()
-        .id_salt("new-chat-contacts")
-        .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("new-chat-contacts")
+            .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
+            .auto_shrink([false, true]),
+        |ui| {
             let offer_self = app.offers_self(&needle);
             if offer_self {
                 super::chats::self_row(app, ui);
@@ -440,7 +445,8 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                     super::chats::contact_row(app, ui, &contact)
                 });
             }
-        });
+        },
+    );
 }
 
 /// The people New chat and New call offer, by name: the contacts and the
@@ -499,15 +505,13 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             palette.text,
         );
         ui.add_space(8.0);
-        egui::ScrollArea::vertical()
-            .max_height(260.0)
-            .show(ui, |ui| {
-                for id in &app.forward_recipients {
-                    if let Some(chat) = app.chat(id) {
-                        theme::text(ui, app.chat_title(chat), theme::regular(14.0), palette.text);
-                    }
+        crate::autoscroll::show(ui, egui::ScrollArea::vertical().max_height(260.0), |ui| {
+            for id in &app.forward_recipients {
+                if let Some(chat) = app.chat(id) {
+                    theme::text(ui, app.chat_title(chat), theme::regular(14.0), palette.text);
                 }
-            });
+            }
+        });
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if theme::pill_button(
@@ -567,11 +571,15 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     // takes no more.
     let full = app.forward_limit > 1 && app.forward_recipients.len() >= app.forward_limit;
 
-    egui::ScrollArea::vertical()
-        .id_salt("forward-chats")
-        .max_height(max_height)
-        .auto_shrink([false, true])
-        .show_rows(ui, row_height, chats.len(), |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("forward-chats")
+            .max_height(max_height)
+            .auto_shrink([false, true]),
+        row_height,
+        chats.len(),
+        |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for chat in &chats[range] {
                 let title = app.chat_title(chat);
@@ -656,7 +664,8 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                         .push(Action::ToggleForwardRecipient(chat.id.clone()));
                 }
             }
-        });
+        },
+    );
     if chats.is_empty() {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -830,11 +839,13 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
     let column = (width - SHORTCUTS_GUTTER * (columns - 1) as f32) / columns as f32;
     let per_column = super::keys::SHORTCUTS.len().div_ceil(columns);
     let height = (ui.ctx().content_rect().height() - 190.0).max(120.0);
-    egui::ScrollArea::vertical()
-        .id_salt("shortcuts")
-        .max_height(height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("shortcuts")
+            .max_height(height)
+            .auto_shrink([false, true]),
+        |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = SHORTCUTS_GUTTER;
                 for rows in super::keys::SHORTCUTS.chunks(per_column) {
@@ -851,7 +862,8 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
                     );
                 }
             });
-        });
+        },
+    );
     ui.add_space(12.0);
     // The hint bar's × hides it; this brings it back.
     let mut hints = app.settings.show_shortcut_hints;
@@ -1003,11 +1015,9 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(members).color(palette.secondary));
     if let Some(description) = &info.description {
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
-            .max_height(140.0)
-            .show(ui, |ui| {
-                super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
-            });
+        crate::autoscroll::show(ui, egui::ScrollArea::vertical().max_height(140.0), |ui| {
+            super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
+        });
     }
     let member = app.chats.iter().any(|chat| chat.id == info.id);
     if info.approval && !member {
@@ -1074,12 +1084,15 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
     if !publisher.trim().is_empty() {
         theme::text(ui, &publisher, theme::regular(13.0), palette.secondary);
     }
-    egui::ScrollArea::vertical()
-        .max_height(320.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .auto_shrink([false, true]),
+        |ui| {
             super::picker::sticker_preview_grid(ui, &palette, &pack.stickers, app.window_focused);
-        });
+        },
+    );
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

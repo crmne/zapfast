@@ -252,17 +252,20 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
         (Icon::X, crate::i18n::gettext(app.locale, "Close"))
     };
     header(app, ui, icon, &close, &title, Action::CloseInfo, false);
-    egui::ScrollArea::vertical()
-        .id_salt(("chat-info", id))
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("chat-info", id))
+            .auto_shrink([false, false]),
+        |ui| {
             Frame::new()
                 .inner_margin(Margin::symmetric(MARGIN as i8, 12))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 8.0;
                     identity(app, ui, &shown, overlay);
                 });
-        });
+        },
+    );
 }
 
 /// The picture, name, details, actions and members, top to bottom.
@@ -523,13 +526,16 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         ui.add_space(4.0);
         // A long description scrolls in place, so the media and the members
         // stay close under it.
-        egui::ScrollArea::vertical()
-            .id_salt("group-description")
-            .max_height(120.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
+        crate::autoscroll::show(
+            ui,
+            egui::ScrollArea::vertical()
+                .id_salt("group-description")
+                .max_height(120.0)
+                .auto_shrink([false, true]),
+            |ui| {
                 theme::selectable_text(ui, description, theme::regular(13.5), palette.text);
-            });
+            },
+        );
     }
     // A locked chat's media stays in the locked folder: the section is not
     // there, rather than empty.
@@ -710,11 +716,15 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) 
     let mut open = None;
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("members", id))
-        .max_height(row_height * rows)
-        .auto_shrink([false, true])
-        .show_rows(ui, row_height, members.len(), |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("members", id))
+            .max_height(row_height * rows)
+            .auto_shrink([false, true]),
+        row_height,
+        members.len(),
+        |ui, range| {
             for (member, name) in &members[range] {
                 let (rect, response) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), row_height),
@@ -761,7 +771,8 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) 
                     open = Some(member.clone());
                 }
             }
-        });
+        },
+    );
     app.info_members = Some((id.to_owned(), members));
     if let Some(member) = open
         && Some(member.as_str()) != app.me.as_deref()
@@ -1009,10 +1020,14 @@ fn media_grid(
     ui.add_space(6.0);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing = vec2(GAP, GAP);
-    egui::ScrollArea::vertical()
-        .id_salt(("info-media-grid", listing.chat.as_str()))
-        .auto_shrink([false, false])
-        .show_rows(ui, cell + GAP, rows, |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("info-media-grid", listing.chat.as_str()))
+            .auto_shrink([false, false]),
+        cell + GAP,
+        rows,
+        |ui, range| {
             for row in range {
                 ui.horizontal(|ui| {
                     ui.add_space(MARGIN);
@@ -1035,7 +1050,8 @@ fn media_grid(
                     }
                 });
             }
-        });
+        },
+    );
 }
 
 /// One square picture or video: its preview cropped to the square, with a
@@ -1174,10 +1190,14 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
     }
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("info-docs", listing.chat.as_str()))
-        .auto_shrink([false, false])
-        .show_rows(ui, ROW_HEIGHT, listing.docs.len(), |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("info-docs", listing.chat.as_str()))
+            .auto_shrink([false, false]),
+        ROW_HEIGHT,
+        listing.docs.len(),
+        |ui, range| {
             for message in &listing.docs[range] {
                 let Content::Document {
                     media,
@@ -1201,7 +1221,8 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
                     go_to(app, message, overlay);
                 }
             }
-        });
+        },
+    );
 }
 
 /// The web links written in the chat, newest first: the preview's title or
@@ -1220,10 +1241,14 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
     }
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("info-links", listing.chat.as_str()))
-        .auto_shrink([false, false])
-        .show_rows(ui, ROW_HEIGHT, listing.links.len(), |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("info-links", listing.chat.as_str()))
+            .auto_shrink([false, false]),
+        ROW_HEIGHT,
+        listing.links.len(),
+        |ui, range| {
             for link in &listing.links[range] {
                 let title = link.title.as_deref().unwrap_or(&link.url);
                 let detail = format!(
@@ -1235,7 +1260,8 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
                     app.actions.push(Action::OpenUrl(link.url.clone()));
                 }
             }
-        });
+        },
+    );
 }
 
 /// One document or link row: an icon in a tile, a title, and a detail line.
