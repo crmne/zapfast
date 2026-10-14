@@ -876,6 +876,9 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
+        /// The cancel flag of the upload this comes from: set by the time the
+        /// worker gets here, the attachment is dropped unsent.
+        cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     },
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {

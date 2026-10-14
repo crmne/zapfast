@@ -6278,7 +6278,19 @@ impl Worker {
                 mentions,
                 quoting,
             } => self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting),
-            Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
+            Command::Outbound {
+                chat,
+                row,
+                raw,
+                cancelled,
+            } => {
+                // A cancel that reached the worker first wins over the send.
+                if !cancelled
+                    .is_some_and(|cancelled| cancelled.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    self.outbound(chat, *row, raw);
+                }
+            }
             Command::SendSticker {
                 chat,
                 path,
@@ -9734,6 +9746,7 @@ impl Worker {
                             chat,
                             row: Box::new(row),
                             raw,
+                            cancelled: Some(Arc::clone(&uploading.cancelled)),
                         });
                     }
                     // Cancelled on purpose: nothing to tell.
@@ -9830,6 +9843,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        cancelled: Some(Arc::clone(&uploading.cancelled)),
                     });
                 }
                 Err(_) if uploading.cancelled() => {}
@@ -9890,6 +9904,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        cancelled: None,
                     });
                 }
                 Err(error) => {
@@ -9963,6 +9978,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        cancelled: None,
                     });
                 }
                 Err(error) => {
@@ -10023,6 +10039,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        cancelled: None,
                     });
                 }
                 Err(error) => {
@@ -13154,6 +13171,27 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len();
         assert_eq!(left, 0, "an ended upload leaves");
+    }
+
+    /// An attachment whose upload was cancelled while its message was being
+    /// built is dropped at the handoff; one that was not goes on to be sent.
+    #[tokio::test]
+    async fn a_cancelled_upload_is_not_sent_at_the_handoff() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        let outbound = |cancelled: bool| Command::Outbound {
+            chat: super::receipt_tests::PEER.into(),
+            row: Box::new(super::receipt_tests::own_message("m1", 1)),
+            raw: Vec::new(),
+            cancelled: Some(Arc::new(std::sync::atomic::AtomicBool::new(cancelled))),
+        };
+        worker.handle_command(outbound(true)).await;
+        assert!(events.try_iter().next().is_none(), "nothing goes out");
+        // Without a connection, an attachment that reaches sending says so.
+        worker.handle_command(outbound(false)).await;
+        assert!(matches!(
+            events.try_iter().collect::<Vec<_>>().as_slice(),
+            [Event::Error(_)]
+        ));
     }
 
     #[test]
