@@ -3391,6 +3391,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.unsent_voice =
                     Some((chat.to_owned(), vec![0.0; crate::voice::RATE as usize * 6]));
             }
+            // A photo of the album coming in, and a file going out.
+            "transfers" => {
+                media_album_sample(app, true);
+                let chat = SAMPLES[0].id;
+                let messages = &mut app.conversations.get_mut(chat).unwrap().messages;
+                messages[1].content.media_at_mut(None).unwrap().state =
+                    crate::model::MediaState::Downloading;
+                app.download_progress
+                    .entry(chat.into())
+                    .or_default()
+                    .insert("album-1".into(), 40);
+                app.uploads.push(crate::model::Upload {
+                    id: 1,
+                    chat: chat.into(),
+                    name: "Quarterly report.pdf".into(),
+                    percent: 62,
+                    seconds_left: Some(18),
+                });
+            }
             // Show two simultaneous group typers.
             "typers" => {
                 let group = SAMPLES[1].id;
@@ -7606,6 +7625,7 @@ mod tests {
             "private-reply-locked-source,light",
             "edit",
             "unsent-voice",
+            "transfers",
             "scrolled",
             "reactions",
             "typers",
@@ -9897,6 +9917,57 @@ mod tests {
             .push(crate::model::Action::OpenChat(pinned.into()));
         frame_with(&mut app, &ctx, vec![]);
         assert_eq!(ids(&app), original, "leaving drops the cleared draft");
+    }
+
+    /// A file going out shows above its own chat's composer only, and its X
+    /// stops it.
+    #[test]
+    fn an_upload_shows_above_its_own_chat_only() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let own = SAMPLES[0].id.to_owned();
+        let other = SAMPLES[2].id.to_owned();
+        app.uploads.push(crate::model::Upload {
+            id: 1,
+            chat: own.clone(),
+            name: "report.pdf".into(),
+            percent: 40,
+            seconds_left: Some(75),
+        });
+        let strip = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-strip", 1_u64))))
+        };
+        app.actions.push(crate::model::Action::OpenChat(other));
+        render(&mut app, &ctx);
+        assert!(strip(&ctx).is_none(), "another chat does not show it");
+        app.actions.push(crate::model::Action::OpenChat(own));
+        render(&mut app, &ctx);
+        assert!(strip(&ctx).is_some(), "its own chat shows it");
+        let pos = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-cancel", 1_u64))))
+            .expect("a cancel button")
+            .center();
+        let click = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), click(true)],
+        );
+        frame_with(&mut app, &ctx, vec![click(false)]);
+        render(&mut app, &ctx);
+        assert!(app.uploads.is_empty(), "the X takes the strip away");
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::CancelUpload(1)))
+        );
     }
 
     #[test]
