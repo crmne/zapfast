@@ -44,6 +44,8 @@ mod contact_names;
 mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
+mod download_organization;
+mod download_saving;
 mod favorite_chats;
 mod interactive;
 mod link_watch;
@@ -737,6 +739,7 @@ pub async fn run(
         group_info_retry: Vec::new(),
         presence_subscribed: HashSet::new(),
         download_folder: None,
+        download_saving: download_saving::State::default(),
         keep_chats_archived: true,
         online_wanted: false,
         online_changed: Instant::now(),
@@ -1145,6 +1148,7 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
+    download_saving: download_saving::State,
     /// Settings' "Keep chats archived". Off, a new message unarchives its
     /// chat here, as the phone does; WhatsApp sends no mutation for it.
     keep_chats_archived: bool,
@@ -1639,6 +1643,7 @@ impl Worker {
 
     /// Deletes a chat and stops everything that could still bring it back.
     fn remove_chat(&mut self, chat: &str, through: i64, delete_media: bool) {
+        self.download_saving.invalidate();
         // A group we left would otherwise keep being asked for metadata and
         // log a 403 or 404 for every attempt.
         self.group_info_queue.retain(|id| id != chat);
@@ -1682,6 +1687,7 @@ impl Worker {
     /// Empties a chat while keeping it listed.
     /// Empties a chat through `through`; false when the archive could not.
     fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
+        self.download_saving.invalidate();
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
@@ -2406,6 +2412,9 @@ impl Worker {
     /// created, otherwise the cache, so an unplugged drive does not stop
     /// downloads.
     fn download_dir(&self) -> PathBuf {
+        if self.download_saving.preferences.is_some() {
+            return self.dirs.media_cache_dir();
+        }
         match &self.download_folder {
             Some(folder) if std::fs::create_dir_all(folder).is_ok() && folder.is_dir() => {
                 folder.clone()
@@ -2653,6 +2662,7 @@ impl Worker {
     }
 
     async fn stop_bot(&mut self) {
+        self.download_saving.invalidate();
         self.client = None;
         // A batch still going belongs to the session that was sending it, and
         // every send is its own task: one can report its tick after this
@@ -3454,6 +3464,7 @@ impl Worker {
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
                 self.ensure_chat(&chat, None);
+                self.download_saving.invalidate();
                 let locked = update.action.locked.unwrap_or(false);
                 let _ =
                     self.archive
@@ -6162,6 +6173,7 @@ impl Worker {
             } => self.edit_settled(chat, id, generation, accepted),
             Command::Revoke { chat, id } => self.revoke(chat, id),
             Command::DeleteLocal { chat, id } => {
+                self.download_saving.invalidate();
                 self.delete_message_for_me(chat, id);
             }
             Command::MessageDeletedForMe {
@@ -6277,11 +6289,31 @@ impl Worker {
                     self.start_bot().await;
                 }
             }
+            Command::SetDownloadSaving {
+                preferences,
+                automatic,
+            } => {
+                self.download_saving.configure(preferences, automatic);
+            }
+            Command::SetDownloadSavingAllowed(allowed) => self.download_saving.set_allowed(allowed),
+            Command::AttachmentSaved {
+                generation,
+                destination,
+                result,
+            } => {
+                if self
+                    .download_saving
+                    .completed(generation, &destination, result.is_ok())
+                {
+                    self.emit(Event::AttachmentSaved(result));
+                }
+            }
             Command::SetDownloadFolder(folder) => {
                 // Interrupted downloads leave hidden staging files behind.
                 if let Some(folder) = &folder {
                     discard_attachment_staging(folder);
                 }
+                self.download_saving.invalidate();
                 self.download_folder = folder;
             }
             Command::SetKeepChatsArchived(keep) => self.keep_chats_archived = keep,
@@ -6457,37 +6489,12 @@ impl Worker {
                     }
                 });
             }
-            Command::SaveAttachmentAs { source, name } => {
-                let events = self.events.clone();
-                let waker = self.waker.clone();
-                tokio::task::spawn_blocking(move || {
-                    let mut dialog = rfd::FileDialog::new()
-                        .set_title("Save attachment")
-                        .set_file_name(&name);
-                    if let Some(downloads) = directories::UserDirs::new()
-                        .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
-                    {
-                        dialog = dialog.set_directory(downloads);
-                    }
-                    // Cancelling the dialog saves nothing and says nothing.
-                    let Some(target) = dialog.save_file() else {
-                        return;
-                    };
-                    let event = match std::fs::copy(&source, &target) {
-                        Ok(_) => Event::Info(format!(
-                            "Saved {}",
-                            target.file_name().map_or_else(
-                                || name.clone(),
-                                |name| name.to_string_lossy().into_owned()
-                            )
-                        )),
-                        Err(error) => {
-                            Event::Error(format!("Could not save the attachment: {error}"))
-                        }
-                    };
-                    let _ = events.send(event);
-                    waker.wake();
-                });
+            Command::SaveAttachmentAs {
+                source,
+                name,
+                attachment,
+            } => {
+                self.save_attachment_as(source, name, attachment);
             }
             Command::OpenLog(path) => {
                 let events = self.events.clone();
@@ -6499,40 +6506,7 @@ impl Worker {
                     }
                 });
             }
-            Command::SaveAttachments { files } => {
-                let events = self.events.clone();
-                let waker = self.waker.clone();
-                tokio::task::spawn_blocking(move || {
-                    let mut dialog = rfd::FileDialog::new().set_title("Save album");
-                    if let Some(downloads) = directories::UserDirs::new()
-                        .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
-                    {
-                        dialog = dialog.set_directory(downloads);
-                    }
-                    let Some(folder) = dialog.pick_folder() else {
-                        return;
-                    };
-                    let mut saved = 0usize;
-                    let mut failed = Vec::new();
-                    for (source, name) in files {
-                        match save_album_copy(&source, &folder, &name) {
-                            Ok(_) => saved += 1,
-                            Err(error) => failed.push(format!("{name}: {error}")),
-                        }
-                    }
-                    let event = if failed.is_empty() {
-                        Event::Info(format!("Saved {saved} album attachments"))
-                    } else {
-                        Event::Error(format!(
-                            "Saved {saved} album attachments; {} could not be saved: {}",
-                            failed.len(),
-                            failed.join("; ")
-                        ))
-                    };
-                    let _ = events.send(event);
-                    waker.wake();
-                });
-            }
+            Command::SaveAttachments { files, chat } => self.save_album(files, &chat),
             Command::PrepareClipboardImage(path) => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
@@ -7307,6 +7281,7 @@ impl Worker {
                 self.emit_chat(&chat);
             }
             Command::SetLocked(chat, locked) => {
+                self.download_saving.invalidate();
                 let _ = self.archive.set_locked(&chat, locked);
                 self.emit_chat(&chat);
                 self.tell_phone(&chat, move |client, jid| async move {
@@ -8460,6 +8435,11 @@ impl Worker {
     /// Downloads an attachment. A `manual` one, asked for by the reader, has
     /// no size limit; every download's deadline grows with its size.
     fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>, manual: bool) {
+        if manual {
+            self.download_saving
+                .manual
+                .insert((chat.clone(), id.clone(), card));
+        }
         if !self.downloads.insert((chat.clone(), id.clone(), card)) {
             // A click while only the picker is fetching it: the picker's
             // download skips the re-upload, so remember to ask if it fails.
@@ -8763,7 +8743,15 @@ impl Worker {
     ) {
         if let Ok(path) = &result {
             let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
+            let manual = self
+                .download_saving
+                .manual
+                .remove(&(chat.clone(), id.clone(), card));
+            self.save_download_copy(&chat, &id, card, path, manual);
         }
+        self.download_saving
+            .manual
+            .remove(&(chat.clone(), id.clone(), card));
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
         let for_picker = self.sticker_downloads.remove(&key);
@@ -9200,6 +9188,31 @@ impl Worker {
                     messages.remove(0);
                 }
                 for message in &mut messages {
+                    if let Some(path) = message
+                        .content
+                        .media()
+                        .and_then(|media| media.path.as_ref())
+                    {
+                        self.save_download_copy(chat, &message.id, None, path, false);
+                    }
+                    if let Content::Interactive {
+                        card: Some(card), ..
+                    } = &message.content
+                    {
+                        for (index, card) in card.carousel.iter().enumerate() {
+                            if let Some(path) =
+                                card.image.as_ref().and_then(|media| media.path.as_ref())
+                            {
+                                self.save_download_copy(
+                                    chat,
+                                    &message.id,
+                                    Some(index),
+                                    path,
+                                    false,
+                                );
+                            }
+                        }
+                    }
                     self.polish(message);
                 }
                 self.emit(Event::Messages {
@@ -16536,6 +16549,7 @@ mod receipt_tests {
             group_info_retry: Vec::new(),
             presence_subscribed: HashSet::new(),
             download_folder: None,
+            download_saving: download_saving::State::default(),
             keep_chats_archived: true,
             online_wanted: false,
             online_changed: Instant::now(),

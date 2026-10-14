@@ -580,6 +580,17 @@ pub enum Command {
         about: Option<String>,
         picture: bool,
     },
+    SetDownloadSavingAllowed(bool),
+    SetDownloadSaving {
+        preferences: Option<crate::settings::DownloadPreferences>,
+        automatic: crate::settings::AutomaticSaving,
+    },
+    /// Internal: a saved copy finished. File failures never replace media state.
+    AttachmentSaved {
+        generation: u64,
+        destination: PathBuf,
+        result: Result<PathBuf, String>,
+    },
     /// Where new downloads go; `None` is the cache.
     SetDownloadFolder(Option<std::path::PathBuf>),
     /// Whether archived chats stay archived when a new message arrives or is
@@ -592,13 +603,15 @@ pub enum Command {
     SaveAttachmentAs {
         source: std::path::PathBuf,
         name: String,
+        attachment: Option<(ChatId, String, Option<usize>)>,
     },
     /// Opens the log, or shows it in its folder, off the interface thread;
     /// only a failure reports back.
     OpenLog(PathBuf),
     /// Asks for one folder, then saves every named attachment into it.
     SaveAttachments {
-        files: Vec<(std::path::PathBuf, String)>,
+        files: Vec<(std::path::PathBuf, String, String)>,
+        chat: ChatId,
     },
     /// Reads and decodes an image file off the UI thread for clipboard writing.
     PrepareClipboardImage(PathBuf),
@@ -972,6 +985,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    AttachmentSaved(Result<PathBuf, String>),
     InteractiveReplyState {
         chat: ChatId,
         message: String,

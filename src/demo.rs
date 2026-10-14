@@ -2429,6 +2429,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "download-management" | "download-management-error" => {
+                app.page = Page::Settings;
+                app.settings_search = "Files".into();
+                app.settings.download_folder =
+                    Some(std::path::PathBuf::from("Synthetic downloads"));
+                app.settings.download_preferences =
+                    Some(crate::settings::DownloadPreferences::default());
+                app.account_mut().settings.auto_download = true;
+                app.account_mut().settings.automatic_saving = crate::settings::AutomaticSaving {
+                    since: Some(1_700_000_000),
+                    include_older: false,
+                };
+                if part == "download-management-error" {
+                    app.account_mut().download_save_status =
+                        Some(Err("Synthetic copy failure".into()));
+                }
+            }
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
