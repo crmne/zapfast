@@ -1088,6 +1088,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        cancelled: None,
                     });
                 }
                 Err(error) => {

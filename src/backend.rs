@@ -801,6 +801,8 @@ pub enum Command {
     /// linked phone keeps receiving push notifications.
     SetOnline(bool),
     Shutdown,
+    /// Stops the file being sent with this id; nothing reaches the chat.
+    CancelUpload(u64),
     /// Internal send result.
     Sent {
         chat: ChatId,
@@ -874,6 +876,9 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
+        /// The cancel flag of the upload this comes from: set by the time the
+        /// worker gets here, the attachment is dropped unsent.
+        cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     },
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {
@@ -1159,6 +1164,26 @@ pub enum Event {
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,
+    },
+    /// How far an attachment download has got, for its ring.
+    DownloadProgress {
+        chat: ChatId,
+        message: String,
+        percent: u8,
+    },
+    /// How far a file being sent has gone out, for the strip above the
+    /// composer, and roughly how many seconds the rest takes. The first one,
+    /// at 0, comes before it is prepared.
+    UploadProgress {
+        id: u64,
+        chat: ChatId,
+        name: String,
+        percent: u8,
+        seconds_left: Option<u32>,
+    },
+    /// The upload with this id is over, sent or not.
+    UploadEnded {
+        id: u64,
     },
     /// A motion photo's clip finished downloading, or failed.
     Motion {
