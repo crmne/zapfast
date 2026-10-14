@@ -796,9 +796,10 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     // Rows read the list from the app while they hand their actions back, so
     // the actions are collected here and applied once the list is drawn.
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical().auto_shrink([false, false]),
+        |ui| {
             for entry in &app.starred {
                 if app
                     .chat(&entry.message.chat)
@@ -816,7 +817,8 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
                     &mut actions,
                 );
             }
-        });
+        },
+    );
     app.actions.append(&mut actions);
 }
 
@@ -1102,7 +1104,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     } else {
         0.0
     };
-    let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
+    let output = crate::autoscroll::show_rows(ui, scroll_area, row_height, total, |ui, range| {
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
                 vec2(0.0, carried),
@@ -1248,11 +1250,17 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
-    scroll_area.show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
-        for chat in &chats[range] {
-            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
-        }
-    });
+    crate::autoscroll::show_rows(
+        ui,
+        scroll_area,
+        theme::ROW_HEIGHT,
+        chats.len(),
+        |ui, range| {
+            for chat in &chats[range] {
+                ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            }
+        },
+    );
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -1297,10 +1305,12 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt("search-results")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("search-results")
+            .auto_shrink([false, false]),
+        |ui| {
             if !chats.is_empty() {
                 section(ui, &palette, "Chats");
                 for chat in &chats {
@@ -1331,7 +1341,8 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             ui.add_space(8.0);
-        });
+        },
+    );
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
@@ -1958,22 +1969,23 @@ fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     }
     let carried = app.scroll_route.take(crate::app::ScrollPane::Chats);
     // Only the avatars on screen are laid out, however many chats there are.
-    let output = scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
-        if carried != 0.0 {
-            ui.scroll_with_delta_animation(
-                vec2(0.0, carried),
-                egui::style::ScrollAnimation::none(),
-            );
-        }
-        for chat in &chats[range] {
-            let response = ui
-                .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
-                .inner;
-            if response.clicked() && !app.locked_folder_open() && !app.show_archived {
-                app.actions.push(Action::KeepUnread(chat.id.clone()));
+    let output =
+        crate::autoscroll::show_rows(ui, scroll_area, COMPACT_CELL, chats.len(), |ui, range| {
+            if carried != 0.0 {
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, carried),
+                    egui::style::ScrollAnimation::none(),
+                );
             }
-        }
-    });
+            for chat in &chats[range] {
+                let response = ui
+                    .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
+                    .inner;
+                if response.clicked() && !app.locked_folder_open() && !app.show_archived {
+                    app.actions.push(Action::KeepUnread(chat.id.clone()));
+                }
+            }
+        });
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
     #[cfg(test)]

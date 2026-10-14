@@ -13183,6 +13183,72 @@ mod tests {
         );
     }
 
+    /// A middle press on a message's text, held while the pointer moves up,
+    /// autoscrolls the message list away from the newest message, which it
+    /// otherwise sticks to, and selects nothing. Releasing it stops.
+    #[test]
+    fn a_held_middle_press_on_a_message_autoscrolls_up_without_selecting() {
+        let mut app = app();
+        let on = crate::autoscroll::enabled(app.settings.middle_click_autoscroll);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let chat = sample_ids()[0].to_owned();
+        let view = app
+            .selection_view
+            .lock()
+            .expect("the view rect")
+            .expect("the conversation was drawn");
+        let body = app.conversations[&chat]
+            .messages
+            .iter()
+            .filter_map(|message| {
+                let key = crate::ui::conversation::bubble_id(&chat, &message.id).with("body");
+                ctx.data(|data| data.get_temp::<egui::Rect>(key))
+            })
+            .rfind(|rect| view.shrink(60.0).contains(rect.center()))
+            .expect("a message's text in the middle of the list");
+        let (start, _) = scroll_metrics(&ctx, &chat);
+        assert!(app.at_bottom, "the chat opens at its newest message");
+        let press = body.center();
+        let middle = |pressed| egui::Event::PointerButton {
+            pos: press,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(press), middle(true)],
+        );
+        assert_eq!(app.autoscroll.active(), on, "the press on text arms");
+        let above = press - egui::vec2(0.0, 80.0);
+        for _ in 0..30 {
+            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(above)]);
+        }
+        let (scrolled, _) = scroll_metrics(&ctx, &chat);
+        assert!(app.sweep.is_none(), "no sweep over messages");
+        assert!(!text_selected(&ctx), "no text selection");
+        if !on {
+            assert_eq!(scrolled, start);
+            return;
+        }
+        assert!(
+            scrolled < start - 50.0,
+            "the list moved up from {start}, to {scrolled}"
+        );
+        assert!(!app.scroll_to_bottom, "the newest message lets go");
+        frame_with(&mut app, &ctx, vec![middle(false)]);
+        assert!(!app.autoscroll.active(), "releasing ends it");
+        let (stopped, _) = scroll_metrics(&ctx, &chat);
+        for _ in 0..5 {
+            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(above)]);
+        }
+        assert_eq!(scroll_metrics(&ctx, &chat).0, stopped);
+    }
+
     /// Selection scrolls only near a view edge.
     #[test]
     fn a_drag_at_the_edge_scrolls_and_in_the_middle_does_not() {

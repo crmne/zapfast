@@ -217,10 +217,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     let palette = app.palette;
     let locale = app.locale;
-    egui::ScrollArea::vertical()
-        .id_salt("settings")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("settings")
+            .auto_shrink([false, false]),
+        |ui| {
             // The column keeps a readable width and sits in the middle of a
             // wide window instead of leaving the space on its right empty.
             let full = ui.available_width();
@@ -278,7 +280,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 },
             );
             ui.add_space(TOP_MARGIN);
-        });
+        },
+    );
 }
 
 /// Widest the settings column grows.
@@ -401,6 +404,17 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    // Windows always autoscrolls and macOS never does.
+    if cfg!(target_os = "linux") {
+        chats.toggle(
+            translated(locale, "Middle-click autoscroll"),
+            translated(
+                locale,
+                "Middle-click a list, then move the pointer to scroll it. Text fields still paste.",
+            ),
+            |settings| &mut settings.middle_click_autoscroll,
+        );
+    }
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
@@ -1233,10 +1247,10 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                             .max_rect(palette_rect)
                             .layout(Layout::top_down(Align::Min).with_main_align(Align::Min)),
                         |ui| {
-                            egui::ScrollArea::vertical()
+                            crate::autoscroll::show(ui, egui::ScrollArea::vertical()
                                 .id_salt("wallpaper-palette")
                                 .auto_shrink([false, false])
-                                .show(ui, |ui| {
+                                , |ui| {
                                     ui.allocate_ui_with_layout(
                                         vec2(palette_width, 28.0),
                                         Layout::top_down(Align::Center),
