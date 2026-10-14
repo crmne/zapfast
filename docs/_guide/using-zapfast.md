@@ -220,6 +220,11 @@ when you switch chats or accounts, and come back when you return. Unlike text
 drafts, they are kept only while ZapFast runs. A refused attachment send goes
 back to the chat it was meant for.
 
+While a file or pasted picture goes out, a strip above the composer names it
+and shows how much has been sent and, after the first second, about how long
+the rest takes; it leaves when the file has gone, or if the send fails. Its
+close button cancels the send, and nothing reaches the chat.
+
 Click a picture above the composer to crop it before you send it. The picture
 opens over the window with the region to keep marked, and you can drag that
 region by its edges and corners or move it whole. **Turn left** and **Turn
@@ -246,7 +251,8 @@ Incoming attachments up to 64 MiB download when they enter view if automatic
 downloads are on, or on click. Visible stickers download automatically even
 when that setting is off. Larger attachments never download on their own:
 click one, or choose **Download** in its right-click menu, and it downloads
-whatever its size. A download may take longer the larger the file is, at
+whatever its size. While it downloads, the ring over it fills as the file
+arrives. A download may take longer the larger the file is, at
 least two minutes plus one second for every 128 KiB, before it gives up and
 offers a retry. If an attachment has expired, ZapFast asks your phone to upload
 it again. A live-location share shows the position this linked device received;

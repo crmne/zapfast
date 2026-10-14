@@ -112,6 +112,72 @@ async fn with_attachment_deadline<T>(
         .unwrap_or_else(|_| Err("Download timed out".to_owned()))
 }
 
+/// Tells the window how far an attachment transfer has got, and how long the
+/// rest should take, at most once per percent: a large file would otherwise
+/// send an event for every read.
+#[derive(Clone)]
+struct Progress {
+    events: std::sync::mpsc::Sender<Event>,
+    waker: Waker,
+    event: Arc<dyn Fn(u8, Option<u32>) -> Event + Send + Sync>,
+    shown: Option<u8>,
+    /// When the transfer of this total began, and how much it had then.
+    start: Option<(Instant, u64, u64)>,
+}
+
+impl Progress {
+    fn new(
+        events: std::sync::mpsc::Sender<Event>,
+        waker: Waker,
+        event: impl Fn(u8, Option<u32>) -> Event + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            events,
+            waker,
+            event: Arc::new(event),
+            shown: None,
+            start: None,
+        }
+    }
+
+    fn report(&mut self, done: u64, total: u64) {
+        let Some(percent) = percent(done, total) else {
+            return;
+        };
+        let now = Instant::now();
+        // Preparing reports out of a placeholder total; timing starts with the real one.
+        let (started, from) = match self.start {
+            Some((started, from, known)) if known == total => (started, from),
+            _ => {
+                self.start = Some((now, done, total));
+                (now, done)
+            }
+        };
+        if self.shown != Some(percent) {
+            self.shown = Some(percent);
+            let left = seconds_left(
+                now - started,
+                done.saturating_sub(from),
+                total - done.min(total),
+            );
+            let _ = self.events.send((self.event)(percent, left));
+            self.waker.wake();
+        }
+    }
+}
+
+/// `done` out of `total` as a whole percent, or nothing for an unknown size.
+fn percent(done: u64, total: u64) -> Option<u8> {
+    (total > 0).then(|| (u128::from(done.min(total)) * 100 / u128::from(total)) as u8)
+}
+
+/// How long `rest` bytes take at the pace `moved` took `elapsed`, once a
+/// second has passed: earlier the pace is mostly noise.
+fn seconds_left(elapsed: Duration, moved: u64, rest: u64) -> Option<u32> {
+    (elapsed >= Duration::from_secs(1) && moved > 0)
+        .then(|| (elapsed.as_secs_f64() * rest as f64 / moved as f64).ceil() as u32)
+}
+
 /// A streaming download sink that refuses to grow beyond the attachment limit.
 ///
 /// WhatsApp's declared file length is useful to reject an oversized attachment
@@ -119,11 +185,17 @@ async fn with_attachment_deadline<T>(
 struct LimitedWriter<W> {
     inner: W,
     limit: u64,
+    /// Reports how much of the declared length has arrived.
+    progress: Option<(Progress, u64)>,
 }
 
 impl<W> LimitedWriter<W> {
-    fn new(inner: W, limit: u64) -> Self {
-        Self { inner, limit }
+    fn new(inner: W, limit: u64, progress: Option<(Progress, u64)>) -> Self {
+        Self {
+            inner,
+            limit,
+            progress,
+        }
     }
 }
 
@@ -134,7 +206,11 @@ impl<W: Write + Seek> Write for LimitedWriter<W> {
         if bytes.len() as u64 > remaining {
             return Err(io::Error::other(ATTACHMENT_LIMIT_ERROR));
         }
-        self.inner.write(bytes)
+        let written = self.inner.write(bytes)?;
+        if let Some((progress, total)) = &mut self.progress {
+            progress.report(position + written as u64, *total);
+        }
+        Ok(written)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -171,12 +247,13 @@ async fn download_attachment(
     path: &Path,
     limit: u64,
 ) -> Result<PathBuf, String> {
-    fetch_attachment(client, downloadable, dir, path, limit, false).await
+    fetch_attachment(client, downloadable, dir, path, limit, false, None).await
 }
 
 /// [`download_attachment`], and with `keep_others` a file already at `path`
 /// stays: the download takes the first free `name (n).ext` instead, as in
-/// the reader's own download folder. Returns where the file landed.
+/// the reader's own download folder. `progress` hears how much of a known
+/// length has arrived. Returns where the file landed.
 async fn fetch_attachment(
     client: &Client,
     downloadable: &dyn Downloadable,
@@ -184,6 +261,7 @@ async fn fetch_attachment(
     path: &Path,
     limit: u64,
     keep_others: bool,
+    progress: Option<Progress>,
 ) -> Result<PathBuf, String> {
     if downloadable.file_length().is_some_and(|size| size > limit) {
         return Err(ATTACHMENT_LIMIT_ERROR.to_owned());
@@ -193,7 +271,10 @@ async fn fetch_attachment(
         .map_err(|error| error.to_string())?;
     let (temporary, file) = temporary_attachment_file(path)?;
     let result = client
-        .download_to_writer(downloadable, LimitedWriter::new(file, limit))
+        .download_to_writer(
+            downloadable,
+            LimitedWriter::new(file, limit, progress.zip(downloadable.file_length())),
+        )
         .await;
     match result {
         Ok(writer) => {
@@ -721,6 +802,7 @@ pub async fn run(
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
         sticker_downloads: HashSet::new(),
+        uploads: Uploads::default(),
         recent_hashes: HashMap::new(),
         emoji_cache: HashMap::new(),
         favorite_fetches: HashSet::new(),
@@ -1140,6 +1222,8 @@ struct Worker {
     sticker_fetches: HashSet<String>,
     /// Active chat-sticker downloads by chat and message id.
     sticker_downloads: HashSet<(ChatId, String)>,
+    /// Cancel flags of the files being sent.
+    uploads: Uploads,
     /// Content hashes of the stickers last listed in Recent, by file.
     recent_hashes: HashMap<PathBuf, String>,
     /// Sticker emojis by file, with the size and time they were read at.
@@ -7353,6 +7437,7 @@ impl Worker {
                     self.handle_failed_group(chat, permanent);
                 }
             }
+            Command::CancelUpload(id) => cancel_upload(&self.uploads, id),
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
@@ -8571,6 +8656,19 @@ impl Worker {
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
+        // A card's picture is small and has no ring of its own.
+        let progress = card.is_none().then(|| {
+            let (chat, message) = (chat.clone(), id.clone());
+            Progress::new(
+                self.events.clone(),
+                self.waker.clone(),
+                move |percent, _| Event::DownloadProgress {
+                    chat: chat.clone(),
+                    message: message.clone(),
+                    percent,
+                },
+            )
+        });
         tokio::spawn(async move {
             let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
             let named = file_name
@@ -8581,8 +8679,16 @@ impl Worker {
             let path = named
                 .unwrap_or_else(|| media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref()));
             let result = with_attachment_deadline(deadline, async {
-                match fetch_attachment(&client, &*downloadable, &dir, &path, limit, keep_others)
-                    .await
+                match fetch_attachment(
+                    &client,
+                    &*downloadable,
+                    &dir,
+                    &path,
+                    limit,
+                    keep_others,
+                    progress.clone(),
+                )
+                .await
                 {
                     Ok(path) => Ok(path),
                     Err(error) => {
@@ -8616,6 +8722,7 @@ impl Worker {
                                                     &path,
                                                     limit,
                                                     keep_others,
+                                                    progress,
                                                 )
                                                 .await
                                             }
@@ -9570,6 +9677,17 @@ impl Worker {
             } else {
                 Vec::new()
             };
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let uploading = Uploading::new(
+                self.events.clone(),
+                self.waker.clone(),
+                &self.uploads,
+                chat.clone(),
+                name,
+            );
             tokio::spawn(async move {
                 let outcome = async {
                     let bytes = tokio::fs::read(&path)
@@ -9582,10 +9700,28 @@ impl Worker {
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned());
                     let prepared = if documents {
-                        prepare_document(&client, bytes, &mime, file_name.as_deref()).await?
+                        prepare_document(
+                            &client,
+                            bytes,
+                            &mime,
+                            file_name.as_deref(),
+                            Some(&uploading),
+                        )
+                        .await?
                     } else {
-                        prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?
+                        prepare_media(
+                            &client,
+                            bytes,
+                            &mime,
+                            file_name.as_deref(),
+                            false,
+                            Some(&uploading),
+                        )
+                        .await?
                     };
+                    if uploading.cancelled() {
+                        return Err(UPLOAD_CANCELLED.to_owned());
+                    }
                     quoted_outbound(
                         &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                     )
@@ -9600,6 +9736,8 @@ impl Worker {
                             raw,
                         });
                     }
+                    // Cancelled on purpose: nothing to tell.
+                    Err(_) if uploading.cancelled() => {}
                     Err(error) => {
                         let _ = commands.send(Command::Sent {
                             chat,
@@ -9651,6 +9789,14 @@ impl Worker {
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
+        // A pasted picture has no name; the strip calls it a picture.
+        let uploading = Uploading::new(
+            self.events.clone(),
+            self.waker.clone(),
+            &self.uploads,
+            chat.clone(),
+            String::new(),
+        );
         tokio::spawn(async move {
             let outcome = async {
                 let encoded = tokio::task::spawn_blocking(move || {
@@ -9660,7 +9806,18 @@ impl Worker {
                 })
                 .await
                 .map_err(|error| error.to_string())??;
-                let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
+                let prepared = prepare_media(
+                    &client,
+                    encoded,
+                    "image/jpeg",
+                    None,
+                    false,
+                    Some(&uploading),
+                )
+                .await?;
+                if uploading.cancelled() {
+                    return Err(UPLOAD_CANCELLED.to_owned());
+                }
                 quoted_outbound(
                     &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                 )
@@ -9675,6 +9832,7 @@ impl Worker {
                         raw,
                     });
                 }
+                Err(_) if uploading.cancelled() => {}
                 Err(error) => {
                     let _ = commands.send(Command::Sent {
                         chat,
@@ -9846,7 +10004,8 @@ impl Worker {
                 })
                 .await
                 .map_err(|error| error.to_string())??;
-                let mut prepared = prepare_media(&client, bytes, "video/mp4", None, true).await?;
+                let mut prepared =
+                    prepare_media(&client, bytes, "video/mp4", None, true, None).await?;
                 if let Content::Video { media, .. } = &mut prepared.content {
                     media.width = Some(gif.width);
                     media.height = Some(gif.height);
@@ -11107,6 +11266,178 @@ fn thumbnail_jpeg(image: &image::DynamicImage) -> Option<Vec<u8>> {
     encode_jpeg(&small, 60).ok()
 }
 
+/// A file being sent, shown above the composer from before it is prepared
+/// until this drops, whether it went out or not.
+struct Uploading {
+    id: u64,
+    progress: Arc<std::sync::Mutex<Progress>>,
+    /// Set when the reader cancels; the upload stops at its next read.
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// The worker's flags for the uploads in flight, this one's included.
+    uploads: Uploads,
+}
+
+/// Cancel flags of the files being sent, by upload id.
+type Uploads = Arc<std::sync::Mutex<HashMap<u64, Arc<std::sync::atomic::AtomicBool>>>>;
+
+impl Uploading {
+    fn new(
+        events: std::sync::mpsc::Sender<Event>,
+        waker: Waker,
+        uploads: &Uploads,
+        chat: ChatId,
+        name: String,
+    ) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut progress = Progress::new(events, waker, move |percent, seconds_left| {
+            Event::UploadProgress {
+                id,
+                chat: chat.clone(),
+                name: name.clone(),
+                percent,
+                seconds_left,
+            }
+        });
+        progress.report(0, 1);
+        let cancelled = Arc::<std::sync::atomic::AtomicBool>::default();
+        uploads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, Arc::clone(&cancelled));
+        Self {
+            id,
+            progress: Arc::new(std::sync::Mutex::new(progress)),
+            cancelled,
+            uploads: Arc::clone(uploads),
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Asks the upload with this id to stop, if it is still in flight.
+fn cancel_upload(uploads: &Uploads, id: u64) {
+    if let Some(cancelled) = uploads
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&id)
+    {
+        cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for Uploading {
+    fn drop(&mut self) {
+        self.uploads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+        let progress = self
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = progress.events.send(Event::UploadEnded { id: self.id });
+        progress.waker.wake();
+    }
+}
+
+/// Encrypted media for `upload_stream` whose reads report how much has gone
+/// out.
+struct Counted {
+    data: Arc<Vec<u8>>,
+    progress: Arc<std::sync::Mutex<Progress>>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl whatsapp_rust::wacore::upload::UploadSource for Counted {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    fn reader_from(&self, offset: u64) -> io::Result<Box<dyn io::Read + Send>> {
+        Ok(Box::new(CountedReader {
+            data: Arc::clone(&self.data),
+            position: usize::try_from(offset)
+                .map_or(self.data.len(), |offset| offset.min(self.data.len())),
+            progress: Arc::clone(&self.progress),
+            cancelled: Arc::clone(&self.cancelled),
+        }))
+    }
+}
+
+struct CountedReader {
+    data: Arc<Vec<u8>>,
+    position: usize,
+    progress: Arc<std::sync::Mutex<Progress>>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl io::Read for CountedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(io::Error::other(UPLOAD_CANCELLED));
+        }
+        let rest = &self.data[self.position..];
+        let count = rest.len().min(buffer.len());
+        buffer[..count].copy_from_slice(&rest[..count]);
+        self.position += count;
+        self.progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .report(self.position as u64, self.data.len() as u64);
+        Ok(count)
+    }
+}
+
+/// Why a cancelled upload stopped; it never reaches the reader.
+const UPLOAD_CANCELLED: &str = "Upload cancelled";
+
+/// Uploads like `Client::upload`, telling `uploading` how much has gone out.
+async fn upload_media(
+    client: &Client,
+    bytes: Vec<u8>,
+    media_type: MediaType,
+    uploading: Option<&Uploading>,
+) -> Result<whatsapp_rust::upload::UploadResponse, String> {
+    let Some(uploading) = uploading else {
+        return client
+            .upload(bytes, media_type, UploadOptions::default())
+            .await
+            .map_err(|error| error.to_string());
+    };
+    if uploading.cancelled() {
+        return Err(UPLOAD_CANCELLED.to_owned());
+    }
+    let file_length = bytes.len() as u64;
+    let encrypted = tokio::task::spawn_blocking(move || {
+        whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
+            &bytes, media_type, None, None,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+    let info = whatsapp_rust::wacore::upload::EncryptedMediaInfo {
+        media_key: encrypted.media_key,
+        file_sha256: encrypted.file_sha256,
+        file_enc_sha256: encrypted.file_enc_sha256,
+        file_length,
+        streaming_sidecar: encrypted.streaming_sidecar,
+    };
+    let source = Counted {
+        data: Arc::new(encrypted.data_to_upload),
+        progress: Arc::clone(&uploading.progress),
+        cancelled: Arc::clone(&uploading.cancelled),
+    };
+    client
+        .upload_stream(source, info, media_type)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Uploads a recording and builds a push-to-talk message with waveform.
 async fn prepare_voice(
     client: &Client,
@@ -11167,6 +11498,7 @@ async fn prepare_media(
     mime: &str,
     file_name: Option<&str>,
     gif: bool,
+    uploading: Option<&Uploading>,
 ) -> Result<Prepared, String> {
     let kind = mime.split('/').next().unwrap_or_default();
     let is_picture = matches!(
@@ -11187,10 +11519,7 @@ async fn prepare_media(
             encode_jpeg(&decoded, 88)?
         };
         let thumbnail = thumbnail_jpeg(&decoded);
-        let upload = client
-            .upload(jpeg.clone(), MediaType::Image, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
+        let upload = upload_media(client, jpeg.clone(), MediaType::Image, uploading).await?;
         let mut message = image_message(upload, {
             let mut options = ImageOptions::default().with_mimetype("image/jpeg");
             options.jpeg_thumbnail = thumbnail.clone();
@@ -11236,10 +11565,7 @@ async fn prepare_media(
             .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
-        let upload = client
-            .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
+        let upload = upload_media(client, bytes.clone(), MediaType::Video, uploading).await?;
         let mut message = video_message(upload, {
             let mut options = VideoOptions::default()
                 .with_mimetype(mime_owned.clone())
@@ -11276,10 +11602,7 @@ async fn prepare_media(
     }
     if let Some(audio_mime) = whatsapp_audio_mime(mime) {
         let mime_owned = audio_mime.to_owned();
-        let upload = client
-            .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
-            .await
-            .map_err(|error| error.to_string())?;
+        let upload = upload_media(client, bytes.clone(), MediaType::Audio, uploading).await?;
         let message = audio_message(
             upload,
             AudioOptions::default()
@@ -11300,7 +11623,7 @@ async fn prepare_media(
             file_name: file_name.map(str::to_owned),
         });
     }
-    prepare_document(client, bytes, mime, file_name).await
+    prepare_document(client, bytes, mime, file_name, uploading).await
 }
 
 /// Uploads a file as a document: its own bytes, name and type, whatever it
@@ -11310,13 +11633,11 @@ async fn prepare_document(
     bytes: Vec<u8>,
     mime: &str,
     file_name: Option<&str>,
+    uploading: Option<&Uploading>,
 ) -> Result<Prepared, String> {
     let size = bytes.len() as u64;
     let mime_owned = mime.to_owned();
-    let upload = client
-        .upload(bytes.clone(), MediaType::Document, UploadOptions::default())
-        .await
-        .map_err(|error| error.to_string())?;
+    let upload = upload_media(client, bytes.clone(), MediaType::Document, uploading).await?;
     let name = file_name.unwrap_or("file").to_owned();
     let message = document_message(
         upload,
@@ -12696,7 +13017,7 @@ mod tests {
 
     #[test]
     fn limited_writer_never_grows_past_its_cap() {
-        let mut writer = LimitedWriter::new(Cursor::new(Vec::new()), 3);
+        let mut writer = LimitedWriter::new(Cursor::new(Vec::new()), 3, None);
         writer.write_all(b"abc").expect("writes through the cap");
         let error = writer
             .write_all(b"d")
@@ -12707,6 +13028,132 @@ mod tests {
             .seek(SeekFrom::Start(0))
             .expect("rewinds after clearing");
         writer.write_all(b"xyz").expect("can retry after clearing");
+    }
+
+    /// Percents the window hears about, in order.
+    fn heard(events: &std::sync::mpsc::Receiver<Event>) -> Vec<u64> {
+        events
+            .try_iter()
+            .map(|event| match event {
+                Event::UploadEnded { id } => id,
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect()
+    }
+
+    fn progress(events: std::sync::mpsc::Sender<Event>) -> Progress {
+        Progress::new(events, Waker::default(), |percent, _| Event::UploadEnded {
+            id: u64::from(percent),
+        })
+    }
+
+    /// A file read a byte at a time tells the window each percent once, and a
+    /// download of unknown length tells it nothing rather than a guess.
+    #[test]
+    fn progress_reports_each_percent_once() {
+        let (sender, events) = std::sync::mpsc::channel();
+        let mut tracked = progress(sender);
+        for done in 0..=1000 {
+            tracked.report(done, 1000);
+        }
+        assert_eq!(heard(&events), (0..=100).collect::<Vec<_>>());
+        tracked.report(2000, 1000);
+        assert!(heard(&events).is_empty(), "past the end stays at 100");
+        tracked.report(5, 0);
+        assert!(heard(&events).is_empty(), "an unknown size reports nothing");
+    }
+
+    /// A download sink reports how much of the declared length it holds, and
+    /// a retry that clears it starts again from nothing.
+    #[test]
+    fn limited_writer_reports_what_it_holds() {
+        let (sender, events) = std::sync::mpsc::channel();
+        let mut writer =
+            LimitedWriter::new(Cursor::new(Vec::new()), 100, Some((progress(sender), 4)));
+        writer.write_all(b"ab").expect("writes");
+        writer.write_all(b"cd").expect("writes");
+        assert_eq!(heard(&events), [50, 100]);
+        writer.truncate(0).expect("clears a failed attempt");
+        writer.seek(SeekFrom::Start(0)).expect("rewinds");
+        writer.write_all(b"a").expect("writes again");
+        assert_eq!(heard(&events), [25]);
+    }
+
+    /// An upload attempt that resumes at an offset sends the rest of the
+    /// ciphertext and counts what went before it.
+    #[test]
+    fn counted_upload_resumes_at_its_offset() {
+        use std::io::Read;
+        use whatsapp_rust::wacore::upload::UploadSource;
+        let (sender, events) = std::sync::mpsc::channel();
+        let source = Counted {
+            data: Arc::new(b"abcd".to_vec()),
+            progress: Arc::new(std::sync::Mutex::new(progress(sender))),
+            cancelled: Arc::default(),
+        };
+        let mut rest = Vec::new();
+        source
+            .reader_from(2)
+            .expect("reader")
+            .read_to_end(&mut rest)
+            .expect("reads");
+        assert_eq!(rest, b"cd");
+        assert_eq!(heard(&events), [100]);
+        let mut none = Vec::new();
+        source
+            .reader_from(9)
+            .expect("reader past the end")
+            .read_to_end(&mut none)
+            .expect("reads nothing");
+        assert!(none.is_empty());
+    }
+
+    /// The time left follows the pace so far, and is not guessed in the
+    /// first second.
+    #[test]
+    fn seconds_left_follow_the_pace() {
+        let second = Duration::from_secs(1);
+        assert_eq!(seconds_left(second / 2, 10, 90), None, "too early");
+        assert_eq!(seconds_left(second * 2, 0, 90), None, "nothing moved yet");
+        assert_eq!(seconds_left(second * 2, 10, 90), Some(18));
+        assert_eq!(seconds_left(second * 2, 30, 1), Some(1), "rounds up");
+    }
+
+    /// Cancelling an upload stops its next read, and an upload that has
+    /// ended can no longer be found to cancel.
+    #[test]
+    fn a_cancelled_upload_stops_reading() {
+        use std::io::Read;
+        use whatsapp_rust::wacore::upload::UploadSource;
+        let (sender, _events) = std::sync::mpsc::channel();
+        let uploads = Uploads::default();
+        let uploading = Uploading::new(
+            sender,
+            Waker::default(),
+            &uploads,
+            "1@s.whatsapp.net".into(),
+            "a.pdf".into(),
+        );
+        let source = Counted {
+            data: Arc::new(b"abcd".to_vec()),
+            progress: Arc::clone(&uploading.progress),
+            cancelled: Arc::clone(&uploading.cancelled),
+        };
+        let mut reader = source.reader_from(0).expect("reader");
+        let mut byte = [0];
+        reader
+            .read_exact(&mut byte)
+            .expect("reads before cancelling");
+        cancel_upload(&uploads, uploading.id);
+        assert!(uploading.cancelled());
+        let error = reader.read(&mut byte).expect_err("stops after cancelling");
+        assert_eq!(error.to_string(), UPLOAD_CANCELLED);
+        drop(uploading);
+        let left = uploads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        assert_eq!(left, 0, "an ended upload leaves");
     }
 
     #[test]
@@ -16416,6 +16863,7 @@ mod receipt_tests {
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
             sticker_downloads: HashSet::new(),
+            uploads: Uploads::default(),
             recent_hashes: HashMap::new(),
             emoji_cache: HashMap::new(),
             favorite_fetches: HashSet::new(),

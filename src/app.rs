@@ -3644,6 +3644,39 @@ impl App {
                 message,
                 result,
             } => self.handle_media(&chat, &message, card, result),
+            Event::DownloadProgress {
+                chat,
+                message,
+                percent,
+            } => {
+                self.download_progress
+                    .entry(chat)
+                    .or_default()
+                    .insert(message, percent);
+            }
+            Event::UploadProgress {
+                id,
+                chat,
+                name,
+                percent,
+                seconds_left,
+            } => match self.uploads.iter_mut().find(|upload| upload.id == id) {
+                Some(upload) => {
+                    upload.percent = percent;
+                    upload.seconds_left = seconds_left;
+                }
+                // Only the first report, at 0, opens a strip: later ones belong
+                // to an upload the reader already cancelled.
+                None if percent == 0 => self.uploads.push(crate::model::Upload {
+                    id,
+                    chat,
+                    name,
+                    percent,
+                    seconds_left,
+                }),
+                None => {}
+            },
+            Event::UploadEnded { id } => self.uploads.retain(|upload| upload.id != id),
             Event::Motion {
                 chat,
                 message,
@@ -4816,6 +4849,14 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        if card.is_none()
+            && let Some(progress) = self.download_progress.get_mut(chat)
+        {
+            progress.remove(id);
+            if progress.is_empty() {
+                self.download_progress.remove(chat);
+            }
+        }
         // The info panel's listing keeps its own copy of the message, so a
         // picture without a preview stops being blank once its file is there.
         if let Ok(path) = &result
@@ -7114,6 +7155,10 @@ impl App {
                 self.refocus_composer(ctx);
             }
             Action::DiscardUnsentVoice => self.unsent_voice = None,
+            Action::CancelUpload(id) => {
+                self.uploads.retain(|upload| upload.id != id);
+                self.backend.send(Command::CancelUpload(id));
+            }
             Action::SetMuted(chat, until) => {
                 if let Some(known) = self.chat_mut(&chat) {
                     known.muted_until = until;
@@ -13140,6 +13185,101 @@ mod tests {
             None,
             "the file landing ends the progress"
         );
+    }
+
+    /// A download's percent lasts until its file lands or fails, and an
+    /// upload's strip until the worker says it is over, sent or not.
+    #[test]
+    fn transfer_progress_lasts_until_the_transfer_ends() {
+        let mut app = app_with_album(3);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let chat: ChatId = "1@s.whatsapp.net".into();
+        for event in [
+            Event::DownloadProgress {
+                chat: chat.clone(),
+                message: "m2".into(),
+                percent: 40,
+            },
+            Event::UploadProgress {
+                id: 7,
+                chat: chat.clone(),
+                name: "a.pdf".into(),
+                percent: 0,
+                seconds_left: None,
+            },
+            Event::UploadProgress {
+                id: 7,
+                chat: chat.clone(),
+                name: "a.pdf".into(),
+                percent: 55,
+                seconds_left: Some(12),
+            },
+        ] {
+            events.send(event).unwrap();
+        }
+        app.handle_events();
+        assert_eq!(
+            app.download_progress
+                .get(&chat)
+                .and_then(|sent| sent.get("m2")),
+            Some(&40)
+        );
+        assert_eq!(
+            app.uploads
+                .iter()
+                .map(|upload| (upload.id, upload.percent, upload.seconds_left))
+                .collect::<Vec<_>>(),
+            [(7, 55, Some(12))],
+            "one strip per upload, at its latest percent"
+        );
+
+        events
+            .send(Event::Media {
+                card: None,
+                chat: chat.clone(),
+                message: "m2".into(),
+                result: Err("Download timed out".into()),
+            })
+            .unwrap();
+        events.send(Event::UploadEnded { id: 7 }).unwrap();
+        app.handle_events();
+        assert!(
+            app.download_progress.is_empty(),
+            "a failed download drops its ring"
+        );
+        assert!(app.uploads.is_empty(), "an ended upload drops its strip");
+    }
+
+    /// Cancelling drops the strip at once and asks the worker to stop; a late
+    /// report from that upload does not bring the strip back.
+    #[test]
+    fn a_cancelled_upload_leaves_at_once() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_album(3);
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let upload = |percent| Event::UploadProgress {
+            id: 7,
+            chat: "1@s.whatsapp.net".into(),
+            name: "a.pdf".into(),
+            percent,
+            seconds_left: None,
+        };
+        events.send(upload(0)).unwrap();
+        app.handle_events();
+        assert_eq!(app.uploads.len(), 1);
+
+        app.apply(Action::CancelUpload(7), &ctx);
+        assert!(app.uploads.is_empty(), "the strip leaves at once");
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::CancelUpload(7))),
+            "the worker is asked to stop"
+        );
+        events.send(upload(30)).unwrap();
+        app.handle_events();
+        assert!(app.uploads.is_empty(), "a late report stays away");
     }
 
     /// The album on screen follows the chat: a message deleted while the viewer
