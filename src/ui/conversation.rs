@@ -1416,6 +1416,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 unsent_voice_strip(app, ui, samples);
             }
+            upload_strips(app, ui, &chat.id);
             if app.editing.is_some() {
                 edit_strip(app, ui);
             } else if let Some(reply_id) = app.reply_to.clone() {
@@ -2121,6 +2122,76 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
     strip_gap(ui);
 }
 
+/// One strip per file going out from this chat, with how much has gone, how
+/// long the rest should take, and a button to stop it.
+fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
+    let palette = app.palette;
+    let cancel = crate::i18n::gettext(app.locale, "Cancel sending");
+    let mut cancelled = None;
+    for upload in app.uploads.iter().filter(|upload| upload.chat == chat) {
+        let name = if upload.name.is_empty() {
+            crate::i18n::gettext(app.locale, "Photo").into_owned()
+        } else {
+            upload.name.clone()
+        };
+        let label = crate::i18n::gettext(app.locale, "Sending {name}").replace("{name}", &name);
+        let amount = match upload.seconds_left {
+            Some(seconds) => format!(
+                "{}% · {}",
+                upload.percent,
+                crate::i18n::gettext(app.locale, "{time} left")
+                    .replace("{time}", &crate::util::duration(seconds))
+            ),
+            None => format!("{}%", upload.percent),
+        };
+        // Before it is prepared nothing has gone, and how long that takes is unknown.
+        let fraction = (upload.percent > 0).then(|| f32::from(upload.percent) / 100.0);
+        let _strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                theme::progress(ui, 16.0, fraction, palette.accent);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let button = theme::icon_button(
+                        ui,
+                        Icon::X,
+                        16.0,
+                        palette.secondary,
+                        palette.text,
+                        cancel.as_ref(),
+                    );
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new(("upload-cancel", upload.id)), button.rect)
+                    });
+                    if button.clicked() {
+                        cancelled = Some(upload.id);
+                    }
+                    theme::text(
+                        ui,
+                        amount,
+                        theme::tabular(fastframe_fonts::Weight::Regular, 12.5),
+                        palette.secondary,
+                    );
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        theme::text(ui, &label, theme::semibold(12.5), palette.text);
+                    });
+                });
+            });
+        });
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("upload-strip", upload.id)),
+                _strip.response.rect,
+            )
+        });
+        strip_gap(ui);
+    }
+    if let Some(id) = cancelled {
+        app.actions.push(Action::CancelUpload(id));
+    }
+}
+
 fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
@@ -2245,6 +2316,14 @@ struct View<'a> {
     voice_speed: f32,
     video: &'a crate::video::Player,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
+    /// How far this chat's downloading attachments have got, by message.
+    download_progress: Option<&'a HashMap<String, u8>>,
+}
+
+/// How far `message`'s attachment download has got, once the worker has said.
+fn download_fraction(view: &View<'_>, message: &Message) -> Option<f32> {
+    let percent = view.download_progress?.get(&message.id)?;
+    Some(f32::from(*percent) / 100.0)
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
@@ -2529,6 +2608,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         // text-selection annotator reinterpret them as drawn body text.
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
+        download_progress: app.download_progress.get(&chat.id),
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -5730,6 +5810,7 @@ pub(crate) fn list_menu(
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
+        download_progress: app.download_progress.get(&chat.id),
         selecting: false,
         motion_playing: None,
         starred: marks.starred.then_some(&stars),
@@ -7398,7 +7479,13 @@ fn album_tile(
             ui.painter()
                 .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
             match media.state {
-                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
+                MediaState::Downloading => theme::paint_progress(
+                    ui,
+                    disc,
+                    20.0,
+                    download_fraction(view, message),
+                    Color32::WHITE,
+                ),
                 MediaState::Failed(_) => {
                     theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE)
                 }
@@ -8471,7 +8558,13 @@ fn picture(
             MediaState::Downloading => {
                 ui.painter()
                     .circle_filled(disc.center(), 22.0, Color32::from_black_alpha(120));
-                theme::paint_spinner(ui, disc, 22.0, Color32::WHITE);
+                theme::paint_progress(
+                    ui,
+                    disc,
+                    22.0,
+                    download_fraction(view, message),
+                    Color32::WHITE,
+                );
             }
             MediaState::Failed(_) => {
                 ui.painter()
@@ -8741,9 +8834,13 @@ fn video(
                 (Some(_), _) if gif => {
                     theme::paint_icon(ui, Icon::ExternalLink, disc, 22.0, Color32::WHITE)
                 }
-                (None, MediaState::Downloading) => {
-                    theme::paint_spinner(ui, disc, 24.0, Color32::WHITE)
-                }
+                (None, MediaState::Downloading) => theme::paint_progress(
+                    ui,
+                    disc,
+                    24.0,
+                    download_fraction(view, message),
+                    Color32::WHITE,
+                ),
                 (None, MediaState::Failed(_)) => {
                     theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger)
                 }
@@ -9158,7 +9255,13 @@ fn video_note(
                 .circle_filled(center, 24.0, Color32::from_black_alpha(140));
         }
         if waiting {
-            theme::paint_spinner(ui, disc, 24.0, Color32::WHITE);
+            // A clip still loading into the player has no amount to show.
+            let fraction = media
+                .path
+                .is_none()
+                .then(|| download_fraction(view, message))
+                .flatten();
+            theme::paint_progress(ui, disc, 24.0, fraction, Color32::WHITE);
         } else if let Some(icon) = icon {
             let color = if icon == Icon::CircleAlert {
                 palette.danger
@@ -9270,7 +9373,7 @@ fn attachment(
                     theme::icon(ui, Icon::ExternalLink, 18.0, palette.secondary);
                 }
                 (None, MediaState::Downloading) => {
-                    theme::spinner(ui, 18.0, palette.accent);
+                    theme::progress(ui, 18.0, download_fraction(view, message), palette.accent);
                 }
                 (None, _) => {
                     theme::icon(ui, Icon::Download, 18.0, palette.secondary);
@@ -9395,13 +9498,13 @@ fn voice_player(
     };
     let fill = palette.accent.gamma_multiply(0.22);
     let hover = palette.accent.gamma_multiply(0.38);
-    let waiting = |ui: &mut egui::Ui| {
+    let waiting = |ui: &mut egui::Ui, fraction: Option<f32>| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(button), Sense::hover());
         ui.painter()
             .circle_filled(rect.center(), button / 2.0, fill);
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.centered_and_justified(|ui| {
-                theme::spinner(ui, 18.0, palette.accent);
+                theme::progress(ui, 18.0, fraction, palette.accent);
             });
         });
     };
@@ -9413,7 +9516,7 @@ fn voice_player(
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             match (&media.path, &media.state) {
-                (None, MediaState::Downloading) => waiting(ui),
+                (None, MediaState::Downloading) => waiting(ui, download_fraction(view, message)),
                 (None, _) => {
                     if theme::circle_button(
                         ui,
@@ -9435,7 +9538,7 @@ fn voice_player(
                     }
                 }
                 (Some(path), _) => match status.state {
-                    State::Loading => waiting(ui),
+                    State::Loading => waiting(ui, None),
                     State::Playing | State::Paused | State::Idle => {
                         let (icon, tooltip) = if status.state == State::Playing {
                             (Icon::Pause, "Pause")
@@ -10713,6 +10816,7 @@ mod tests {
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
+            download_progress: None,
             selecting: false,
             motion_playing: None,
             starred: None,
