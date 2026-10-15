@@ -2221,7 +2221,8 @@ impl App {
         matches!(
             self.link,
             LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
-        ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
+        ) || (!self.chats.is_empty()
+            && !matches!(self.link, LinkStatus::LoggedOut | LinkStatus::ChooseHistory))
     }
 
     pub fn chat(&self, id: &str) -> Option<&Chat> {
@@ -4121,6 +4122,7 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                self.pairing_history = crate::model::PairingHistory::default();
                 // Account-scoped lookup results are discarded by the worker.
                 // End their UI requests too, so a later account can retry.
                 self.new_contact_request = None;
@@ -8224,6 +8226,18 @@ impl App {
                 self.app_lock.note_input();
                 self.mark_settings_dirty();
             }
+            Action::ChoosePairingHistory { account, history } => {
+                if self.account().id == account && self.link == LinkStatus::ChooseHistory {
+                    self.pairing_history = history;
+                }
+            }
+            Action::StartPairing(account) => {
+                if self.account().id == account && self.link == LinkStatus::ChooseHistory {
+                    let history = self.pairing_history;
+                    self.backend.send(Command::StartPairing(history));
+                    self.link = LinkStatus::Starting;
+                }
+            }
             Action::Reconnect => self.backend.send(Command::Reconnect),
             Action::StartOverArchive => {
                 self.dialog = None;
@@ -9760,6 +9774,117 @@ pub use calls::CallPerson;
 mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
+
+    #[test]
+    fn pairing_choice_defaults_to_recent_and_starts_only_once() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        assert_eq!(app.pairing_history, crate::model::PairingHistory::Recent);
+        app.link = LinkStatus::ChooseHistory;
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::StartPairing(crate::model::PairingHistory::Recent))
+        ));
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn pairing_choice_cannot_change_an_existing_link() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history: crate::model::PairingHistory::FullThreeYears,
+            },
+            &ctx,
+        );
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+        assert_eq!(app.pairing_history, crate::model::PairingHistory::Recent);
+        assert!(commands.try_recv().is_err());
+        app.link = LinkStatus::ChooseHistory;
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history: crate::model::PairingHistory::FullThreeYears,
+            },
+            &ctx,
+        );
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::StartPairing(
+                crate::model::PairingHistory::FullThreeYears
+            ))
+        ));
+    }
+
+    #[test]
+    fn pairing_choices_belong_to_the_account_on_screen() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(root.path());
+        let (mut app, _events) = App::headless(dirs.clone(), Settings::default());
+        let (mut second, _events) = Account::detached(
+            &dirs,
+            AccountId::parse("2").unwrap(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap();
+        app.link = LinkStatus::ChooseHistory;
+        second.link = LinkStatus::ChooseHistory;
+        app.accounts.push(second);
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history: crate::model::PairingHistory::FullTwoYears,
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.accounts[1].pairing_history,
+            crate::model::PairingHistory::Recent
+        );
+        let previous_account = app.accounts[0].id.clone();
+        app.active = 1;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: previous_account.clone(),
+                history: crate::model::PairingHistory::FullThreeYears,
+            },
+            &ctx,
+        );
+        app.apply(Action::StartPairing(previous_account), &ctx);
+        assert_eq!(app.pairing_history, crate::model::PairingHistory::Recent);
+        assert!(
+            commands.try_recv().is_err(),
+            "a stale click cannot pair another account"
+        );
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history: crate::model::PairingHistory::FullThreeYears,
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.accounts[0].pairing_history,
+            crate::model::PairingHistory::FullTwoYears
+        );
+        assert_eq!(
+            app.accounts[1].pairing_history,
+            crate::model::PairingHistory::FullThreeYears
+        );
+    }
 
     #[test]
     fn toasts_errors_and_connection_changes_are_announced() {

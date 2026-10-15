@@ -56,7 +56,15 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 
 ## Link with your phone
 
-ZapFast links as a companion device, like WhatsApp Web. Start it and either:
+ZapFast links as a companion device, like WhatsApp Web. Before requesting a code
+for a new account, choose **Recent** (the default) for a quicker setup, or
+**Full** to request **1 year**, **2 years**, or **3 years** of history
+(365, 730, or 1,095 days). Your phone decides how much it can supply, so the
+selected period is a request, not a guarantee. Longer periods can take more
+time and disk space. This choice does not change an already linked account,
+re-pair it, or enable background history or media recovery.
+
+Click **Continue to linking**, then either:
 
 - scan the QR code with your phone (WhatsApp, **Settings**, **Linked
   devices**, **Link a device**). The phone's camera app also reads the code
@@ -77,8 +85,8 @@ notification, receipt, download, and wallpaper settings.
 
 ## Message history
 
-After linking, the phone sends recent history. The chat list appears within
-seconds, and messages can take a few minutes to finish loading. ZapFast stores
+After linking, the phone sends the history available for the requested profile.
+The chat list can appear before messages finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
 ZapFast asks your phone for older messages. The phone must be online.
 

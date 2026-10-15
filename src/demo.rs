@@ -2991,6 +2991,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     palette: crate::theme::Palette::messages_light(),
                 });
             }
+            "pairing-history" | "pairing-history-full" => {
+                unlink(app);
+                app.link = LinkStatus::ChooseHistory;
+                app.pairing_history = if part == "pairing-history-full" {
+                    crate::model::PairingHistory::FullThreeYears
+                } else {
+                    crate::model::PairingHistory::Recent
+                };
+            }
             "login" => {
                 unlink(app);
                 app.link = LinkStatus::Unlinked {
@@ -6078,7 +6087,13 @@ mod tests {
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
         }
-        for page in ["login", "pair", "phone"] {
+        for page in [
+            "login",
+            "pair",
+            "phone",
+            "pairing-history",
+            "pairing-history-full",
+        ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
@@ -6230,6 +6245,9 @@ mod tests {
             ("locked-open", wide),
             ("app-lock", wide),
             ("login", wide),
+            ("pairing-history", wide),
+            ("pairing-history-full", wide),
+            ("pairing-history-full", narrow),
             ("offline", wide),
             ("offline,empty", wide),
             ("offline,settings", wide),

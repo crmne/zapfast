@@ -36,6 +36,8 @@ pub enum MessageRemovalOutcome {
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkStatus {
     Starting,
+    /// A new device needs its history choice before requesting a code.
+    ChooseHistory,
     /// Waiting for QR scanning or pairing-code acceptance.
     Unlinked {
         qr: Option<String>,
@@ -62,6 +64,7 @@ impl LinkStatus {
     pub(crate) fn log_label(&self) -> &'static str {
         match self {
             Self::Starting => "starting",
+            Self::ChooseHistory => "choosing history",
             Self::Unlinked { .. } => "unlinked",
             Self::Connecting => "connecting",
             Self::Connected => "connected",
@@ -799,6 +802,8 @@ pub enum Command {
     Unlink,
     /// Unlinks this account and deletes its local folders.
     RemoveAccount,
+    /// Starts a new pairing only while waiting for its history choice.
+    StartPairing(crate::model::PairingHistory),
     Reconnect,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),

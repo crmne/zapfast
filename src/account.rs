@@ -81,6 +81,8 @@ pub struct Account {
     pub(crate) new_contact_request: Option<u64>,
     pub(crate) new_contact_dialog_request: Option<u64>,
     pub pair_phone: String,
+    /// View state for the history chooser, never applied to an existing link.
+    pub pairing_history: crate::model::PairingHistory,
     pub show_archived: bool,
     pub chat_filter: ChatFilter,
     /// The chip the Calls page's history shows.
@@ -195,6 +197,7 @@ impl Account {
             new_contact_request: None,
             new_contact_dialog_request: None,
             pair_phone: String::new(),
+            pairing_history: crate::model::PairingHistory::default(),
             show_archived: false,
             chat_filter,
             call_filter,
@@ -262,7 +265,8 @@ impl Account {
         matches!(
             self.link,
             LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
-        ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
+        ) || (!self.chats.is_empty()
+            && !matches!(self.link, LinkStatus::LoggedOut | LinkStatus::ChooseHistory))
     }
 
     /// The taskbar count: unarchived, unmuted, unlocked chats that look
