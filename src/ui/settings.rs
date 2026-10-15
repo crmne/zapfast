@@ -1119,8 +1119,11 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             palette.text,
         );
         response.response.widget_info(|| {
-            let mut info =
-                egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), "Theme");
+            let mut info = egui::WidgetInfo::labeled(
+                egui::WidgetType::ComboBox,
+                ui.is_enabled(),
+                crate::i18n::gettext(app.locale, "Theme"),
+            );
             info.current_text_value = Some(selected.to_owned());
             info
         });
@@ -1128,7 +1131,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             ui,
             &palette,
             Some(Icon::ExternalLink),
-            "Open themes folder",
+            &crate::i18n::gettext(app.locale, "Open themes folder"),
             false,
         )
         .clicked()

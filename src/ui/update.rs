@@ -14,6 +14,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
     let palette = app.palette;
+    let locale = app.locale;
     let mut close = false;
     let frame = Frame::new()
         .fill(palette.overlay)
@@ -21,7 +22,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
         .inner_margin(Margin::same(22))
         .shadow(palette.modal_shadow());
-    egui::Window::new("Update ZapFast")
+    egui::Window::new(crate::i18n::gettext(locale, "Update ZapFast"))
         .id(egui::Id::new("zapfast-update"))
         .title_bar(false)
         .resizable(false)
@@ -32,7 +33,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.set_width(420.0_f32.min((ctx.content_rect().width() - 64.0).max(240.0)));
             ui.horizontal(|ui| {
-                theme::text(ui, "Update ZapFast", theme::bold(20.0), palette.text);
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(locale, "Update ZapFast"),
+                    theme::bold(20.0),
+                    palette.text,
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     close |= theme::icon_button(
                         ui,
@@ -40,7 +46,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Close update",
+                        &crate::i18n::gettext(locale, "Close update"),
                     )
                     .clicked();
                 });
@@ -54,16 +60,16 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             );
             ui.add_space(20.0);
             let mut action = None;
-            let mut release_link = "Release notes";
+            let mut release_link = crate::i18n::gettext(locale, "Release notes");
             match &app.update_download {
                 DownloadState::Downloading { received, total } => {
                     let checking = *total > 0 && received == total;
                     theme::text(
                         ui,
                         if checking {
-                            "Checking download…"
+                            crate::i18n::gettext(locale, "Checking download…")
                         } else {
-                            "Downloading update…"
+                            crate::i18n::gettext(locale, "Downloading update…")
                         },
                         theme::medium(14.0),
                         palette.text,
@@ -76,13 +82,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                                 .desired_height(6.0),
                         );
                         ui.add_space(6.0);
+                        let progress_text = crate::i18n::gettext(locale, "{received} of {total} MB")
+                            .replace(
+                                "{received}",
+                                &format!("{:.1}", *received as f64 / 1_000_000.0),
+                            )
+                            .replace("{total}", &format!("{:.1}", *total as f64 / 1_000_000.0));
                         theme::text(
                             ui,
-                            format!(
-                                "{:.1} of {:.1} MB",
-                                *received as f64 / 1_000_000.0,
-                                *total as f64 / 1_000_000.0
-                            ),
+                            progress_text,
                             theme::regular(12.0),
                             palette.secondary,
                         );
@@ -91,26 +99,35 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                 }
                 DownloadState::Ready(_) => {
-                    theme::text(ui, "Ready to install", theme::semibold(14.0), palette.text);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(locale, "Ready to install"),
+                        theme::semibold(14.0),
+                        palette.text,
+                    );
                     ui.add_space(6.0);
                     ui.add(
                         egui::Label::new(
-                            RichText::new(
+                            RichText::new(crate::i18n::gettext(
+                                locale,
                                 "Finish any unsent messages or recordings before restarting. ZapFast will briefly disconnect, then reconnect automatically.",
-                            )
+                            ))
                             .font(theme::regular(14.0))
                             .color(palette.secondary),
                         )
                         .wrap(),
                     );
-                    action = Some(("Restart to update", Action::InstallUpdate));
+                    action = Some((
+                        crate::i18n::gettext(locale, "Restart to update"),
+                        Action::InstallUpdate,
+                    ));
                 }
                 DownloadState::Installing => {
                     ui.horizontal(|ui| {
                         theme::spinner(ui, 16.0, palette.accent);
                         theme::text(
                             ui,
-                            "Preparing to restart…",
+                            crate::i18n::gettext(locale, "Preparing to restart…"),
                             theme::regular(14.0),
                             palette.text,
                         );
@@ -127,14 +144,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         }
                         Some(Err(reason)) => {
                             message(ui, reason, palette.secondary);
-                            release_link = "Download from GitHub";
+                            release_link = crate::i18n::gettext(locale, "Download from GitHub");
                         }
                         Some(Ok(_)) => {
                             action = Some((
                                 if matches!(app.update_download, DownloadState::Failed(_)) {
-                                    "Retry download"
+                                    crate::i18n::gettext(locale, "Retry download")
                                 } else {
-                                    "Download update"
+                                    crate::i18n::gettext(locale, "Download update")
                                 },
                                 Action::DownloadUpdate,
                             ));
@@ -146,7 +163,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some((label, action)) = action
-                        && theme::soft_button(ui, &palette, None, label, true).clicked()
+                        && theme::soft_button(ui, &palette, None, &label, true).clicked()
                     {
                         app.actions.push(action);
                     }

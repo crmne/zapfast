@@ -293,9 +293,9 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         center + vec2(0.0, 30.0),
         Align2::CENTER_CENTER,
         if app.chats.is_empty() {
-            "Your chats appear on the left as they load."
+            crate::i18n::gettext(app.locale, "Your chats appear on the left as they load.")
         } else {
-            "Select a chat on the left."
+            crate::i18n::gettext(app.locale, "Select a chat on the left.")
         },
         theme::regular(14.0),
         palette.secondary,
@@ -620,23 +620,37 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "More",
+                        &crate::i18n::gettext(app.locale, "More"),
                     );
                     if palette.vibrant() {
                         ui.painter()
                             .set(more_glass, glass_button(&palette, more.rect));
                     }
+                    let info_label = crate::i18n::gettext(app.locale, "Info");
+                    let pin_label = if chat.pinned {
+                        crate::i18n::gettext(app.locale, "Unpin")
+                    } else {
+                        crate::i18n::gettext(app.locale, "Pin to top")
+                    };
+                    let archive_label = if chat.archived {
+                        crate::i18n::gettext(app.locale, "Unarchive")
+                    } else {
+                        crate::i18n::gettext(app.locale, "Archive")
+                    };
+                    let clear_label = crate::i18n::gettext(app.locale, "Clear chat");
+                    let copy_number_label = crate::i18n::gettext(app.locale, "Copy number");
+                    let close_label = crate::i18n::gettext(app.locale, "Close chat");
                     let width = widgets::menu_width(
                         ui,
                         &[
-                            "Info",
+                            info_label.as_ref(),
                             select_messages_label.as_ref(),
-                            "Pin to top",
-                            "Unarchive",
-                            "Clear chat",
+                            pin_label.as_ref(),
+                            archive_label.as_ref(),
+                            clear_label.as_ref(),
                             leave_label.as_ref(),
-                            "Copy number",
-                            "Close chat",
+                            copy_number_label.as_ref(),
+                            close_label.as_ref(),
                         ],
                         true,
                     );
@@ -649,7 +663,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
                         .show(|ui| {
-                            if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::Info),
+                                info_label.as_ref(),
+                            ) {
                                 app.actions.push(Action::OpenInfo(chat.id.clone()));
                             }
                             if widgets::menu_item(
@@ -664,7 +683,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 ui,
                                 &palette,
                                 Some(if chat.pinned { Icon::PinOff } else { Icon::Pin }),
-                                if chat.pinned { "Unpin" } else { "Pin to top" },
+                                pin_label.as_ref(),
                             ) {
                                 app.actions
                                     .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
@@ -673,11 +692,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 ui,
                                 &palette,
                                 Some(Icon::Archive),
-                                if chat.archived {
-                                    "Unarchive"
-                                } else {
-                                    "Archive"
-                                },
+                                archive_label.as_ref(),
                             ) {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
@@ -688,7 +703,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 ui,
                                 &palette,
                                 Some(Icon::Eraser),
-                                "Clear chat",
+                                clear_label.as_ref(),
                                 app.is_connected(),
                             ) {
                                 app.actions
@@ -711,11 +726,17 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                     )));
                             }
                             if let Some(phone) = chat.phone()
-                                && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy number")
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::Copy),
+                                    copy_number_label.as_ref(),
+                                )
                             {
                                 app.actions.push(Action::CopyText(format!("+{phone}")));
                             }
-                            if widgets::menu_item(ui, &palette, Some(Icon::X), "Close chat") {
+                            if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref())
+                            {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
@@ -4504,6 +4525,7 @@ fn bubble_frame(
                 super::polls::results_button(
                     ui,
                     &palette,
+                    view.locale,
                     message,
                     settled.unwrap_or(cap),
                     actions,
@@ -5651,6 +5673,7 @@ fn selection_menu(
     selection_delete_items(
         ui,
         &view.palette,
+        view.locale,
         &view.chat.id,
         selection_can_revoke(messages, selected, view.now),
         selected,
@@ -5663,16 +5686,19 @@ fn selection_menu(
 fn selection_delete_items(
     ui: &mut egui::Ui,
     palette: &Palette,
+    locale: crate::i18n::Locale,
     chat: &str,
     can_revoke: bool,
     selected: &[String],
     actions: &mut Vec<Action>,
 ) {
+    let delete_everyone_label = crate::i18n::gettext(locale, "Delete for everyone");
+    let delete_me_label = crate::i18n::gettext(locale, "Delete for me");
     for (label, for_everyone, enabled) in [
-        ("Delete for everyone", true, can_revoke),
-        ("Delete for me", false, !selected.is_empty()),
+        (delete_everyone_label, true, can_revoke),
+        (delete_me_label, false, !selected.is_empty()),
     ] {
-        if widgets::menu_item_enabled(ui, palette, Some(Icon::Trash), label, enabled) {
+        if widgets::menu_item_enabled(ui, palette, Some(Icon::Trash), label.as_ref(), enabled) {
             actions.push(Action::ShowDialog(Dialog::ConfirmDeleteSelection {
                 chat: chat.to_owned(),
                 messages: selected.to_vec(),
@@ -5722,7 +5748,8 @@ fn context_menu(
                 line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                 let response = if chosen {
-                    response.on_hover_text("Remove your reaction")
+                    response
+                        .on_hover_text(crate::i18n::gettext(view.locale, "Remove your reaction"))
                 } else {
                     response
                 };
@@ -5755,7 +5782,7 @@ fn context_menu(
             }
             if response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("React with any emoji")
+                .on_hover_text(crate::i18n::gettext(view.locale, "React with any emoji"))
                 .clicked()
             {
                 actions.push(Action::OpenReactionPicker {
@@ -5768,7 +5795,12 @@ fn context_menu(
     );
     widgets::menu_separator(ui, &palette);
     if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Reply),
+            &crate::i18n::gettext(view.locale, "Reply"),
+        )
     {
         if matches!(origin, MenuOrigin::List) {
             actions.push(Action::OpenMessage {
@@ -5826,7 +5858,12 @@ fn context_menu(
         });
     }
     if crate::app::can_select(&message.content)
-        && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Forward),
+            &crate::i18n::gettext(view.locale, "Forward"),
+        )
     {
         actions.push(Action::ShowDialog(Dialog::Forward {
             chat: chat.clone(),
@@ -5852,7 +5889,12 @@ fn context_menu(
         });
     }
     if crate::app::can_select(&message.content)
-        && widgets::menu_item(ui, &palette, Some(Icon::Check), "Select")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Check),
+            &crate::i18n::gettext(view.locale, "Select"),
+        )
     {
         if matches!(origin, MenuOrigin::List) {
             actions.push(Action::OpenMessage {
@@ -5881,7 +5923,12 @@ fn context_menu(
         _ => None,
     };
     if let Some(text) = text
-        && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy text")
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Copy),
+            &crate::i18n::gettext(view.locale, "Copy text"),
+        )
     {
         let mentions = mentions_of(view, message);
         actions.push(Action::CopyText(markup::plain(&text, &mentions)));
@@ -5893,7 +5940,14 @@ fn context_menu(
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if can_edit && widgets::menu_item(ui, &palette, Some(Icon::Pencil), "Edit") {
+    if can_edit
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Pencil),
+            &crate::i18n::gettext(view.locale, "Edit"),
+        )
+    {
         if matches!(origin, MenuOrigin::List) {
             actions.push(Action::OpenMessage {
                 chat: chat.clone(),
@@ -5902,14 +5956,26 @@ fn context_menu(
         }
         actions.push(Action::Edit(message.id.clone()));
     }
-    if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
+    if can_revoke
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Trash),
+            &crate::i18n::gettext(view.locale, "Delete for everyone"),
+        )
+    {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),
             for_everyone: true,
         }));
     }
-    if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::EyeOff),
+        &crate::i18n::gettext(view.locale, "Delete for me"),
+    ) {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),
@@ -5933,7 +5999,7 @@ fn context_menu(
                 let open = if matches!(message.content, Content::Video { gif: false, .. }) {
                     crate::i18n::gettext(view.locale, "Open in system player")
                 } else {
-                    "Open file".into()
+                    crate::i18n::gettext(view.locale, "Open file")
                 };
                 if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
                     actions.push(Action::OpenFile(path.clone()));
@@ -5948,29 +6014,40 @@ fn context_menu(
                 {
                     actions.push(Action::CopyImage(path.clone()));
                 }
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
+                if widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::Download),
+                    &crate::i18n::gettext(view.locale, "Save as…"),
+                ) {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
                         name: attachment_name(&message.content, path),
                     });
                 }
                 if let Some(folder) = path.parent()
-                    && widgets::menu_item(ui, &palette, Some(Icon::FileText), "Show in folder")
+                    && widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::FileText),
+                        &crate::i18n::gettext(view.locale, "Show in folder"),
+                    )
                 {
                     actions.push(Action::OpenFolder(folder.to_path_buf()));
                 }
             }
             None => {
                 let downloading = matches!(media.state, MediaState::Downloading);
+                let download_label = if downloading {
+                    crate::i18n::gettext(view.locale, "Downloading…")
+                } else {
+                    crate::i18n::gettext(view.locale, "Download")
+                };
                 if widgets::menu_item_enabled(
                     ui,
                     &palette,
                     Some(Icon::Download),
-                    if downloading {
-                        "Downloading…"
-                    } else {
-                        "Download"
-                    },
+                    download_label.as_ref(),
                     !downloading,
                 ) {
                     actions.push(Action::Download {
@@ -6017,7 +6094,12 @@ fn context_menu(
         });
     }
     // The id helps when looking a message up for a bug report.
-    if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::Copy),
+        &crate::i18n::gettext(view.locale, "Copy message ID"),
+    ) {
         actions.push(Action::CopyText(message.id.clone()));
     }
 }
@@ -6597,6 +6679,7 @@ fn content(
             super::polls::ballot(
                 ui,
                 &palette,
+                view.locale,
                 message,
                 width,
                 view.connected,
@@ -9553,6 +9636,7 @@ fn select_box(ui: &egui::Ui, palette: &Palette, rect: Rect, checked: bool) {
 /// Replaces the composer while messages are selected.
 fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[String]) {
     let palette = app.palette;
+    let locale = app.locale;
     ui.horizontal(|ui| {
         if theme::icon_button(
             ui,
@@ -9560,25 +9644,32 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             18.0,
             palette.secondary,
             palette.text,
-            "Cancel selection",
+            &crate::i18n::gettext(locale, "Cancel selection"),
         )
         .clicked()
             || ui.input(|input| input.key_pressed(Key::Escape))
         {
             app.actions.push(Action::CancelSelection);
         }
-        let count = if selected.len() == 1 {
-            "1 selected".to_owned()
-        } else {
-            format!("{} selected", selected.len())
-        };
+        let count = crate::i18n::ngettext(
+            locale,
+            "1 selected",
+            "{count} selected",
+            selected.len() as u32,
+        )
+        .replace("{count}", &selected.len().to_string());
         theme::text(ui, &count, theme::medium(14.5), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // The selection stays open with nothing in it, as its check
             // boxes do; there is nothing to forward until one is ticked.
             let forward = ui
                 .add_enabled_ui(!selected.is_empty(), |ui| {
-                    theme::pill_button(ui, &palette, "Forward…", true)
+                    theme::pill_button(
+                        ui,
+                        &palette,
+                        &crate::i18n::gettext(locale, "Forward…"),
+                        true,
+                    )
                 })
                 .inner;
             if forward.clicked() {
@@ -9589,7 +9680,12 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             }
             let delete = ui
                 .add_enabled_ui(!selected.is_empty(), |ui| {
-                    theme::pill_button(ui, &palette, "Delete…", false)
+                    theme::pill_button(
+                        ui,
+                        &palette,
+                        &crate::i18n::gettext(locale, "Delete…"),
+                        false,
+                    )
                 })
                 .inner;
             // Demo/test: hold this menu open for a screenshot.
@@ -9600,13 +9696,27 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             let can_revoke = app.conversations.get(chat).is_some_and(|conversation| {
                 selection_can_revoke(&conversation.messages, selected, crate::util::now())
             });
-            let width = widgets::menu_width(ui, &["Delete for everyone", "Delete for me"], true);
+            let delete_everyone_label = crate::i18n::gettext(locale, "Delete for everyone");
+            let delete_me_label = crate::i18n::gettext(locale, "Delete for me");
+            let width = widgets::menu_width(
+                ui,
+                &[delete_everyone_label.as_ref(), delete_me_label.as_ref()],
+                true,
+            );
             let mut actions = Vec::new();
             egui::Popup::menu(&delete)
                 .width(width)
                 .frame(widgets::menu_frame(&palette))
                 .show(|ui| {
-                    selection_delete_items(ui, &palette, chat, can_revoke, selected, &mut actions);
+                    selection_delete_items(
+                        ui,
+                        &palette,
+                        locale,
+                        chat,
+                        can_revoke,
+                        selected,
+                        &mut actions,
+                    );
                 });
             app.actions.extend(actions);
         });
