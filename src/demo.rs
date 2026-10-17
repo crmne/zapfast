@@ -239,12 +239,14 @@ fn demo_waveform() -> Vec<u8> {
 /// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
 ///
 /// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
-/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs, and
-/// Arabic lam ligatures in a line long enough to wrap.
-pub const RTL_SELF_CHAT: [&str; 3] = [
+/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs,
+/// Arabic lam ligatures in a line long enough to wrap, and Hebrew sentences,
+/// one of them with Latin and numbers in it, that wrap too.
+pub const RTL_SELF_CHAT: [&str; 4] = [
     "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
     "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
     "إلى السطر التالي\nالله أكبر، لا بأس 🌙\nهذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة إلى السطر التالي",
+    "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך כל הרחוב עד שהגיע אל הגינה השקטה שליד הבית, ושם נשכב לנוח בצל העץ\nקבענו ב-18:30 ליד ה-Central Park, אל תשכח להביא את ה-laptop ואת המטען כי הפגישה תהיה ארוכה",
 ];
 
 /// Numbers inside right-to-left text on the `rtl` page: Arabic-Indic and
@@ -2425,6 +2427,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     },
                 );
                 app.open_chat = Some(ME.into());
+                // A draft that wraps and ends in Latin, where the caret has
+                // to stay beside the last letter typed.
+                app.composer =
+                    "נדבר מחר ב-10:00 על ה-release החדש, אני אשלח לך את ה-link לפגישה ברגע שנסיים את ה-code review"
+                        .into();
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
