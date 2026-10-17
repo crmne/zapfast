@@ -8,6 +8,10 @@ nav_order: 3
 
 ## Writing
 
+Undo and redo in the message field apply to its current chat and account.
+Switching chats or accounts, closing a chat, or unlinking clears the editor's
+undo history. Saved drafts remain available when you return to their chat.
+
 Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
