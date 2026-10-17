@@ -898,6 +898,69 @@ fn starred_row(
     }
 }
 
+/// The archive belongs to the normal chat list, never search or a private folder.
+fn offers_archived_entry(app: &App) -> bool {
+    app.page == Page::Chats
+        && !app.show_starred
+        && !app.show_archived
+        && !app.locked_folder
+        && app.search.trim().is_empty()
+        && app.archived_count() > 0
+}
+
+/// A named entry above the chats, in addition to the rail's archive shortcut.
+fn archived_entry(app: &mut App, ui: &mut egui::Ui) -> egui::Response {
+    let palette = app.palette;
+    let count = app.archived_unread();
+    let title = crate::i18n::gettext(app.locale, "Archived");
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme::ROW_HEIGHT),
+        Sense::hover(),
+    );
+    let response = ui.interact(
+        rect,
+        ui.make_persistent_id("archived-entry"),
+        Sense::click(),
+    );
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            format!("{title}, {count}"),
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() || response.has_focus() {
+            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        }
+        let icon =
+            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
+        Icon::Archive.image(palette.accent, 22.0).paint_at(ui, icon);
+        ui.painter().text(
+            pos2(rect.left() + 76.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            title.as_ref(),
+            theme::medium(14.5),
+            palette.text,
+        );
+        if count > 0 {
+            ui.painter().text(
+                pos2(rect.right() - 16.0, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                count.to_string(),
+                theme::regular(12.5),
+                palette.accent,
+            );
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.clicked() {
+        app.actions.push(Action::ShowArchived(true));
+    }
+    response
+}
+
 fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     // Taken here so a send seen while the list is hidden cannot move it later.
@@ -919,6 +982,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     if !app.search.trim().is_empty() {
         results(app, ui);
         return;
+    }
+    // Keep the entry available even when every chat is archived or a chip
+    // has no matches. Outside the virtual rows, chat indices stay unchanged.
+    if offers_archived_entry(app) {
+        archived_entry(app, ui);
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     if chats.is_empty() {
@@ -2173,6 +2241,112 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archived_entry_is_only_offered_in_the_normal_chat_list() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        assert!(!offers_archived_entry(&app));
+        let mut chat = Chat::new("fixture@g.us".into(), "Archived fixture".into());
+        chat.archived = true;
+        chat.locked = true;
+        chat.unread = 8;
+        app.chats.push(chat);
+        assert!(!offers_archived_entry(&app), "locked archives stay hidden");
+        assert_eq!(app.archived_unread(), 0);
+        app.chats[0].locked = false;
+        assert!(offers_archived_entry(&app));
+        assert_eq!(app.archived_unread(), 1, "count chats, not messages");
+        app.chat_filter = ChatFilter::Unread;
+        assert!(offers_archived_entry(&app), "chips do not hide the archive");
+        app.search = "fixture".into();
+        assert!(!offers_archived_entry(&app));
+        app.search.clear();
+        app.show_archived = true;
+        assert!(!offers_archived_entry(&app));
+        app.show_archived = false;
+        app.locked_folder = true;
+        assert!(!offers_archived_entry(&app));
+        app.locked_folder = false;
+        app.show_starred = true;
+        assert!(!offers_archived_entry(&app));
+        app.show_starred = false;
+        for page in [Page::Calls, Page::Settings, Page::Wallpaper] {
+            app.page = page;
+            assert!(!offers_archived_entry(&app));
+        }
+        app.page = Page::Chats;
+        app.chats[0].unread = 0;
+        assert!(
+            offers_archived_entry(&app),
+            "read archives remain accessible"
+        );
+        assert_eq!(app.archived_unread(), 0);
+    }
+
+    #[test]
+    fn archived_entry_opens_the_archive_even_without_normal_chats() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        let mut chat = Chat::new("fixture@g.us".into(), "Archived fixture".into());
+        chat.archived = true;
+        chat.unread = 3;
+        app.chats.push(chat);
+        let mut locked = Chat::new("locked-fixture@g.us".into(), "Locked fixture".into());
+        locked.archived = true;
+        locked.locked = true;
+        locked.unread = 5;
+        app.chats.push(locked);
+        assert_eq!(app.archived_count(), 1);
+        assert_eq!(app.archived_unread(), 1);
+        assert!(app.visible_chats().is_empty());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let frame = |app: &mut App, events| {
+            let mut entry_id = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    entry_id = Some(ui.make_persistent_id("archived-entry"));
+                    list(app, ui);
+                },
+            );
+            output.textures_delta.clear();
+            entry_id.unwrap()
+        };
+        let entry_id = frame(&mut app, vec![]);
+        let position = ctx
+            .read_response(entry_id)
+            .expect("archive entry above the empty list")
+            .rect
+            .center();
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(app.actions, [Action::ShowArchived(true)]);
+        assert!(!app.show_archived, "the view only queues an action");
+    }
 
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.

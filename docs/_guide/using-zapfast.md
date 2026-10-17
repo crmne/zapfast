@@ -601,6 +601,10 @@ on the left above **Settings**, opens the archived chats in the list, and
 shows how many of them are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
+When there are archived chats, a named **Archived** row also appears above the
+chats, so the archive can be opened from the list itself; its number counts
+unread archived chats. It is not shown in search, Calls, Starred, the archive,
+or the locked folder, and locked chats never contribute to its count.
 ZapFast remembers the chip or label each account last showed and comes back
 to it at the next start.
 When the chips do not fit the chat list's width, the row fades at its edge:
