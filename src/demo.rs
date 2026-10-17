@@ -7458,6 +7458,59 @@ mod tests {
         }
     }
 
+    /// In a chat with its own speed, the chip and the message menu change
+    /// that chat's speed and leave the one in Settings alone.
+    #[test]
+    fn a_chat_with_its_own_speed_changes_only_its_own() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.settings.voice_speed = 2.0;
+        let chat = sample_ids()[0].to_owned();
+        app.chat_mut(&chat).unwrap().voice_speed = Some(1.0);
+        let mut clip = media("audio/ogg; codecs=opus", 12_000, None, None);
+        clip.path = Some(std::path::PathBuf::from("demo/voice.ogg"));
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "voice-speed",
+            false,
+            100,
+            Content::Audio {
+                media: clip,
+                seconds: Some(5),
+                voice_note: true,
+                waveform: demo_waveform(),
+            },
+        )];
+        render(&mut app, &ctx);
+        let click = |app: &mut App, id: egui::Id, button: egui::PointerButton| {
+            let pos = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id))
+                .expect("the speed control is on screen")
+                .center();
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(app, &ctx, vec![egui::Event::PointerMoved(pos), press(true)]);
+            frame_with(app, &ctx, vec![press(false)]);
+            frame_with(app, &ctx, Vec::new());
+        };
+        // The chip starts from the chat's 1x, not the 2x in Settings.
+        let chip = crate::ui::conversation::speed_chip_id(&chat, "voice-speed");
+        click(&mut app, chip, egui::PointerButton::Primary);
+        assert_eq!(app.chat(&chat).unwrap().voice_speed, Some(1.5));
+        assert_eq!(app.player.speed(), 1.5);
+        assert_eq!(app.settings.voice_speed, 2.0);
+        click(&mut app, chip, egui::PointerButton::Secondary);
+        let choice = crate::ui::conversation::speed_button_id(&chat, "voice-speed", 1.25);
+        click(&mut app, choice, egui::PointerButton::Primary);
+        assert_eq!(app.chat(&chat).unwrap().voice_speed, Some(1.25));
+        assert_eq!(app.settings.voice_speed, 2.0);
+    }
+
     /// A refused voice message waits above its own chat's composer, where
     /// Enter in the empty composer sends it again and the strip's X discards
     /// it; other chats neither show nor send it.

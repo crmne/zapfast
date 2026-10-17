@@ -553,6 +553,9 @@ pub struct App {
     /// Chat whose voice messages carry on into the next unheard one when a
     /// clip ends. Leaving the chat, or playing a video, ends the run.
     voice_chat: Option<ChatId>,
+    /// Chat of the clip in the player, whose speed it plays at. Unlike
+    /// `voice_chat` it outlives a chat switch, as the clip keeps playing.
+    voice_clip_chat: Option<ChatId>,
     /// Next voice message of a run, playing once its download finishes, and
     /// when the download began. Media stays paused for a short while meanwhile.
     voice_wanted: Option<(ChatId, String, Instant)>,
@@ -1375,6 +1378,7 @@ impl App {
             video_chat: None,
             video_wanted: None,
             voice_chat: None,
+            voice_clip_chat: None,
             voice_wanted: None,
             recording: None,
             media_hold: None,
@@ -1684,6 +1688,7 @@ impl App {
         self.video_wanted = None;
         self.motion_playing = None;
         self.voice_chat = None;
+        self.voice_clip_chat = None;
         self.voice_wanted = None;
         self.recording = None;
         self.image_preview = None;
@@ -2226,6 +2231,14 @@ impl App {
 
     pub fn chat(&self, id: &str) -> Option<&Chat> {
         self.chats.iter().find(|chat| chat.id == id)
+    }
+
+    /// The speed voice messages play at in `chat`: its own, else the one in
+    /// Settings.
+    pub fn voice_speed_in(&self, chat: Option<&str>) -> f32 {
+        chat.and_then(|chat| self.chat(chat))
+            .and_then(|chat| chat.voice_speed)
+            .unwrap_or(self.settings.voice_speed)
     }
 
     pub fn chat_mut(&mut self, id: &str) -> Option<&mut Chat> {
@@ -7100,12 +7113,15 @@ impl App {
                 self.video.stop();
                 self.voice_wanted = None;
                 self.voice_chat = self.open_chat.clone();
+                self.voice_clip_chat = self.open_chat.clone();
+                self.sync_voice_speed();
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
             }
             Action::SetVoiceSpeed(speed) => {
-                self.settings.voice_speed = self.player.set_speed(speed);
+                self.settings.voice_speed = crate::audio::supported_speed(speed);
+                self.sync_voice_speed();
                 self.mark_settings_dirty();
             }
             Action::StartRecording => {
@@ -8102,6 +8118,7 @@ impl App {
                 self.backend.send(Command::SetChatSound { chat, sound });
             }
             Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
+            Action::SetChatVoiceSpeed { chat, speed } => self.set_chat_voice_speed(chat, speed),
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
@@ -8911,11 +8928,32 @@ impl App {
         self.video.stop();
         self.voice_wanted = None;
         self.voice_chat = self.open_chat.clone();
+        self.voice_clip_chat = self.open_chat.clone();
+        self.sync_voice_speed();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
         }
         self.tell_played(message);
+    }
+
+    /// Gives `chat` its own voice message speed, or `None` to follow
+    /// Settings.
+    fn set_chat_voice_speed(&mut self, chat: ChatId, speed: Option<f32>) {
+        let speed = speed.map(crate::audio::supported_speed);
+        if let Some(known) = self.chat_mut(&chat) {
+            known.voice_speed = speed;
+        }
+        self.sync_voice_speed();
+        self.backend
+            .send(Command::SetChatVoiceSpeed { chat, speed });
+    }
+
+    /// Plays the clip in the player at the speed of its own chat, which may
+    /// not be the one on screen.
+    fn sync_voice_speed(&mut self) {
+        let chat = self.voice_clip_chat.clone().or(self.open_chat.clone());
+        self.player.set_speed(self.voice_speed_in(chat.as_deref()));
     }
 
     fn tell_played(&mut self, message: String) {
@@ -20052,6 +20090,68 @@ mod tests {
         assert!(app.open_chat.is_none());
         app.open_chat(id.into());
         assert_eq!(app.composer, "unfinished message");
+    }
+
+    #[test]
+    fn a_chat_with_its_own_speed_keeps_it_and_leaves_settings_alone() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (own, other) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(own.into(), "Ada".into()));
+        app.chats.push(Chat::new(other.into(), "Bob".into()));
+        app.apply(Action::SetVoiceSpeed(2.0), &ctx);
+
+        app.open_chat(own.into());
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.0),
+            },
+            &ctx,
+        );
+        assert_eq!(app.voice_speed_in(Some(own)), 1.0);
+        assert_eq!(app.player.speed(), 1.0);
+        assert_eq!(app.voice_speed_in(Some(other)), 2.0);
+
+        // Settings leave a chat with its own speed alone.
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.5),
+            },
+            &ctx,
+        );
+        app.open_chat(other.into());
+        app.apply(Action::SetVoiceSpeed(1.25), &ctx);
+        assert_eq!(app.settings.voice_speed, 1.25);
+        assert_eq!(app.chat(own).unwrap().voice_speed, Some(1.5));
+
+        // A clip from that chat still playing in another chat keeps the
+        // chat's speed when Settings change, and follows the chat's own.
+        app.voice_clip_chat = Some(own.into());
+        app.apply(Action::SetVoiceSpeed(2.0), &ctx);
+        assert_eq!(app.settings.voice_speed, 2.0);
+        assert_eq!(app.player.speed(), 1.5);
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.0),
+            },
+            &ctx,
+        );
+        assert_eq!(app.player.speed(), 1.0);
+        app.voice_clip_chat = None;
+        app.apply(Action::SetVoiceSpeed(1.25), &ctx);
+
+        // Back to Default, the chat follows Settings again.
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: None,
+            },
+            &ctx,
+        );
+        assert_eq!(app.voice_speed_in(Some(own)), 1.25);
     }
 
     #[test]

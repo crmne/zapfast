@@ -6290,6 +6290,12 @@ impl Worker {
                 let _ = self.archive.set_notification_sound(&chat, sound.as_ref());
                 self.emit_chat(&chat);
             }
+            Command::SetChatVoiceSpeed { chat, speed } => {
+                if let Err(error) = self.archive.set_voice_speed(&chat, speed) {
+                    log::warn!("could not store the chat's voice speed: {error}");
+                }
+                self.emit_chat(&chat);
+            }
             Command::PickChatSound(chat) => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();

@@ -541,6 +541,11 @@ pub enum Command {
     },
     /// Asks for an audio file for one chat's notifications.
     PickChatSound(ChatId),
+    /// Stores a chat's own voice message speed.
+    SetChatVoiceSpeed {
+        chat: ChatId,
+        speed: Option<f32>,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Asks for a wallpaper image and copies it into the state directory.

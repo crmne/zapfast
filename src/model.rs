@@ -309,6 +309,8 @@ pub struct Chat {
     /// The oldest unread message that mentions us (or everyone), which the
     /// chat list marks with "@" and opening the chat shows.
     pub unread_mention: Option<String>,
+    /// This chat's own voice message speed; `None` follows Settings.
+    pub voice_speed: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -353,6 +355,7 @@ impl Chat {
             labels: Vec::new(),
             notification_sound: None,
             unread_mention: None,
+            voice_speed: None,
         }
     }
 
@@ -2762,6 +2765,11 @@ pub enum Action {
     },
     /// Asks for an audio file for one chat's notifications.
     PickChatSound(ChatId),
+    /// Sets a chat's own voice message speed; `None` follows Settings.
+    SetChatVoiceSpeed {
+        chat: ChatId,
+        speed: Option<f32>,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Changes our display name and About text; `None` keeps the current one.

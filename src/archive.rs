@@ -170,7 +170,7 @@ const CHAT_COLUMNS: &str =
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
-                    c.info_locked, c.group_admin, c.group_description";
+                    c.info_locked, c.group_admin, c.group_description, c.voice_speed";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -214,6 +214,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "group_description", "TEXT"),
     // Set once the phone says it holds nothing older than what it sent.
     ("chats", "history_start", "INTEGER NOT NULL DEFAULT 0"),
+    // NULL plays voice messages at the speed in Settings.
+    ("chats", "voice_speed", "REAL"),
     ("contacts", "first_name", "TEXT"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -271,6 +273,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         info_locked: row.get(23)?,
         admin: row.get(24)?,
         group_description: row.get(25)?,
+        voice_speed: row.get(26)?,
     })
 }
 
@@ -621,6 +624,17 @@ impl Archive {
         self.connection.execute(
             "UPDATE chats SET notification_sound = ?2 WHERE id = ?1",
             params![id, sound],
+        )?;
+        Ok(())
+    }
+
+    /// A chat's own voice message speed; `None` follows Settings. Any other
+    /// speed is stored as the nearest supported one.
+    pub fn set_voice_speed(&self, id: &str, speed: Option<f32>) -> Result<()> {
+        let speed = speed.map(crate::audio::supported_speed);
+        self.connection.execute(
+            "UPDATE chats SET voice_speed = ?2 WHERE id = ?1",
+            params![id, speed],
         )?;
         Ok(())
     }
@@ -1204,6 +1218,7 @@ impl Archive {
                     WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN ephemeral_setting_timestamp
                     ELSE MAX(ephemeral_setting_timestamp, (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)) END,
                 notification_sound = COALESCE(notification_sound, (SELECT notification_sound FROM chats WHERE id = ?1)),
+                voice_speed = COALESCE(voice_speed, (SELECT voice_speed FROM chats WHERE id = ?1)),
                 history_start = MAX(history_start, COALESCE((SELECT history_start FROM chats WHERE id = ?1), 0))
              WHERE id = ?4 AND EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
             params![lid_chat, pn, phone_chat, phone_chat],
@@ -4180,6 +4195,20 @@ pub(crate) mod tests {
         );
         archive.set_notification_sound(id, None).unwrap();
         assert_eq!(archive.chat(id).unwrap().unwrap().notification_sound, None);
+    }
+
+    #[test]
+    fn a_chat_keeps_its_own_voice_speed() {
+        let archive = Archive::in_memory().unwrap();
+        let id = "1@s.whatsapp.net";
+        archive.ensure_chat(id, "Ada").unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().voice_speed, None);
+        archive.set_voice_speed(id, Some(1.0)).unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().voice_speed, Some(1.0));
+        archive.set_voice_speed(id, Some(1.3)).unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().voice_speed, Some(1.25));
+        archive.set_voice_speed(id, None).unwrap();
+        assert_eq!(archive.chat(id).unwrap().unwrap().voice_speed, None);
     }
 
     #[test]
