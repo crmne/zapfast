@@ -33,6 +33,7 @@ use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
 use whatsapp_rust::wacore::history_sync::{HistorySyncStream, MAX_DECOMPRESSED};
 use whatsapp_rust::wacore::iq::abprops;
 use whatsapp_rust::wacore::store::DevicePropsOverride;
+use whatsapp_rust::wacore::store::traits::DeviceStore as _;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
@@ -580,6 +581,38 @@ fn device_name() -> String {
     }
 }
 
+/// Existing sessions keep the original startup path and never wait for a choice.
+fn pairing_history_for_device(
+    linked: bool,
+    selected: Option<crate::model::PairingHistory>,
+) -> Option<crate::model::PairingHistory> {
+    if linked {
+        Some(crate::model::PairingHistory::Recent)
+    } else {
+        selected
+    }
+}
+
+/// Use the library's supported full-sync profile as a complete unit.
+fn pairing_device_props(history: crate::model::PairingHistory) -> DevicePropsOverride {
+    let props = DevicePropsOverride::new()
+        .with_os(device_name())
+        .with_version(app_version());
+    match history.days() {
+        None => props.with_platform_type(wa::device_props::PlatformType::DESKTOP),
+        Some(days) => {
+            let mut config = whatsapp_rust::wacore::store::device::default_history_sync_config();
+            config.full_sync_days_limit = Some(days);
+            config.on_demand_ready = Some(true);
+            config.complete_on_demand_ready = Some(true);
+            props
+                .with_platform_type(wa::device_props::PlatformType::UWP)
+                .with_require_full_sync(true)
+                .with_history_sync_config(config)
+        }
+    }
+}
+
 /// App version in WhatsApp device-property format.
 fn app_version() -> wa::device_props::AppVersion {
     let mut parts = env!("CARGO_PKG_VERSION")
@@ -719,6 +752,7 @@ pub async fn run(
         lid_to_pn: HashMap::new(),
         contacts: HashMap::new(),
         status: LinkStatus::Starting,
+        pairing_history: None,
         pairing_phone: None,
         pair_code: None,
         qr: None,
@@ -1109,6 +1143,8 @@ struct Worker {
     lid_to_pn: HashMap<String, String>,
     contacts: HashMap<String, Contact>,
     status: LinkStatus,
+    /// Confirmed only for this new pairing attempt, never loaded from settings.
+    pairing_history: Option<crate::model::PairingHistory>,
     pairing_phone: Option<String>,
     pair_code: Option<String>,
     qr: Option<String>,
@@ -2353,6 +2389,19 @@ impl Worker {
                 return;
             }
         };
+        let linked = match store.load().await {
+            Ok(device) => device.is_some_and(|device| device.pn.is_some()),
+            Err(error) => {
+                self.set_status(LinkStatus::Failed(format!(
+                    "Could not load the linked device: {error}"
+                )));
+                return;
+            }
+        };
+        let Some(history) = pairing_history_for_device(linked, self.pairing_history) else {
+            self.set_status(LinkStatus::ChooseHistory);
+            return;
+        };
         let sender = self.wa_sender.clone();
         let builder = host_owned_presence(Bot::builder().with_backend(store))
             .with_watched_ab_props([
@@ -2377,12 +2426,7 @@ impl Worker {
         };
         let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
-            .with_device_props(
-                DevicePropsOverride::new()
-                    .with_os(device_name())
-                    .with_version(app_version())
-                    .with_platform_type(wa::device_props::PlatformType::DESKTOP),
-            )
+            .with_device_props(pairing_device_props(history))
             .with_event_handler(UiEvents {
                 sender,
                 generation: self.privacy_generation,
@@ -3682,6 +3726,7 @@ impl Worker {
         self.pair_code = None;
         self.pairing_phone = None;
         self.set_syncing(false);
+        self.pairing_history = None;
         let session = self.dirs.session_db();
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut path = session.clone().into_os_string();
@@ -7373,6 +7418,12 @@ impl Worker {
                 }
                 self.stop_bot().await;
                 self.emit(Event::AccountRemoved);
+            }
+            Command::StartPairing(history) => {
+                if self.status == LinkStatus::ChooseHistory && self.client.is_none() {
+                    self.pairing_history = Some(history);
+                    self.start_bot().await;
+                }
             }
             Command::Reconnect => {
                 if let Some(client) = self.client.clone() {
@@ -16518,6 +16569,7 @@ mod receipt_tests {
             lid_to_pn: HashMap::new(),
             contacts: HashMap::new(),
             status: LinkStatus::Connected,
+            pairing_history: None,
             pairing_phone: None,
             pair_code: None,
             qr: None,
@@ -21603,5 +21655,81 @@ mod older_history_tests {
         worker.apply_history(history, true);
         worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
         assert!(!worker.archive.history_start(CHAT).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod pairing_history_tests {
+    use super::*;
+    use crate::model::PairingHistory;
+
+    #[test]
+    fn only_a_new_device_waits_for_a_history_choice() {
+        assert_eq!(pairing_history_for_device(false, None), None);
+        assert_eq!(
+            pairing_history_for_device(false, Some(PairingHistory::FullThreeYears)),
+            Some(PairingHistory::FullThreeYears)
+        );
+        for selected in [None, Some(PairingHistory::FullThreeYears)] {
+            assert_eq!(
+                pairing_history_for_device(true, selected),
+                Some(PairingHistory::Recent)
+            );
+        }
+    }
+
+    #[test]
+    fn recent_profile_preserves_the_existing_defaults() {
+        let props = pairing_device_props(PairingHistory::Recent);
+        assert_eq!(
+            props.platform_type,
+            Some(wa::device_props::PlatformType::DESKTOP)
+        );
+        assert_eq!(props.require_full_sync, None);
+        assert!(props.history_sync_config.is_none());
+    }
+
+    #[test]
+    fn full_profiles_reach_the_library_registration_payload() {
+        for (history, days) in [
+            (PairingHistory::FullOneYear, 365),
+            (PairingHistory::FullTwoYears, 730),
+            (PairingHistory::FullThreeYears, 1095),
+        ] {
+            let mut device = whatsapp_rust::wacore::store::Device::new();
+            device.set_device_props(pairing_device_props(history));
+            let payload = device.get_client_payload();
+            let bytes = payload
+                .device_pairing_data
+                .into_option()
+                .unwrap()
+                .device_props
+                .unwrap();
+            let props = wa::DeviceProps::decode_from_slice(&bytes).unwrap();
+            assert_eq!(
+                props.platform_type,
+                Some(wa::device_props::PlatformType::UWP)
+            );
+            assert_eq!(props.require_full_sync, Some(true));
+            let config = props.history_sync_config.into_option().unwrap();
+            assert_eq!(config.full_sync_days_limit, Some(days));
+            assert_eq!(config.on_demand_ready, Some(true));
+            assert_eq!(config.complete_on_demand_ready, Some(true));
+            assert_eq!(config.support_message_association, Some(true));
+            // Linked-device login has no registration properties and cannot
+            // request a second initial sync or replace a linked identity.
+            device.pn = Some("15550001111@s.whatsapp.net".parse().unwrap());
+            assert!(device.get_client_payload().device_pairing_data.is_unset());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_late_pairing_command_does_not_reconfigure_a_connected_worker() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker
+            .handle_command(Command::StartPairing(PairingHistory::FullThreeYears))
+            .await;
+        assert_eq!(worker.status, LinkStatus::Connected);
+        assert_eq!(worker.pairing_history, None);
     }
 }

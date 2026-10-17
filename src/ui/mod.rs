@@ -550,7 +550,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             true,
             None,
         ),
-        LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
+        LinkStatus::ChooseHistory | LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
             "Not linked to a phone".to_owned(),
             palette.warning,

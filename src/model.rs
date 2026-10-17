@@ -12,6 +12,29 @@ use serde::{Deserialize, Serialize};
 /// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
 pub type ChatId = String;
 
+/// History requested from the phone when linking a new companion device.
+/// The phone decides how much of that history it can actually supply.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PairingHistory {
+    #[default]
+    Recent,
+    FullOneYear,
+    FullTwoYears,
+    FullThreeYears,
+}
+
+impl PairingHistory {
+    /// Requested day limit, absent for the existing recent-history profile.
+    pub fn days(self) -> Option<u32> {
+        match self {
+            Self::Recent => None,
+            Self::FullOneYear => Some(365),
+            Self::FullTwoYears => Some(730),
+            Self::FullThreeYears => Some(1095),
+        }
+    }
+}
+
 /// Stable folder name for a linked WhatsApp account on this computer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub String);
@@ -2815,6 +2838,13 @@ pub enum Action {
     /// How long ZapFast may go unused before it locks.
     SetAutoLock(crate::settings::AutoLock),
     Reconnect,
+    /// Updates the account's choice before requesting a pairing code.
+    ChoosePairingHistory {
+        account: AccountId,
+        history: PairingHistory,
+    },
+    /// Requests a code using this account's selected history profile.
+    StartPairing(AccountId),
     /// Sets aside an archive whose key is gone and links again.
     StartOverArchive,
     Quit,
