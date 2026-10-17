@@ -44,6 +44,9 @@ several, **Review recipients** lists them for you to confirm, and **Back**
 returns to the picker without losing the selection. If a destination becomes
 locked or read-only, ZapFast returns to selection instead of sending a partial
 batch. Switching accounts discards the open forwarding selection.
+In a large window the dialog takes more of the window, so more recipients fit
+at once; it still stays inside a narrow or short one, and searching or changing
+the selection does not collapse the list.
 
 Right-click a group message and choose **Reply privately** to open a direct
 conversation with its sender while quoting the group message. The quote

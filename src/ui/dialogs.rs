@@ -15,7 +15,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-        .inner_margin(Margin::same(22))
+        .inner_margin(Margin::same(if matches!(dialog, Dialog::Forward { .. }) {
+            12
+        } else {
+            22
+        }))
         .shadow(palette.modal_shadow());
     let response = egui::Modal::new(egui::Id::new("dialog"))
         .frame(frame)
@@ -42,7 +46,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmRemoveStickerPack { .. } => 380.0,
                 Dialog::StickerPack => 420.0,
                 Dialog::StickerMaker => 400.0,
-                Dialog::Forward { .. } => 420.0,
+                Dialog::Forward { .. } => {
+                    let width = ui.ctx().content_rect().width();
+                    (width * 0.6)
+                        .clamp(420.0, 760.0)
+                        .min((width - 48.0).max(1.0))
+                }
                 Dialog::CreatePoll(_) => 420.0,
                 Dialog::SendLocation(_) => 420.0,
                 Dialog::PollResults { .. }
@@ -103,6 +112,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
             }
         });
+    #[cfg(any(test, feature = "demo"))]
+    if matches!(app.dialog, Some(Dialog::Forward { .. })) {
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("forward-layout", "modal")),
+                response.response.rect,
+            )
+        });
+    }
     if response.should_close() {
         app.actions.push(Action::CloseDialog);
     }
@@ -479,6 +497,13 @@ pub(super) fn contact_choices(app: &App, needle: &str) -> Vec<crate::model::Cont
 /// confirmation. A single recipient is forwarded to without one.
 fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     let palette = app.palette;
+    ui.spacing_mut().item_spacing.y = 4.0;
+    let height = ui.ctx().content_rect().height();
+    ui.set_height(
+        (height * 0.8)
+            .clamp(300.0, 800.0)
+            .min((height - 48.0).max(1.0)),
+    );
     let heading = if messages.len() == 1 {
         crate::i18n::gettext(app.locale, "Forward message").into_owned()
     } else {
@@ -491,6 +516,21 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
         .replace("{count}", &messages.len().to_string())
     };
     title(ui, app, &heading);
+    // Lay out the real footer first, upwards from the bottom. Wrapped notes
+    // and translated buttons then leave exactly their measured room for the
+    // list, rather than relying on a guessed header/footer height.
+    let mut footer = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("forward-footer")
+            .max_rect(ui.available_rect_before_wrap())
+            .layout(Layout::bottom_up(Align::Min)),
+    );
+    forward_footer(app, &mut footer);
+    let footer_rect = footer.min_rect();
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new(("forward-layout", "footer")), footer_rect)
+    });
     if app.forward_reviewing {
         theme::text(
             ui,
@@ -499,8 +539,11 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             palette.text,
         );
         ui.add_space(8.0);
-        egui::ScrollArea::vertical()
-            .max_height(260.0)
+        let list = egui::ScrollArea::vertical()
+            .id_salt("forward-review")
+            .max_height((footer_rect.top() - ui.cursor().top() - 8.0).max(1.0))
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 for id in &app.forward_recipients {
                     if let Some(chat) = app.chat(id) {
@@ -508,29 +551,12 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                     }
                 }
             });
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            if theme::pill_button(
-                ui,
-                &palette,
-                &crate::i18n::gettext(app.locale, "Back"),
-                false,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::BackToForwardSelection);
-            }
-            if theme::pill_button(
-                ui,
-                &palette,
-                &crate::i18n::gettext(app.locale, "Forward"),
-                true,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ConfirmForward);
-            }
+        #[cfg(any(test, feature = "demo"))]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::new(("forward-layout", "list")), list.inner_rect)
         });
+        #[cfg(not(any(test, feature = "demo")))]
+        let _ = list;
         return;
     }
     let width = ui.available_width();
@@ -562,15 +588,16 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     chats.sort_by_key(|chat| std::cmp::Reverse(chat.last_activity));
 
     let row_height = 52.0;
-    let max_height = (ui.ctx().content_rect().height() - 220.0).clamp(row_height * 3.0, 420.0);
+    let max_height = (footer_rect.top() - ui.cursor().top() - 8.0).max(1.0);
     // With room for one recipient a click swaps it; otherwise a full list
     // takes no more.
     let full = app.forward_limit > 1 && app.forward_recipients.len() >= app.forward_limit;
 
-    egui::ScrollArea::vertical()
+    let list = egui::ScrollArea::vertical()
         .id_salt("forward-chats")
         .max_height(max_height)
-        .auto_shrink([false, true])
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, false])
         .show_rows(ui, row_height, chats.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for chat in &chats[range] {
@@ -656,22 +683,97 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                         .push(Action::ToggleForwardRecipient(chat.id.clone()));
                 }
             }
+            if chats.is_empty() {
+                theme::text(
+                    ui,
+                    "No writable chats found",
+                    theme::regular(13.5),
+                    palette.secondary,
+                );
+            }
         });
-    if chats.is_empty() {
-        ui.add_space(12.0);
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new(("forward-layout", "list")), list.inner_rect)
+    });
+    #[cfg(not(any(test, feature = "demo")))]
+    let _ = list;
+}
+
+fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    if app.forward_reviewing {
         ui.horizontal(|ui| {
-            ui.add_space(8.0);
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(app.locale, "Back"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::BackToForwardSelection);
+            }
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(app.locale, "Forward"),
+                true,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::ConfirmForward);
+            }
+        });
+        return;
+    }
+    let count = app.forward_recipients.len();
+    // Keep the action visible even when the translated count needs truncation.
+    let (label, action) = if count > 1 {
+        (
+            crate::i18n::gettext(app.locale, "Review recipients"),
+            Action::ReviewForward,
+        )
+    } else {
+        (
+            crate::i18n::gettext(app.locale, "Forward"),
+            Action::ConfirmForward,
+        )
+    };
+    ui.horizontal(|ui| {
+        let button_width = ui
+            .painter()
+            .layout_no_wrap(label.to_string(), theme::semibold(13.0), palette.on_accent)
+            .size()
+            .x
+            + 36.0;
+        let count_width =
+            (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(1.0);
+        ui.allocate_ui(vec2(count_width, 20.0), |ui| {
             theme::text(
                 ui,
-                "No writable chats found",
+                crate::i18n::ngettext(
+                    app.locale,
+                    "{count} recipient selected",
+                    "{count} recipients selected",
+                    count as u32,
+                )
+                .replace("{count}", &count.to_string()),
                 theme::regular(13.5),
                 palette.secondary,
             );
         });
-        ui.add_space(12.0);
-    }
-    ui.add_space(12.0);
-    // Says why no more chats can be picked, as WhatsApp does.
+        let button = ui
+            .add_enabled_ui(count > 0, |ui| {
+                theme::pill_button(ui, &palette, &label, true)
+            })
+            .inner;
+        if button.clicked() {
+            app.actions.push(action);
+        }
+    });
+    // This UI lays out bottom-up: the note sits above the action row.
+    let full = app.forward_limit > 1 && app.forward_recipients.len() >= app.forward_limit;
     let limit = if app.forward_limit == 1 {
         Some(
             crate::i18n::gettext(
@@ -702,43 +804,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             )
             .wrap(),
         );
-        ui.add_space(8.0);
     }
-    let count = app.forward_recipients.len();
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::ngettext(
-                app.locale,
-                "{count} recipient selected",
-                "{count} recipients selected",
-                count as u32,
-            )
-            .replace("{count}", &count.to_string()),
-            theme::regular(13.5),
-            palette.secondary,
-        );
-        // One recipient is sent to at once; several are confirmed first.
-        let (label, action) = if count > 1 {
-            (
-                crate::i18n::gettext(app.locale, "Review recipients"),
-                Action::ReviewForward,
-            )
-        } else {
-            (
-                crate::i18n::gettext(app.locale, "Forward"),
-                Action::ConfirmForward,
-            )
-        };
-        let button = ui
-            .add_enabled_ui(count > 0, |ui| {
-                theme::pill_button(ui, &palette, &label, true)
-            })
-            .inner;
-        if button.clicked() {
-            app.actions.push(action);
-        }
-    });
 }
 
 /// Uses the model's send permissions to reject unavailable forwarding destinations.
@@ -751,9 +817,15 @@ fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
     ui.horizontal(|ui| {
         theme::text(ui, label, theme::bold(18.0), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
-                .clicked()
-            {
+            let close =
+                theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close");
+            #[cfg(any(test, feature = "demo"))]
+            if matches!(app.dialog, Some(Dialog::Forward { .. })) {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(egui::Id::new(("forward-layout", "close")), close.rect)
+                });
+            }
+            if close.clicked() {
                 app.actions.push(Action::CloseDialog);
             }
         });
