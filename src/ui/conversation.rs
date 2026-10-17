@@ -9368,7 +9368,30 @@ fn voice_player(
                         theme::tabular(fastframe_fonts::Weight::Regular, 11.5),
                     ),
                 };
-                duration = Some(theme::text(ui, text, font, palette.secondary).rect);
+                let shown = theme::text(ui, text, font, palette.secondary).rect;
+                duration = Some(shown);
+                // A dot beside the length until their voice message is heard,
+                // here or on another device.
+                if voice_note
+                    && !message.from_me
+                    && message.status != Delivery::Played
+                    && !matches!(media.state, MediaState::Failed(_))
+                {
+                    let dot = Rect::from_center_size(
+                        pos2(shown.right() + 7.0, shown.center().y),
+                        Vec2::splat(6.0),
+                    );
+                    ui.painter()
+                        .circle_filled(dot.center(), 3.0, palette.accent);
+                    // The time beside it keeps clear of the dot too.
+                    duration = Some(shown.union(dot));
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            bubble_id(&view.chat.id, &message.id).with("unheard"),
+                            dot,
+                        );
+                    });
+                }
             });
             if !voice_note {
                 let (slot, response) = ui.allocate_exact_size(Vec2::splat(button), Sense::hover());

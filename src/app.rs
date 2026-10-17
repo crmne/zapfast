@@ -8932,7 +8932,8 @@ impl App {
         else {
             return;
         };
-        if row.from_me {
+        // Played on another device: the phone already told the sender.
+        if row.from_me || row.status == Delivery::Played {
             return;
         }
         let sender = row.sender.clone();
@@ -9007,7 +9008,11 @@ impl App {
         conversation.messages[position + 1..]
             .iter()
             .take_while(|message| voice_note(message))
-            .find(|message| !message.from_me && !self.played_told.contains(&message.id))
+            .find(|message| {
+                !message.from_me
+                    && message.status != Delivery::Played
+                    && !self.played_told.contains(&message.id)
+            })
             .map(|message| message.id.clone())
     }
 
@@ -16112,6 +16117,9 @@ mod tests {
         app.open_chat = Some(chat.into());
         let mut own = voice(chat, "own", 2, None);
         own.from_me = true;
+        // Played on the phone.
+        let mut heard = voice(chat, "heard", 3, None);
+        heard.status = Delivery::Played;
         let mut song = voice(chat, "song", 6, None);
         if let Content::Audio { voice_note, .. } = &mut song.content {
             *voice_note = false;
@@ -16120,7 +16128,7 @@ mod tests {
             vec![
                 voice(chat, "played", 1, None),
                 own,
-                voice(chat, "heard", 3, None),
+                heard,
                 voice(chat, "waiting", 4, None),
                 message(chat, "text", 5),
                 voice(chat, "after text", 6, None),
@@ -16130,7 +16138,6 @@ mod tests {
             false,
         );
         app.played_told.insert("played".into());
-        app.played_told.insert("heard".into());
 
         assert_eq!(
             app.next_voice_after(chat, "played").as_deref(),
