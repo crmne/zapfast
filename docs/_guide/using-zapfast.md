@@ -253,6 +253,37 @@ it again. A live-location share shows the position this linked device received;
 WhatsApp sends later positions only to the phone. ZapFast marks when newer
 positions are available there, but cannot follow the moving location here.
 
+### Saving attachments
+
+Under **Settings > Files**, choose a download folder and its **Folder layout**:
+**One folder**, **By chat**, or **By chat and month**. Chat layouts keep accounts
+separate, including conversations with identical names. New installations recommend
+**By chat**; existing download-folder configurations keep their earlier behavior
+until you choose one of the new controls. Changing a layout does not move old files.
+
+**Saved filenames** chooses original document names or date-prefixed names (UTC
+message time). Attachments without a filename get a unique name. Invalid characters
+are sanitized and automatic copies never replace an existing file.
+
+**Save as…** starts in the suggested chat folder with the chosen filename style;
+you can still choose another name or location. **Save all…** suggests the same
+folder and uses the same naming rules. Clicking **Download** also saves a copy
+in the chosen folder when download management is enabled.
+
+**Save received attachments automatically** is off by default and applies separately
+to each account. It copies incoming attachments that ZapFast downloads; it does not
+fetch more messages or download additional files. By default, only attachments dated
+since enabling it are copied. **Include older attachments** also allows older files
+as they download or their cached messages are opened. It does not export the whole
+archive at once. Sticker-picker assets are excluded.
+
+Managed downloads stay in the account cache so a failed saved copy cannot break
+playback. **Last saved copy** in Settings reports the saved location or a failure;
+check the folder and free space, then reopen the chat to retry. Disabling automatic
+saving, changing download settings, locking the app or disconnecting cancels pending
+copies. Files already published remain in your folder. Saved copies are ordinary
+files outside the encrypted message archive.
+
 ## Locations
 
 **Send location** in the plus menu beside the message field opens a dialog that

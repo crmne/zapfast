@@ -32,11 +32,20 @@ has in its media cache, split into images, videos and GIFs, stickers, and other
 files. **Clear…** there deletes that account's cached attachments after asking:
 its messages, its other caches, and the other accounts' files stay, and so do
 files in a download folder you chose.
-**Settings > Files > Change…** sends new downloads to another folder, leaving
-earlier ones in place. There, documents keep the name they were sent with; a
-file already in the folder is never replaced, and the download becomes
-`name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
-become `_`.
+**Settings > Files > Downloads** chooses the folder for saved attachment copies.
+New installations recommend a folder per chat, with accounts separated. **One
+folder** and **By chat and month** are alternatives. **Saved filenames** selects
+original document names or UTC date-prefixed names. Existing download-folder
+configurations continue to work as before until a new control is chosen. Earlier
+files are never moved. See [Saving attachments]({{ '/using-zapfast/' | relative_url }}#saving-attachments).
+
+**Save received attachments automatically** is off by default and saved per account.
+It copies downloaded incoming attachments dated since activation, or older
+attachments too when **Include older attachments** is enabled. It never adds a
+network download. Managed media stays in the account cache; exported copies are
+ordinary files in the selected folder. Automatic copies do not replace user files.
+Failures are reported under **Last saved copy**, without invalidating downloaded
+media. Manual Save as and Save all use the same folder and filename suggestions.
 
 On macOS, settings, state, and the logs are in
 `~/Library/Application Support/me.paolino.zapfast` and the caches in

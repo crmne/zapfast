@@ -43,6 +43,8 @@ pub struct Account {
     /// until a measurement succeeds, so a failed one shows no numbers
     /// rather than zeroes.
     pub storage_stats: Option<crate::model::StorageStats>,
+    pub download_save_status: Option<Result<PathBuf, String>>,
+    pub(crate) saving_allowed_sent: Option<bool>,
     /// The measurement being waited for; an older answer is dropped.
     pub storage_token: u64,
     /// Whether the media cache is being emptied.
@@ -160,6 +162,8 @@ impl Account {
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             storage_stats: None,
+            download_save_status: None,
+            saving_allowed_sent: None,
             storage_token: 0,
             storage_clearing: false,
             draft_mentions: HashMap::new(),

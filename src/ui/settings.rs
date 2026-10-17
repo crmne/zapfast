@@ -835,6 +835,7 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    download_management_rows(&mut files, app);
     files.block(
         vec![
             translated(locale, "Storage used"),
@@ -955,6 +956,130 @@ fn app_lock_rows(app: &App, privacy: &mut Section) {
                     });
                 theme::reveal_focus(&response.response);
             },
+        );
+    }
+}
+
+/// Folder and filename rules are shared by explicit saves and automatic copies.
+fn download_management_rows(files: &mut Section, app: &App) {
+    use crate::settings::{DownloadNaming, DownloadOrganization};
+    let locale = app.locale;
+    files.row(
+        translated(locale, "Folder layout"),
+        translated(
+            locale,
+            "Chat folders keep accounts separate. Existing files stay where they are.",
+        ),
+        |ui, app| {
+            let preferences = app.settings.download_preferences.clone().unwrap_or(
+                crate::settings::DownloadPreferences {
+                    organization: DownloadOrganization::Flat,
+                    naming: DownloadNaming::Original,
+                },
+            );
+            let choices = [
+                (
+                    DownloadOrganization::Flat,
+                    crate::i18n::gettext(app.locale, "One folder"),
+                ),
+                (
+                    DownloadOrganization::ByChat,
+                    crate::i18n::gettext(app.locale, "By chat"),
+                ),
+                (
+                    DownloadOrganization::ByChatMonth,
+                    crate::i18n::gettext(app.locale, "By chat and month"),
+                ),
+            ];
+            let current = choices
+                .iter()
+                .find(|(value, _)| *value == preferences.organization)
+                .unwrap()
+                .1
+                .clone();
+            let response = egui::ComboBox::from_id_salt("download-folder-layout")
+                .selected_text(current)
+                .width(180.0_f32.min(ui.available_width()))
+                .show_ui(ui, |ui| {
+                    for (organization, label) in choices {
+                        if theme_option(
+                            ui,
+                            &app.palette,
+                            &label,
+                            organization == preferences.organization,
+                        ) {
+                            let mut next = preferences.clone();
+                            next.organization = organization;
+                            app.actions.push(Action::SetDownloadPreferences(next));
+                        }
+                    }
+                });
+            theme::reveal_focus(&response.response);
+        },
+    );
+    files.row(
+        translated(locale, "Saved filenames"),
+        translated(locale, "Use original document names or add the message date. Other attachments get a unique name."),
+        |ui, app| {
+            let preferences = app.settings.download_preferences.clone().unwrap_or(crate::settings::DownloadPreferences {
+                organization: DownloadOrganization::Flat,
+                naming: DownloadNaming::Original,
+            });
+            let choices = [(DownloadNaming::Original, crate::i18n::gettext(app.locale, "Original filenames")), (DownloadNaming::DatePrefixed, crate::i18n::gettext(app.locale, "Date-prefixed filenames"))];
+            let current = choices.iter().find(|(value, _)| *value == preferences.naming).unwrap().1.clone();
+            let response = egui::ComboBox::from_id_salt("download-filename-style")
+                .selected_text(current)
+                .width(180.0_f32.min(ui.available_width()))
+                .show_ui(ui, |ui| {
+                    for (naming, label) in choices {
+                        if theme_option(ui, &app.palette, &label, naming == preferences.naming) {
+                            let mut next = preferences.clone();
+                            next.naming = naming;
+                            app.actions.push(Action::SetDownloadPreferences(next));
+                        }
+                    }
+                });
+            theme::reveal_focus(&response.response);
+        },
+    );
+    files.row(
+        translated(locale, "Save received attachments automatically"),
+        translated(locale, "Copies downloaded attachments to your chosen folder. Choose a folder above first; this does not download extra files."),
+        |ui, app| {
+            let automatic = app.account().settings.automatic_saving.clone();
+            let legacy = app.settings.download_preferences.is_none() && app.settings.download_folder.is_some() && app.account().settings.auto_download;
+            let mut enabled = automatic.since.is_some() || legacy;
+            ui.add_enabled_ui(app.settings.download_folder.is_some(), |ui| {
+                let response = widgets::switch(ui, &app.palette, &mut enabled);
+                theme::reveal_focus(&response);
+                response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), enabled, crate::i18n::gettext(app.locale, "Save received attachments automatically")));
+                if response.changed() { app.actions.push(Action::SetAutomaticSaving { enabled, include_older: automatic.include_older || legacy }); }
+            });
+        },
+    );
+    files.row(
+        translated(locale, "Include older attachments"),
+        translated(locale, "Also save older received attachments when they are downloaded or their chat is opened. Off saves only files dated since enabling automatic saving."),
+        |ui, app| {
+            let automatic = app.account().settings.automatic_saving.clone();
+            let legacy = app.settings.download_preferences.is_none() && app.settings.download_folder.is_some() && app.account().settings.auto_download;
+            let mut include_older = automatic.include_older || legacy;
+            ui.add_enabled_ui((automatic.since.is_some() || legacy) && app.settings.download_folder.is_some(), |ui| {
+                let response = widgets::switch(ui, &app.palette, &mut include_older);
+                theme::reveal_focus(&response);
+                response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), include_older, crate::i18n::gettext(app.locale, "Include older attachments")));
+                if response.changed() { app.actions.push(Action::SetAutomaticSaving { enabled: true, include_older }); }
+            });
+        },
+    );
+    if let Some(status) = &app.account().download_save_status {
+        files.row(
+            translated(locale, "Last saved copy"),
+            match status {
+                Ok(path) => path.display().to_string(),
+                Err(_) => crate::i18n::gettext(locale, "Could not save a copy. Check the folder and available space, then reopen the chat to retry.").into_owned(),
+            },
+            |_, _| {},
         );
     }
 }
