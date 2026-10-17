@@ -28,3 +28,4 @@ src/ui/info.rs
 src/ui/login.rs
 src/ui/rail.rs
 src/ui/mod.rs
+src/a11y.rs

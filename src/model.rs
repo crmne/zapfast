@@ -2712,6 +2712,10 @@ pub enum Action {
     ScrollToBottom,
     /// Scrolls the open chat by about a page, or to the top of its history.
     ScrollPage(Scroll),
+    /// Moves the open chat's current message, from its focused message list.
+    MessageCursor(crate::ui::list_nav::Step),
+    /// Gives the open chat's message list keyboard focus.
+    FocusMessages,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
     /// Updates chat-list search text.
