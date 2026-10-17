@@ -9,7 +9,13 @@ use crate::qr::Qr;
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    card(app, ui, "login", "A native WhatsApp client.", body);
+    card(
+        app,
+        ui,
+        "login",
+        &crate::i18n::gettext(app.locale, "A native WhatsApp client."),
+        body,
+    );
 }
 
 /// The centred card of the linking and lock screens: the logo, the name,
@@ -77,23 +83,39 @@ pub(super) fn card(
 
 fn body(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let locale = app.locale;
     match app.link.clone() {
         LinkStatus::Starting | LinkStatus::Connecting => {
-            busy(ui, palette.accent, "Connecting to WhatsApp…");
+            busy(
+                ui,
+                palette.accent,
+                &crate::i18n::gettext(locale, "Connecting to WhatsApp…"),
+            );
         }
         LinkStatus::Connected | LinkStatus::Disconnected { .. } => {
-            busy(ui, palette.accent, "Linked. Waiting for your chats…");
+            busy(
+                ui,
+                palette.accent,
+                &crate::i18n::gettext(locale, "Linked. Waiting for your chats…"),
+            );
         }
         LinkStatus::LoggedOut => {
             theme::icon(ui, Icon::Smartphone, 28.0, palette.warning);
             theme::paragraph(
                 ui,
-                "This computer was unlinked from your phone. Requesting a new code.",
+                crate::i18n::gettext(
+                    locale,
+                    "This computer was unlinked from your phone. Requesting a new code.",
+                ),
                 theme::regular(14.0),
                 palette.text,
             );
             ui.add_space(8.0);
-            busy(ui, palette.accent, "Requesting a new code…");
+            busy(
+                ui,
+                palette.accent,
+                &crate::i18n::gettext(locale, "Requesting a new code…"),
+            );
         }
         LinkStatus::Failed(message) => {
             let key_lost = archive_key_lost(&message);
@@ -111,7 +133,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 if theme::pill_button(
                     ui,
                     &palette,
-                    &crate::i18n::gettext(app.locale, "Try again"),
+                    &crate::i18n::gettext(locale, "Try again"),
                     true,
                 )
                 .clicked()
@@ -122,7 +144,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                     && theme::pill_button(
                         ui,
                         &palette,
-                        &crate::i18n::gettext(app.locale, "Start over…"),
+                        &crate::i18n::gettext(locale, "Start over…"),
                         false,
                     )
                     .clicked()
@@ -140,15 +162,17 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
             if let Some(code) = pair_code {
                 pair_code_view(app, ui, &code, pairing_phone.as_deref());
             } else if let Some(phone) = pairing_phone {
-                busy(
-                    ui,
-                    palette.accent,
-                    &format!("Requesting a code for +{phone}…"),
-                );
+                let requesting = crate::i18n::gettext(locale, "Requesting a code for +{phone}…")
+                    .replace("{phone}", &phone);
+                busy(ui, palette.accent, &requesting);
             } else if let Some(qr) = qr {
                 qr_view(app, ui, &qr);
             } else {
-                busy(ui, palette.accent, "Waiting for a code from WhatsApp…");
+                busy(
+                    ui,
+                    palette.accent,
+                    &crate::i18n::gettext(locale, "Waiting for a code from WhatsApp…"),
+                );
             }
         }
     }
@@ -156,7 +180,10 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(18.0);
     theme::paragraph(
         ui,
-        "Unofficial client. Using it may be against WhatsApp's terms of service.",
+        crate::i18n::gettext(
+            locale,
+            "Unofficial client. Using it may be against WhatsApp's terms of service.",
+        ),
         theme::regular(11.5),
         palette.dim,
     );
@@ -178,9 +205,10 @@ pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
 
 fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     let palette = app.palette;
+    let locale = app.locale;
     theme::text(
         ui,
-        "Link this computer",
+        crate::i18n::gettext(locale, "Link this computer"),
         theme::semibold(16.0),
         palette.text,
     );
@@ -194,11 +222,10 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
         }
     }
     ui.add_space(4.0);
-    let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
-        "Tap Link a device and point the phone at this code",
-    ];
+    let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
+    let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
+    let step3 = crate::i18n::gettext(locale, "Tap Link a device and point the phone at this code");
+    let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -208,13 +235,13 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
                 theme::semibold(13.0),
                 palette.accent,
             );
-            theme::text(ui, *step, theme::regular(13.0), palette.secondary);
+            theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
         });
     }
     ui.add_space(10.0);
     if theme::link(
         ui,
-        "Link with phone number instead",
+        crate::i18n::gettext(locale, "Link with phone number instead"),
         theme::medium(13.0),
         palette.link,
     )
@@ -226,19 +253,16 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
 
 fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&str>) {
     let palette = app.palette;
+    let locale = app.locale;
     theme::text(
         ui,
-        "Enter this code on your phone",
+        crate::i18n::gettext(locale, "Enter this code on your phone"),
         theme::semibold(16.0),
         palette.text,
     );
     if let Some(phone) = phone {
-        theme::text(
-            ui,
-            format!("for +{phone}"),
-            theme::regular(13.0),
-            palette.secondary,
-        );
+        let for_phone = crate::i18n::gettext(locale, "for +{phone}").replace("{phone}", phone);
+        theme::text(ui, for_phone, theme::regular(13.0), palette.secondary);
     }
     ui.add_space(8.0);
     let shown = if code.len() == 8 && !code.contains('-') {
@@ -254,11 +278,13 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             theme::text(ui, &shown, theme::bold(30.0), palette.text);
         });
     ui.add_space(8.0);
-    let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
+    let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
+    let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
+    let step3 = crate::i18n::gettext(
+        locale,
         "Tap Link a device, then Link with phone number instead",
-    ];
+    );
+    let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -268,13 +294,21 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
                 theme::semibold(13.0),
                 palette.accent,
             );
-            theme::text(ui, *step, theme::regular(13.0), palette.secondary);
+            theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
         });
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
-        if theme::soft_button(ui, &palette, Some(Icon::Copy), "Copy code", false).clicked() {
+        if theme::soft_button(
+            ui,
+            &palette,
+            Some(Icon::Copy),
+            &crate::i18n::gettext(locale, "Copy code"),
+            false,
+        )
+        .clicked()
+        {
             app.actions.push(Action::CopyText(code.to_owned()));
         }
     });

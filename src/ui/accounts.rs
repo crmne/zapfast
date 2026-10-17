@@ -263,20 +263,20 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let back = if app.adding_account {
-            "Cancel".to_owned()
+            gettext(app.locale, "Cancel").into_owned()
         } else {
-            "Use another account".to_owned()
+            gettext(app.locale, "Use another account").into_owned()
         };
-        let remove = (!app.adding_account).then_some("Remove this account");
+        let remove = (!app.adding_account).then(|| gettext(app.locale, "Remove this account"));
         let width = ui
             .painter()
             .layout_no_wrap(back.clone(), theme::medium(13.0), palette.link)
             .size()
             .x
-            + remove.map_or(0.0, |remove| {
+            + remove.as_ref().map_or(0.0, |remove| {
                 24.0 + ui
                     .painter()
-                    .layout_no_wrap(remove.to_owned(), theme::medium(13.0), palette.link)
+                    .layout_no_wrap(remove.to_string(), theme::medium(13.0), palette.link)
                     .size()
                     .x
             });
@@ -290,7 +290,7 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         }
         if let Some(remove) = remove {
             ui.add_space(24.0);
-            if theme::link(ui, remove, theme::medium(13.0), palette.danger).clicked() {
+            if theme::link(ui, remove.as_ref(), theme::medium(13.0), palette.danger).clicked() {
                 let id = app.account().id.clone();
                 app.actions.push(Action::ShowDialog(
                     crate::model::Dialog::ConfirmRemoveAccount(id),

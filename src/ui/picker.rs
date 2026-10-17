@@ -105,11 +105,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 }
 
 fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab) {
+    let locale = app.locale;
+    let emoji = gettext(locale, "Emoji");
+    let gif = gettext(locale, "GIF");
+    let stickers = gettext(locale, "Stickers");
     ui.horizontal(|ui| {
         let entries = [
-            (PickerTab::Emoji, Icon::Smile, "Emoji"),
-            (PickerTab::Gifs, Icon::Gif, "GIF"),
-            (PickerTab::Stickers, Icon::Sticker, "Stickers"),
+            (PickerTab::Emoji, Icon::Smile, emoji.as_ref()),
+            (PickerTab::Gifs, Icon::Gif, gif.as_ref()),
+            (PickerTab::Stickers, Icon::Sticker, stickers.as_ref()),
         ];
         let spacing = ui.spacing().item_spacing.x;
         let total = entries
@@ -434,7 +438,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                             ui.horizontal(|ui| {
                                 theme::text(
                                     ui,
-                                    "React to message",
+                                    gettext(app.locale, "React to message"),
                                     theme::semibold(13.0),
                                     palette.text,
                                 );
@@ -445,7 +449,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                         14.0,
                                         palette.secondary,
                                         palette.text,
-                                        "Close reactions",
+                                        &gettext(app.locale, "Close reactions"),
                                     )
                                     .clicked()
                                     {
@@ -624,7 +628,8 @@ fn emoji_grid(
         .flatten();
     let submit = search_active && take_plain_key(ui, Key::Enter);
     let mut search = app.picker_search.clone();
-    let response = search_box(ui, palette, search_id, &mut search, "Search emoji");
+    let search_hint = gettext(app.locale, "Search emoji");
+    let response = search_box(ui, palette, search_id, &mut search, &search_hint);
     let query_changed = search != app.picker_search;
     if query_changed {
         app.picker_search = search;
@@ -1004,13 +1009,8 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let mut query = app.picker_search.clone();
     let submit = ui.memory(|memory| memory.has_focus(egui::Id::new("gif-search")))
         && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-    search_box(
-        ui,
-        palette,
-        "gif-search",
-        &mut query,
-        "Search GIFs via GIPHY",
-    );
+    let search_hint = gettext(app.locale, "Search GIFs via GIPHY");
+    search_box(ui, palette, "gif-search", &mut query, &search_hint);
     if query != app.picker_search {
         app.picker_search = query.clone();
     }
@@ -1020,7 +1020,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.gif_pending {
         ui.horizontal(|ui| {
             theme::spinner(ui, 16.0, palette.accent);
-            theme::text(ui, "Searching…", theme::regular(12.5), palette.secondary);
+            theme::text(
+                ui,
+                gettext(app.locale, "Searching…"),
+                theme::regular(12.5),
+                palette.secondary,
+            );
         });
     } else if let Some(error) = &app.gif_error {
         theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
@@ -1073,7 +1078,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 ui.vertical_centered(|ui| {
                     theme::text(
                         ui,
-                        "Search for a GIF or browse trending results.",
+                        gettext(app.locale, "Search for a GIF or browse trending results."),
                         theme::regular(13.0),
                         palette.secondary,
                     );
