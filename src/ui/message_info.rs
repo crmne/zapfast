@@ -78,7 +78,7 @@ fn receipts(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str, message: &Me
         crate::model::ChatKind::from_id(chat),
         app.account_receipts_off,
     );
-    preview(ui, &palette, message, delivery);
+    preview(ui, &palette, app.locale, message, delivery);
     if crate::model::ChatKind::from_id(chat) != crate::model::ChatKind::Group {
         direct(app, ui, message);
         return;
@@ -100,10 +100,16 @@ fn receipts(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str, message: &Me
 }
 
 /// The message as its bubble shows it, shortened to a few lines.
-fn preview(ui: &mut egui::Ui, palette: &Palette, message: &Message, delivery: Delivery) {
+fn preview(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    locale: crate::i18n::Locale,
+    message: &Message,
+    delivery: Delivery,
+) {
     let text = widgets::line(
         ui,
-        &message.content.summary(),
+        &message.content.summary_in(locale),
         theme::regular(14.0),
         palette.text,
         (ui.available_width() * 0.85 - 24.0).max(1.0),

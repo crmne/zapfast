@@ -321,7 +321,34 @@ pub struct LastMessage {
     /// The whole message behind `summary`, every line of it: the chat row
     /// shows it in a tooltip when the one-line preview cannot.
     pub full: String,
+    /// Whether `summary` and `full` start with a content label such as
+    /// "Photo" rather than the message's own text.
+    pub labelled: bool,
     pub status: Delivery,
+}
+
+impl LastMessage {
+    /// `summary` with its content label in `locale`.
+    pub fn summary_in(&self, locale: crate::i18n::Locale) -> std::borrow::Cow<'_, str> {
+        self.localized(locale, &self.summary)
+    }
+
+    /// `full` with its content label in `locale`.
+    pub fn full_in(&self, locale: crate::i18n::Locale) -> std::borrow::Cow<'_, str> {
+        self.localized(locale, &self.full)
+    }
+
+    fn localized<'a>(
+        &self,
+        locale: crate::i18n::Locale,
+        text: &'a str,
+    ) -> std::borrow::Cow<'a, str> {
+        if self.labelled {
+            localized_summary(locale, text)
+        } else {
+            std::borrow::Cow::Borrowed(text)
+        }
+    }
 }
 
 impl Chat {
@@ -529,6 +556,11 @@ impl Message {
         self.content.summary()
     }
 
+    /// [`Self::summary`] with its content label in `locale`.
+    pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        self.content.summary_in(locale)
+    }
+
     /// The line of this message that contains `query`, for a search result's
     /// preview. The archive matches the whole text, so a hit on a later line
     /// would otherwise show a first line the query is nowhere in.
@@ -618,9 +650,25 @@ pub struct Quoted {
     pub sender: String,
     pub sender_name: Option<String>,
     pub summary: String,
+    /// Whether `summary` starts with a content label such as "Photo" rather
+    /// than quoting text. `None` for quotes archived before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labelled: Option<bool>,
     /// Mentions in quoted text.
     #[serde(default)]
     pub mentions: Vec<MentionRef>,
+}
+
+impl Quoted {
+    /// `summary` with its content label in `locale`. A quote archived before
+    /// `labelled` was kept translates a label it starts with.
+    pub fn summary_in(&self, locale: crate::i18n::Locale) -> std::borrow::Cow<'_, str> {
+        if self.labelled == Some(false) {
+            std::borrow::Cow::Borrowed(&self.summary)
+        } else {
+            localized_summary(locale, &self.summary)
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1179,6 +1227,32 @@ impl Content {
         }
     }
 
+    /// Whether [`Self::summary`] starts with a content label such as "Photo"
+    /// rather than the message's own text.
+    pub fn labelled(&self) -> bool {
+        !matches!(self, Self::Text { .. } | Self::Interactive { .. })
+    }
+
+    /// [`Self::summary`] with its content label in `locale`.
+    pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        let summary = self.summary();
+        if self.labelled() {
+            localized_summary(locale, &summary).into_owned()
+        } else {
+            summary
+        }
+    }
+
+    /// [`Self::full_summary`] with its content label in `locale`.
+    pub fn full_summary_in(&self, locale: crate::i18n::Locale) -> String {
+        let summary = self.full_summary();
+        if self.labelled() {
+            localized_summary(locale, &summary).into_owned()
+        } else {
+            summary
+        }
+    }
+
     pub fn summary(&self) -> String {
         match self {
             Self::Text { text, .. } | Self::Interactive { text, .. } => {
@@ -1415,6 +1489,99 @@ fn video_label(gif: bool, note: bool) -> &'static str {
     } else {
         "Video"
     }
+}
+
+/// The labels a summary of content other than text starts with. Summaries
+/// are made in English where the archive and the worker build them, and
+/// [`localized_summary`] translates the label when one is shown.
+const SUMMARY_LABELS: [&str; 26] = [
+    "Photo",
+    "Video",
+    "GIF",
+    "Video message",
+    "Voice message",
+    "Audio",
+    "Document",
+    "Sticker",
+    "Sticker pack",
+    "Location",
+    "Live location",
+    "Live location ended",
+    "Contact",
+    "Poll",
+    "This message was deleted",
+    "Unsupported message",
+    "View once photo",
+    "View once video",
+    "View once voice message",
+    "View once audio",
+    "View once message",
+    "Message on your phone",
+    "Missed voice call",
+    "Missed video call",
+    "Voice call",
+    "Video call",
+];
+
+/// A summary label in `locale`. Literal calls, so xgettext extracts each.
+fn summary_label(
+    locale: crate::i18n::Locale,
+    label: &'static str,
+) -> std::borrow::Cow<'static, str> {
+    use crate::i18n::gettext;
+    match label {
+        "Photo" => gettext(locale, "Photo"),
+        "Video" => gettext(locale, "Video"),
+        "GIF" => gettext(locale, "GIF"),
+        "Video message" => gettext(locale, "Video message"),
+        "Voice message" => gettext(locale, "Voice message"),
+        "Audio" => gettext(locale, "Audio"),
+        "Document" => gettext(locale, "Document"),
+        "Sticker" => gettext(locale, "Sticker"),
+        "Sticker pack" => gettext(locale, "Sticker pack"),
+        "Location" => gettext(locale, "Location"),
+        "Live location" => gettext(locale, "Live location"),
+        "Live location ended" => gettext(locale, "Live location ended"),
+        "Contact" => gettext(locale, "Contact"),
+        "Poll" => gettext(locale, "Poll"),
+        "This message was deleted" => gettext(locale, "This message was deleted"),
+        "Unsupported message" => gettext(locale, "Unsupported message"),
+        "View once photo" => gettext(locale, "View once photo"),
+        "View once video" => gettext(locale, "View once video"),
+        "View once voice message" => gettext(locale, "View once voice message"),
+        "View once audio" => gettext(locale, "View once audio"),
+        "View once message" => gettext(locale, "View once message"),
+        "Message on your phone" => gettext(locale, "Message on your phone"),
+        "Missed voice call" => gettext(locale, "Missed voice call"),
+        "Missed video call" => gettext(locale, "Missed video call"),
+        "Voice call" => gettext(locale, "Voice call"),
+        "Video call" => gettext(locale, "Video call"),
+        _ => std::borrow::Cow::Borrowed(label),
+    }
+}
+
+/// `summary` with the content label it starts with, such as "Photo" or
+/// "Voice message", in `locale`. What follows the label (a caption, a file
+/// name, a length) stays as it is. A summary of text must not come here: a
+/// message that reads "Location: home" is the sender's words.
+pub fn localized_summary(locale: crate::i18n::Locale, summary: &str) -> std::borrow::Cow<'_, str> {
+    // The longest label that fits, so "Video message" is not read as "Video".
+    let label = SUMMARY_LABELS
+        .into_iter()
+        .filter(|label| {
+            summary.strip_prefix(label).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with(": ") || rest.starts_with(" (")
+            })
+        })
+        .max_by_key(|label| label.len());
+    let Some(label) = label else {
+        return std::borrow::Cow::Borrowed(summary);
+    };
+    let translated = summary_label(locale, label);
+    if translated == label {
+        return std::borrow::Cow::Borrowed(summary);
+    }
+    std::borrow::Cow::Owned(format!("{translated}{}", &summary[label.len()..]))
 }
 
 /// `label: caption` with the caption whole, for a row that wraps it.
@@ -3525,6 +3692,83 @@ mod tests {
             .summary(),
             "Voice message (1:05)"
         );
+    }
+
+    #[test]
+    fn summaries_show_their_label_in_the_interface_language() {
+        use crate::i18n::Locale;
+        let photo = Content::Image {
+            motion: None,
+            caption: Some("look".into()),
+            media: media(),
+        };
+        assert_eq!(photo.summary_in(Locale::Spanish), "Foto: look");
+        assert_eq!(photo.summary_in(Locale::English), "Photo: look");
+        let voice = Content::Audio {
+            media: media(),
+            seconds: Some(65),
+            voice_note: true,
+            waveform: Vec::new(),
+        };
+        assert_eq!(voice.summary_in(Locale::Spanish), "Mensaje de voz (1:05)");
+        // The longest label wins: a video message is not a "Video".
+        assert_eq!(
+            localized_summary(Locale::Spanish, "Video message (0:12)"),
+            "Videomensaje (0:12)"
+        );
+        // Only a whole label followed by its caption or length is one.
+        assert_eq!(
+            localized_summary(Locale::Spanish, "Photographs"),
+            "Photographs"
+        );
+        // Text is the sender's words, even when it reads like a label.
+        let text = Content::text("Location: home");
+        assert_eq!(text.summary_in(Locale::Spanish), "Location: home");
+        assert_eq!(text.full_summary_in(Locale::Spanish), "Location: home");
+    }
+
+    #[test]
+    fn stored_summaries_translate_only_their_labels() {
+        use crate::i18n::Locale;
+        let quote = |labelled| Quoted {
+            chat: None,
+            id: "quoted".into(),
+            sender: "ada@s.whatsapp.net".into(),
+            sender_name: None,
+            summary: "Photo: look".into(),
+            labelled,
+            mentions: Vec::new(),
+        };
+        assert_eq!(quote(Some(true)).summary_in(Locale::Spanish), "Foto: look");
+        assert_eq!(
+            quote(Some(false)).summary_in(Locale::Spanish),
+            "Photo: look"
+        );
+        // A quote archived before `labelled` was kept still translates.
+        assert_eq!(quote(None).summary_in(Locale::Spanish), "Foto: look");
+        let last = |labelled| LastMessage {
+            from_me: false,
+            sender: String::new(),
+            sender_name: None,
+            summary: "Photo: look".into(),
+            full: "Photo: look\nagain".into(),
+            labelled,
+            status: Delivery::Read,
+        };
+        assert_eq!(last(true).summary_in(Locale::Spanish), "Foto: look");
+        assert_eq!(last(true).full_in(Locale::Spanish), "Foto: look\nagain");
+        assert_eq!(last(false).summary_in(Locale::Spanish), "Photo: look");
+    }
+
+    /// Every label has its own literal `gettext` call, so xgettext extracts
+    /// it and a translation reaches the screen.
+    #[test]
+    fn every_summary_label_is_translated() {
+        use crate::i18n::Locale;
+        // Russian spells every label but GIF in its own script.
+        for label in SUMMARY_LABELS.into_iter().filter(|label| *label != "GIF") {
+            assert_ne!(summary_label(Locale::Russian, label), label);
+        }
     }
 
     #[test]

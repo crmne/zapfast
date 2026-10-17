@@ -229,6 +229,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
                 what: "unreadable".into(),
             });
             Some(LastMessage {
+                labelled: content.labelled(),
                 from_me: row.get(8)?,
                 sender: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
                 sender_name: row.get(9)?,

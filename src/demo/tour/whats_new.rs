@@ -136,6 +136,7 @@ fn videos(app: &mut App) {
     {
         chat.last_activity = row.timestamp;
         chat.last = Some(crate::model::LastMessage {
+            labelled: row.content.labelled(),
             from_me: row.from_me,
             sender: row.sender.clone(),
             sender_name: row.sender_name.clone(),

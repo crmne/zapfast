@@ -2165,7 +2165,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     } else {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary(), &app.mention_list(quoted));
+    let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
     let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
         ui.horizontal(|ui| {
@@ -3073,8 +3073,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             message.sender_name.as_deref(),
                                         )
                                     };
-                                    let summary: String =
-                                        message.content.summary().chars().take(120).collect();
+                                    let summary: String = message
+                                        .content
+                                        .summary_in(view.locale)
+                                        .chars()
+                                        .take(120)
+                                        .collect();
                                     let label = crate::i18n::gettext(
                                         view.locale,
                                         "Select message from {sender}, {time}: {summary}",
@@ -4843,7 +4847,10 @@ fn quote_block(
     } else {
         (view.names_or)(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary, &quote_mentions(view, quoted));
+    let summary = markup::plain(
+        &quoted.summary_in(view.locale),
+        &quote_mentions(view, quoted),
+    );
     // As in WhatsApp, the bar and name take the quoted sender's colour, the
     // one their name has in groups, kept readable on this bubble.
     let bubble = if message.from_me {
@@ -10910,6 +10917,7 @@ mod reaction_tests {
         assert!(!bare_picture(&messages, &forwarded));
         let mut quoting = photo(None);
         quoting.quoted = Some(crate::model::Quoted {
+            labelled: None,
             chat: None,
             id: "q".into(),
             sender: "a@s.whatsapp.net".into(),

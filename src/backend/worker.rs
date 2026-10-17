@@ -4845,15 +4845,15 @@ impl Worker {
             .as_deref()
             .map(|participant| self.canonical_str(participant))
             .unwrap_or_default();
-        let (summary, listed) = context
+        let (summary, labelled, listed) = context
             .quoted_message
             .as_option()
             .map(|quoted| {
                 let base = quoted.get_base_message();
+                let content = classify(quoted);
                 (
-                    classify(quoted)
-                        .map(|content| content.summary())
-                        .unwrap_or_default(),
+                    content.as_ref().map(Content::summary).unwrap_or_default(),
+                    content.as_ref().map(Content::labelled),
                     self.mentions_of(&recorded_mention_ids(base)),
                 )
             })
@@ -4861,6 +4861,7 @@ impl Worker {
         let summary = self.pn_tokens(&summary);
         let mentions = self.quote_mentions(&summary, listed);
         Some(Quoted {
+            labelled,
             chat: context
                 .remote_jid
                 .as_deref()
@@ -7847,6 +7848,7 @@ impl Worker {
         // mention for display from the archived message.
         silence_everyone(&mut context);
         let shown = Quoted {
+            labelled: Some(row.content.labelled()),
             chat: (source != chat).then(|| source.to_owned()),
             mentions: row.mentions.clone(),
             id: row.id,
@@ -12038,18 +12040,15 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         }
         let quoted = context_of(base).and_then(|context| {
             let id = context.stanza_id.clone().filter(|id| !id.is_empty())?;
+            let content = context.quoted_message.as_option().and_then(classify);
             Some(Quoted {
+                labelled: content.as_ref().map(Content::labelled),
                 chat: context.remote_jid.clone(),
                 mentions: Vec::new(),
                 id,
                 sender: context.participant.clone().unwrap_or_default(),
                 sender_name: None,
-                summary: context
-                    .quoted_message
-                    .as_option()
-                    .and_then(classify)
-                    .map(|content| content.summary())
-                    .unwrap_or_default(),
+                summary: content.as_ref().map(Content::summary).unwrap_or_default(),
             })
         });
         let reactions = info
@@ -12534,6 +12533,7 @@ mod tests {
             delivered_at: None,
             read_at: None,
             quoted: Some(Quoted {
+                labelled: None,
                 chat: None,
                 id: "quoted".into(),
                 sender: sender.into(),
@@ -15185,6 +15185,7 @@ mod tests {
             delivered_at: Some(11),
             read_at: Some(12),
             quoted: Some(Quoted {
+                labelled: None,
                 chat: None,
                 id: "quoted".into(),
                 sender: "two@s.whatsapp.net".into(),

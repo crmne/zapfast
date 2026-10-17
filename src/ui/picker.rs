@@ -411,7 +411,12 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         .conversations
         .get(&chat)
         .and_then(|conversation| conversation.message(&message))
-        .map(|message| (app.display_name(&message.sender), message.content.summary()));
+        .map(|message| {
+            (
+                app.display_name(&message.sender),
+                message.content.summary_in(app.locale),
+            )
+        });
     let area = egui::Area::new(egui::Id::new("reaction-picker"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
