@@ -2313,6 +2313,7 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         Content::Document { caption, .. } => 70.0 + caption_rows(caption),
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
+        Content::DisappearingTimer { .. } => 0.0,
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
@@ -2546,12 +2547,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         .as_ref()
         .filter(|divider| divider.chat == chat.id)
         .and_then(|divider| {
-            conversation
-                .messages
-                .iter()
-                .rev()
-                .filter(|message| !message.from_me)
-                .nth(divider.count.saturating_sub(1) as usize)
+            unread_divider_message(&conversation.messages, divider.count)
                 .map(|message| (message.id.clone(), divider.count, divider.placed))
         });
     let mut divider_placed = false;
@@ -3794,6 +3790,35 @@ struct RunPlace {
     tailed: bool,
 }
 
+/// The message the unread divider sits before: the `count`-th incoming row
+/// from the end. A disappearing-timer notice is not a message the unread count
+/// includes, so it is skipped; counting it would put the divider on the wrong
+/// row.
+fn unread_divider_message(messages: &[Message], count: u32) -> Option<&Message> {
+    messages
+        .iter()
+        .rev()
+        .filter(|message| {
+            !message.from_me && !matches!(message.content, Content::DisappearingTimer { .. })
+        })
+        .nth(count.saturating_sub(1) as usize)
+}
+
+/// The system row a disappearing-message timer change leaves in the
+/// transcript: a centred chip naming who changed it and to what, as the
+/// phone shows it. It is not a message, so nothing selects or copies it.
+fn timer_notice(ui: &mut egui::Ui, view: &View<'_>, message: &Message, seconds: u32) {
+    let name = if message.from_me {
+        crate::i18n::gettext(view.locale, "You").into_owned()
+    } else {
+        (view.names_or)(&message.sender, message.sender_name.as_deref())
+    };
+    let text = crate::util::disappearing_change(view.locale, &name, seconds);
+    ui.vertical_centered(|ui| {
+        widgets::chip(ui, &view.palette, &text);
+    });
+}
+
 /// Draws a message row and returns its bubble response for scrolling.
 fn bubble(
     ui: &mut egui::Ui,
@@ -3803,6 +3828,12 @@ fn bubble(
     place: RunPlace,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // A timer change is a system row, not a message: a centred chip naming
+    // who changed it and to what, with no bubble, avatar, or selection.
+    if let Content::DisappearingTimer { seconds } = &message.content {
+        timer_notice(ui, view, message, *seconds);
+        return None;
+    }
     let RunPlace {
         show_sender,
         show_avatar,
@@ -5627,7 +5658,10 @@ fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> 
     for message in messages {
         if remaining.remove(message.id.as_str()) {
             if !message.from_me
-                || matches!(message.content, Content::Revoked)
+                || matches!(
+                    message.content,
+                    Content::Revoked | Content::DisappearingTimer { .. }
+                )
                 || now - message.timestamp > crate::app::REVOKE_WINDOW.as_secs() as i64
             {
                 return false;
@@ -6769,6 +6803,11 @@ fn content(
                     );
                 },
             );
+            None
+        }
+        Content::DisappearingTimer { .. } => {
+            // Drawn as a centred system row by `bubble`, which returns before
+            // the bubble is built. This arm only keeps the match exhaustive.
             None
         }
     }
@@ -10012,6 +10051,26 @@ mod tests {
             thumbnail: None,
             history_order: None,
         }
+    }
+
+    /// The unread divider skips timer notices, which the unread count does not
+    /// include, so the count-th incoming message is the right one.
+    #[test]
+    fn the_unread_divider_skips_timer_notices() {
+        let incoming = |id: &str, content: Content| {
+            let mut row = message(content);
+            row.id = id.into();
+            row.from_me = false;
+            row
+        };
+        let rows = vec![
+            incoming("old", Content::text("old")),
+            incoming("notice", Content::DisappearingTimer { seconds: 86_400 }),
+            incoming("newest", Content::text("newest")),
+        ];
+        assert_eq!(unread_divider_message(&rows, 1).unwrap().id, "newest");
+        // The notice is not counted, so the next incoming message is chosen.
+        assert_eq!(unread_divider_message(&rows, 2).unwrap().id, "old");
     }
 
     /// The menu offers the viewer for a message the album takes and a file

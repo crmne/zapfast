@@ -2300,6 +2300,45 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "disappearing-notice" => {
+                // A chat showing the in-conversation notice a timer change
+                // leaves, as the phone files it: a centred system row.
+                let chat = SAMPLES[0].id.to_owned();
+                let now = crate::util::now();
+                if let Some(conversation) = app.conversations.get_mut(&chat) {
+                    conversation.messages.push(message(
+                        &chat,
+                        "zapfast-timer-demo",
+                        false,
+                        now - 30,
+                        Content::DisappearingTimer { seconds: 604_800 },
+                    ));
+                }
+                app.open_chat = Some(chat);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
+            "disappearing-notice-group" => {
+                // The same notice in a group: the chip names the member who
+                // changed the timer, not the group.
+                let chat = SAMPLES[1].id.to_owned();
+                let now = crate::util::now();
+                if let Some(conversation) = app.conversations.get_mut(&chat) {
+                    let mut notice = message(
+                        &chat,
+                        "zapfast-timer-demo-group",
+                        false,
+                        now - 30,
+                        Content::DisappearingTimer { seconds: 86_400 },
+                    );
+                    notice.sender = "491702222222@s.whatsapp.net".to_owned();
+                    notice.sender_name = Some("Mira".to_owned());
+                    conversation.messages.push(notice);
+                }
+                app.open_chat = Some(chat);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "arabic-reply" => {
                 let chat = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -2755,6 +2794,41 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 if part == "group-info-saving" {
                     app.group_saving.insert(group.to_owned());
                 }
+            }
+            "disappearing-timer-menu" | "disappearing-timer-menu-direct" => {
+                // The timer row's menu held open for a screenshot, on a group
+                // and on a one-to-one chat whose timers are known.
+                let chat = if part == "disappearing-timer-menu" {
+                    SAMPLES[1].id
+                } else {
+                    SAMPLES[0].id
+                };
+                let seconds = if part == "disappearing-timer-menu" {
+                    86_400
+                } else {
+                    604_800
+                };
+                if let Some(row) = app.chats.iter_mut().find(|row| row.id == chat) {
+                    row.ephemeral_expiration = Some(seconds);
+                }
+                app.open_chat = Some(chat.to_owned());
+                info_sample(app, chat, InfoView::Overview);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+                app.open_timer_menu = Some(chat.to_owned());
+            }
+            "disappearing-saving" => {
+                // A direct change that went out and is waiting for the
+                // server's ack: the row stays disabled until it lands.
+                let chat = SAMPLES[0].id;
+                if let Some(row) = app.chats.iter_mut().find(|row| row.id == chat) {
+                    row.ephemeral_expiration = Some(604_800);
+                }
+                app.open_chat = Some(chat.to_owned());
+                info_sample(app, chat, InfoView::Overview);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+                app.timer_saving.insert(chat.to_owned());
             }
             "forward" | "forward-selected" | "forward-review" | "forward-full" | "forward-once" => {
                 app.dialog = app.open_chat.clone().map(|chat| Dialog::Forward {
@@ -5914,9 +5988,14 @@ mod tests {
             "disappearing",
             "disappearing-direct",
             "disappearing-off",
+            "disappearing-notice",
+            "disappearing-notice-group",
             "disappearing,group-info",
             "disappearing-direct,info",
             "disappearing-off,info",
+            "disappearing-timer-menu",
+            "disappearing-timer-menu-direct",
+            "disappearing-saving",
             "settings",
             "settings-search=Notifications",
             "settings-search=System",
@@ -7024,8 +7103,12 @@ mod tests {
                 Some("Disappearing messages: 7 days"),
             ),
             ("disappearing-off,info", Some("Disappearing messages: Off")),
-            ("group-info", None),
-            ("info", None),
+            // A chat whose timer nobody has mentioned still offers the choice,
+            // labelled without a value rather than guessing "Off".
+            ("group-info", Some("Disappearing messages")),
+            ("info", Some("Disappearing messages")),
+            // A group we have left takes no new settings, so no row.
+            ("disappearing,left-group,group-info", None),
         ] {
             let mut app = app();
             let ctx = egui::Context::default();
@@ -7076,13 +7159,15 @@ mod tests {
             Some("Disappearing messages: Off".to_owned())
         );
 
-        // The same panel, now a chat whose timer nobody has mentioned.
+        // The same panel, now a chat whose timer nobody has mentioned: the
+        // row is redrawn for it without a value, never carrying the old one.
         app.open_chat = Some(SAMPLES[3].id.to_owned());
         info_sample(&mut app, SAMPLES[3].id, InfoView::Overview);
         render(&mut app, &ctx);
 
-        assert!(
-            drawn(&ctx).is_none(),
+        assert_eq!(
+            drawn(&ctx).map(|row| row.text),
+            Some("Disappearing messages".to_owned()),
             "the previous chat's row is still marked"
         );
     }
