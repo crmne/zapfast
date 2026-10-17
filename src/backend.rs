@@ -945,6 +945,12 @@ pub enum Command {
     },
     /// Internal: followed channels and whether each is muted on the server.
     ChannelMutes(Vec<(String, bool)>),
+    /// Internal: every followed channel and the name the server gives it
+    /// (blank when it has none), from the query numbered `generation`.
+    ChannelNames {
+        generation: u64,
+        names: Vec<(String, String)>,
+    },
     /// Internal: the pictures of followed channels, or `None` when the list
     /// could not be read.
     ChannelPictures(Option<Vec<(ChatId, ChannelPicture)>>),
