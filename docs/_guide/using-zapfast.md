@@ -220,6 +220,12 @@ when you switch chats or accounts, and come back when you return. Unlike text
 drafts, they are kept only while ZapFast runs. A refused attachment send goes
 back to the chat it was meant for.
 
+Pinned chats stay first. Other chats with unsent text or attachments appear
+below the pins once you leave their conversation. Opening a draft, typing,
+or clearing it keeps its draft priority until you leave again. Within each
+group, chats keep their usual latest-message order. The Favorites chip keeps
+the phone's favorites order below pins.
+
 Click a picture above the composer to crop it before you send it. The picture
 opens over the window with the region to keep marked, and you can drag that
 region by its edges and corners or move it whole. **Turn left** and **Turn

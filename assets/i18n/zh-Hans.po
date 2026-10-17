@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-15 12:26+0200\n"
+"POT-Creation-Date: 2026-10-16 12:10-0300\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -214,7 +214,7 @@ msgstr "{hours} 小时"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} 小时 {minutes} 分钟"
 
-#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3166
+#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3192
 msgid "Starred"
 msgstr "已加星标"
 
@@ -246,7 +246,7 @@ msgstr "右键点击消息并选择“加星标”，即可保留在这里。"
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:1359 src/app.rs:2546
+#: src/ui/chats.rs:1359 src/app.rs:2547
 msgid "Message yourself"
 msgstr "给自己发消息"
 
@@ -254,21 +254,21 @@ msgstr "给自己发消息"
 msgid "Draft:"
 msgstr "草稿："
 
-#: src/ui/chats.rs:1635 src/ui/chats.rs:1996 src/ui/picker.rs:1621
+#: src/ui/chats.rs:1635 src/ui/chats.rs:2013 src/ui/picker.rs:1621
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1637 src/ui/chats.rs:1998 src/ui/conversation.rs:5925
+#: src/ui/chats.rs:1637 src/ui/chats.rs:2015 src/ui/conversation.rs:5925
 #: src/ui/dialogs.rs:1234 src/ui/picker.rs:1622
 msgid "Add to favorites"
 msgstr "添加到收藏"
 
-#: src/ui/chats.rs:1647 src/ui/chats.rs:2022 src/ui/conversation.rs:606
+#: src/ui/chats.rs:1647 src/ui/chats.rs:2039 src/ui/conversation.rs:606
 #: src/ui/dialogs.rs:1483 src/ui/info.rs:551
 msgid "Leave group"
 msgstr "退出群组"
 
-#: src/ui/chats.rs:1648 src/ui/chats.rs:2020 src/ui/conversation.rs:604
+#: src/ui/chats.rs:1648 src/ui/chats.rs:2037 src/ui/conversation.rs:604
 #: src/ui/dialogs.rs:1481 src/ui/info.rs:549
 msgid "Leave channel"
 msgstr "退出频道"
@@ -393,14 +393,14 @@ msgstr "一条消息已被置顶"
 msgid "{} pinned a message"
 msgstr "{} 置顶了一条消息"
 
-#: src/ui/conversation.rs:2886 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2886 src/notify.rs:19
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 条未读消息"
 
 #: src/ui/conversation.rs:3069 src/ui/call.rs:1009 src/app/calls.rs:135
-#: src/app.rs:2528 src/app.rs:2547
+#: src/app.rs:2529 src/app.rs:2548
 msgid "You"
 msgstr "你"
 
@@ -905,7 +905,7 @@ msgstr "“系统”使用桌面的界面字体。Inter 在每台电脑上都一
 msgid "Wallpaper"
 msgstr "壁纸"
 
-#: src/ui/settings.rs:369 src/app.rs:3022 src/ui/image_preview.rs:212
+#: src/ui/settings.rs:369 src/app.rs:3042 src/ui/image_preview.rs:212
 msgid "Image"
 msgstr "图片"
 
@@ -938,7 +938,7 @@ msgid ""
 "Draw ZapFast's own title bar and window buttons instead of the desktop's."
 msgstr "使用 ZapFast 自己的标题栏和窗口按钮，而不是桌面环境提供的。"
 
-#: src/ui/settings.rs:430 src/ui/rail.rs:272
+#: src/ui/settings.rs:430 src/ui/rail.rs:292
 msgid "Chats"
 msgstr "聊天"
 
@@ -1475,7 +1475,7 @@ msgstr "无法连接"
 msgid "No answer"
 msgstr "无人接听"
 
-#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4081
+#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4107
 msgid "Connection lost"
 msgstr "连接已断开"
 
@@ -1756,108 +1756,108 @@ msgstr "此号码未注册 WhatsApp"
 msgid "Not connected to WhatsApp"
 msgstr "未连接到 WhatsApp"
 
-#: src/app.rs:884 src/app.rs:7639
+#: src/app.rs:884 src/app.rs:7666
 msgid "Enter a valid international phone number"
 msgstr "请输入有效的国际电话号码"
 
-#: src/app.rs:1805
+#: src/app.rs:1806
 msgid "Could not delete the removed account's files"
 msgstr "无法删除已移除账号的文件"
 
-#: src/app.rs:2438
+#: src/app.rs:2439
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已存在名为“{name}”的标签。"
 
-#: src/app.rs:2527
+#: src/app.rs:2528
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（你）"
 
-#: src/app.rs:3089
+#: src/app.rs:3109
 msgid "Media cache cleared"
 msgstr "媒体缓存已清除"
 
-#: src/app.rs:3168
+#: src/app.rs:3194
 msgid "Star removed"
 msgstr "已取消星标"
 
-#: src/app.rs:3204
+#: src/app.rs:3230
 msgid "Pinned for 7 days"
 msgstr "已置顶 7 天"
 
-#: src/app.rs:3206
+#: src/app.rs:3232
 msgid "Pin removed"
 msgstr "已取消置顶"
 
-#: src/app.rs:3705
+#: src/app.rs:3731
 msgid "Loading chat history"
 msgstr "正在加载聊天记录"
 
-#: src/app.rs:3799
+#: src/app.rs:3825
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:4021 src/app.rs:7542
+#: src/app.rs:4047 src/app.rs:7569
 msgid "This chat already has three pinned messages"
 msgstr "此聊天已有三条置顶消息"
 
-#: src/app.rs:4091
+#: src/app.rs:4117
 msgid "Connecting"
 msgstr "正在连接"
 
-#: src/app.rs:4722
+#: src/app.rs:4748
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:4726
+#: src/app.rs:4752
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
 #
-#: src/app.rs:6767
+#: src/app.rs:6794
 msgid "A selected chat is no longer writable"
 msgstr "无法再向某个所选聊天发送消息"
 
-#: src/app.rs:7300
+#: src/app.rs:7327
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:7377
+#: src/app.rs:7404
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:7759 src/ui/labels.rs:257
+#: src/app.rs:7786 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:8304
+#: src/app.rs:8331
 #, rust-format
 msgid "{}: {}"
 msgstr "{}：{}"
 
-#: src/app.rs:8663
+#: src/app.rs:8690
 msgid "App lock password saved"
 msgstr "应用锁密码已保存"
 
-#: src/app.rs:8671
+#: src/app.rs:8698
 msgid "App lock turned off"
 msgstr "应用锁已关闭"
 
-#: src/app.rs:8805
+#: src/app.rs:8832
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:9384
+#: src/app.rs:9429
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:9387 src/app.rs:9392
+#: src/app.rs:9432 src/app.rs:9437
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
@@ -2315,7 +2315,7 @@ msgstr ""
 
 #. Translators: the body of a notification that hides who wrote and
 #. what: a message has arrived.
-#: src/notify.rs:397
+#: src/notify.rs:402
 msgctxt "notification"
 msgid "New message"
 msgstr "新消息"
@@ -2340,7 +2340,7 @@ msgstr "单聊"
 msgid "Direct messages and groups"
 msgstr "单聊和群组"
 
-#: src/account.rs:295
+#: src/account.rs:299
 #, rust-format
 msgid "Account {id}"
 msgstr "账号 {id}"
@@ -2482,19 +2482,19 @@ msgstr "取消（Esc）"
 msgid "Start over…"
 msgstr "重新开始…"
 
-#: src/ui/rail.rs:281
+#: src/ui/rail.rs:301
 msgid "Calls"
 msgstr "通话"
 
-#: src/ui/rail.rs:288
+#: src/ui/rail.rs:308
 msgid "Starred messages"
 msgstr "已加星标的消息"
 
-#: src/ui/rail.rs:296
+#: src/ui/rail.rs:316
 msgid "Archived"
 msgstr "已归档"
 
-#: src/ui/rail.rs:302
+#: src/ui/rail.rs:322
 msgid "Locked"
 msgstr "已锁定"
 

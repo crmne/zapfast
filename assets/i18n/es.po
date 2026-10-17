@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-15 12:26+0200\n"
+"POT-Creation-Date: 2026-10-16 12:10-0300\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Spanish\n"
@@ -214,7 +214,7 @@ msgstr "{hours} h"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} h {minutes} min"
 
-#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3166
+#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3192
 msgid "Starred"
 msgstr "Destacados"
 
@@ -246,7 +246,7 @@ msgstr "Haz clic derecho en un mensaje y elige Destacar para guardarlo aquí."
 msgid "No favorites yet"
 msgstr "Aún no hay favoritos"
 
-#: src/ui/chats.rs:1359 src/app.rs:2546
+#: src/ui/chats.rs:1359 src/app.rs:2547
 msgid "Message yourself"
 msgstr "Envíate un mensaje"
 
@@ -254,21 +254,21 @@ msgstr "Envíate un mensaje"
 msgid "Draft:"
 msgstr "Borrador:"
 
-#: src/ui/chats.rs:1635 src/ui/chats.rs:1996 src/ui/picker.rs:1621
+#: src/ui/chats.rs:1635 src/ui/chats.rs:2013 src/ui/picker.rs:1621
 msgid "Remove from favorites"
 msgstr "Quitar de favoritos"
 
-#: src/ui/chats.rs:1637 src/ui/chats.rs:1998 src/ui/conversation.rs:5925
+#: src/ui/chats.rs:1637 src/ui/chats.rs:2015 src/ui/conversation.rs:5925
 #: src/ui/dialogs.rs:1234 src/ui/picker.rs:1622
 msgid "Add to favorites"
 msgstr "Añadir a favoritos"
 
-#: src/ui/chats.rs:1647 src/ui/chats.rs:2022 src/ui/conversation.rs:606
+#: src/ui/chats.rs:1647 src/ui/chats.rs:2039 src/ui/conversation.rs:606
 #: src/ui/dialogs.rs:1483 src/ui/info.rs:551
 msgid "Leave group"
 msgstr "Salir del grupo"
 
-#: src/ui/chats.rs:1648 src/ui/chats.rs:2020 src/ui/conversation.rs:604
+#: src/ui/chats.rs:1648 src/ui/chats.rs:2037 src/ui/conversation.rs:604
 #: src/ui/dialogs.rs:1481 src/ui/info.rs:549
 msgid "Leave channel"
 msgstr "Salir del canal"
@@ -396,7 +396,7 @@ msgstr "Se ha fijado un mensaje"
 msgid "{} pinned a message"
 msgstr "{} ha fijado un mensaje"
 
-#: src/ui/conversation.rs:2886 src/notify/badge_windows.rs:255
+#: src/ui/conversation.rs:2886 src/notify.rs:19
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
@@ -404,7 +404,7 @@ msgstr[0] "{} mensaje no leído"
 msgstr[1] "{} mensajes no leídos"
 
 #: src/ui/conversation.rs:3069 src/ui/call.rs:1009 src/app/calls.rs:135
-#: src/app.rs:2528 src/app.rs:2547
+#: src/app.rs:2529 src/app.rs:2548
 msgid "You"
 msgstr "Tú"
 
@@ -945,7 +945,7 @@ msgstr ""
 msgid "Wallpaper"
 msgstr "Fondo de pantalla"
 
-#: src/ui/settings.rs:369 src/app.rs:3022 src/ui/image_preview.rs:212
+#: src/ui/settings.rs:369 src/app.rs:3042 src/ui/image_preview.rs:212
 msgid "Image"
 msgstr "Imagen"
 
@@ -981,7 +981,7 @@ msgstr ""
 "Dibuja la barra de título y los botones de ventana propios de ZapFast en "
 "lugar de los del escritorio."
 
-#: src/ui/settings.rs:430 src/ui/rail.rs:272
+#: src/ui/settings.rs:430 src/ui/rail.rs:292
 msgid "Chats"
 msgstr "Chats"
 
@@ -1532,7 +1532,7 @@ msgstr "No se pudo conectar"
 msgid "No answer"
 msgstr "Sin respuesta"
 
-#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4081
+#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4107
 msgid "Connection lost"
 msgstr "Se perdió la conexión"
 
@@ -1825,61 +1825,61 @@ msgstr "Este número no está en WhatsApp"
 msgid "Not connected to WhatsApp"
 msgstr "Sin conexión a WhatsApp"
 
-#: src/app.rs:884 src/app.rs:7639
+#: src/app.rs:884 src/app.rs:7666
 msgid "Enter a valid international phone number"
 msgstr "Introduce un número de teléfono internacional válido"
 
-#: src/app.rs:1805
+#: src/app.rs:1806
 msgid "Could not delete the removed account's files"
 msgstr "No se pudieron eliminar los archivos de la cuenta quitada"
 
-#: src/app.rs:2438
+#: src/app.rs:2439
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Ya existe una etiqueta llamada «{name}»."
 
-#: src/app.rs:2527
+#: src/app.rs:2528
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (Tú)"
 
-#: src/app.rs:3089
+#: src/app.rs:3109
 msgid "Media cache cleared"
 msgstr "Caché multimedia vaciada"
 
-#: src/app.rs:3168
+#: src/app.rs:3194
 msgid "Star removed"
 msgstr "Destacado quitado"
 
-#: src/app.rs:3204
+#: src/app.rs:3230
 msgid "Pinned for 7 days"
 msgstr "Fijado durante 7 días"
 
-#: src/app.rs:3206
+#: src/app.rs:3232
 msgid "Pin removed"
 msgstr "Mensaje sin fijar"
 
-#: src/app.rs:3705
+#: src/app.rs:3731
 msgid "Loading chat history"
 msgstr "Cargando el historial del chat"
 
-#: src/app.rs:3799
+#: src/app.rs:3825
 msgid "Could not use this image"
 msgstr "No se pudo usar esta imagen"
 
-#: src/app.rs:4021 src/app.rs:7542
+#: src/app.rs:4047 src/app.rs:7569
 msgid "This chat already has three pinned messages"
 msgstr "Este chat ya tiene tres mensajes fijados"
 
-#: src/app.rs:4091
+#: src/app.rs:4117
 msgid "Connecting"
 msgstr "Conectando"
 
-#: src/app.rs:4722
+#: src/app.rs:4748
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "No enviado: ZapFast no está conectado a WhatsApp."
 
-#: src/app.rs:4726
+#: src/app.rs:4752
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
@@ -1888,47 +1888,47 @@ msgstr ""
 "Cancela la respuesta para enviarlo sin cita."
 
 #
-#: src/app.rs:6767
+#: src/app.rs:6794
 msgid "A selected chat is no longer writable"
 msgstr "Ya no se pueden enviar mensajes a uno de los chats seleccionados"
 
-#: src/app.rs:7300
+#: src/app.rs:7327
 msgid "Added to favorites"
 msgstr "Añadido a favoritos"
 
-#: src/app.rs:7377
+#: src/app.rs:7404
 msgid "Sending the sticker pack…"
 msgstr "Enviando el paquete de stickers…"
 
-#: src/app.rs:7759 src/ui/labels.rs:257
+#: src/app.rs:7786 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Tienes {limit} etiquetas, el máximo que guarda ZapFast."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:8304
+#: src/app.rs:8331
 #, rust-format
 msgid "{}: {}"
 msgstr "{}: {}"
 
-#: src/app.rs:8663
+#: src/app.rs:8690
 msgid "App lock password saved"
 msgstr "Contraseña de bloqueo guardada"
 
-#: src/app.rs:8671
+#: src/app.rs:8698
 msgid "App lock turned off"
 msgstr "Bloqueo de la app desactivado"
 
-#: src/app.rs:8805
+#: src/app.rs:8832
 msgid "This video opens in your system player"
 msgstr "Este vídeo se abre en el reproductor del sistema"
 
-#: src/app.rs:9384
+#: src/app.rs:9429
 msgid "Copied image"
 msgstr "Imagen copiada"
 
-#: src/app.rs:9387 src/app.rs:9392
+#: src/app.rs:9432 src/app.rs:9437
 msgid "Failed to copy image"
 msgstr "Error al copiar la imagen"
 
@@ -2403,7 +2403,7 @@ msgstr ""
 
 #. Translators: the body of a notification that hides who wrote and
 #. what: a message has arrived.
-#: src/notify.rs:397
+#: src/notify.rs:402
 msgctxt "notification"
 msgid "New message"
 msgstr "Mensaje nuevo"
@@ -2428,7 +2428,7 @@ msgstr "Chats individuales"
 msgid "Direct messages and groups"
 msgstr "Chats individuales y grupos"
 
-#: src/account.rs:295
+#: src/account.rs:299
 #, rust-format
 msgid "Account {id}"
 msgstr "Cuenta {id}"
@@ -2572,19 +2572,19 @@ msgstr "Cancelar (Escape)"
 msgid "Start over…"
 msgstr "Empezar de nuevo…"
 
-#: src/ui/rail.rs:281
+#: src/ui/rail.rs:301
 msgid "Calls"
 msgstr "Llamadas"
 
-#: src/ui/rail.rs:288
+#: src/ui/rail.rs:308
 msgid "Starred messages"
 msgstr "Mensajes destacados"
 
-#: src/ui/rail.rs:296
+#: src/ui/rail.rs:316
 msgid "Archived"
 msgstr "Archivados"
 
-#: src/ui/rail.rs:302
+#: src/ui/rail.rs:322
 msgid "Locked"
 msgstr "Bloqueados"
 
