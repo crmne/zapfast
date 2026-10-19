@@ -3762,17 +3762,21 @@ impl Worker {
             ReceiptType::Read => Delivery::Read,
             ReceiptType::Played => Delivery::Played,
             ReceiptType::ReadSelf | ReceiptType::PlayedSelf => {
+                let played = receipt.r#type == ReceiptType::PlayedSelf;
                 // The receipt time is when the phone read, not the position
                 // it read through. A delayed receipt must leave newer messages.
                 for id in &receipt.message_ids {
                     match self.archive.message(&chat, id) {
                         Ok(Some(message)) if !message.from_me => {
                             let _ = self.archive.mark_read_to(&chat, id);
+                            if played {
+                                self.store_played(&chat, id);
+                            }
                         }
                         // Offline, messages are filed in batches after their
                         // receipts: the read applies once the message is.
                         Ok(None) if !receipt.source.chat.is_status_broadcast() => {
-                            self.early.wait_read(&chat, id);
+                            self.early.wait_read(&chat, id, played);
                         }
                         _ => {}
                     }
@@ -4515,16 +4519,29 @@ impl Worker {
         let Ok(Some(message)) = self.archive.message(chat, id) else {
             return false;
         };
-        let read = self.early.take_read(chat, id) && !message.from_me;
-        if read {
+        let read = self.early.take_read(chat, id).filter(|_| !message.from_me);
+        if read.is_some() {
             let _ = self.archive.mark_read_to(chat, id);
+        }
+        if read == Some(true) {
+            self.store_played(chat, id);
         }
         for waiting in self.early.take_reactions(chat, id) {
             // The sender's privacy id may have been mapped since.
             let sender = self.canonical_str(&waiting.sender);
             self.apply_reaction(chat, id, &sender, waiting.from_me, waiting.body, None);
         }
-        read
+        read.is_some()
+    }
+
+    /// Files an incoming voice message as played, here or on another device,
+    /// and tells the interface when that is news.
+    fn store_played(&self, chat: &str, id: &str) {
+        match self.archive.mark_played(chat, id) {
+            Ok(true) => self.emit_message(chat, id),
+            Ok(false) => {}
+            Err(error) => log::warn!("could not store a played voice message: {error}"),
+        }
     }
 
     fn apply_history_reaction(
@@ -6814,6 +6831,7 @@ impl Worker {
                 sender,
                 receipts,
             } => {
+                self.store_played(&chat, &message);
                 if receipts {
                     self.mark_played(chat, message, sender);
                 }
@@ -12010,6 +12028,9 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                 Some(Status::ERROR) => Delivery::Failed,
                 _ => Delivery::Sent,
             }
+        } else if info.status == Some(Status::PLAYED) {
+            // We played their voice message on another device.
+            Delivery::Played
         } else {
             Delivery::None
         };
@@ -18379,6 +18400,47 @@ mod receipt_tests {
     }
 
     #[test]
+    fn history_keeps_their_voice_message_played_on_the_phone() {
+        use wa::web_message_info::Status;
+        let parsed = |status| {
+            parse_conversation({
+                let mut proto = wa::Conversation::default();
+                proto.id = PEER.into();
+                proto.messages = vec![{
+                    let mut proto = wa::HistorySyncMsg::default();
+                    proto.message = MessageField::some({
+                        let mut proto = wa::WebMessageInfo::default();
+                        proto.key = MessageField::some({
+                            let mut proto = wa::MessageKey::default();
+                            proto.id = Some("voice".into());
+                            proto.from_me = Some(false);
+                            proto
+                        });
+                        proto.message = MessageField::some({
+                            let mut proto = wa::Message::default();
+                            proto.audio_message = MessageField::some({
+                                let mut proto = wa::message::AudioMessage::default();
+                                proto.ptt = Some(true);
+                                proto
+                            });
+                            proto
+                        });
+                        proto.status = Some(status);
+                        proto
+                    });
+                    proto
+                }];
+                proto
+            })
+            .messages[0]
+                .status
+        };
+        assert_eq!(parsed(Status::PLAYED), Delivery::Played);
+        assert_eq!(parsed(Status::READ), Delivery::None);
+        assert_eq!(parsed(Status::DELIVERY_ACK), Delivery::None);
+    }
+
+    #[test]
     fn history_receipts_date_direct_ticks_and_fill_group_message_info() {
         use wa::web_message_info::Status;
         let conversation = |chat: &str, status| {
@@ -19271,6 +19333,54 @@ mod receipt_tests {
         );
         worker.on_receipt(&receipt(PEER_LID, &["new"], ReceiptType::ReadSelf));
         assert_eq!(unread(&worker), 0);
+    }
+
+    #[tokio::test]
+    async fn a_voice_message_played_here_or_on_the_phone_is_kept_as_heard() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let status =
+            |worker: &Worker, id: &str| worker.archive.message(PEER, id).unwrap().unwrap().status;
+        worker.store_message(incoming("phone", 100), None, None);
+        worker.store_message(incoming("here", 200), None, None);
+        worker.store_message(own_message("ours", 300), None, None);
+        while events.try_recv().is_ok() {}
+
+        worker.on_receipt(&receipt(PEER, &["phone"], ReceiptType::PlayedSelf));
+        assert_eq!(status(&worker, "phone"), Delivery::Played);
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::MessageUpdated(message) if message.id == "phone"
+        )));
+
+        worker
+            .handle_command(Command::MarkPlayed {
+                chat: PEER.into(),
+                message: "here".into(),
+                sender: PEER.into(),
+                receipts: false,
+            })
+            .await;
+        assert_eq!(
+            status(&worker, "here"),
+            Delivery::Played,
+            "heard here even without sending receipts"
+        );
+
+        worker.on_receipt(&receipt(PEER, &["ours"], ReceiptType::PlayedSelf));
+        assert_eq!(
+            status(&worker, "ours"),
+            Delivery::Sent,
+            "our own keeps its ticks"
+        );
+
+        // Offline, the phone's play can come before its message.
+        worker.on_receipt(&receipt(PEER, &["early"], ReceiptType::PlayedSelf));
+        worker.store_message(incoming("early", 400), None, None);
+        assert_eq!(status(&worker, "early"), Delivery::Played);
+
+        // A replay of the message does not undo it.
+        worker.store_message(incoming("phone", 100), None, None);
+        assert_eq!(status(&worker, "phone"), Delivery::Played);
     }
 
     #[test]

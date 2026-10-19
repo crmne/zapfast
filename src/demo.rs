@@ -588,18 +588,23 @@ pub fn populate(app: &mut App) {
                 pages: Some(12),
             },
         ),
-        message(
-            ada,
-            "ada-voice",
-            false,
-            base + 90,
-            Content::Audio {
-                media: media("audio/ogg; codecs=opus", 71_002, None, None),
-                seconds: Some(42),
-                voice_note: true,
-                waveform: demo_waveform(),
-            },
-        ),
+        {
+            let mut row = message(
+                ada,
+                "ada-voice",
+                false,
+                base + 90,
+                Content::Audio {
+                    media: media("audio/ogg; codecs=opus", 71_002, None, None),
+                    seconds: Some(42),
+                    voice_note: true,
+                    waveform: demo_waveform(),
+                },
+            );
+            // The reply below says it was heard.
+            row.status = Delivery::Played;
+            row
+        },
         message(
             ada,
             "you-voice",
@@ -17112,6 +17117,42 @@ mod bubble_detail_tests {
         apply_flags(&mut app, Some("photos"));
         frames(&mut app, &ctx, egui::vec2(1180.0, 1400.0));
         (app, ctx)
+    }
+
+    /// Their voice message carries a dot until it is heard; ours never does.
+    #[test]
+    fn an_unheard_voice_message_has_a_dot() {
+        for (from_me, status, dot) in [
+            (false, Delivery::None, true),
+            (false, Delivery::Played, false),
+            (true, Delivery::Read, false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("audio-types"));
+            let chat = app.open_chat.clone().unwrap();
+            for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+                row.from_me = from_me;
+                row.status = status;
+            }
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+            let bubble = crate::ui::conversation::bubble_id(&chat, "audio-original");
+            let shown = rect(&ctx, bubble.with("unheard"));
+            assert_eq!(shown.is_some(), dot, "from me: {from_me}, {status:?}");
+            if let Some(shown) = shown {
+                let frame = rect(&ctx, bubble.with("rect")).expect("voice bubble drawn");
+                assert!(frame.contains_rect(shown), "the dot is inside its bubble");
+            }
+            assert!(
+                rect(
+                    &ctx,
+                    crate::ui::conversation::bubble_id(&chat, "audio-file").with("unheard")
+                )
+                .is_none(),
+                "an audio file has no dot"
+            );
+        }
     }
 
     /// Both audio types keep their own player treatment and forwarding label

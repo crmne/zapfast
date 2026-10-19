@@ -2230,6 +2230,15 @@ impl Archive {
         Ok(changed > 0)
     }
 
+    /// Marks an incoming message as played and returns whether it was not yet.
+    pub fn mark_played(&self, chat: &str, id: &str) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET status = ?3 WHERE chat = ?1 AND id = ?2 AND from_me = 0 AND status < ?3",
+            params![chat, id, status_rank(Delivery::Played)],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
     pub fn advance_statuses(
         &self,
