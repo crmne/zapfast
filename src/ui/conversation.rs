@@ -11320,7 +11320,11 @@ mod reaction_tests {
     #[test]
     fn every_message_menu_label_can_be_translated() {
         const TEMPLATE: &str = include_str!("../../assets/i18n/zapfast.pot");
-        let translatable = |text: &str| TEMPLATE.contains(&format!("msgid \"{text}\"\n"));
+        // Line by line: a Windows checkout may end the template's lines in CRLF.
+        let translatable = |text: &str| {
+            let msgid = format!("msgid \"{text}\"");
+            TEMPLATE.lines().any(|line| line == msgid)
+        };
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("photo.jpg");
         std::fs::write(&file, b"jpeg").unwrap();
