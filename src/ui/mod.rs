@@ -1474,10 +1474,10 @@ mod idle_tests {
         .0;
         app.link = LinkStatus::Connected;
         for i in 0..60 {
-            app.chats.push(crate::model::Chat::new(
-                format!("{i}@s.whatsapp.net"),
-                format!("Chat {i}"),
-            ));
+            app.chats.push(crate::model::Chat {
+                last_activity: 1,
+                ..crate::model::Chat::new(format!("{i}@s.whatsapp.net"), format!("Chat {i}"))
+            });
         }
         let ctx = egui::Context::default();
         theme::install(&ctx);

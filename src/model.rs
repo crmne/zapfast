@@ -400,6 +400,12 @@ impl Chat {
         self.kind == ChatKind::Group
     }
 
+    /// Never held a message: history sync files such a conversation for
+    /// many contacts, and the phone lists none of them.
+    pub fn never_messaged(&self) -> bool {
+        self.last.is_none() && self.last_activity == 0
+    }
+
     /// Counted unread, or marked unread with nothing pending.
     pub fn looks_unread(&self) -> bool {
         self.unread > 0 || self.marked_unread

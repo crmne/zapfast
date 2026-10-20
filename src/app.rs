@@ -2834,6 +2834,18 @@ impl App {
             .iter()
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
+            // The phone's list leaves out people never written to; searching
+            // still finds them, and one being opened stays.
+            .filter(|chat| {
+                chat.kind != crate::model::ChatKind::Direct
+                    || !chat.never_messaged()
+                    || chat.pinned
+                    || chat.favorite
+                    || chat.looks_unread()
+                    || !chat.labels.is_empty()
+                    || !needle.is_empty()
+                    || self.open_chat.as_deref() == Some(chat.id.as_str())
+            })
             .filter(|chat| match &self.label_filter {
                 // A label lists every chat wearing it, channels included,
                 // because someone put each of them there.
@@ -19930,7 +19942,10 @@ mod tests {
             favorite("1@s.whatsapp.net", "Ada", 1, 30),
             favorite("2@s.whatsapp.net", "Bob", 0, 10),
             pinned,
-            Chat::new("4@s.whatsapp.net".into(), "Dee".into()),
+            Chat {
+                last_activity: 1,
+                ..Chat::new("4@s.whatsapp.net".into(), "Dee".into())
+            },
         ];
         app.chat_filter = ChatFilter::Favorites;
         let names: Vec<&str> = app
@@ -20005,10 +20020,12 @@ mod tests {
         let mut app = app();
         let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         ada.unread = 1;
+        ada.last_activity = 2;
         let bob = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
         app.chats = vec![ada, bob];
         let mut cy = Chat::new("3@s.whatsapp.net".into(), "Cy".into());
         cy.unread = 1;
+        cy.last_activity = 1;
         app.chats.push(cy);
         app.chat_filter = ChatFilter::Unread;
         let ctx = egui::Context::default();
@@ -20033,6 +20050,28 @@ mod tests {
         app.apply(Action::KeepUnread("2@s.whatsapp.net".into()), &ctx);
         app.apply(Action::SetChatFilter(ChatFilter::Unread), &ctx);
         assert!(app.visible_chats().is_empty());
+    }
+
+    #[test]
+    fn people_never_written_to_stay_out_of_the_list_until_searched() {
+        let mut app = app();
+        let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        ada.last_activity = 10;
+        let stranger = Chat::new("2@s.whatsapp.net".into(), "Stranger".into());
+        let group = Chat::new("3@g.us".into(), "Group".into());
+        app.chats = vec![ada, stranger, group];
+        let names = |app: &App| {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&app), ["Ada", "Group"], "groups stay listed");
+        app.search = "Stran".into();
+        assert_eq!(names(&app), ["Stranger"]);
+        app.search.clear();
+        app.open_chat("2@s.whatsapp.net".into());
+        assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
     }
 
     #[test]
