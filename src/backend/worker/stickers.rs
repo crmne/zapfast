@@ -156,6 +156,10 @@ const RECEIVED_SHELF: usize = 200;
 /// have been replayed.
 pub(super) const FAVORITES_RECOVERED: &str = "favorite_stickers_recovered_v1";
 
+/// The phone's "Keep chats archived" lives in RegularLow too, and syncs
+/// from before ZapFast followed it consumed it, so it needs the same replay.
+pub(super) const UNARCHIVE_SETTING_RECOVERED: &str = "unarchive_setting_recovered_v1";
+
 /// A favorite sticker the phone told us about, fetched by its references.
 /// The filehash is the plaintext SHA-256, which an unencrypted sticker (one
 /// the phone has no media key for) needs to be fetched at all.
@@ -892,9 +896,10 @@ impl Worker {
         }
     }
 
-    /// Favorites saved on the phone before ZapFast followed them were already
-    /// consumed by earlier syncs, and incremental syncs never repeat them.
-    /// Rebuilds the collection holding them once, so they replay.
+    /// Favorites saved on the phone before ZapFast followed them, and the
+    /// phone's "Keep chats archived", were already consumed by earlier syncs,
+    /// and incremental syncs never repeat them. Rebuilds the collection
+    /// holding them once, so they replay.
     pub(super) fn recover_favorites(&mut self) {
         if self.favorites_recovered
             || self.favorites_recovering
@@ -938,8 +943,10 @@ impl Worker {
             return;
         }
         self.favorites_recovered = true;
-        if let Err(error) = self.archive.set_meta(FAVORITES_RECOVERED, "complete") {
-            log::warn!("could not record the favorite sticker sync: {error}");
+        for key in [FAVORITES_RECOVERED, UNARCHIVE_SETTING_RECOVERED] {
+            if let Err(error) = self.archive.set_meta(key, "complete") {
+                log::warn!("could not record the chat settings replay: {error}");
+            }
         }
     }
 

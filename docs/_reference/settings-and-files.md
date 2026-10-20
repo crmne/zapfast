@@ -146,9 +146,11 @@ name or description, in the interface language or in English.
   does not answer goes to the back of the queue. Pages fetched this way go into
   the archive without moving the view. A chat the phone says has nothing older
   is not asked again.
-- **Keep chats archived** (development builds): on by default. When off, a new
-  message, received or sent, brings an archived chat back to the list. Applies
-  to all accounts here; it does not read or change the phone's own setting.
+- **Keep chats archived**: on by default. When off, a new message, received or
+  sent, brings an archived chat back to the list. Applies to all accounts here
+  whose phone has not sent its own **Keep chats archived**; once a phone has,
+  ZapFast follows the phone for that account. It does not change the phone's
+  setting.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
   with sound, and resume them afterwards. Linux and Windows only.

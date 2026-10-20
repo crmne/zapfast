@@ -643,12 +643,12 @@ this computer once it confirms. Groups and channels can be left from the same
 menu, keeping their history here. `Ctrl+E` (Command+E on macOS) archives the
 open chat, or unarchives it from **Archived**, as in WhatsApp.
 
-Archived chats stay archived when new messages arrive. **Development builds**
-add **Keep chats archived** in Settings: turn it off to have a new message,
-received or sent, bring the chat back to the list. This setting applies to all
-accounts here. ZapFast does not read the phone's own setting yet, so set it
-here to match. Messages older than the archiving, duplicate deliveries, and
-history replay leave archived chats in place.
+ZapFast follows your phone's **Keep chats archived** (in WhatsApp's chat
+settings): with it off, a new message, received or sent, brings an archived
+chat back to the list, as on the phone. Until a phone has sent its setting,
+**Keep chats archived** in ZapFast's Settings decides for that account.
+Messages older than the archiving, duplicate deliveries, and history replay
+leave archived chats in place.
 
 The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
 chat's matches, newest first. Its calendar narrows them to one day.

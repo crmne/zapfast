@@ -672,18 +672,22 @@ pub async fn run(
     // state rebuilt from a snapshot; a new link receives it with the first sync.
     let privacy_snapshot =
         !privacy_confirmed && archive.chats().is_ok_and(|chats| !chats.is_empty());
-    // A new link receives the phone's favorites with its first sync; only an
-    // archive filled before favorites were followed needs them replayed.
-    let favorites_recovered = archive
-        .meta(stickers::FAVORITES_RECOVERED)
-        .ok()
-        .flatten()
-        .as_deref()
-        == Some("complete")
+    // A new link receives the phone's favorites and its "Keep chats archived"
+    // with its first sync; only an archive filled before ZapFast followed
+    // them needs them replayed.
+    let replayed = [
+        stickers::FAVORITES_RECOVERED,
+        stickers::UNARCHIVE_SETTING_RECOVERED,
+    ];
+    let favorites_recovered = replayed
+        .iter()
+        .all(|key| archive.meta(key).ok().flatten().as_deref() == Some("complete"))
         || (archive.chats().is_ok_and(|chats| chats.is_empty())
-            && archive
-                .set_meta(stickers::FAVORITES_RECOVERED, "complete")
-                .is_ok());
+            && replayed
+                .iter()
+                .all(|key| archive.set_meta(key, "complete").is_ok()));
+    // The phone's own setting, read before the archive moves into the worker.
+    let phone_unarchive_chats = archive.unarchive_chats().ok().flatten();
     // Likewise only contacts synced before first names were kept lack them.
     let first_names_recovered = archive
         .meta(contact_names::FIRST_NAMES_RECOVERED)
@@ -748,6 +752,7 @@ pub async fn run(
         presence_subscribed: HashSet::new(),
         download_folder: None,
         keep_chats_archived: true,
+        phone_unarchive_chats,
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
@@ -1160,9 +1165,13 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
-    /// Settings' "Keep chats archived". Off, a new message unarchives its
-    /// chat here, as the phone does; WhatsApp sends no mutation for it.
+    /// Settings' "Keep chats archived", for an account whose phone has not
+    /// sent its own. Off, a new message unarchives its chat here, as the
+    /// phone does; WhatsApp sends no mutation for it.
     keep_chats_archived: bool,
+    /// The phone's own "Keep chats archived", inverted as WhatsApp sends it
+    /// (`Some(true)`: a new message unarchives). It wins over Settings'.
+    phone_unarchive_chats: Option<bool>,
     /// Whether the window is focused and visible.
     online_wanted: bool,
     /// When `online_wanted` last changed.
@@ -3590,6 +3599,17 @@ impl Worker {
                 self.me_about = Some(update.status.clone()).filter(|about| !about.is_empty());
                 self.emit(self.me_event());
             }
+            E::UnarchiveChatsSettingUpdate(update) => {
+                match self.archive.set_unarchive_chats_at(
+                    update.unarchive_chats,
+                    update.timestamp.timestamp_millis(),
+                ) {
+                    Ok(unarchive) => self.phone_unarchive_chats = Some(unarchive),
+                    Err(error) => {
+                        log::warn!("could not store the phone's archive setting: {error}")
+                    }
+                }
+            }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
@@ -3738,6 +3758,7 @@ impl Worker {
         self.privacy_ready = false;
         self.privacy_confirmed = false;
         self.privacy_snapshot = false;
+        self.phone_unarchive_chats = None;
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
         self.early.clear();
@@ -4760,6 +4781,12 @@ impl Worker {
         self.archive_message(message, raw, push_name, false);
     }
 
+    /// The phone's "Keep chats archived" once it has said, else Settings'.
+    fn keeps_chats_archived(&self) -> bool {
+        self.phone_unarchive_chats
+            .map_or(self.keep_chats_archived, |unarchive| !unarchive)
+    }
+
     /// Stores `message`; `poll_baseline` records a live poll creation's
     /// zero-vote baseline once the row is archived, before the interface
     /// hears of it. A skipped or failed insert leaves no baseline behind.
@@ -4816,7 +4843,7 @@ impl Worker {
         // theirs. A duplicate delivery or one older than the archiving does
         // not bring the chat back.
         if is_new
-            && !self.keep_chats_archived
+            && !self.keeps_chats_archived()
             && let Err(error) = self
                 .archive
                 .unarchive_for_message(&chat, message.timestamp.saturating_mul(1000))
@@ -16771,6 +16798,7 @@ mod receipt_tests {
             presence_subscribed: HashSet::new(),
             download_folder: None,
             keep_chats_archived: true,
+            phone_unarchive_chats: None,
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,
@@ -19289,6 +19317,39 @@ mod receipt_tests {
         stale.chats[0].archived = Some(true);
         worker.apply_history(stale, true);
         assert!(!archived(&worker), "history cannot undo it");
+    }
+
+    #[tokio::test]
+    async fn the_phones_keep_chats_archived_wins_over_settings() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let archived = |worker: &Worker| worker.archive.chat(PEER).unwrap().unwrap().archived;
+        let setting = |unarchive: bool| {
+            let mut action = wa::sync_action_value::UnarchiveChatsSetting::default();
+            action.unarchive_chats = Some(unarchive);
+            Arc::new(wa_events::Event::UnarchiveChatsSettingUpdate(
+                wa_events::UnarchiveChatsSettingUpdate::builder()
+                    .unarchive_chats(unarchive)
+                    .timestamp(whatsapp_rust::wacore::time::now_utc())
+                    .action(Box::new(action))
+                    .from_full_sync(true)
+                    .build(),
+            ))
+        };
+        worker.store_message(incoming("before", 100), None, None);
+        worker.archive.set_archived_at(PEER, true, 200_000).unwrap();
+        // Settings keep chats archived, but the phone does not.
+        worker.handle_wa_event(setting(true)).await;
+        worker.store_message(incoming("new", 300), None, None);
+        assert!(!archived(&worker));
+
+        // Now the phone keeps them, though Settings would not.
+        worker.archive.set_archived_at(PEER, true, 400_000).unwrap();
+        worker
+            .handle_command(Command::SetKeepChatsArchived(false))
+            .await;
+        worker.handle_wa_event(setting(false)).await;
+        worker.store_message(incoming("kept", 500), None, None);
+        assert!(archived(&worker));
     }
 
     #[test]

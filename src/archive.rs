@@ -396,6 +396,10 @@ fn kind_from_name(name: &str) -> ChatKind {
 /// rather than every photo it ever held.
 pub const GALLERY_PAGE: usize = 200;
 
+/// `meta` keys for the phone's "Keep chats archived" and when it changed.
+const UNARCHIVE_CHATS: &str = "unarchive_chats";
+const UNARCHIVE_CHATS_AT: &str = "unarchive_chats_at";
+
 impl Archive {
     /// Unlocks the on-disk archive with its OS keyring key, migrating plaintext
     /// archives before their first encrypted use. Never falls back to plaintext.
@@ -2430,6 +2434,29 @@ impl Archive {
         Ok(existing)
     }
 
+    /// The phone's "Keep chats archived", inverted as WhatsApp sends it:
+    /// `Some(true)` when a new message brings an archived chat back. `None`
+    /// until the phone has said.
+    pub fn unarchive_chats(&self) -> Result<Option<bool>> {
+        Ok(self.meta(UNARCHIVE_CHATS)?.map(|value| value == "1"))
+    }
+
+    /// Records the phone's "Keep chats archived" (inverted, as
+    /// [`Archive::unarchive_chats`]) changed at `timestamp` milliseconds,
+    /// unless a newer change is stored, so a replayed snapshot cannot undo
+    /// it. Returns the setting in force.
+    pub fn set_unarchive_chats_at(&self, unarchive: bool, timestamp: i64) -> Result<bool> {
+        let stored = self
+            .meta(UNARCHIVE_CHATS_AT)?
+            .and_then(|value| value.parse::<i64>().ok());
+        if stored.is_some_and(|stored| stored > timestamp) {
+            return Ok(self.unarchive_chats()?.unwrap_or(unarchive));
+        }
+        self.set_meta(UNARCHIVE_CHATS, if unarchive { "1" } else { "0" })?;
+        self.set_meta(UNARCHIVE_CHATS_AT, &timestamp.to_string())?;
+        Ok(unarchive)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -3651,6 +3678,19 @@ pub(crate) mod tests {
             .ensure_chat("1@s.whatsapp.net", "Initial history")
             .unwrap();
         assert!(!fresh.take_preferences_refresh().unwrap());
+    }
+
+    #[test]
+    fn the_phones_keep_chats_archived_applies_in_timestamp_order() {
+        let archive = Archive::in_memory().unwrap();
+        assert_eq!(archive.unarchive_chats().unwrap(), None);
+        assert!(archive.set_unarchive_chats_at(true, 200).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(true));
+        // A replayed older change does not undo it; a newer one does.
+        assert!(archive.set_unarchive_chats_at(false, 100).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(true));
+        assert!(!archive.set_unarchive_chats_at(false, 300).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(false));
     }
 
     #[test]
