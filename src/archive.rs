@@ -2246,6 +2246,19 @@ impl Archive {
         Ok(changed > 0)
     }
 
+    /// Replaces the local clock's stamp on a message we sent with the time
+    /// WhatsApp's server acknowledged it, which incoming messages are stamped
+    /// with too, so a reply never sorts above it when this computer's clock is
+    /// ahead. Returns whether the stamp changed.
+    pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET timestamp = ?3
+             WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND timestamp != ?3",
+            params![chat, id, timestamp],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
     pub fn advance_statuses(
         &self,
@@ -4551,6 +4564,37 @@ pub(crate) mod tests {
         archive.set_unread(chat, 4).unwrap();
         archive.mark_read_to(chat, "second").unwrap();
         assert_eq!(archive.chat(chat).unwrap().unwrap().unread, 2);
+    }
+
+    #[test]
+    fn a_sent_message_restamped_with_the_server_time_sorts_before_a_later_reply() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        // Our clock was ahead: the message was stamped 200, the reply came at 150.
+        archive
+            .insert_message(&message(chat, "mine", 200, true), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "reply", 150, false), None)
+            .unwrap();
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(archive.messages(chat, None, 10).unwrap()),
+            ["reply", "mine"]
+        );
+        assert!(archive.restamp_sent(chat, "mine", 140).unwrap());
+        assert!(!archive.restamp_sent(chat, "mine", 140).unwrap());
+        // Only our own messages are restamped.
+        assert!(!archive.restamp_sent(chat, "reply", 100).unwrap());
+        assert_eq!(
+            archive.message(chat, "reply").unwrap().unwrap().timestamp,
+            150
+        );
+        assert_eq!(
+            ids(archive.messages(chat, None, 10).unwrap()),
+            ["mine", "reply"]
+        );
     }
 
     #[test]

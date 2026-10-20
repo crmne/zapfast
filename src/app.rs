@@ -293,6 +293,10 @@ impl Conversation {
             let added = self.messages.len() - old_len;
             self.messages.rotate_right(added);
         }
+        self.sort();
+    }
+
+    fn sort(&mut self) {
         self.messages
             .sort_by_key(|message| (message.timestamp, message.history_order.unwrap_or(i64::MAX)));
     }
@@ -3518,6 +3522,7 @@ impl App {
                             .collect::<Vec<_>>(),
                         _ => Vec::new(),
                     };
+                    let moved = existing.timestamp != message.timestamp;
                     *existing = message;
                     for (index, state) in carousel_states.into_iter().enumerate() {
                         if let (Some(state), Some(media)) =
@@ -3538,6 +3543,10 @@ impl App {
                     ) = (motion_state, &mut existing.content)
                     {
                         motion.state = state;
+                    }
+                    if moved {
+                        // Our own message, restamped with the server's time.
+                        conversation.sort();
                     }
                 }
             }
@@ -18621,6 +18630,38 @@ mod tests {
         assert_eq!(ids, vec!["a", "b", "c"]);
         conversation.merge(vec![message("c", "c", 3)], false);
         assert_eq!(conversation.messages.len(), 3);
+    }
+
+    #[test]
+    fn a_restamped_message_moves_to_its_new_place() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let chat = "1@s.whatsapp.net";
+        let mut mine = message(chat, "mine", 200);
+        mine.from_me = true;
+        let restamped = Message {
+            timestamp: 120,
+            ..mine.clone()
+        };
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![message(chat, "a", 100), mine, message(chat, "reply", 150)],
+            false,
+        );
+        let ids = |app: &App| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&app), ["a", "reply", "mine"]);
+        // The server's time for our message arrives as an update.
+        events
+            .send(Event::MessageUpdated(Box::new(restamped)))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(ids(&app), ["a", "mine", "reply"]);
     }
 
     #[test]

@@ -81,7 +81,9 @@ would be on its own.
 [Chats](#chats).
 
 **Development builds** preserve edited replies and the phone's order for
-messages sent within the same second when loading history. If an earlier
+messages sent within the same second when loading history. A message you
+send takes the time WhatsApp's server gave it, so a reply no longer sorts
+above it when this computer's clock runs ahead. If an earlier
 build missed a message or put nearby messages in the wrong order, right-click
 a message just after the affected area and choose **Reload earlier messages**.
 This asks your phone for up to 50 messages before that point and merges them
