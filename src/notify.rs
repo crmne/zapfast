@@ -411,6 +411,22 @@ pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (S
     (chat_name.to_owned(), body)
 }
 
+/// The bundle identifier packaging/macos gives the app.
+const MACOS_BUNDLE_ID: &str = "me.paolino.fastsapp";
+
+/// The identity notifications are sent under. macOS refuses a client whose
+/// identity is not the running bundle's before it asks for permission, so a
+/// mismatch leaves the app out of Notification Center: no banners, no sound,
+/// and no Dock badge. Elsewhere it is the app id the desktop entry and the
+/// Windows shortcuts use.
+fn notification_app_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        MACOS_BUNDLE_ID
+    } else {
+        "me.paolino.zapfast"
+    }
+}
+
 /// Fastframe owns the platform adapters and one bounded native worker. This
 /// thread only keeps ZapFast's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
@@ -433,7 +449,7 @@ fn deliver(
     };
     let client = match CLIENT.get_or_init(|| {
         Client::new(
-            App::new("me.paolino.zapfast", "ZapFast")
+            App::new(notification_app_id(), "ZapFast")
                 .desktop_entry("zapfast")
                 .icon("zapfast")
                 // ZapFast's green, the theme's accent, behind the logo on
@@ -505,6 +521,23 @@ fn deliver(
 
 #[cfg(test)]
 mod tests {
+    /// Notifications on macOS need the bundle's own identifier, or the
+    /// system never asks for permission.
+    #[test]
+    fn the_macos_notification_identity_is_the_bundle_identifier() {
+        let plist = include_str!("../packaging/macos/Info.plist");
+        let key = "<key>CFBundleIdentifier</key>";
+        let after = &plist[plist.find(key).expect("Info.plist names the bundle") + key.len()..];
+        let value = after
+            .trim_start()
+            .strip_prefix("<string>")
+            .and_then(|rest| rest.split_once("</string>"))
+            .map(|(value, _)| value);
+        assert_eq!(value, Some(super::MACOS_BUNDLE_ID));
+        #[cfg(target_os = "macos")]
+        assert_eq!(super::notification_app_id(), super::MACOS_BUNDLE_ID);
+    }
+
     #[test]
     fn badge_description_agrees_with_the_count() {
         use crate::i18n::Locale;
