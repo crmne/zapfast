@@ -744,7 +744,7 @@ fn starred_row(
     // The message's own words with WhatsApp's markup taken off and mentions
     // named, the way the chat list previews one. Color emoji and wrapping go
     // through the same line helper as chat text.
-    let summary = message.content.full_summary();
+    let summary = message.content.full_summary_in(app.locale);
     let words = crate::markup::plain(&app.resolve_mention_tokens(&summary), &[]);
     let body = widgets::line(
         ui,
@@ -1320,7 +1320,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         }
         let words = widgets::line(
             ui,
-            &app.preview_line(&hit.summary(), hit),
+            &app.preview_line(&hit.summary_in(app.locale), hit),
             theme::regular(13.0),
             palette.dim,
             (right - x).max(0.0),
@@ -1360,6 +1360,44 @@ pub(super) fn self_row(app: &mut App, ui: &mut egui::Ui) {
     if person_row(app, ui, &me, &name, Some(detail.as_ref())).clicked() {
         app.actions.push(Action::MessageYourself);
     }
+}
+
+/// A row that starts something, drawn like a person's: an icon on the
+/// accent colour where the photo would be. New chat's New group and Add
+/// contact.
+pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
+    let palette = app.palette;
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), theme::ROW_HEIGHT),
+        Sense::click(),
+    );
+    theme::reveal_focus(&response);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if ui.is_rect_visible(rect) {
+        if response.hovered() || response.has_focus() {
+            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        }
+        let circle =
+            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        ui.painter()
+            .circle_filled(circle.center(), circle.width() / 2.0, palette.accent);
+        theme::paint_icon(ui, icon, circle, 22.0, palette.on_accent);
+        let left = rect.left() + 76.0;
+        let line = widgets::line(
+            ui,
+            label,
+            theme::medium(14.5),
+            palette.text,
+            rect.right() - 14.0 - left,
+            1,
+        );
+        line.paint(
+            ui,
+            pos2(left, rect.center().y - line.size().y / 2.0),
+            palette.text,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn person_row(
@@ -1600,7 +1638,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             }
             let words = widgets::line(
                 ui,
-                &crate::markup::plain(&app.resolve_mention_tokens(&last.summary), &[]),
+                &crate::markup::plain(
+                    &app.resolve_mention_tokens(&last.summary_in(app.locale)),
+                    &[],
+                ),
                 theme::regular(13.0),
                 preview_color,
                 (badge_right - x).max(0.0),
@@ -1613,7 +1654,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     pos2(left, line_y - 4.0),
                     pos2(badge_right, line_y + words.size().y.max(16.0) + 4.0),
                 );
-                full_preview = Some((area, prefix, last.full.clone()));
+                full_preview = Some((area, prefix, last.full_in(app.locale).into_owned()));
             }
             words
         } else {
@@ -1660,6 +1701,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             ui,
             &[
                 "Notification sound",
+                "Voice message speed",
                 &crate::i18n::gettext(app.locale, "Labels"),
             ],
             true,
@@ -2063,6 +2105,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         }
     }
     sound_menu(app, ui, palette, chat);
+    voice_speed_menu(app, ui, palette, chat);
     labels::chat_menu(app, ui, chat, palette);
     if widgets::menu_item(
         ui,
@@ -2165,6 +2208,44 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
             if widgets::menu_item(ui, palette, None, choose) {
                 app.actions.push(Action::PickChatSound(chat.id.clone()));
                 ui.close();
+            }
+        },
+    );
+}
+
+/// A chat's own voice message speed, overriding Settings for this chat.
+fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
+    let options: Vec<(Option<f32>, String)> = std::iter::once((
+        None,
+        format!(
+            "Default ({})",
+            crate::audio::speed_label(app.settings.voice_speed)
+        ),
+    ))
+    .chain(
+        crate::audio::SPEEDS
+            .into_iter()
+            .map(|speed| (Some(speed), crate::audio::speed_label(speed))),
+    )
+    .collect();
+    let items: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
+    widgets::submenu(
+        ui,
+        palette,
+        Icon::Play,
+        "Voice message speed",
+        &items,
+        |ui| {
+            for (speed, label) in &options {
+                let speed = *speed;
+                let checked = chat.voice_speed == speed;
+                if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
+                    app.actions.push(Action::SetChatVoiceSpeed {
+                        chat: chat.id.clone(),
+                        speed,
+                    });
+                    ui.close();
+                }
             }
         },
     );

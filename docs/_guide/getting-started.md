@@ -35,17 +35,18 @@ source build has no launcher integration.
 
 The build needs a C/C++ toolchain, CMake, and Perl (for the bundled
 OpenSSL); `rust-toolchain.toml` pins the Rust version. On Linux it also needs
-egui's development libraries and ALSA. libopus and the H.264 decoder build
-from source. On Arch Linux:
+egui's development libraries, ALSA, and PipeWire with clang (the PipeWire
+output's bindings are generated at build time). libopus and the H.264 decoder
+build from source. On Arch Linux:
 
 ```sh
-sudo pacman -S --needed alsa-lib libxkbcommon wayland cmake perl
+sudo pacman -S --needed alsa-lib pipewire clang libxkbcommon wayland cmake perl
 ```
 
-On Debian or Ubuntu:
+On Debian 13, Ubuntu 24.04 or newer:
 
 ```sh
-sudo apt install build-essential cmake perl libasound2-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+sudo apt install build-essential cmake perl clang libclang-dev libasound2-dev libpipewire-0.3-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
 ```
 
 With Nix, `nix develop` provides the toolchain and every native dependency,

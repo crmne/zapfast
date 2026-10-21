@@ -273,7 +273,7 @@ impl Sound {
     /// track, or a computer without an output device, plays silently.
     fn open(path: &Path, from: Duration, muted: bool, speed: f32) -> Option<Self> {
         let decoder = sound_decoder(path, from)?;
-        let device = match crate::audio::open_output(crate::audio::Health::new("video sound")) {
+        let device = match crate::audio::open_output(None) {
             Ok(device) => device,
             Err(error) => {
                 log::warn!("video plays without sound: {error}");

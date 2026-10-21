@@ -39,6 +39,8 @@ pub(super) enum CallRuntimeEvent {
     Ended,
     /// A call link's join finished: the call is in, or why it is not.
     LinkJoined(Result<whatsapp_rust::voip::CallHandle, String>),
+    /// The call service answered a group call we started: it is out, or why it is not.
+    GroupStarted(Result<whatsapp_rust::voip::CallHandle, calls::GroupRefusal>),
 }
 
 impl CallRuntime {
@@ -213,13 +215,25 @@ impl Worker {
         generation: u64,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
+        if crate::model::ChatKind::from_id(&chat) == crate::model::ChatKind::Group {
+            if !calls::group_calls_enabled() {
+                // The interface offers no button for it; the worker is the boundary all the same.
+                log::warn!("[CALL] refusing to start a group call: group calls are off");
+                let mut placing = CallUpdate::placing(generation, chat.to_string(), video);
+                placing.group = Some(calls::GroupCall::default());
+                self.emit_call(placing.not_placed());
+                return;
+            }
+            self.start_group_call(chat, video, generation, cancel).await;
+            return;
+        }
         let placing = CallUpdate::placing(generation, chat.to_string(), video);
         if self.call_busy() {
             self.emit_call(placing.not_placed());
             return;
         }
         if !callable_chat(&chat) {
-            log::warn!("[CALL] refusing a call to a chat that is not one to one");
+            log::warn!("[CALL] refusing a call to a chat that is neither a person nor a group");
             self.emit(Event::Error("Calls are one to one only".to_owned()));
             self.emit_call(placing.not_placed());
             return;
@@ -278,6 +292,81 @@ impl Worker {
         }
     }
 
+    /// Starts a call in the group `chat`, which the window is already showing as placing under
+    /// `generation`, the way [`Worker::start_call`] places a 1:1 call.
+    ///
+    /// The offer runs on a task of its own (the library waits for the call service's answer and
+    /// the relay before it hands the call back), and its answer comes back as
+    /// [`CallRuntimeEvent::GroupStarted`]. Until then the call reads as calling.
+    async fn start_group_call(
+        &mut self,
+        chat: ChatId,
+        video: bool,
+        generation: u64,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let mut placing = CallUpdate::placing(generation, chat.to_string(), video);
+        placing.group = Some(calls::GroupCall::default());
+        if self.call_busy() {
+            self.emit_call(placing.not_placed());
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            log::warn!("[CALL] cannot start a call: WhatsApp is not connected");
+            self.emit(Event::Error(
+                "ZapFast is not connected to WhatsApp".to_owned(),
+            ));
+            self.emit_call(placing.not_placed());
+            return;
+        };
+        let devices = self.emit_call_devices().await;
+        let camera = video
+            .then(|| calls::default_camera(&devices, None))
+            .flatten();
+        let (done, answers) = async_channel::bounded(1);
+        let placed = Call::place_group(
+            &client,
+            generation,
+            chat.to_string(),
+            video,
+            camera,
+            &cancel,
+            done,
+        )
+        .await;
+        match placed {
+            Ok((call, frames)) => {
+                let (tx, events) = async_channel::bounded(1);
+                // The call service's answer, as the runtime's first event.
+                tokio::spawn(async move {
+                    if let Ok(answer) = answers.recv().await {
+                        let _ = tx.send(CallRuntimeEvent::GroupStarted(answer)).await;
+                    }
+                });
+                let runtime = CallRuntime::joining(call, frames, events);
+                let update = runtime.call.update();
+                self.call = Some(runtime);
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    log::info!("[CALL] the call was hung up while it was being placed");
+                    self.hangup_call().await;
+                } else {
+                    self.emit_call(update);
+                }
+            }
+            Err(error) if error.is::<calls::Cancelled>() => {
+                log::info!("[CALL] {error}");
+                self.emit_call(placing.not_placed());
+            }
+            Err(error) => {
+                log::error!("[CALL] could not start the group call: {error}");
+                self.emit(Event::Error(format!(
+                    "The call could not be started: {error}"
+                )));
+                self.emit_call(placing.not_placed());
+            }
+        }
+    }
+
     /// Joins a call link the window is already showing as placing under `generation`.
     ///
     /// The join itself runs on a task of its own (the call service may hold us in its waiting
@@ -295,6 +384,12 @@ impl Worker {
             link: true,
             ..calls::GroupCall::default()
         });
+        if !calls::group_calls_enabled() {
+            log::warn!("[CALL] not joining a call link: group calls are off");
+            self.emit(Event::Error(calls::CALL_LINKS_OFF.to_owned()));
+            self.emit_call(placing.not_placed());
+            return;
+        }
         if self.call_busy() {
             self.emit_call(placing.not_placed());
             return;
@@ -508,11 +603,19 @@ impl Worker {
     /// One event from the current call's media plane.
     pub(super) fn call_runtime(&mut self, event: CallRuntimeEvent) {
         let mut refused = None;
+        let mut group_refused = None;
         let update = match self.call.as_mut() {
             Some(runtime) => match event {
                 CallRuntimeEvent::LinkJoined(joined) => {
                     refused = joined.as_ref().err().cloned();
                     let update = runtime.call.link_joined(joined);
+                    runtime.watch();
+                    update
+                }
+                CallRuntimeEvent::GroupStarted(started) => {
+                    let live = runtime.call.phase().is_live();
+                    group_refused = started.as_ref().err().filter(|_| live).cloned();
+                    let update = runtime.call.group_started(started);
                     runtime.watch();
                     update
                 }
@@ -534,6 +637,9 @@ impl Worker {
             self.emit(Event::Error(format!(
                 "The call link could not be joined: {error}"
             )));
+        }
+        if let Some(refusal) = group_refused {
+            self.emit(Event::Error(group_refusal_text(&refusal)));
         }
         if let Some(update) = update {
             self.emit_call(update);
@@ -623,7 +729,21 @@ impl Worker {
             }
             return;
         }
+        if let Some(index) = self.phone_only_call(action.call_id()) {
+            if let Some(update) = self.phone_only_calls[index].signaling(action) {
+                self.phone_only_changed(index, update);
+            }
+            return;
+        }
         if !calls::is_offer(action) {
+            return;
+        }
+        // A group call this device cannot join yet rings on the phone alone. Nothing goes back to
+        // WhatsApp, not even while another call is up here, since a refusal could stop the phone
+        // ringing; the window only says who is calling and to answer there.
+        let group = calls::offer_is_group(incoming);
+        if group && !calls::group_calls_enabled() {
+            self.ring_on_phone_only(incoming);
             return;
         }
         if self.call_busy() {
@@ -645,15 +765,7 @@ impl Worker {
             }
             return;
         }
-        // A group call rings under its group, as WhatsApp files it; a call among several people
-        // with no group behind it rings under the person who started it. Either way the roster the
-        // offer carried says who else is on it.
-        let group = calls::offer_is_group(incoming);
-        let chat = match calls::offer_group(incoming) {
-            Some(jid) => self.canonical(&jid),
-            None if group => self.canonical(&incoming.action.call_creator().to_non_ad()),
-            None => self.canonical(&incoming.from),
-        };
+        let chat = self.offer_chat(incoming, group);
         // A broadcast or newsletter offer never reaches the call surface, and neither does a
         // group's offer that names something other than a group. The worker is the boundary: such
         // an offer is refused here rather than rung, so no call is created and no history entry is
@@ -684,6 +796,61 @@ impl Worker {
         self.emit_call(update);
     }
 
+    /// The chat an offer rings in. A group call rings under its group, as WhatsApp files it; a
+    /// call among several people with no group behind it rings under the person who started it.
+    /// Either way the roster the offer carried says who else is on it.
+    fn offer_chat(&self, incoming: &IncomingCall, group: bool) -> ChatId {
+        match calls::offer_group(incoming) {
+            Some(jid) => self.canonical(&jid),
+            None if group => self.canonical(&incoming.action.call_creator().to_non_ad()),
+            None => self.canonical(&incoming.from),
+        }
+    }
+
+    /// Keeps a group call's offer that only the phone can answer while group calls are off, and
+    /// tells the window, which says who is calling and to answer on the phone. The call is not
+    /// this worker's call: it takes no devices, never rings here, and leaves the worker free for
+    /// another. It is filed in its group as it ends, as a call that rang here would be.
+    fn ring_on_phone_only(&mut self, incoming: &IncomingCall) {
+        let chat = self.offer_chat(incoming, true);
+        // An offer naming something other than a group is no group's call to tell anyone about.
+        if !rings_in(&chat, true) {
+            log::warn!("[CALL] ignored a group offer from a chat that cannot be called");
+            return;
+        }
+        let video = calls::offer_is_video(&incoming.action);
+        let call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        log::info!(
+            "[CALL] a group call rings on the phone only, group calls are off call_id={}",
+            call.call_id()
+        );
+        let update = self.canonical_call(call.update());
+        if self.phone_only_calls.len() >= MAX_PHONE_ONLY_CALLS {
+            self.phone_only_calls.remove(0);
+        }
+        self.phone_only_calls.push(call);
+        self.emit(Event::PhoneOnlyCall(Box::new(update)));
+    }
+
+    /// Where the call `call_id` is among the group calls ringing on the phone only.
+    fn phone_only_call(&self, call_id: &str) -> Option<usize> {
+        self.phone_only_calls
+            .iter()
+            .position(|call| call.call_id() == call_id)
+    }
+
+    /// A group call ringing on the phone only moved on: once it is over it is filed in its group
+    /// and the window takes back its word about it.
+    fn phone_only_changed(&mut self, index: usize, update: CallUpdate) {
+        if update.phase.is_live() {
+            return;
+        }
+        let call = self.phone_only_calls.remove(index);
+        let update = self.canonical_call(update);
+        self.file_finished_call(&call, &update);
+        self.emit(Event::PhoneOnlyCall(Box::new(update)));
+    }
+
     /// A call we were ringing for was resolved on another of the account's devices (`elsewhere`
     /// says how), or the caller gave up before anyone answered (`None`).
     ///
@@ -703,6 +870,12 @@ impl Worker {
         };
         if let Some(update) = update {
             self.emit_call(update);
+        }
+        if let Some(index) = self.phone_only_call(call_id) {
+            mine = true;
+            if let Some(update) = self.phone_only_calls[index].resolved_elsewhere(elsewhere) {
+                self.phone_only_changed(index, update);
+            }
         }
         mine
     }
@@ -798,6 +971,10 @@ impl Worker {
         }
     }
 }
+
+/// How many group calls ringing on the phone only are kept at once. A call the phone never says
+/// the end of is let go once this many newer ones have come.
+const MAX_PHONE_ONLY_CALLS: usize = 4;
 
 /// A call to file among a chat's messages.
 pub(super) struct CallEntry {
@@ -1099,12 +1276,22 @@ async fn discover_devices() -> calls::DeviceList {
         .unwrap_or_default()
 }
 
-/// Whether a chat can be called at all.
+/// What the window says when the call service refused a group call we started. The plain words
+/// are a catalog key the window translates; any other refusal keeps the generic failure.
+fn group_refusal_text(refusal: &calls::GroupRefusal) -> String {
+    if refusal.not_enabled {
+        calls::GROUP_CALLS_NOT_ENABLED.to_owned()
+    } else {
+        format!("The call could not be started: {}", refusal.detail)
+    }
+}
+
+/// Whether a chat can take a one-to-one call.
 ///
-/// The interface only draws the phone and camera buttons on a one-to-one chat, but the worker is the
-/// boundary rather than the interface: a group, a channel or a broadcast list reaching the 1:1
-/// builder would be refused by the protocol at best and misbehave at worst, so the JID is checked
-/// here as well.
+/// The interface only draws the call buttons on a person's chat or a group's (which goes to
+/// [`Worker::start_group_call`]), but the worker is the boundary rather than the interface: a
+/// channel or a broadcast list reaching the 1:1 builder would be refused by the protocol at best
+/// and misbehave at worst, so the JID is checked here as well.
 fn callable_chat(chat: &str) -> bool {
     matches!(
         crate::model::ChatKind::from_id(chat),
@@ -1196,6 +1383,103 @@ mod tests {
                 status: calls::CallOutcome::Missed,
                 ..
             }
+        ));
+    }
+
+    /// With group calls off, a group's offer never becomes this worker's call: the window is told
+    /// who is calling, nothing is sent back, the worker stays free for another call, and the call
+    /// is filed in its group as it ends, as one that rang here and was answered on the phone.
+    #[tokio::test]
+    async fn with_group_calls_off_a_group_call_rings_on_the_phone_only() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, group_offer, member};
+        let _off = calls::override_group_calls(false);
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        worker.archive.ensure_chat(GROUP, "Book club").unwrap();
+        worker
+            .lid_to_pn
+            .insert("200000000000001".to_owned(), "15550002222".to_owned());
+        let incoming = group_offer(vec![
+            member("200000000000001", true),
+            member("200000000000002", false),
+        ]);
+        worker.call_signaling(&incoming).await;
+        assert!(worker.call.is_none(), "the worker stays free");
+        let first: Vec<Event> = events.try_iter().collect();
+        assert!(
+            !first.iter().any(|event| matches!(event, Event::Call(_))),
+            "no call screen"
+        );
+        let told = first
+            .iter()
+            .find_map(|event| match event {
+                Event::PhoneOnlyCall(update) => Some(update),
+                _ => None,
+            })
+            .expect("the window is told");
+        assert_eq!(told.chat, GROUP);
+        assert_eq!(told.phase, calls::CallPhase::Incoming);
+        assert_eq!(
+            told.group
+                .as_ref()
+                .and_then(|group| group.caller.as_deref()),
+            Some("15550002222@s.whatsapp.net")
+        );
+        // The same offer again is the same call.
+        worker.call_signaling(&incoming).await;
+        assert_eq!(worker.phone_only_calls.len(), 1);
+
+        // Answered on the phone: filed in the group, and the window takes its word back.
+        assert!(worker.call_resolved(CALL_ID, Some(calls::CallOutcome::AnsweredElsewhere)));
+        assert!(worker.phone_only_calls.is_empty());
+        let filed = worker.archive.call_log(10).unwrap();
+        assert_eq!(filed.len(), 1);
+        assert_eq!(filed[0].chat, GROUP);
+        assert_eq!(filed[0].sender, "15550002222@s.whatsapp.net");
+        assert!(matches!(
+            filed[0].content,
+            Content::Call {
+                group: true,
+                status: calls::CallOutcome::AnsweredElsewhere,
+                ..
+            }
+        ));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::PhoneOnlyCall(update) if !update.phase.is_live()
+        )));
+    }
+
+    /// With group calls off, a group call or a call link cannot be started here even if asked:
+    /// the window hears it was not placed, and a link says why.
+    #[tokio::test]
+    async fn with_group_calls_off_nothing_starts_a_group_call() {
+        let _off = calls::override_group_calls(false);
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        worker
+            .start_call(
+                "120363000000000009@g.us".to_owned(),
+                false,
+                7,
+                cancel.clone(),
+            )
+            .await;
+        worker
+            .join_call_link("AbCdEf1234567890".to_owned(), true, 8, cancel)
+            .await;
+        assert!(worker.call.is_none());
+        let events: Vec<Event> = events.try_iter().collect();
+        for generation in [7, 8] {
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    Event::Call(update) if update.generation == generation && !update.phase.is_live()
+                )),
+                "{generation} was not placed"
+            );
+        }
+        assert!(events.iter().any(
+            |event| matches!(event, Event::Error(message) if message == calls::CALL_LINKS_OFF)
         ));
     }
 

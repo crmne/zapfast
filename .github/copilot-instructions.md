@@ -32,6 +32,10 @@ review, before any line comments:
   inside this repository. Changes those crates need go upstream.
 - Flag any feature that sends message content, audio, or contacts to a third
   party. That is outside the product boundaries.
+- Flag any automation as outside the product boundaries: bots, an MCP server,
+  or any API, command-line, plugin or scripting interface that reads, exports
+  or sends messages for another program, and scheduled, bulk or automatic
+  replies. WhatsApp's terms forbid automated use.
 
 ## Review priorities
 

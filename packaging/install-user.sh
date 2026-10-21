@@ -50,7 +50,7 @@ mkdir -p "$apps_dir"
 # is on the session's PATH. Arguments after the binary are kept.
 #
 # The path is quoted and escaped the way a Desktop Entry's Exec key wants, the
-# same rules src/autostart.rs applies to the tray entry, because a home
+# same rules fastframe-autostart applies to the tray entry, because a home
 # directory like `/home/alice/Zap Fast` is valid: unquoted, the launcher would
 # read that as an executable plus an argument and the entry would do nothing.
 # `"`, `` ` ``, `$` and `\` are backslash-escaped, and a literal `%` is doubled.

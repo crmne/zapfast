@@ -439,7 +439,8 @@ pub enum Command {
         samples: Vec<f32>,
         quoting: Option<crate::model::ReplyTarget>,
     },
-    /// Places a 1:1 call, offering video from the first frame when asked.
+    /// Places a 1:1 call, or starts a call in a group for a group chat, offering video from the
+    /// first frame when asked.
     ///
     /// `generation` is the one the window already drew the call under, and `cancel` is set when
     /// the reader hangs up before the offer has gone out, so the peer is never rung for it.
@@ -556,6 +557,11 @@ pub enum Command {
         attempt: u64,
         result: Result<(String, i64), String>,
     },
+    /// Stores a chat's own voice message speed.
+    SetChatVoiceSpeed {
+        chat: ChatId,
+        speed: Option<f32>,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Asks for a wallpaper image and copies it into the state directory.
@@ -582,6 +588,24 @@ pub enum Command {
     SetGroupPicture {
         chat: ChatId,
         jpeg: Option<Vec<u8>>,
+    },
+    /// Asks for a picture for a group being created, and answers with
+    /// `Event::NewGroupPicture`: cropped and encoded as a group photo is.
+    PickNewGroupPicture,
+    /// Creates a group with us as its admin, answered by `Event::GroupCreated`.
+    /// `members` are canonical chat ids; `picture` a staged JPEG from
+    /// `PickNewGroupPicture`, set once the group exists.
+    CreateGroup {
+        request: u64,
+        subject: String,
+        members: Vec<ChatId>,
+        picture: Option<std::path::PathBuf>,
+    },
+    /// Internal: WhatsApp answered `CreateGroup`.
+    GroupCreated {
+        request: u64,
+        result: Result<CreatedGroup, crate::new_group::CreateFailure>,
+        picture: Option<std::path::PathBuf>,
     },
     /// Internal: WhatsApp answered a change to a group's name, photo or
     /// timer. `session` is the account session the change was sent under; a
@@ -963,6 +987,12 @@ pub enum Command {
     },
     /// Internal: followed channels and whether each is muted on the server.
     ChannelMutes(Vec<(String, bool)>),
+    /// Internal: every followed channel and the name the server gives it
+    /// (blank when it has none), from the query numbered `generation`.
+    ChannelNames {
+        generation: u64,
+        names: Vec<(String, String)>,
+    },
     /// Internal: the pictures of followed channels, or `None` when the list
     /// could not be read.
     ChannelPictures(Option<Vec<(ChatId, ChannelPicture)>>),
@@ -1251,6 +1281,13 @@ pub enum Event {
         code: String,
         result: Result<(ChatId, bool), String>,
     },
+    /// A picture picked for a group being created, staged as a JPEG.
+    NewGroupPicture(Result<std::path::PathBuf, String>),
+    /// `Command::CreateGroup` finished: the group is filed and can open.
+    GroupCreated {
+        request: u64,
+        result: Result<crate::new_group::Created, crate::new_group::CreateFailure>,
+    },
     /// Number lookup failed without opening a chat.
     ContactFailed {
         request: u64,
@@ -1264,6 +1301,10 @@ pub enum Event {
     },
     /// The current call changed state. The UI renders this and nothing else.
     Call(Box<crate::calls::CallUpdate>),
+    /// A group call ZapFast cannot join while [`crate::calls::GROUP_CALLS_ENABLED`] is off:
+    /// ringing (`phase` is `Incoming`), so the window says who is calling and to answer on the
+    /// phone, or over, so that word is taken back. It never takes the call screen.
+    PhoneOnlyCall(Box<crate::calls::CallUpdate>),
     /// The devices the call screen can offer.
     CallDevices(Box<crate::calls::DeviceList>),
     /// The account's call entries, newest first, for the Calls page.
@@ -1326,6 +1367,26 @@ pub enum GroupEdit {
     Picture { removed: bool },
     /// The new disappearing-message duration in seconds; zero turns it off.
     Timer(u32),
+}
+
+/// A group WhatsApp created for `Command::CreateGroup`, read on the runtime
+/// and filed by the worker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatedGroup {
+    /// The group's canonical chat id.
+    pub chat: ChatId,
+    pub subject: String,
+    /// The members under canonical chat ids, ourselves included.
+    pub participants: Vec<String>,
+    /// Whether we are an admin, as the creator is.
+    pub admin: bool,
+    pub info_locked: bool,
+    pub read_only: bool,
+    /// When WhatsApp made it, in Unix seconds.
+    pub created_at: i64,
+    /// The people picked whom WhatsApp did not add. Empty when the members
+    /// could not be confirmed.
+    pub unadded: Vec<ChatId>,
 }
 
 /// Where a channel's picture lives on WhatsApp's media servers, as the

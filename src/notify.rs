@@ -362,9 +362,7 @@ pub fn play_sound(sound: NotificationSound) {
             let played = (|| -> Result<(), String> {
                 let reader = source().map_err(|error| error.to_string())?;
                 let decoder = rodio::Decoder::new(reader).map_err(|error| error.to_string())?;
-                let health = crate::audio::Health::new("notification sound");
-                let device =
-                    crate::audio::open_output(health).map_err(|error| error.to_string())?;
+                let device = crate::audio::open_output(None)?;
                 let player = rodio::Player::connect_new(device.mixer());
                 player.append(decoder);
                 // Not `sleep_until_end`: a stream that keeps failing plays nothing, so the
@@ -437,7 +435,13 @@ fn deliver(
         Client::new(
             App::new("me.paolino.zapfast", "ZapFast")
                 .desktop_entry("zapfast")
-                .icon("zapfast"),
+                .icon("zapfast")
+                // ZapFast's green, the theme's accent, behind the logo on
+                // Windows toasts, so Windows 11's dark theme leaves it as drawn.
+                .logo(
+                    include_bytes!("../packaging/macos/icon-1024.png"),
+                    [0x00, 0xa8, 0x84],
+                ),
         )
     }) {
         Ok(client) => client,

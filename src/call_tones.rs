@@ -119,8 +119,7 @@ impl Playing {
             .spawn(move || {
                 let mut retry = RETRY;
                 loop {
-                    let health = crate::audio::Health::new("call tone");
-                    let device = match crate::audio::open_output(health) {
+                    let device = match crate::audio::open_output(None) {
                         Ok(device) => device,
                         Err(error) => {
                             log::debug!("call tone not played: {error}");

@@ -80,6 +80,12 @@ pub struct Account {
     pub(crate) new_contact_sequence: u64,
     pub(crate) new_contact_request: Option<u64>,
     pub(crate) new_contact_dialog_request: Option<u64>,
+    /// The group being put together in the New chat dialog, if any.
+    pub new_group: Option<crate::new_group::Draft>,
+    pub(crate) new_group_sequence: u64,
+    /// The `CreateGroup` the window waits for; an earlier one's answer files
+    /// its group and opens nothing.
+    pub(crate) new_group_request: Option<u64>,
     pub pair_phone: String,
     pub show_archived: bool,
     pub chat_filter: ChatFilter,
@@ -197,6 +203,9 @@ impl Account {
             new_contact_sequence: 0,
             new_contact_request: None,
             new_contact_dialog_request: None,
+            new_group: None,
+            new_group_sequence: 0,
+            new_group_request: None,
             pair_phone: String::new(),
             show_archived: false,
             chat_filter,

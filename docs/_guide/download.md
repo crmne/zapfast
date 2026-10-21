@@ -52,9 +52,12 @@ the new file when {{ app }} says a release is out.
 - [{{ name }}-{{ v }}-x86_64.AppImage]({{ base }}/{{ name }}-{{ v }}-x86_64.AppImage)
 - [{{ name }}-{{ v }}-aarch64.AppImage]({{ base }}/{{ name }}-{{ v }}-aarch64.AppImage)
 
-{{ app }} needs the standard egui libraries and ALSA:
-`libglvnd`, `libxkbcommon`, `wayland`, `libx11`, and `alsa-lib` (on
-Debian or Ubuntu: `libasound2`, `libgl1`, `libxkbcommon0`, `libwayland-client0`).
+{{ app }} needs glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 and
+newer), the standard egui libraries, ALSA and libpipewire 0.3.53 or newer:
+`libglvnd`, `libxkbcommon`, `wayland`, `libx11`, `alsa-lib` and `libpipewire` (on
+Debian or Ubuntu: `libasound2t64`, `libpipewire-0.3-0t64`, `libgl1`,
+`libxkbcommon0`, `libwayland-client0`). Sound goes to PipeWire itself, else to
+PulseAudio, else to ALSA.
 Emoji come from the desktop's colour emoji font when one is installed
 (`noto-fonts-emoji`, `fonts-noto-color-emoji` on Debian), else from the copy
 {{ app }} bundles. The file picker uses `xdg-desktop-portal`.

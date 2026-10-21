@@ -81,6 +81,11 @@ const CONGESTION_HOLD: Duration = Duration::from_secs(3);
 /// The rise for a clean report, and how often it may be applied.
 const RISE: f64 = 1.08;
 const RISE_EVERY: Duration = Duration::from_secs(1);
+/// Where a rate that met loss is remembered as the path's limit: a little under it.
+const LOSS_CEILING: f64 = 0.9;
+/// The rise past that limit: a slow probe, since the path lost video there not long ago. A real
+/// call climbed back to its old rate within ten seconds of each loss, and lost again there.
+const PROBE_RISE: f64 = 1.02;
 /// Reported loss above this is congestion; below `LOSS_CLEAN` the path is clean. Between the two
 /// the rate holds, since a few percent is what a healthy wireless link loses anyway.
 const LOSS_CONGESTED: f64 = 0.10;
@@ -91,6 +96,18 @@ const DROP_CUT: f64 = 0.7;
 const REMB_TTL: Duration = Duration::from_secs(10);
 /// Our own audio streams the reports can name; a call has one, a renumbered one two.
 const AUDIO_SSRC_MEMORY: usize = 4;
+/// Round trip above the call's shortest that means a queue is filling on the path. A path at its
+/// limit queues before it loses anything, and that queue is delay the peer sees: on a deep buffer,
+/// seconds of it with no loss reported at all.
+const QUEUE_DELAY: Duration = Duration::from_millis(250);
+/// Round trip above the shortest at which the rate stops rising, short of cutting it.
+const RISE_DELAY: Duration = Duration::from_millis(100);
+/// What one queue-delay reading costs the rate, and how often it may: a queue takes a while to
+/// drain once the rate is under what the path carries, so the next reports still show it.
+const DELAY_CUT: f64 = 0.85;
+const DELAY_CUT_EVERY: Duration = Duration::from_secs(1);
+/// Seconds between the NTP era (1900) and the Unix one.
+const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
 
 /// What the capture thread reads between frames: the rate and the step, as the controller last
 /// set them. And the one thing it reports back: frames it could not hand to the engine.
@@ -175,6 +192,8 @@ pub enum Reason {
     CaptureDrops,
     /// The peer's own estimate of what it can receive.
     Estimate(u32),
+    /// The round trip stood this far above the call's shortest: a queue on the path.
+    Delay(Duration),
 }
 
 /// A move of the rate or the step, from one setting to the next.
@@ -199,8 +218,15 @@ pub struct RateControl {
     stepped_up_at: Option<Instant>,
     congested_at: Option<Instant>,
     raised_at: Option<Instant>,
+    /// A little under the rate the peer last reported loss at: clean reports climb quickly up to
+    /// it and slowly past it.
+    loss_ceiling: Option<u32>,
     /// The peer's latest estimate of what it can receive, and when it said so.
     estimate: Option<(u32, Instant)>,
+    /// The shortest round trip of the call, the path with nothing queued, and the latest one.
+    round_trip_floor: Option<Duration>,
+    round_trip: Option<Duration>,
+    delay_cut_at: Option<Instant>,
     /// Our own audio SSRCs, learnt from reports that cover audio alone, so that a report covering
     /// both directions of media can be read for its video block alone.
     audio_ssrcs: Vec<u32>,
@@ -218,7 +244,11 @@ impl RateControl {
             stepped_up_at: None,
             congested_at: None,
             raised_at: None,
+            loss_ceiling: None,
             estimate: None,
+            round_trip_floor: None,
+            round_trip: None,
+            delay_cut_at: None,
             audio_ssrcs: Vec::new(),
             share,
         }
@@ -274,16 +304,54 @@ impl RateControl {
         let before = self.setting;
         let reason = if loss > LOSS_CONGESTED {
             self.congested(now);
+            self.loss_ceiling = Some(scale(self.setting.bitrate, LOSS_CEILING).max(MIN_BITRATE));
             self.setting.bitrate = scale(self.setting.bitrate, 1.0 - loss / 2.0);
             Reason::Loss(loss)
         } else if loss < LOSS_CLEAN && self.may_rise(now) {
             self.raised_at = Some(now);
-            self.setting.bitrate = scale(self.setting.bitrate, RISE);
+            self.setting.bitrate = self.risen(self.setting.bitrate);
             Reason::Clean
         } else {
             return self.restep(now, before, Reason::Loss(loss));
         };
         self.restep(now, before, reason)
+    }
+
+    /// The latest round trip and the call's shortest, for the log.
+    pub fn round_trips(&self) -> (Option<Duration>, Option<Duration>) {
+        (self.round_trip, self.round_trip_floor)
+    }
+
+    /// A round trip measured from the peer's report on one of our sender reports.
+    ///
+    /// The queue a path builds when it is sent more than it carries shows first as delay, and only
+    /// once the queue overflows as loss; a deep buffer may hold seconds before it does. So a round
+    /// trip well above the call's shortest cuts the rate like loss would, and one somewhat above it
+    /// keeps the rate from rising.
+    pub fn on_round_trip(&mut self, round_trip: Duration, now: Instant) -> Option<Change> {
+        let floor = self
+            .round_trip_floor
+            .map_or(round_trip, |floor| floor.min(round_trip));
+        self.round_trip_floor = Some(floor);
+        self.round_trip = Some(round_trip);
+        let queued = round_trip.saturating_sub(floor);
+        if queued < RISE_DELAY {
+            return None;
+        }
+        let before = self.setting;
+        if queued < QUEUE_DELAY
+            || self
+                .delay_cut_at
+                .is_some_and(|at| now.duration_since(at) < DELAY_CUT_EVERY)
+        {
+            // Holding is enough here: the rate stays put until the queue drains.
+            self.congested_at = Some(now);
+            return None;
+        }
+        self.delay_cut_at = Some(now);
+        self.congested(now);
+        self.setting.bitrate = scale(self.setting.bitrate, DELAY_CUT);
+        self.restep(now, before, Reason::Delay(queued))
     }
 
     /// The send queue dropped video it could not take: the path is carrying less than is sent.
@@ -318,6 +386,16 @@ impl RateControl {
             && now.duration_since(at) < STEP_UP_PROBATION
         {
             self.step_up_hold = (self.step_up_hold * 2).min(MAX_STEP_UP_HOLD);
+        }
+    }
+
+    /// The rate after one clean report: up by [`RISE`] to the loss ceiling, by [`PROBE_RISE`] past
+    /// it.
+    fn risen(&self, bitrate: u32) -> u32 {
+        match self.loss_ceiling {
+            Some(ceiling) if bitrate >= ceiling => scale(bitrate, PROBE_RISE),
+            Some(ceiling) => scale(bitrate, RISE).min(ceiling.max(scale(bitrate, PROBE_RISE))),
+            None => scale(bitrate, RISE),
         }
     }
 
@@ -384,6 +462,33 @@ fn scale(bitrate: u32, factor: f64) -> u32 {
     (f64::from(bitrate) * factor)
         .round()
         .clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+/// The middle 32 bits of the NTP timestamp for `now`, the form RTCP's LSR field takes.
+pub fn ntp_middle(now: std::time::SystemTime) -> u32 {
+    let since = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let seconds = since.as_secs().wrapping_add(NTP_UNIX_OFFSET);
+    let fraction = (u64::from(since.subsec_nanos()) << 32) / 1_000_000_000;
+    (((seconds & 0xffff) << 16) | (fraction >> 16)) as u32
+}
+
+/// The round trip a report block measures (RFC 3550, 6.4.1): from when our sender report left,
+/// which its LSR names, to `now`, less the time the peer held it, which its DLSR names. All three
+/// in NTP's middle 32 bits, units of 1/65536 s. `None` before the peer has had a sender report, or
+/// when the clocks say the report came back before it left.
+pub fn round_trip(last_sender_report: u32, delay_since: u32, now: u32) -> Option<Duration> {
+    if last_sender_report == 0 {
+        return None;
+    }
+    let units = now
+        .wrapping_sub(last_sender_report)
+        .wrapping_sub(delay_since);
+    if units >= 0x8000_0000 {
+        return None;
+    }
+    Some(Duration::from_micros(u64::from(units) * 1_000_000 / 65_536))
 }
 
 /// A receiver estimate (RTCP PSFB "REMB", `draft-alvestrand-rmcat-remb`) from one feedback item's
@@ -639,6 +744,105 @@ mod tests {
             None,
             "at most once a second"
         );
+    }
+
+    #[test]
+    fn after_loss_the_rate_climbs_quickly_to_under_where_it_was_lost_and_slowly_past_it() {
+        let (mut control, _) = control();
+        let mut now = Instant::now();
+        for _ in 0..40 {
+            now += Duration::from_secs(1);
+            control.on_loss(0, now);
+        }
+        let top = control.setting().bitrate;
+        assert_eq!(top, TIERS[2].max_bitrate, "a clean call reaches the top");
+        // The peer loses a quarter of it, as a real call did at 1.5 Mbit/s.
+        now += Duration::from_secs(1);
+        control.on_loss(64, now);
+        let ceiling = scale(top, LOSS_CEILING);
+        now += CONGESTION_HOLD;
+        let mut seconds = 0;
+        while control.setting().bitrate < ceiling {
+            now += Duration::from_secs(1);
+            seconds += 1;
+            control.on_loss(0, now);
+        }
+        assert!(seconds <= 5, "back near the limit in {seconds} s");
+        assert_eq!(
+            control.setting().bitrate,
+            ceiling,
+            "and not past it in one step"
+        );
+        now += Duration::from_secs(1);
+        let change = control.on_loss(0, now).expect("still rises");
+        assert_eq!(
+            change.to.bitrate,
+            scale(ceiling, PROBE_RISE),
+            "slowly past it"
+        );
+    }
+
+    #[test]
+    fn a_round_trip_is_read_from_lsr_and_dlsr() {
+        // RFC 3550's example: LSR 0xb705:2000, DLSR 5.25 s, arriving at 0xb710:8000.
+        let round_trip = round_trip(0xb705_2000, 0x0005_4000, 0xb710_8000);
+        assert_eq!(round_trip, Some(Duration::from_micros(6_125_000)));
+        assert_eq!(super::round_trip(0, 0, 0xb710_8000), None, "no report yet");
+        assert_eq!(
+            super::round_trip(0xb710_8000, 0x0001_0000, 0xb710_8000),
+            None,
+            "back before it left"
+        );
+    }
+
+    #[test]
+    fn the_ntp_middle_bits_count_from_1900() {
+        assert_eq!(ntp_middle(std::time::UNIX_EPOCH), 0x7e80_0000);
+        let half = std::time::UNIX_EPOCH + Duration::from_millis(1_500);
+        assert_eq!(ntp_middle(half), 0x7e81_8000);
+    }
+
+    #[test]
+    fn a_queue_on_the_path_cuts_the_rate_before_any_loss() {
+        let (mut control, _) = control();
+        let now = Instant::now();
+        let floor = Duration::from_millis(80);
+        assert_eq!(control.on_round_trip(floor, now), None);
+        assert_eq!(
+            control.on_round_trip(floor + Duration::from_millis(60), now),
+            None,
+            "a little delay is the path's own"
+        );
+        let change = control
+            .on_round_trip(floor + Duration::from_millis(400), now)
+            .expect("a queue cuts the rate");
+        assert_eq!(change.reason, Reason::Delay(Duration::from_millis(400)));
+        assert_eq!(change.to.bitrate, 595_000);
+        let later = now + Duration::from_millis(500);
+        assert_eq!(
+            control.on_round_trip(floor + Duration::from_millis(400), later),
+            None,
+            "at most once a second, while the queue drains"
+        );
+        assert!(
+            control
+                .on_round_trip(
+                    floor + Duration::from_millis(400),
+                    now + Duration::from_secs(1)
+                )
+                .is_some()
+        );
+        assert_eq!(control.round_trips().1, Some(floor));
+    }
+
+    #[test]
+    fn some_queue_delay_keeps_the_rate_from_rising() {
+        let (mut control, _) = control();
+        let now = Instant::now();
+        control.on_round_trip(Duration::from_millis(80), now);
+        assert_eq!(control.on_round_trip(Duration::from_millis(230), now), None);
+        assert_eq!(control.on_loss(0, now + Duration::from_secs(2)), None);
+        assert!(control.on_loss(0, now + Duration::from_secs(3)).is_some());
     }
 
     #[test]

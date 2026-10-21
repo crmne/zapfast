@@ -267,6 +267,7 @@ impl Worker {
             delivered_at: None,
             read_at: None,
             quoted: Some(Quoted {
+                labelled: Some(source.content.labelled()),
                 chat: None,
                 mentions: source.mentions,
                 id: source.id,

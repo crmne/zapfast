@@ -557,6 +557,9 @@ pub struct App {
     /// Chat whose voice messages carry on into the next unheard one when a
     /// clip ends. Leaving the chat, or playing a video, ends the run.
     voice_chat: Option<ChatId>,
+    /// Chat of the clip in the player, whose speed it plays at. Unlike
+    /// `voice_chat` it outlives a chat switch, as the clip keeps playing.
+    voice_clip_chat: Option<ChatId>,
     /// Next voice message of a run, playing once its download finishes, and
     /// when the download began. Media stays paused for a short while meanwhile.
     voice_wanted: Option<(ChatId, String, Instant)>,
@@ -764,6 +767,8 @@ pub struct App {
     pub call_member_textures: HashMap<String, CallTexture>,
     /// Whether ZapFast starts at login, when this installation supports it.
     pub start_with_system: Option<bool>,
+    /// The read or change of the login item running on its thread.
+    login_item: crate::autostart::LoginItem,
     /// Cross-thread window repaint handle.
     waker: Waker,
     tray: Option<fastframe_tray::Tray>,
@@ -1198,9 +1203,8 @@ impl App {
                 app.settings.keep_chats_archived,
             ));
         }
-        if crate::autostart::supported() {
-            app.start_with_system = Some(crate::autostart::enabled());
-        }
+        let login_waker = waker.clone();
+        app.login_item.read(move || login_waker.wake());
         let _ = app.roster.save_to(&app.files, &app.dirs.accounts_file());
         Ok(app)
     }
@@ -1381,6 +1385,7 @@ impl App {
             video_chat: None,
             video_wanted: None,
             voice_chat: None,
+            voice_clip_chat: None,
             voice_wanted: None,
             recording: None,
             media_hold: None,
@@ -1474,6 +1479,7 @@ impl App {
             call_member_frames: HashMap::new(),
             call_member_textures: HashMap::new(),
             start_with_system: None,
+            login_item: Default::default(),
             waker,
             tray: None,
             power: fastframe_power::Power::fixed(Default::default()),
@@ -1690,6 +1696,7 @@ impl App {
         self.video_wanted = None;
         self.motion_playing = None;
         self.voice_chat = None;
+        self.voice_clip_chat = None;
         self.voice_wanted = None;
         self.recording = None;
         self.image_preview = None;
@@ -2234,6 +2241,14 @@ impl App {
         self.chats.iter().find(|chat| chat.id == id)
     }
 
+    /// The speed voice messages play at in `chat`: its own, else the one in
+    /// Settings.
+    pub fn voice_speed_in(&self, chat: Option<&str>) -> f32 {
+        chat.and_then(|chat| self.chat(chat))
+            .and_then(|chat| chat.voice_speed)
+            .unwrap_or(self.settings.voice_speed)
+    }
+
     pub fn chat_mut(&mut self, id: &str) -> Option<&mut Chat> {
         self.chats.iter_mut().find(|chat| chat.id == id)
     }
@@ -2637,7 +2652,7 @@ impl App {
             Content::Text { text, .. } | Content::Interactive { text, .. } => {
                 crate::markup::plain(text, &self.mention_list(message))
             }
-            _ => self.preview_line(&message.summary(), message),
+            _ => self.preview_line(&message.summary_in(self.locale), message),
         }
     }
 
@@ -3119,6 +3134,7 @@ impl App {
                 self.me_about = about;
             }
             Event::Call(update) => self.handle_call_update(*update),
+            Event::PhoneOnlyCall(update) => self.handle_phone_only_call(*update),
             Event::CallDevices(devices) => self.call_devices = *devices,
             Event::CallVideo {
                 local,
@@ -3853,6 +3869,19 @@ impl App {
                     }
                 }
             }
+            Event::NewGroupPicture(result) => match result {
+                Ok(path) => {
+                    if let Some(draft) = self.new_group.as_mut() {
+                        draft.picture = Some(path);
+                    }
+                }
+                Err(_) if live => {
+                    let said = crate::i18n::gettext(self.locale, "Could not use this picture.");
+                    self.toast_error(said.into_owned());
+                }
+                Err(_) => {}
+            },
+            Event::GroupCreated { request, result } => self.group_created(request, result, live),
             Event::ContactFailed { request, error } => {
                 if self.new_contact_request == Some(request) {
                     self.new_contact_request = None;
@@ -4032,6 +4061,16 @@ impl App {
                     "This chat already has three pinned messages" => crate::i18n::gettext(
                         self.locale,
                         "This chat already has three pinned messages",
+                    )
+                    .into_owned(),
+                    crate::calls::GROUP_CALLS_NOT_ENABLED => crate::i18n::gettext(
+                        self.locale,
+                        "WhatsApp hasn't turned on group calls from a computer for your account yet. Ask someone in the group to call it, and answer here.",
+                    )
+                    .into_owned(),
+                    crate::calls::CALL_LINKS_OFF => crate::i18n::gettext(
+                        self.locale,
+                        "ZapFast can't join group calls yet: open the link on your phone.",
                     )
                     .into_owned(),
                     _ => message,
@@ -6615,7 +6654,14 @@ impl App {
             }
             Action::OpenUrl(url) => {
                 if let Some((token, video)) = crate::safety::call_link(&url) {
-                    self.join_call_link(token, video);
+                    if crate::calls::group_calls_enabled() {
+                        self.join_call_link(token, video);
+                    } else {
+                        self.toast(crate::i18n::gettext(
+                            self.locale,
+                            "ZapFast can't join group calls yet: open the link on your phone.",
+                        ));
+                    }
                 } else if let Some(code) = crate::safety::group_invite_code(&url) {
                     self.invite = Some(crate::model::GroupInvite {
                         code: code.clone(),
@@ -7113,12 +7159,15 @@ impl App {
                 self.video.stop();
                 self.voice_wanted = None;
                 self.voice_chat = self.open_chat.clone();
+                self.voice_clip_chat = self.open_chat.clone();
+                self.sync_voice_speed();
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
             }
             Action::SetVoiceSpeed(speed) => {
-                self.settings.voice_speed = self.player.set_speed(speed);
+                self.settings.voice_speed = crate::audio::supported_speed(speed);
+                self.sync_voice_speed();
                 self.mark_settings_dirty();
             }
             Action::StartRecording => {
@@ -7575,6 +7624,7 @@ impl App {
                 self.clear_chat_lock_entry();
                 if dialog == Dialog::NewChat {
                     self.new_chat_search.clear();
+                    self.new_group = None;
                 }
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -7620,6 +7670,8 @@ impl App {
                 self.forward_reviewing = false;
                 self.contact_edit = None;
                 self.group_name_edit = None;
+                // A group on its way still opens once WhatsApp makes it.
+                self.new_group = None;
                 self.refocus_composer(ctx);
             }
             Action::EditContact { id, name } => {
@@ -8103,6 +8155,47 @@ impl App {
                 self.group_name_edit = None;
                 self.backend.send(Command::SetGroupName { chat, name });
             }
+            Action::StartNewGroup => {
+                self.new_chat_search.clear();
+                self.new_group = Some(Default::default());
+            }
+            Action::ToggleNewGroupMember(id) => {
+                let Some(draft) = self.new_group.as_mut() else {
+                    return;
+                };
+                let adding = !draft.picked(&id);
+                if draft.toggle(&id) == crate::new_group::Step::Leave {
+                    self.new_group = None;
+                } else if adding {
+                    // Ready for the next name, as on the phone.
+                    self.new_chat_search.clear();
+                }
+            }
+            Action::NewGroupNext => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.advance();
+                }
+            }
+            Action::NewGroupBack => {
+                if self
+                    .new_group
+                    .as_mut()
+                    .is_some_and(|draft| draft.back() == crate::new_group::Step::Leave)
+                {
+                    self.new_group = None;
+                }
+            }
+            Action::PickNewGroupPicture => {
+                if self.new_group.is_some() {
+                    self.backend.send(Command::PickNewGroupPicture);
+                }
+            }
+            Action::RemoveNewGroupPicture => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.picture = None;
+                }
+            }
+            Action::CreateGroup => self.create_group(),
             Action::PickGroupPicture(chat) => self.backend.send(Command::PickGroupPicture(chat)),
             Action::RemoveGroupPicture(chat) => {
                 self.backend
@@ -8119,6 +8212,7 @@ impl App {
                 self.backend
                     .send(Command::SetDisappearingTimer { chat, seconds });
             }
+            Action::SetChatVoiceSpeed { chat, speed } => self.set_chat_voice_speed(chat, speed),
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
@@ -8153,10 +8247,10 @@ impl App {
                     account.backend.send(Command::SetProxy(value.clone()));
                 }
             }
-            Action::SetStartWithSystem(enabled) => match crate::autostart::set(enabled) {
-                Ok(()) => self.start_with_system = Some(crate::autostart::enabled()),
-                Err(error) => self.toast_error(format!("Could not change the login item: {error}")),
-            },
+            Action::SetStartWithSystem(enabled) => {
+                let waker = self.waker.clone();
+                self.login_item.set(enabled, move || waker.wake());
+            }
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
@@ -8330,6 +8424,79 @@ impl App {
         )
     }
 
+    /// Sends the group the New chat dialog put together to WhatsApp.
+    fn create_group(&mut self) {
+        let Some(draft) = self.new_group.as_mut() else {
+            return;
+        };
+        if draft.stage != crate::new_group::Stage::Naming || draft.creating {
+            return;
+        }
+        if let Some(problem) = draft.problem() {
+            let said = problem.message(self.locale);
+            self.toast_error(said);
+            return;
+        }
+        draft.creating = true;
+        let subject = draft.subject().to_owned();
+        let members = draft.members.clone();
+        let picture = draft.picture.clone();
+        self.new_group_sequence = self.new_group_sequence.wrapping_add(1);
+        let request = self.new_group_sequence;
+        self.new_group_request = Some(request);
+        self.backend.send(Command::CreateGroup {
+            request,
+            subject,
+            members,
+            picture,
+        });
+    }
+
+    /// WhatsApp answered `CreateGroup`: the new group opens, or the dialog
+    /// says why not and stays for another try. An answer the window no
+    /// longer waits for opens nothing; its group is filed all the same.
+    fn group_created(
+        &mut self,
+        request: u64,
+        result: Result<crate::new_group::Created, crate::new_group::CreateFailure>,
+        live: bool,
+    ) {
+        if self.new_group_request != Some(request) {
+            return;
+        }
+        self.new_group_request = None;
+        match result {
+            Ok(created) => {
+                self.new_group = None;
+                if !live {
+                    return;
+                }
+                if self.dialog == Some(Dialog::NewChat) {
+                    self.dialog = None;
+                }
+                self.actions.push(Action::OpenChat(created.chat));
+                if !created.unadded.is_empty() {
+                    let names: Vec<String> = created
+                        .unadded
+                        .iter()
+                        .map(|id| self.display_name(id))
+                        .collect();
+                    let said = crate::new_group::unadded_message(self.locale, &names);
+                    self.toast(said);
+                }
+            }
+            Err(failure) => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.creating = false;
+                }
+                if live {
+                    let said = failure.message(self.locale);
+                    self.toast_error(said);
+                }
+            }
+        }
+    }
+
     pub fn toast(&mut self, message: impl Into<String>) {
         let message = message.into();
         let said = self.toast_said(&message);
@@ -8455,6 +8622,7 @@ impl App {
             self.window_focused = false;
         }
         self.tick_app_lock(ctx);
+        self.tick_login_item();
         // Nobody reads behind the lock screen: messages stay unread, the
         // phone keeps notifying, and notifications here say nothing.
         if self.app_lock.is_locked() {
@@ -8532,6 +8700,27 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
             ));
+        }
+    }
+
+    /// Collects a finished read or change of the login item.
+    fn tick_login_item(&mut self) {
+        let Some(outcome) = self.login_item.poll() else {
+            return;
+        };
+        match outcome.state {
+            Ok(state) => {
+                self.start_with_system = crate::autostart::switch(state);
+                if outcome.changed && matches!(state, fastframe_autostart::State::NeedsApproval(_))
+                {
+                    self.toast("Allow ZapFast in System Settings, under Login Items.");
+                }
+            }
+            Err(error) => {
+                if outcome.changed {
+                    self.toast_error(format!("Could not change the login item: {error}"));
+                }
+            }
         }
     }
 
@@ -8928,11 +9117,32 @@ impl App {
         self.video.stop();
         self.voice_wanted = None;
         self.voice_chat = self.open_chat.clone();
+        self.voice_clip_chat = self.open_chat.clone();
+        self.sync_voice_speed();
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
         }
         self.tell_played(message);
+    }
+
+    /// Gives `chat` its own voice message speed, or `None` to follow
+    /// Settings.
+    fn set_chat_voice_speed(&mut self, chat: ChatId, speed: Option<f32>) {
+        let speed = speed.map(crate::audio::supported_speed);
+        if let Some(known) = self.chat_mut(&chat) {
+            known.voice_speed = speed;
+        }
+        self.sync_voice_speed();
+        self.backend
+            .send(Command::SetChatVoiceSpeed { chat, speed });
+    }
+
+    /// Plays the clip in the player at the speed of its own chat, which may
+    /// not be the one on screen.
+    fn sync_voice_speed(&mut self) {
+        let chat = self.voice_clip_chat.clone().or(self.open_chat.clone());
+        self.player.set_speed(self.voice_speed_in(chat.as_deref()));
     }
 
     fn tell_played(&mut self, message: String) {
@@ -15283,6 +15493,7 @@ mod tests {
         assert!(!app.addresses_us(&someone_else));
 
         let quote = |sender: &str| crate::model::Quoted {
+            labelled: None,
             chat: None,
             id: "earlier".into(),
             sender: sender.into(),
@@ -15396,6 +15607,115 @@ mod tests {
         // A second click while joining sends nothing more.
         app.apply(Action::JoinGroup, &ctx);
         assert!(commands.try_recv().is_err());
+    }
+
+    /// Create sends the draft once; WhatsApp's answer opens the group and
+    /// names who could not be added, a failure keeps the dialog for another
+    /// try, and an answer nobody waits for opens nothing.
+    #[test]
+    fn a_created_group_opens_and_names_who_was_left_out() {
+        use crate::new_group::{CreateFailure, Created, Draft, Stage};
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "15550000001@s.whatsapp.net";
+        let grace = "15550000002@s.whatsapp.net";
+        app.contacts.insert(
+            grace.into(),
+            Contact {
+                id: grace.into(),
+                full_name: Some("Grace Hopper".into()),
+                ..Default::default()
+            },
+        );
+        app.apply(Action::ShowDialog(Dialog::NewChat), &ctx);
+        app.apply(Action::StartNewGroup, &ctx);
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        app.apply(Action::ToggleNewGroupMember(grace.into()), &ctx);
+        app.apply(Action::CreateGroup, &ctx);
+        assert!(commands.try_recv().is_err(), "not before the name");
+        app.apply(Action::NewGroupNext, &ctx);
+        app.new_group.as_mut().unwrap().name = " Book club ".into();
+        app.apply(Action::CreateGroup, &ctx);
+        app.apply(Action::CreateGroup, &ctx);
+        let request = match commands.try_recv() {
+            Ok(Command::CreateGroup {
+                request,
+                subject,
+                members,
+                picture: None,
+            }) => {
+                assert_eq!(subject, "Book club");
+                assert_eq!(members, [ada, grace]);
+                request
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!(commands.try_recv().is_err(), "sent once");
+
+        // A failure says why in plain words and leaves the name for a retry.
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request,
+                result: Err(CreateFailure::RateLimited),
+            },
+            true,
+        );
+        let draft = app.new_group.as_ref().unwrap();
+        assert!(!draft.creating);
+        assert_eq!(draft.stage, Stage::Naming);
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("too many groups")),
+        );
+
+        app.apply(Action::CreateGroup, &ctx);
+        let Ok(Command::CreateGroup { request, .. }) = commands.try_recv() else {
+            panic!("retried");
+        };
+        let chat = "120363000000000001@g.us";
+        app.chats.push(Chat::new(chat.into(), "Book club".into()));
+        // An earlier request's answer is not the one the window waits for.
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request: request.wrapping_sub(1),
+                result: Ok(Created {
+                    chat: chat.into(),
+                    unadded: Vec::new(),
+                }),
+            },
+            true,
+        );
+        assert!(app.new_group.is_some());
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request,
+                result: Ok(Created {
+                    chat: chat.into(),
+                    unadded: vec![grace.into()],
+                }),
+            },
+            true,
+        );
+        assert_eq!(app.dialog, None);
+        assert!(app.new_group.is_none());
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenChat(id) if id == chat))
+        );
+        assert!(app.toasts.iter().any(|toast| toast.message
+            == "Grace Hopper could not be added to the group. Their privacy settings may not allow it."));
+
+        // Back out of naming and choosing; letting the last one go leaves too.
+        app.apply(Action::ShowDialog(Dialog::NewChat), &ctx);
+        assert!(app.new_group.is_none(), "a new dialog starts fresh");
+        app.new_group = Some(Draft::default());
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        assert!(app.new_group.is_none());
     }
 
     #[test]
@@ -20072,6 +20392,68 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_with_its_own_speed_keeps_it_and_leaves_settings_alone() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (own, other) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        app.chats.push(Chat::new(own.into(), "Ada".into()));
+        app.chats.push(Chat::new(other.into(), "Bob".into()));
+        app.apply(Action::SetVoiceSpeed(2.0), &ctx);
+
+        app.open_chat(own.into());
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.0),
+            },
+            &ctx,
+        );
+        assert_eq!(app.voice_speed_in(Some(own)), 1.0);
+        assert_eq!(app.player.speed(), 1.0);
+        assert_eq!(app.voice_speed_in(Some(other)), 2.0);
+
+        // Settings leave a chat with its own speed alone.
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.5),
+            },
+            &ctx,
+        );
+        app.open_chat(other.into());
+        app.apply(Action::SetVoiceSpeed(1.25), &ctx);
+        assert_eq!(app.settings.voice_speed, 1.25);
+        assert_eq!(app.chat(own).unwrap().voice_speed, Some(1.5));
+
+        // A clip from that chat still playing in another chat keeps the
+        // chat's speed when Settings change, and follows the chat's own.
+        app.voice_clip_chat = Some(own.into());
+        app.apply(Action::SetVoiceSpeed(2.0), &ctx);
+        assert_eq!(app.settings.voice_speed, 2.0);
+        assert_eq!(app.player.speed(), 1.5);
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: Some(1.0),
+            },
+            &ctx,
+        );
+        assert_eq!(app.player.speed(), 1.0);
+        app.voice_clip_chat = None;
+        app.apply(Action::SetVoiceSpeed(1.25), &ctx);
+
+        // Back to Default, the chat follows Settings again.
+        app.apply(
+            Action::SetChatVoiceSpeed {
+                chat: own.into(),
+                speed: None,
+            },
+            &ctx,
+        );
+        assert_eq!(app.voice_speed_in(Some(own)), 1.25);
+    }
+
+    #[test]
     fn a_saved_speed_between_choices_snaps_to_one() {
         let root = std::env::temp_dir().join(format!("zapfast-speed-{}", std::process::id()));
         let settings = Settings {
@@ -21421,6 +21803,7 @@ mod app_lock_tests {
         }];
         let mut reply = plain.clone();
         reply.quoted = Some(crate::model::Quoted {
+            labelled: None,
             chat: None,
             id: "earlier".into(),
             sender: "15550001111@s.whatsapp.net".into(),

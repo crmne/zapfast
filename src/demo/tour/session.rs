@@ -261,6 +261,7 @@ fn quote(app: &App, chat: &str, target: crate::model::ReplyTarget) -> Option<Quo
         .get(target.source_chat(chat))?
         .message(&target.id)?;
     Some(Quoted {
+        labelled: Some(row.content.labelled()),
         chat: target.chat,
         sender: row.sender.clone(),
         sender_name: row.sender_name.clone(),
@@ -288,6 +289,7 @@ fn append(app: &mut App, row: Message) {
     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == row.chat) {
         chat.last_activity = row.timestamp;
         chat.last = Some(LastMessage {
+            labelled: row.content.labelled(),
             from_me: row.from_me,
             sender: row.sender.clone(),
             sender_name: row.sender_name.clone(),

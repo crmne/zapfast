@@ -1,275 +1,140 @@
-//! Starting ZapFast in the tray when the person logs in.
+//! Starting ZapFast in the tray when the person logs in, through
+//! fastframe-autostart.
 //!
-//! The platform's own login-item entry is the only record: Settings reads it
-//! back rather than keeping a copy that could disagree with it.
+//! The platform's own login-item record is the only state: Settings reads it
+//! back rather than keeping a copy that could disagree with it. Every read and
+//! change may block (`SMAppService`, the registry, the Flatpak portal, which can
+//! ask the person first), so each runs on a thread of its own.
 
-use std::io;
-use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 
-/// Argument that starts ZapFast without a window.
-pub const HIDDEN: &str = "--start-hidden";
+use fastframe_autostart::{Autostart, Start, State};
 
-/// Whether this installation can register itself to start at login.
-pub fn supported() -> bool {
-    // A Flatpak cannot write the host's autostart folder; that needs the
-    // background portal instead.
-    std::env::var_os("FLATPAK_ID").is_none() && executable().is_some()
+fn autostart() -> Autostart {
+    Autostart::new("zapfast", "ZapFast")
 }
 
-/// Whether ZapFast is registered to start at login.
-pub fn enabled() -> bool {
-    platform::enabled()
+/// What a finished read or change found.
+#[derive(Debug)]
+pub struct Outcome {
+    /// The login item as the platform has it now, or why it could not be
+    /// changed.
+    pub state: Result<State, String>,
+    /// Whether the person asked for the change, rather than a read at start.
+    pub changed: bool,
 }
 
-/// Registers or removes the login entry for the running executable.
-pub fn set(enabled: bool) -> io::Result<()> {
-    if !enabled {
-        return platform::remove();
-    }
-    let executable = executable()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot locate ZapFast"))?;
-    platform::install(&executable)
+/// The one read or change of the login item in flight.
+#[derive(Default)]
+pub struct LoginItem {
+    job: Option<Receiver<Outcome>>,
 }
 
-/// The file to start: an AppImage runs from a temporary mount, so its own
-/// path is the stable one.
-fn executable() -> Option<PathBuf> {
-    std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok())
-}
-
-#[cfg(target_os = "linux")]
-mod platform {
-    use super::*;
-
-    fn entry() -> Option<PathBuf> {
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config")))?;
-        Some(config.join("autostart").join("zapfast.desktop"))
+impl LoginItem {
+    /// Reads the login item, after moving an older macOS registration over.
+    pub fn read(&mut self, wake: impl Fn() + Send + 'static) {
+        self.spawn(
+            move || {
+                #[cfg(target_os = "macos")]
+                move_launch_agent();
+                Outcome {
+                    state: Ok(autostart().state()),
+                    changed: false,
+                }
+            },
+            wake,
+        );
     }
 
-    pub fn enabled() -> bool {
-        entry().is_some_and(|path| path.is_file())
+    /// Starts ZapFast in the tray at login, or not at all.
+    pub fn set(&mut self, enabled: bool, wake: impl Fn() + Send + 'static) {
+        self.spawn(
+            move || Outcome {
+                state: autostart()
+                    .set(enabled.then_some(Start::Hidden))
+                    .map_err(|error| error.to_string()),
+                changed: true,
+            },
+            wake,
+        );
     }
 
-    pub fn install(executable: &Path) -> io::Result<()> {
-        let path = entry().ok_or_else(|| io::Error::other("no configuration directory"))?;
-        std::fs::create_dir_all(path.parent().expect("autostart folder"))?;
-        std::fs::write(path, desktop_entry(executable))
-    }
-
-    pub fn remove() -> io::Result<()> {
-        match entry().map(std::fs::remove_file) {
-            Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+    fn spawn(
+        &mut self,
+        work: impl FnOnce() -> Outcome + Send + 'static,
+        wake: impl Fn() + Send + 'static,
+    ) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("login-item".into())
+            .spawn(move || {
+                let _ = sender.send(work());
+                wake();
+            });
+        match spawned {
+            Ok(_) => self.job = Some(receiver),
+            Err(error) => log::warn!("could not read the login item: {error}"),
         }
     }
 
-    pub(super) fn desktop_entry(executable: &Path) -> String {
-        format!(
-            "[Desktop Entry]\n\
-             Type=Application\n\
-             Name=ZapFast\n\
-             Comment=Start ZapFast in the tray\n\
-             Exec={} {HIDDEN}\n\
-             Icon=zapfast\n\
-             Terminal=false\n\
-             X-GNOME-Autostart-enabled=true\n",
-            exec_quote(&executable.to_string_lossy())
-        )
-    }
-
-    /// Quotes a path for a desktop entry's `Exec` key.
-    fn exec_quote(path: &str) -> String {
-        let mut quoted = String::from("\"");
-        for character in path.chars() {
-            if matches!(character, '"' | '`' | '$' | '\\') {
-                quoted.push('\\');
+    /// The finished read or change, if there is one.
+    pub fn poll(&mut self) -> Option<Outcome> {
+        match self.job.as_ref()?.try_recv() {
+            Ok(outcome) => {
+                self.job = None;
+                Some(outcome)
             }
-            if character == '%' {
-                quoted.push('%');
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.job = None;
+                None
             }
-            quoted.push(character);
         }
-        quoted.push('"');
-        quoted
     }
 }
 
+/// Whether Settings offers the switch, and where it stands: `None` where this
+/// installation cannot start at login.
+pub fn switch(state: State) -> Option<bool> {
+    match state {
+        State::Unsupported => None,
+        State::Off => Some(false),
+        State::On(_) | State::NeedsApproval(_) => Some(true),
+    }
+}
+
+/// ZapFast 0.19 and earlier wrote their own LaunchAgent. Registers the bundled
+/// agent in its place and deletes the old file, once; a copy that cannot
+/// register (one run outside its bundle) leaves the file as it is.
 #[cfg(target_os = "macos")]
-mod platform {
-    use super::*;
-
-    const LABEL: &str = "me.paolino.zapfast";
-
-    fn entry() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")?;
-        Some(
-            Path::new(&home)
-                .join("Library/LaunchAgents")
-                .join(format!("{LABEL}.plist")),
-        )
-    }
-
-    pub fn enabled() -> bool {
-        entry().is_some_and(|path| path.is_file())
-    }
-
-    pub fn install(executable: &Path) -> io::Result<()> {
-        let path = entry().ok_or_else(|| io::Error::other("no home directory"))?;
-        std::fs::create_dir_all(path.parent().expect("LaunchAgents folder"))?;
-        std::fs::write(path, launch_agent(executable))
-    }
-
-    pub fn remove() -> io::Result<()> {
-        match entry().map(std::fs::remove_file) {
-            Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        }
-    }
-
-    pub(super) fn launch_agent(executable: &Path) -> String {
-        format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{}</string>
-        <string>{HIDDEN}</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-</dict>
-</plist>
-"#,
-            xml_escape(&executable.to_string_lossy())
-        )
-    }
-
-    fn xml_escape(text: &str) -> String {
-        text.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    }
-}
-
-#[cfg(windows)]
-mod platform {
-    use super::*;
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::System::Registry::{
-        HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+fn move_launch_agent() {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
     };
-
-    const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    const VALUE: &str = "ZapFast";
-
-    fn wide(text: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(text)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
+    let old = std::path::Path::new(&home).join("Library/LaunchAgents/me.paolino.zapfast.plist");
+    if !old.is_file() {
+        return;
     }
-
-    pub fn enabled() -> bool {
-        let (key, value) = (wide(RUN), wide(VALUE));
-        // SAFETY: null-terminated UTF-16 strings; a null buffer only asks
-        // whether the value exists.
-        unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                value.as_ptr(),
-                RRF_RT_REG_SZ,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            ) == ERROR_SUCCESS
+    match autostart().set(Some(Start::Hidden)) {
+        Ok(_) => {
+            if let Err(error) = std::fs::remove_file(&old) {
+                log::warn!("could not remove the old login item: {error}");
+            }
         }
-    }
-
-    pub fn install(executable: &Path) -> io::Result<()> {
-        let command = wide(&format!("\"{}\" {HIDDEN}", executable.display()));
-        let (key, value) = (wide(RUN), wide(VALUE));
-        // SAFETY: null-terminated UTF-16 strings; the byte length includes
-        // the terminator, as REG_SZ requires.
-        let status = unsafe {
-            RegSetKeyValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                value.as_ptr(),
-                REG_SZ,
-                command.as_ptr().cast(),
-                (command.len() * 2) as u32,
-            )
-        };
-        if status == ERROR_SUCCESS {
-            Ok(())
-        } else {
-            Err(io::Error::from_raw_os_error(status as i32))
-        }
-    }
-
-    pub fn remove() -> io::Result<()> {
-        let (key, value) = (wide(RUN), wide(VALUE));
-        // SAFETY: null-terminated UTF-16 strings.
-        let status = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) };
-        const ERROR_FILE_NOT_FOUND: u32 = 2;
-        if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
-            Ok(())
-        } else {
-            Err(io::Error::from_raw_os_error(status as i32))
-        }
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-mod platform {
-    use super::*;
-
-    pub fn enabled() -> bool {
-        false
-    }
-
-    pub fn install(_executable: &Path) -> io::Result<()> {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
-    }
-
-    pub fn remove() -> io::Result<()> {
-        Ok(())
+        Err(error) => log::info!("the old login item stays: {error}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn the_desktop_entry_starts_hidden_and_quotes_the_path() {
-        let entry =
-            super::platform::desktop_entry(std::path::Path::new("/opt/Zap Fast/100%/zap\"fast"));
-        assert!(entry.contains("Exec=\"/opt/Zap Fast/100%%/zap\\\"fast\" --start-hidden\n"));
-        assert!(entry.starts_with("[Desktop Entry]\nType=Application\n"));
-    }
+    use super::*;
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn the_launch_agent_starts_hidden_and_escapes_the_path() {
-        let plist = super::platform::launch_agent(std::path::Path::new(
-            "/Applications/A&B.app/Contents/MacOS/zapfast",
-        ));
-        assert!(
-            plist.contains("<string>/Applications/A&amp;B.app/Contents/MacOS/zapfast</string>")
-        );
-        assert!(plist.contains("<string>--start-hidden</string>"));
+    fn the_switch_shows_only_where_zapfast_can_start_at_login() {
+        assert_eq!(switch(State::Unsupported), None);
+        assert_eq!(switch(State::Off), Some(false));
+        assert_eq!(switch(State::On(Start::Hidden)), Some(true));
+        assert_eq!(switch(State::NeedsApproval(Start::Hidden)), Some(true));
+        assert_eq!(switch(State::On(Start::Window)), Some(true));
     }
 }

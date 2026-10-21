@@ -396,14 +396,13 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
 }
 
 fn new_chat(app: &mut App, ui: &mut egui::Ui) {
+    // Making a group turns the same dialog into its steps.
+    if app.new_group.is_some() {
+        super::new_group::show(app, ui);
+        return;
+    }
     let palette = app.palette;
     title(ui, app, "New chat");
-    // "Message yourself" heads the contact list below, as on the phone.
-    ui.horizontal_wrapped(|ui| {
-        if theme::soft_button(ui, &palette, Some(Icon::Plus), "Add contact", false).clicked() {
-            app.actions.push(Action::ShowDialog(Dialog::NewContact));
-        }
-    });
     let width = ui.available_width();
     let search = super::widgets::search_field(
         ui,
@@ -423,6 +422,16 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
         .auto_shrink([false, true])
         .show(ui, |ui| {
+            // New group and Add contact head the list, then "Message
+            // yourself", as on the phone.
+            let new_group = crate::i18n::gettext(app.locale, "New group");
+            if super::chats::action_row(app, ui, Icon::Users, &new_group).clicked() {
+                app.actions.push(Action::StartNewGroup);
+            }
+            let add_contact = crate::i18n::gettext(app.locale, "Add contact");
+            if super::chats::action_row(app, ui, Icon::Plus, &add_contact).clicked() {
+                app.actions.push(Action::ShowDialog(Dialog::NewContact));
+            }
             let offer_self = app.offers_self(&needle);
             if offer_self {
                 super::chats::self_row(app, ui);
@@ -600,17 +609,9 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
                         pos2(rect.right() - 18.0, rect.center().y),
                         egui::Vec2::splat(20.0),
                     );
-                    let mut checked = selected;
-                    let checkbox = ui.put(check, egui::Checkbox::without_text(&mut checked));
-                    checkbox.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::Checkbox,
-                            ui.is_enabled(),
-                            checked,
-                            &title,
-                        )
-                    });
-                    if checked != selected && !blocked {
+                    if super::widgets::round_check(
+                        ui, &palette, check, &chat.id, selected, !blocked, &title,
+                    ) {
                         app.actions
                             .push(Action::ToggleForwardRecipient(chat.id.clone()));
                     }

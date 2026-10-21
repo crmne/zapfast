@@ -30,6 +30,8 @@ separated action rows.
 ## Boundaries and accessibility
 
 No browser engine, hosted backend, telemetry, or ZapFast-operated account system.
+No automation: no bots, MCP server, or interface for other programs to read or
+send messages, and no scheduled, bulk or automatic replies.
 Several WhatsApp accounts may be linked locally. Current feature limitations
 are not permanent exclusions; see the product boundaries in [AGENTS.md](AGENTS.md#product-boundaries).
 Avoid decorative dashboards and extra nested cards inside message bubbles.

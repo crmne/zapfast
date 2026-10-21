@@ -18,7 +18,7 @@ fake="$work/zapfast-fake"
 printf '#!/bin/sh\nexit 0\n' > "$fake"
 chmod +x "$fake"
 
-# The Desktop Entry Exec escaping, mirroring src/autostart.rs: a backslash is
+# The Desktop Entry Exec escaping, mirroring fastframe-autostart: a backslash is
 # doubled first, then `"`, `` ` ``, `$` and `\` are backslash-escaped, and a
 # literal `%` is doubled. Written here so the test states the expected bytes
 # rather than reading them back from the script under test.
@@ -62,7 +62,7 @@ check_prefix() {
 
   # desktop-file-validate rejects the spec-correct doubled backslash in a
   # quoted Exec, so it is only consulted for paths without one. The escaping is
-  # still checked above, and mirrors src/autostart.rs.
+  # still checked above, and mirrors fastframe-autostart.
   if command -v desktop-file-validate >/dev/null 2>&1 && [[ "$prefix" != *\\* ]]; then
     desktop-file-validate "$entry"
   fi

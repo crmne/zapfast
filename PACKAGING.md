@@ -92,15 +92,17 @@ native-packages build \
 Secret configuration applies to future builds. Existing published DMGs retain
 their original signatures; this setup does not replace release assets.
 
-Linux releases build on Ubuntu 22.04, so the binaries need glibc 2.35 or newer
-and the packages install on Ubuntu 22.04 and Debian 12 onwards. native-packages
-derives the `libc6`/`glibc` floor from the binary; do not declare one. DEB/RPM
-recipes declare runtime-loaded Wayland, X11 and EGL libraries as well as ALSA
-(`libasound2t64 | libasound2`, the package's name before and after the 64-bit
-time transition) and its PulseAudio plugin. Packaging CI builds both
-architectures from the published v0.13.1 fixture on PRs; release runs use their
-own tag and also install on `ubuntu:22.04` and `debian:12-slim`, which the
-fixture, built on 24.04, cannot. Clean Ubuntu, Debian and Fedora containers
+Linux releases build on Ubuntu 24.04, so the binaries need glibc 2.39 or newer
+and the packages install on Ubuntu 24.04 and Debian 13 onwards: 22.04's
+libpipewire is older than the 0.3.53 fastframe-audio's PipeWire output builds
+against. native-packages derives the `libc6`/`glibc` floor from the binary; do
+not declare one. DEB/RPM recipes declare runtime-loaded Wayland, X11 and EGL
+libraries as well as ALSA (`libasound2t64 | libasound2`, the package's name
+before and after the 64-bit time transition) and libpipewire
+(`libpipewire-0.3-0t64 | libpipewire-0.3-0`, `pipewire-libs`). Sound goes to
+PipeWire or PulseAudio directly, so ALSA's PulseAudio plugin is not needed.
+Packaging CI builds both architectures from the published v0.13.1 fixture on
+PRs; release runs use their own tag. Clean Ubuntu, Debian and Fedora containers
 install and remove each package, check GUI libraries loaded with `dlopen`, and
 verify desktop and theme assets. Run the same check locally with
 `bash packaging/test-install.sh ubuntu:24.04 /path/to/native-packages-output`. The macOS job selects `macos-universal`

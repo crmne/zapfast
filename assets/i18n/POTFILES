@@ -1,4 +1,5 @@
 src/mentions.rs
+src/new_group.rs
 src/model.rs
 src/util.rs
 src/ui/chats.rs
@@ -18,7 +19,6 @@ src/ui/pane.rs
 src/privacy.rs
 src/ui/image_editor.rs
 src/ui/image_preview.rs
-src/notify/badge_windows.rs
 src/ui/lock.rs
 src/notify.rs
 src/settings.rs
@@ -28,3 +28,4 @@ src/ui/info.rs
 src/ui/login.rs
 src/ui/rail.rs
 src/ui/mod.rs
+src/ui/new_group.rs

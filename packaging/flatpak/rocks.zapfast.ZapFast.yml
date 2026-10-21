@@ -15,6 +15,9 @@ runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # libclang, for the bindings fastframe-audio's PipeWire output generates
+  # against the SDK's libpipewire headers.
+  - org.freedesktop.Sdk.Extension.llvm22
 command: zapfast
 finish-args:
   # Wayland first, X11 when that is what there is.
@@ -37,9 +40,10 @@ finish-args:
   # state directory (session, history, logs, and credential markers) durable.
   - --persist=.local/state
 build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
   env:
     CARGO_HOME: /run/build/zapfast/cargo
+    LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
 modules:
   - name: zapfast
     buildsystem: simple

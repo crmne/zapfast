@@ -22,6 +22,10 @@ Product boundaries and upstream responsibilities:
 - ZapFast will not embed a browser engine, add telemetry, or introduce a
   ZapFast-operated service. Features that send message content to a third
   party are out of scope.
+- ZapFast will never automate WhatsApp: no bots, MCP server, or API,
+  command-line or scripting interface that reads or sends messages, and no
+  scheduled, bulk or automatic replies. WhatsApp's terms forbid automated
+  use and it bans accounts for it.
 
 The guide's [current limitations](https://zapfast.rocks/what-is-zapfast/#what-it-does-not-do-yet)
 describe what is implemented today, not permanent exclusions. Missing features,

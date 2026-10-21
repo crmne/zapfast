@@ -436,11 +436,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 let (subtitle, color) = subtitle(app, chat);
                 let call_here = app.call_live_here(&chat.id);
                 // More and Search, and Back in a narrow window, and the call
-                // buttons in a one-to-one chat, each on its own glass with
-                // room around it on a vibrant window.
-                let call_buttons = if chat.kind == crate::model::ChatKind::Direct
-                    && app.me.as_deref() != Some(chat.id.as_str())
-                {
+                // buttons in a person's or a group's chat, each on its own
+                // glass with room around it on a vibrant window.
+                let call_buttons = if callable(chat, app.me.as_deref()) {
                     if call_here { 1.0 } else { 2.0 }
                 } else {
                     0.0
@@ -719,9 +717,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 app.actions.push(Action::CloseChat);
                             }
                         });
-                    // Calls are one to one: a group, a channel, a broadcast
-                    // list and the chat with ourselves have no call button.
-                    // While this chat has the call, the button ends it.
+                    // A person's chat calls them and a group's starts a call
+                    // in the group; a channel, a broadcast list and the chat
+                    // with ourselves have no call button. While this chat has
+                    // the call, the button ends it.
                     if call_buttons > 0.0 {
                         let (call_tooltip, call_icon, call_fill, call) = if call_here {
                             (
@@ -1962,17 +1961,7 @@ pub(crate) fn scroll_metrics_id(chat: &ChatId) -> egui::Id {
 fn ink_middle(ui: &egui::Ui, line_height: f32) -> f32 {
     let format = egui::TextFormat::simple(theme::regular(BODY_SIZE), Color32::WHITE);
     let (galley, _) = crate::bidi::layout_editor(ui, "Hy", &format, f32::INFINITY, true);
-    galley
-        .rows
-        .first()
-        .and_then(|row| {
-            let [capital, descender] = [row.glyphs.first()?, row.glyphs.get(1)?];
-            let top = capital.pos.y + capital.uv_rect.offset.y;
-            let bottom = descender.pos.y + descender.uv_rect.offset.y + descender.uv_rect.size.y;
-            (!capital.uv_rect.is_nothing() && !descender.uv_rect.is_nothing())
-                .then(|| row.pos.y + (top + bottom) / 2.0)
-        })
-        .unwrap_or(line_height / 2.0)
+    widgets::ink_middle(&galley).unwrap_or(line_height / 2.0)
 }
 
 /// Lays out a control centred in the composer's last-line band, however
@@ -2165,7 +2154,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     } else {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary(), &app.mention_list(quoted));
+    let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
     let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
         ui.horizontal(|ui| {
@@ -2252,6 +2241,8 @@ struct View<'a> {
     /// The motion photo of this chat whose clip plays.
     motion_playing: Option<&'a str>,
     player: &'a crate::audio::Player,
+    /// The speed this chat's voice messages play at.
+    voice_speed: f32,
     video: &'a crate::video::Player,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
 }
@@ -2533,6 +2524,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             .filter(|(playing, _)| *playing == chat.id)
             .map(|(_, message)| message.as_str()),
         player: &app.player,
+        voice_speed: app.voice_speed_in(Some(&chat.id)),
         video: &app.video,
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
@@ -3069,8 +3061,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             message.sender_name.as_deref(),
                                         )
                                     };
-                                    let summary: String =
-                                        message.content.summary().chars().take(120).collect();
+                                    let summary: String = message
+                                        .content
+                                        .summary_in(view.locale)
+                                        .chars()
+                                        .take(120)
+                                        .collect();
                                     let label = crate::i18n::gettext(
                                         view.locale,
                                         "Select message from {sender}, {time}: {summary}",
@@ -4205,11 +4201,30 @@ pub fn edge_scroll(pointer: f32, top: f32, bottom: f32) -> f32 {
     }
 }
 
-/// A call's menu: calling back, in a chat that can take a call.
+/// Whether a chat's header offers to call it: a person's chat calls them, a
+/// group's starts a call in the group while group calls are on
+/// (`calls::GROUP_CALLS_ENABLED`). Never the chat with ourselves, a channel or
+/// a broadcast list.
+pub(crate) fn callable(chat: &crate::model::Chat, me: Option<&str>) -> bool {
+    match chat.kind {
+        crate::model::ChatKind::Direct => me != Some(chat.id.as_str()),
+        crate::model::ChatKind::Group => crate::calls::group_calls_enabled(),
+        _ => false,
+    }
+}
+
+/// A call's menu: calling back, in a chat that can take a call. A group's
+/// call is called back in its group while group calls are on; a call among
+/// several people with no group behind it cannot be started here.
 fn call_menu(ui: &mut egui::Ui, view: &View<'_>, group: bool, actions: &mut Vec<Action>) {
     let palette = view.palette;
     let chat = &view.chat.id;
-    if group || view.chat.kind != crate::model::ChatKind::Direct {
+    let back = match view.chat.kind {
+        crate::model::ChatKind::Group => crate::calls::group_calls_enabled(),
+        crate::model::ChatKind::Direct => !group,
+        _ => false,
+    };
+    if !back {
         ui.add_enabled_ui(false, |ui| {
             widgets::menu_item(
                 ui,
@@ -4321,13 +4336,26 @@ fn speed_pill(
 
 /// The message menu's row of every playback speed for a playable voice
 /// message, so 1.25x and 1.75x are reachable without cycling.
+/// Choosing `speed` for a voice message of `chat`: a chat with its own speed
+/// changes that, and any other changes the speed in Settings.
+fn speed_action(chat: &Chat, speed: f32) -> Action {
+    if chat.voice_speed.is_some() {
+        Action::SetChatVoiceSpeed {
+            chat: chat.id.clone(),
+            speed: Some(speed),
+        }
+    } else {
+        Action::SetVoiceSpeed(speed)
+    }
+}
+
 fn speed_menu_row(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     actions: &mut Vec<Action>,
 ) {
-    let speed = view.player.speed();
+    let speed = view.voice_speed;
     let preparing = view.player.preparing_speed(&message.id);
     widgets::menu_separator(ui, &view.palette);
     ui.allocate_ui_with_layout(
@@ -4353,7 +4381,7 @@ fn speed_menu_row(
                     );
                 });
                 if response.clicked() {
-                    actions.push(Action::SetVoiceSpeed(option));
+                    actions.push(speed_action(view.chat, option));
                     ui.close();
                 }
             }
@@ -4874,7 +4902,10 @@ fn quote_block(
     } else {
         (view.names_or)(&quoted.sender, quoted.sender_name.as_deref())
     };
-    let summary = markup::plain(&quoted.summary, &quote_mentions(view, quoted));
+    let summary = markup::plain(
+        &quoted.summary_in(view.locale),
+        &quote_mentions(view, quoted),
+    );
     // As in WhatsApp, the bar and name take the quoted sender's colour, the
     // one their name has in groups, kept readable on this bubble.
     let bubble = if message.from_me {
@@ -4954,6 +4985,114 @@ fn quote_block(
             actions.push(Action::ScrollTo(quoted.id.clone()));
         }
     }
+}
+
+/// Diameter of the tinted disc behind a call entry's glyph.
+const CALL_BADGE: f32 = 36.0;
+/// Size of the glyph inside it.
+const CALL_GLYPH: f32 = 18.0;
+/// Room between the disc and the words.
+const CALL_BADGE_GAP: f32 = 10.0;
+/// Room between the title and the line under it.
+const CALL_LINE_GAP: f32 = 2.0;
+/// Height of the time's line, as [`footer`] draws it.
+const FOOTER_HEIGHT: f32 = 15.0;
+
+/// Draws a call entry as WhatsApp does: the glyph in a tinted disc, centred
+/// on the title and the detail beside it, and the time at the end of the
+/// detail's line when it fits there. Painted at measured positions inside one
+/// allocation, so an own bubble's right-to-left layout cannot reorder or
+/// stretch it. Returns the time's slot, or `None` when the time needs a line
+/// of its own.
+fn call_entry(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    entry: &super::calls::Entry,
+    locale: crate::i18n::Locale,
+    tint: Color32,
+    width: f32,
+    reserve: f32,
+) -> Option<Rect> {
+    let title = entry.title(locale);
+    let detail = entry.detail(locale);
+    let title_galley =
+        ui.painter()
+            .layout_no_wrap(title.clone(), theme::medium(14.0), palette.text);
+    let detail_galley = detail.as_ref().map(|detail| {
+        ui.painter()
+            .layout_no_wrap(detail.clone(), theme::regular(12.5), palette.secondary)
+    });
+    let detail_width = detail_galley.as_ref().map_or(0.0, |galley| galley.size().x);
+    // The time follows the detail on its line, 8 points after it as after a
+    // text's last line; with no detail it has that line to itself.
+    let gap = if detail_galley.is_some() { 8.0 } else { 0.0 };
+    let lead = CALL_BADGE + CALL_BADGE_GAP;
+    let inline = lead + detail_width + gap + reserve <= width;
+    let second_width = if inline {
+        detail_width + gap + reserve
+    } else {
+        detail_width
+    };
+    let second_height = match (&detail_galley, inline) {
+        (Some(galley), true) => galley.size().y.max(FOOTER_HEIGHT),
+        (Some(galley), false) => galley.size().y,
+        (None, true) => FOOTER_HEIGHT,
+        (None, false) => 0.0,
+    };
+    let block_height = title_galley.size().y
+        + if second_height > 0.0 {
+            CALL_LINE_GAP + second_height
+        } else {
+            0.0
+        };
+    let content_width = lead + title_galley.size().x.max(second_width);
+    // Span the bubble when a sender's name above made it wider, so the time
+    // keeps to the bubble's end as it does under text.
+    let row_width = content_width
+        .max(ui.min_rect().width())
+        .min(width.max(content_width));
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(row_width, block_height.max(CALL_BADGE)),
+        Sense::hover(),
+    );
+    response.widget_info(|| {
+        let label = match &detail {
+            Some(detail) => format!("{title}, {detail}"),
+            None => title.clone(),
+        };
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label)
+    });
+    let badge = Rect::from_center_size(
+        pos2(rect.left() + CALL_BADGE / 2.0, rect.center().y),
+        Vec2::splat(CALL_BADGE),
+    );
+    let text_left = badge.right() + CALL_BADGE_GAP;
+    let top = rect.center().y - block_height / 2.0;
+    let second_top = top + title_galley.size().y + CALL_LINE_GAP;
+    let second_middle = second_top + second_height / 2.0;
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .circle_filled(badge.center(), CALL_BADGE / 2.0, tint.gamma_multiply(0.16));
+        theme::paint_icon(
+            ui,
+            entry.icon(),
+            Rect::from_center_size(badge.center(), Vec2::splat(CALL_GLYPH)),
+            CALL_GLYPH,
+            tint,
+        );
+        ui.painter()
+            .galley(pos2(text_left, top), title_galley, palette.text);
+        if let Some(galley) = detail_galley {
+            let at = pos2(text_left, second_middle - galley.size().y / 2.0);
+            ui.painter().galley(at, galley, palette.secondary);
+        }
+    }
+    inline.then(|| {
+        Rect::from_min_size(
+            pos2(rect.right() - reserve, second_middle - FOOTER_HEIGHT / 2.0),
+            vec2(reserve, FOOTER_HEIGHT),
+        )
+    })
 }
 
 /// Keeps row contents left-to-right inside right-aligned own bubbles.
@@ -5596,6 +5735,7 @@ pub(crate) fn list_menu(
         // A row drawn outside the conversation holds still.
         animate: false,
         player: &app.player,
+        voice_speed: app.voice_speed_in(Some(&chat.id)),
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
@@ -6658,43 +6798,7 @@ fn content(
             } else {
                 palette.accent
             };
-            mirrored_row(
-                ui,
-                own,
-                |ui| {
-                    theme::icon(ui, entry.icon(), 20.0, tint);
-                },
-                |ui| {
-                    // Measured first and laid out at that width: a plain
-                    // `vertical` in an own bubble's right-to-left row takes
-                    // every point the row offers, which stretched a call's
-                    // bubble across the transcript.
-                    let title = entry.title(view.locale);
-                    let detail = entry.detail(view.locale);
-                    let measure = |text: &str, font: egui::FontId| {
-                        ui.painter()
-                            .layout_no_wrap(text.to_owned(), font, palette.text)
-                            .size()
-                            .x
-                    };
-                    let width = detail
-                        .as_deref()
-                        .map(|detail| measure(detail, theme::regular(12.5)))
-                        .unwrap_or(0.0)
-                        .max(measure(&title, theme::medium(14.0)));
-                    ui.allocate_ui_with_layout(
-                        vec2(width, 0.0),
-                        Layout::top_down(Align::Min),
-                        |ui| {
-                            theme::text(ui, title, theme::medium(14.0), palette.text);
-                            if let Some(detail) = detail {
-                                theme::text(ui, detail, theme::regular(12.5), palette.secondary);
-                            }
-                        },
-                    );
-                },
-            );
-            None
+            call_entry(ui, &palette, &entry, view.locale, tint, width, reserve)
         }
         Content::Revoked => {
             mirrored_row(
@@ -9428,7 +9532,7 @@ fn voice_player(
             // Speed chip, cycling 1x, 1.5x, and 2x like the phone. The
             // message menu lists every speed, including 1.25x and 1.75x.
             if shows_chip {
-                let speed = view.player.speed();
+                let speed = view.voice_speed;
                 // The label follows the click at once, faded until this
                 // clip actually plays at that speed.
                 let preparing = view.player.preparing_speed(&message.id);
@@ -9449,9 +9553,10 @@ fn voice_player(
                     data.insert_temp(speed_chip_id(&view.chat.id, &message.id), response.rect);
                 });
                 if response.clicked() {
-                    actions.push(Action::SetVoiceSpeed(crate::audio::next_cycled_speed(
-                        speed,
-                    )));
+                    actions.push(speed_action(
+                        view.chat,
+                        crate::audio::next_cycled_speed(speed),
+                    ));
                 }
                 response.on_hover_text(if preparing {
                     "Preparing playback speed"
@@ -9489,8 +9594,8 @@ fn voice_player(
 /// Voice-recording controls and live waveform.
 fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let (elapsed, levels) = match app.recording.as_ref() {
-        Some(recorder) => (recorder.elapsed(), recorder.levels()),
+    let (elapsed, levels, listening) = match app.recording.as_ref() {
+        Some(recorder) => (recorder.elapsed(), recorder.levels(), recorder.listening()),
         None => return,
     };
     // As tall as the one-line composer it replaces, so the field keeps its
@@ -9524,10 +9629,16 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.actions.push(Action::CancelRecording);
             }
+            // The light pulses red once sound arrives; while the microphone
+            // wakes it stays dim, and the time at zero.
             let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
-            let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
-            ui.painter()
-                .circle_filled(dot.center(), 5.0, palette.danger.gamma_multiply(pulse));
+            let light = if listening {
+                let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
+                palette.danger.gamma_multiply(pulse)
+            } else {
+                palette.secondary.gamma_multiply(0.5)
+            };
+            ui.painter().circle_filled(dot.center(), 5.0, light);
             theme::text(
                 ui,
                 crate::util::duration(elapsed.as_secs() as u32),
@@ -10555,6 +10666,7 @@ mod tests {
             now: 0,
             animate: false,
             player: &app.player,
+            voice_speed: app.settings.voice_speed,
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
@@ -10969,6 +11081,7 @@ mod reaction_tests {
         assert!(!bare_picture(&messages, &forwarded));
         let mut quoting = photo(None);
         quoting.quoted = Some(crate::model::Quoted {
+            labelled: None,
             chat: None,
             id: "q".into(),
             sender: "a@s.whatsapp.net".into(),

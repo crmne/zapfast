@@ -10,7 +10,7 @@ install="${pkgname}.install"
 # Nothing beyond libc is linked directly; winit and glutin dlopen these at
 # startup, and this is a GUI-only application, so all of them have to be
 # there for it to run at all.
-depends=('alsa-lib' 'alsa-plugins' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
+depends=('alsa-lib' 'libpipewire' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
 optdepends=('org.freedesktop.secrets: archive encryption key storage'
             'noto-fonts-emoji: colour emoji in messages and reactions'
             'xdg-desktop-portal: the file picker for attachments')

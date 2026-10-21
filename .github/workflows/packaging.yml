@@ -41,7 +41,7 @@ jobs:
   packaging:
     permissions:
       contents: write
-    uses: crmne/native-packages/.github/workflows/package.yml@83bd46c245488c2b8f1b9d74569e16cf6a449e8f # v0.9.0
+    uses: crmne/native-packages/.github/workflows/package.yml@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
     with:
       targets: linux-amd64,linux-arm64
       version: ${{ inputs.version || 'v0.13.1' }}
@@ -75,7 +75,7 @@ jobs:
       - name: Package as the release does
         shell: pwsh
         run: |
-          gem install native-packages --version 0.9.0 --no-document
+          gem install native-packages --version 0.10.0 --no-document
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $payload = "dist\windows-input-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force $payload | Out-Null
@@ -95,10 +95,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
-        # Releases also install on the oldest distributions the Ubuntu 22.04
-        # builds support. The v0.13.1 fixture that pull requests package was
-        # built on 24.04 and needs glibc 2.39, so they skip those two.
-        image: ${{ fromJSON(inputs.version && '["ubuntu:22.04", "debian:12-slim", "ubuntu:24.04", "debian:13-slim", "fedora:41", "fedora:latest"]' || '["ubuntu:24.04", "debian:13-slim", "fedora:41", "fedora:latest"]') }}
+        # The oldest distributions the Ubuntu 24.04 builds support (glibc
+        # 2.39) and newer.
+        image: ["ubuntu:24.04", "debian:13-slim", "fedora:41", "fedora:latest"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
@@ -138,7 +137,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2t64
+          sudo apt-get install -y --no-install-recommends libasound2t64 libpipewire-0.3-0t64
           set -- dist/native-packages/packages/"$TARGET"/appimage/zapfast-*-"$ARCH".AppImage
           test "$#" -eq 1
           chmod +x "$1"

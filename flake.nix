@@ -58,6 +58,10 @@
                 # On macOS the app links the system frameworks instead.
                 ++ lib.optionals isLinux [
                   alsa-lib
+                  pipewire
+                  # The PipeWire output's bindings are made by bindgen,
+                  # which needs libclang.
+                  rustPlatform.bindgenHook
                   libxkbcommon
                   wayland
                   libGL
@@ -126,7 +130,11 @@
                 perl
                 makeWrapper
               ]
-              ++ lib.optionals isLinux [ removeReferencesTo ]
+              # bindgen, for the PipeWire output's bindings, needs libclang.
+              ++ lib.optionals isLinux [
+                removeReferencesTo
+                rustPlatform.bindgenHook
+              ]
               # Sandboxed stand-ins for iconutil and codesign in bundle.sh.
               ++ lib.optionals isDarwin [
                 icnsify
@@ -137,6 +145,7 @@
               with pkgs;
               [
                 alsa-lib
+                pipewire
                 libGL
                 libx11
               ]
