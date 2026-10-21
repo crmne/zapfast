@@ -2452,8 +2452,17 @@ impl Archive {
         if stored.is_some_and(|stored| stored > timestamp) {
             return Ok(self.unarchive_chats()?.unwrap_or(unarchive));
         }
-        self.set_meta(UNARCHIVE_CHATS, if unarchive { "1" } else { "0" })?;
-        self.set_meta(UNARCHIVE_CHATS_AT, &timestamp.to_string())?;
+        // One statement, so a failed write leaves the previous pair intact.
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2), (?3, ?4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![
+                UNARCHIVE_CHATS,
+                if unarchive { "1" } else { "0" },
+                UNARCHIVE_CHATS_AT,
+                timestamp.to_string()
+            ],
+        )?;
         Ok(unarchive)
     }
 
