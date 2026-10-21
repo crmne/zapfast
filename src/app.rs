@@ -679,6 +679,9 @@ pub struct App {
     unread_kept: HashSet<ChatId>,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
+    /// Invalidates editor history when a composer closes and reopens before
+    /// another frame, including a new session reusing the same account id.
+    composer_undo_epoch: u64,
     /// Text a link put in the composer, with the chat it belongs to. Text the
     /// reader never changed is not their draft, so a chat they leave does not
     /// store it in place of the one they wrote.
@@ -1474,6 +1477,7 @@ impl App {
             unread_kept: HashSet::new(),
             toasts: Vec::new(),
             actions: Vec::new(),
+            composer_undo_epoch: 0,
             prefilled: None,
             deferred_account_actions: Vec::new(),
             events_hidden: false,
@@ -1698,6 +1702,7 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        self.invalidate_composer_undo();
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -2330,6 +2335,9 @@ impl App {
     /// hits and dialogs, and, when it is open, the conversation with its
     /// composer, recording and playback. Keeping a draft is up to the caller.
     fn leave_chat(&mut self, id: &str) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(id) {
+            self.invalidate_composer_undo();
+        }
         self.clear_chat_notifications(id);
         self.search_hits.retain(|message| message.chat != id);
         // A locked or deleted chat keeps none of its pinned words on screen.
@@ -3346,6 +3354,9 @@ impl App {
                 }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
+                        if live {
+                            self.invalidate_composer_undo();
+                        }
                         self.open_chat = None;
                     } else {
                         // Show archived messages immediately, including offline.
@@ -4324,6 +4335,9 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                if live {
+                    self.invalidate_composer_undo();
+                }
                 // Account-scoped lookup results are discarded by the worker.
                 // End their UI requests too, so a later account can retry.
                 self.new_contact_request = None;
@@ -5388,6 +5402,7 @@ impl App {
         }
         self.reset_notification_throttle(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
+            self.invalidate_composer_undo();
             self.reaction_target = None;
             self.reaction_anchor = None;
             self.composer_tools_open = false;
@@ -6473,6 +6488,7 @@ impl App {
                 // call history.
                 self.picked_call = None;
                 if let Some(chat) = self.open_chat.take() {
+                    self.invalidate_composer_undo();
                     self.save_attachment_draft(&chat);
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
@@ -9780,6 +9796,33 @@ impl App {
         self.set_composer_cursor(ctx, at + text.chars().count());
     }
 
+    fn invalidate_composer_undo(&mut self) {
+        self.composer_undo_epoch = self.composer_undo_epoch.wrapping_add(1);
+    }
+
+    /// Keep the fixed editor id for focus/cursor handling, but discard undo
+    /// snapshots before keyboard input reaches a different composer owner.
+    pub(crate) fn prepare_composer_undo(&self, ctx: &egui::Context) {
+        let id = egui::Id::new("composer-text");
+        let owner_id = id.with("undo-owner");
+        let owner = (
+            self.account().id.clone(),
+            self.open_chat.clone(),
+            self.editing.clone(),
+            self.composer_undo_epoch,
+        );
+        let previous = ctx.data(|data| {
+            data.get_temp::<(AccountId, Option<ChatId>, Option<String>, u64)>(owner_id)
+        });
+        if previous.as_ref() != Some(&owner) {
+            if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+                state.clear_undoer();
+                egui::TextEdit::store_state(ctx, id, state);
+            }
+            ctx.data_mut(|data| data.insert_temp(owner_id, owner));
+        }
+    }
+
     fn set_composer_cursor(&self, ctx: &egui::Context, at: usize) {
         let id = egui::Id::new("composer-text");
         let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
@@ -10446,6 +10489,238 @@ pub use calls::CallPerson;
 mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
+
+    fn composer_undo_boundary_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) {
+        let id = egui::Id::new("composer-text");
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        if time == 0.0 {
+            app.attach(ctx);
+        }
+        app.link = crate::backend::LinkStatus::Connected;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                events,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.frame_ui(ui),
+        );
+        output.textures_delta.clear();
+    }
+
+    fn composer_undo_key() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: Some(egui::Key::Z),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }
+    }
+
+    /// Real keyboard undo cannot restore a previous chat/account's text
+    /// through the production composer, even with a stored checkpoint.
+    #[test]
+    fn editor_undo_cannot_restore_text_from_another_chat_or_account() {
+        for switch_account in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            for account in &mut app.accounts {
+                account
+                    .chats
+                    .push(Chat::new("source@s.whatsapp.net".into(), "Source".into()));
+                account
+                    .chats
+                    .push(Chat::new("target@s.whatsapp.net".into(), "Target".into()));
+            }
+            let ctx = egui::Context::default();
+            let marker = "Synthetic source account draft";
+            app.open_chat("source@s.whatsapp.net".into());
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text(marker.into())],
+            );
+            // egui's default stable_time is 1 second. No sleeping is needed.
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            assert_eq!(app.composer, marker);
+            if switch_account {
+                let second = app.accounts[1].id.clone();
+                app.switch_account(&second);
+                app.open_chat("source@s.whatsapp.net".into());
+            } else {
+                app.open_chat("target@s.whatsapp.net".into());
+            }
+            assert!(app.composer.is_empty());
+            composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+            assert!(
+                !app.composer.contains(marker),
+                "Ctrl/Cmd+Z crossed the composer ownership boundary"
+            );
+        }
+    }
+
+    /// Normal edits within one ownership lifetime keep ordinary undo/redo.
+    #[test]
+    fn composer_owner_isolation_preserves_same_chat_undo_and_redo() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.chats
+            .push(Chat::new("source@s.whatsapp.net".into(), "Source".into()));
+        app.open_chat("source@s.whatsapp.net".into());
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.1, vec![egui::Event::Text("alpha".into())]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![egui::Event::Text(" beta".into())]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+        assert_eq!(app.composer, "alpha");
+        let mut redo = composer_undo_key();
+        if let egui::Event::Key { modifiers, .. } = &mut redo {
+            modifiers.shift = true;
+        }
+        composer_undo_boundary_frame(&mut app, &ctx, 1.5, vec![redo]);
+        assert_eq!(app.composer, "alpha beta");
+    }
+
+    /// Reusing exactly the same ids cannot revive history from a composer
+    /// closed or unlinked between frames.
+    #[test]
+    fn composer_undo_resets_on_close_reopen_and_logout_with_reused_ids() {
+        for logout in [false, true] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            let chat = "source@s.whatsapp.net";
+            let marker = "Synthetic previous lifetime";
+            app.chats.push(Chat::new(chat.into(), "Source".into()));
+            app.open_chat(chat.into());
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text(marker.into())],
+            );
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            if logout {
+                app.handle_link(LinkStatus::LoggedOut, true);
+                app.handle_link(LinkStatus::Connected, true);
+                app.chats.push(Chat::new(chat.into(), "New session".into()));
+                app.open_chat(chat.into());
+                composer_undo_boundary_frame(
+                    &mut app,
+                    &ctx,
+                    1.3,
+                    vec![egui::Event::Text("Fresh draft".into())],
+                );
+                composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+                assert!(
+                    !app.composer.contains(marker),
+                    "a new session restored old editor history"
+                );
+            } else {
+                app.apply(Action::CloseChat, &ctx);
+                app.open_chat(chat.into());
+                assert_eq!(app.composer, marker);
+                composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+                assert_eq!(
+                    app.composer, marker,
+                    "closing/reopening starts fresh editor history"
+                );
+            }
+        }
+    }
+
+    /// Editing owns a distinct history from another message and the draft.
+    #[test]
+    fn composer_undo_cannot_cross_edit_targets_or_return_to_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "source@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Source".into()));
+        let mut first = message(chat, "first", crate::util::now());
+        first.from_me = true;
+        first.content = Content::text("First edit target");
+        let mut second = message(chat, "second", crate::util::now());
+        second.from_me = true;
+        second.content = Content::text("Second edit target");
+        app.conversations.insert(
+            chat.into(),
+            Conversation {
+                messages: vec![first, second],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.open_chat(chat.into());
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        app.apply(Action::Edit("first".into()), &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.1, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+        assert_eq!(app.composer, "First edit target");
+        app.apply(Action::Edit("second".into()), &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+        assert_eq!(app.composer, "Second edit target");
+        app.apply(Action::CancelEdit, &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+        assert!(
+            app.composer.is_empty(),
+            "draft undo cannot restore either edited message"
+        );
+    }
+
+    /// Events for an account off screen cannot discard the active editor's
+    /// normal undo checkpoints, including removal that changes the roster.
+    #[test]
+    fn hidden_account_logout_and_removal_preserve_active_composer_undo() {
+        for remove in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            let ctx = egui::Context::default();
+            let chat = "source@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Source".into()));
+            app.open_chat(chat.into());
+            let (backend, events) = Backend::detached();
+            app.accounts[1].backend = backend;
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text("alpha".into())],
+            );
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                1.3,
+                vec![egui::Event::Text(" beta".into())],
+            );
+            events
+                .send(if remove {
+                    Event::AccountRemoved
+                } else {
+                    Event::Link(LinkStatus::LoggedOut)
+                })
+                .unwrap();
+            app.handle_events();
+            composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+            assert_eq!(
+                app.composer, "alpha",
+                "hidden account event erased active undo"
+            );
+        }
+    }
 
     #[test]
     fn toasts_errors_and_connection_changes_are_announced() {

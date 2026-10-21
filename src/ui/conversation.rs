@@ -1476,6 +1476,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     None => app.reply_to = None,
                 }
             }
+            app.prepare_composer_undo(ui.ctx());
             let id = egui::Id::new("composer-text");
             let has_focus = ui.memory(|memory| memory.has_focus(id));
             let enter_sends = app.settings.enter_sends;

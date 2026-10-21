@@ -18404,10 +18404,31 @@ mod picture_edge_tests {
                 })
                 .collect::<Vec<_>>()
         };
-        // The picture decodes on a loader thread.
+        // Wait for the actual decode before measuring stability. A fixed
+        // sleep can expire before the loader runs on a busy CI host.
+        let uri = crate::util::image_uri(&photo);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            frame(&mut app);
+            if matches!(
+                ctx.try_load_texture(
+                    &uri,
+                    egui::TextureOptions::default(),
+                    egui::SizeHint::default()
+                ),
+                Ok(egui::load::TexturePoll::Ready { .. })
+            ) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the sample picture did not decode"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Let the decoded dimensions reach the transcript's cached row layout.
         for _ in 0..30 {
             frame(&mut app);
-            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let settled = frame(&mut app);
         for _ in 0..6 {
