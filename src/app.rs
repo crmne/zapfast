@@ -2845,6 +2845,7 @@ impl App {
                     || !chat.labels.is_empty()
                     || !needle.is_empty()
                     || self.open_chat.as_deref() == Some(chat.id.as_str())
+                    || self.draft_preview(&chat.id).is_some()
             })
             .filter(|chat| match &self.label_filter {
                 // A label lists every chat wearing it, channels included,
@@ -20071,6 +20072,10 @@ mod tests {
         assert_eq!(names(&app), ["Stranger"]);
         app.search.clear();
         app.open_chat("2@s.whatsapp.net".into());
+        assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
+        // A draft left unsent keeps the chat listed once it is closed.
+        app.open_chat = None;
+        app.drafts.insert("2@s.whatsapp.net".into(), "hello".into());
         assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
     }
 
