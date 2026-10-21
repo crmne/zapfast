@@ -4035,7 +4035,8 @@ pub(crate) fn open_reaction_picker_action(chat: &str, message: &str, from_list: 
     }
 }
 
-/// Draws a Smile control beside a hovered message and opens the existing picker.
+/// Draws the Smile, Reply and Forward controls beside a hovered message; the
+/// Smile opens the existing picker.
 /// These hover controls are for the pointer only. They use `Sense::CLICK`, which
 /// is not focusable and adds no accessibility node; the message menu and the
 /// message keys give keyboard and screen-reader users the same actions.
@@ -4093,11 +4094,22 @@ fn reaction_affordance(
     };
     let reply_rect = rect.translate(vec2(outward, 0.0));
     let reply_fits = can_reply && bounds.contains_rect(reply_rect);
-    let reach = if reply_fits {
+    // Forward takes the next free slot outwards: past reply where the chat can
+    // reply, and reply's own place where it cannot, so every message the
+    // forward dialog accepts offers the control.
+    let forward_rect = rect.translate(vec2(outward * if reply_fits { 2.0 } else { 1.0 }, 0.0));
+    let forward_fits =
+        crate::app::can_select(&message.content) && bounds.contains_rect(forward_rect);
+    let reach = if forward_fits {
+        rect.union(forward_rect)
+    } else if reply_fits {
         rect.union(reply_rect)
     } else {
         rect
     };
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble.id.with("forward-rect"), forward_rect);
+    });
     let revealed = reaction_affordance_visible(pointer, shown, reach);
     if ui.is_rect_visible(rect) && uncovered && revealed {
         floating_circle(ui, &view.palette, rect, response.hovered());
@@ -4124,30 +4136,56 @@ fn reaction_affordance(
             false,
         ));
     }
-    if !reply_fits {
-        return;
+    if reply_fits {
+        let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::CLICK);
+        if ui.is_rect_visible(reply_rect) && uncovered && revealed {
+            floating_circle(ui, &view.palette, reply_rect, reply.hovered());
+            theme::paint_icon(
+                ui,
+                Icon::Reply,
+                reply_rect.shrink(5.0),
+                15.0,
+                if reply.hovered() {
+                    view.palette.text
+                } else {
+                    view.palette.secondary
+                },
+            );
+        }
+        if reply
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Reply")
+            .clicked()
+        {
+            actions.push(Action::Reply(message.id.clone()));
+        }
     }
-    let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::CLICK);
-    if ui.is_rect_visible(reply_rect) && uncovered && revealed {
-        floating_circle(ui, &view.palette, reply_rect, reply.hovered());
-        theme::paint_icon(
-            ui,
-            Icon::Reply,
-            reply_rect.shrink(5.0),
-            15.0,
-            if reply.hovered() {
-                view.palette.text
-            } else {
-                view.palette.secondary
-            },
-        );
-    }
-    if reply
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Reply")
-        .clicked()
-    {
-        actions.push(Action::Reply(message.id.clone()));
+    if forward_fits {
+        let forward = ui.interact(forward_rect, bubble.id.with("forward"), Sense::CLICK);
+        if ui.is_rect_visible(forward_rect) && uncovered && revealed {
+            floating_circle(ui, &view.palette, forward_rect, forward.hovered());
+            theme::paint_icon(
+                ui,
+                Icon::Forward,
+                forward_rect.shrink(5.0),
+                15.0,
+                if forward.hovered() {
+                    view.palette.text
+                } else {
+                    view.palette.secondary
+                },
+            );
+        }
+        if forward
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Forward")
+            .clicked()
+        {
+            actions.push(Action::ShowDialog(Dialog::Forward {
+                chat: view.chat.id.clone(),
+                messages: vec![message.id.clone()],
+            }));
+        }
     }
 }
 
