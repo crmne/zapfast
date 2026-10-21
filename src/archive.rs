@@ -2250,13 +2250,34 @@ impl Archive {
     /// WhatsApp's server acknowledged it, which incoming messages are stamped
     /// with too, so a reply never sorts above it when this computer's clock is
     /// ahead. Returns whether the stamp changed.
+    /// The chat's activity follows: an activity time this message set moves
+    /// to the chat's newest message, and later activity stays.
     pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
-        let changed = self.connection.execute(
-            "UPDATE messages SET timestamp = ?3
-             WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND timestamp != ?3",
+        let transaction = self.connection.unchecked_transaction()?;
+        let Some(old) = transaction
+            .query_row(
+                "SELECT timestamp FROM messages
+                 WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND timestamp != ?3",
+                params![chat, id, timestamp],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        transaction.execute(
+            "UPDATE messages SET timestamp = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, timestamp],
         )?;
-        Ok(changed > 0)
+        transaction.execute(
+            "UPDATE chats SET last_activity = MAX(?3, CASE WHEN last_activity = ?2
+                 THEN COALESCE((SELECT MAX(timestamp) FROM messages WHERE chat = ?1), ?3)
+                 ELSE last_activity END)
+             WHERE id = ?1",
+            params![chat, old, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(true)
     }
 
     /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
@@ -4585,6 +4606,8 @@ pub(crate) mod tests {
         );
         assert!(archive.restamp_sent(chat, "mine", 140).unwrap());
         assert!(!archive.restamp_sent(chat, "mine", 140).unwrap());
+        // The chat's activity came from our message and now follows the reply.
+        assert_eq!(archive.chat(chat).unwrap().unwrap().last_activity, 150);
         // Only our own messages are restamped.
         assert!(!archive.restamp_sent(chat, "reply", 100).unwrap());
         assert_eq!(

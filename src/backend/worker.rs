@@ -2707,6 +2707,8 @@ impl Worker {
         // session that comes next. Message ids are fresh per send, so an ack
         // can never match a job queued after the stop.
         self.abandon_forwards();
+        // Acks belong to the session that sent; the next one never answers.
+        self.awaiting_ack.clear();
         if let Some(handle) = self.handle.take()
             && tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
                 .await
@@ -8276,6 +8278,8 @@ impl Worker {
             if self.destination_writable(&job.0) {
                 return Some((id, job));
             }
+            // Never sent, so never acked.
+            self.awaiting_ack.remove(&id);
             let _ = self
                 .archive
                 .set_status(&job.0, &id, Delivery::Failed, crate::util::now());

@@ -3501,6 +3501,7 @@ impl App {
                     }
                     self.reload_lists();
                 }
+                let mut restamped = None;
                 if let Some(conversation) = self.conversations.get_mut(&message.chat)
                     && let Some(existing) = conversation.message_mut(&message.id)
                 {
@@ -3546,8 +3547,12 @@ impl App {
                     }
                     if moved {
                         // Our own message, restamped with the server's time.
+                        restamped = Some(existing.chat.clone());
                         conversation.sort();
                     }
+                }
+                if let Some(chat) = restamped {
+                    self.order_selection(&chat);
                 }
             }
             Event::Contacts(contacts) => {
@@ -4112,6 +4117,24 @@ impl App {
             sweep.base = base;
         }
         self.selection = Some((chat, ids));
+    }
+
+    /// Puts the selected messages of `chat` back in chat order after one of
+    /// them moved, so selection actions keep following the chat.
+    fn order_selection(&mut self, chat: &str) {
+        let Some((selected, mut ids)) = self.selection.clone() else {
+            return;
+        };
+        let Some(conversation) = self.conversations.get(chat).filter(|_| selected == chat) else {
+            return;
+        };
+        ids.sort_by_key(|id| {
+            conversation
+                .messages
+                .iter()
+                .position(|message| message.id == *id)
+        });
+        self.selection = Some((selected, ids));
     }
 
     /// Updates one account's link state, discarding its drafts when it is unlinked.
@@ -18656,12 +18679,18 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(ids(&app), ["a", "reply", "mine"]);
+        app.selection = Some((chat.into(), vec!["reply".into(), "mine".into()]));
         // The server's time for our message arrives as an update.
         events
             .send(Event::MessageUpdated(Box::new(restamped)))
             .unwrap();
         app.handle_events();
         assert_eq!(ids(&app), ["a", "mine", "reply"]);
+        assert_eq!(
+            app.selection.as_ref().map(|(_, ids)| ids.as_slice()),
+            Some(["mine".to_owned(), "reply".to_owned()].as_slice()),
+            "the selection follows the chat's order"
+        );
     }
 
     #[test]
