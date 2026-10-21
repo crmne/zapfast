@@ -956,7 +956,7 @@ pub async fn run(
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
-    loop {
+    'commands: loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
@@ -969,6 +969,25 @@ pub async fn run(
             command = inbox.recv() => {
                 match command {
                     Some(Command::Shutdown) | None => break,
+                    Some(Command::SearchMessages { mut query }) => {
+                        // Scanning the archive takes seconds, and everything
+                        // else the worker does waits behind it: keep only the
+                        // newest query the reader typed, so one scan replaces
+                        // the queue. Commands that are not searches run first,
+                        // in the order they arrived.
+                        let mut waiting = Vec::new();
+                        while let Ok(next) = inbox.try_recv() {
+                            match next {
+                                Command::SearchMessages { query: newer } => query = newer,
+                                Command::Shutdown => break 'commands,
+                                other => waiting.push(other),
+                            }
+                        }
+                        for next in waiting {
+                            worker.handle_command(next).await;
+                        }
+                        worker.handle_command(Command::SearchMessages { query }).await;
+                    }
                     Some(command) => worker.handle_command(command).await,
                 }
             }

@@ -166,6 +166,9 @@ pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
 const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
 const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long the chat list's search waits after the last keystroke before it
+/// scans the archive, which takes seconds on a long history.
+const SEARCH_DELAY: Duration = Duration::from_millis(250);
 /// How long other apps' media stays paused while the next voice message of a
 /// run downloads. A stalled download must not keep music paused for good.
 const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
@@ -2616,7 +2619,7 @@ impl App {
         if chat.is_group() {
             return chat.name.clone();
         }
-        self.person_name(&chat.id, None)
+        self.person_name_of(&chat.id, None, Some(chat))
     }
 
     /// The title of the chat `id`, as the chat list writes it, for places that
@@ -2670,6 +2673,13 @@ impl App {
     }
 
     fn person_name(&self, id: &str, hint: Option<&str>) -> String {
+        self.person_name_of(id, hint, None)
+    }
+
+    /// [`Self::person_name`] for a chat already at hand, which spares the
+    /// lookup by id: the chat list asks for every chat's title on every frame
+    /// while it searches, and that lookup walks the whole list.
+    fn person_name_of(&self, id: &str, hint: Option<&str>, chat: Option<&Chat>) -> String {
         let contact = self.contacts.get(id);
         let present = |name: Option<&str>| name.filter(|name| !name.is_empty()).map(str::to_owned);
         let saved = present(contact.and_then(|contact| contact.full_name.as_deref()));
@@ -2686,7 +2696,7 @@ impl App {
         let number = |c: char| {
             c.is_ascii_digit() || (phone.is_some() && matches!(c, '+' | ' ' | '(' | ')' | '-'))
         };
-        if let Some(chat) = self.chat(id)
+        if let Some(chat) = chat.or_else(|| self.chat(id))
             && !chat.name.is_empty()
             && !chat.name.chars().all(number)
         {
@@ -2970,11 +2980,12 @@ impl App {
                 // not a query to match.
                 (self.locked_folder && !self.chat_lock_authenticated())
                     || needle.is_empty()
-                    || crate::util::search_key(&self.chat_title(chat)).contains(&needle)
+                    || self.text_matches(&self.chat_title(chat), &needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
-                    || chat.last.as_ref().is_some_and(|last| {
-                        crate::util::search_key(&last.summary).contains(&needle)
-                    })
+                    || chat
+                        .last
+                        .as_ref()
+                        .is_some_and(|last| self.text_matches(&last.summary, &needle))
             })
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
@@ -3014,16 +3025,20 @@ impl App {
         if needle.is_empty() {
             return Vec::new();
         }
+        let talked_to: std::collections::HashSet<&str> =
+            self.chats.iter().map(|chat| chat.id.as_str()).collect();
         let mut contacts: Vec<&Contact> = self
             .contacts
             .values()
             .filter(|contact| crate::model::phone_of(&contact.id).is_some())
             .filter(|contact| self.me.as_deref() != Some(contact.id.as_str()))
-            .filter(|contact| !self.chats.iter().any(|chat| chat.id == contact.id))
+            // Looking each contact up among the chats one by one made every
+            // keystroke cost contacts × chats.
+            .filter(|contact| !talked_to.contains(contact.id.as_str()))
             .filter(|contact| {
                 contact
                     .display_name()
-                    .is_some_and(|name| crate::util::search_key(name).contains(&needle))
+                    .is_some_and(|name| self.text_matches(name, &needle))
                     || contact
                         .id
                         .split('@')
@@ -3544,6 +3559,7 @@ impl App {
             }
             Event::SearchHits { query, messages } => {
                 if query == self.search.trim() {
+                    self.search_due = None;
                     // Locked chats' messages stay out of plain search.
                     self.search_hits = messages
                         .into_iter()
@@ -4855,6 +4871,28 @@ impl App {
         }
     }
 
+    /// Whether `text` holds `needle` once both are normalized, remembering
+    /// the normalized form so the next frame does not pay for it again.
+    fn text_matches(&self, text: &str, needle: &str) -> bool {
+        if let Some(key) = self.search_keys.borrow().get(text) {
+            return key.contains(needle);
+        }
+        let key = crate::util::search_key(text);
+        let hit = key.contains(needle);
+        self.search_keys.borrow_mut().insert(text.to_owned(), key);
+        hit
+    }
+
+    /// Asks the archive to be scanned for the chat list's search text.
+    fn request_search(&mut self) {
+        self.search_due = None;
+        let query = self.search.trim().to_owned();
+        if query.is_empty() || self.locked_folder_open() || self.secret_code_matched() {
+            return;
+        }
+        self.backend.send(Command::SearchMessages { query });
+    }
+
     /// Asks for the open chat's matches, for the query and day in force.
     fn request_chat_search(&mut self) {
         self.chat_search_selected = None;
@@ -6033,6 +6071,17 @@ impl App {
         self.maybe_download_update();
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
             self.save_settings();
+        }
+        // The chat list's search scans the archive once the reader stops
+        // typing: a whole-history scan takes seconds, so one per word rather
+        // than one per letter.
+        if let Some(due) = self.search_due {
+            let left = due.saturating_duration_since(now);
+            if left.is_zero() {
+                self.request_search();
+            } else {
+                ctx.request_repaint_after(left);
+            }
         }
         for account in &mut self.accounts {
             if account.settings_dirty {
@@ -8396,6 +8445,9 @@ impl App {
             Action::Search(text) => {
                 self.search = text;
                 self.search_selected = None;
+                // The names and previews compared for the last text are not
+                // worth remembering for the next one.
+                self.search_keys.borrow_mut().clear();
                 let query = self.search.trim().to_owned();
                 // Editing the search away from the secret code hides the
                 // locked folder again, like leaving the phone's home screen.
@@ -8404,8 +8456,9 @@ impl App {
                 }
                 if query.is_empty() || self.locked_folder_open() || self.secret_code_matched() {
                     self.search_hits.clear();
+                    self.search_due = None;
                 } else {
-                    self.backend.send(Command::SearchMessages { query });
+                    self.search_due = Some(Instant::now() + SEARCH_DELAY);
                 }
             }
             Action::OpenChatSearch => self.open_chat_search(),
@@ -19970,6 +20023,34 @@ mod tests {
         assert!(fading > 0.0 && fading < 1.0, "{fading}");
         assert_eq!(JumpHighlight::strength(JumpHighlight::DURATION), 0.0);
         assert_eq!(JumpHighlight::strength(10.0), 0.0);
+    }
+
+    #[test]
+    fn the_chat_search_scans_once_after_the_typing_stops() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        for text in ["e", "en", "eng"] {
+            app.apply(Action::Search(text.into()), &ctx);
+            assert!(app.search_due.is_some(), "the scan waits for {text}");
+        }
+        assert!(
+            commands.try_recv().is_err(),
+            "no scan of the archive while the reader is still typing"
+        );
+        // The wait ends: the text in force is scanned for once.
+        app.search_due = Some(Instant::now());
+        app.tick(&ctx);
+        let queries: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SearchMessages { query } => Some(query),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queries, ["eng"]);
+        assert!(app.search_due.is_none());
     }
 
     #[test]
