@@ -557,4 +557,48 @@ mod tests {
         assert_eq!(pgettext(Locale::Turkish, "sound", "None"), "Yok");
         assert_eq!(gettext(Locale::Turkish, "None"), "None");
     }
+
+    #[test]
+    fn pairing_recent_history_has_its_own_translation_context() {
+        assert_eq!(
+            pgettext(Locale::English, "message history", "Recent"),
+            "Recent"
+        );
+        assert_eq!(
+            pgettext(Locale::German, "message history", "Recent"),
+            "Neuere Nachrichten"
+        );
+        assert_eq!(
+            pgettext(Locale::Indonesian, "message history", "Recent"),
+            "Pesan terbaru"
+        );
+        assert_ne!(
+            pgettext(Locale::German, "message history", "Recent"),
+            gettext(Locale::German, "Recent")
+        );
+        assert_ne!(
+            pgettext(Locale::Indonesian, "message history", "Recent"),
+            gettext(Locale::Indonesian, "Recent")
+        );
+    }
+
+    #[test]
+    fn portuguese_pairing_choices_do_not_fall_back_to_english() {
+        for source in [
+            "History to request",
+            "Full",
+            "1 year",
+            "2 years",
+            "3 years",
+            "Ask for older history during linking. Your phone may supply less. Longer periods can take more time and disk space.",
+            "Start with recent conversations for a quicker setup. Older messages can still be requested when you scroll up.",
+            "Continue to linking",
+        ] {
+            assert_ne!(gettext(Locale::PortugueseBrazil, source), source);
+        }
+        assert_eq!(
+            pgettext(Locale::PortugueseBrazil, "message history", "Recent"),
+            "Recentes"
+        );
+    }
 }

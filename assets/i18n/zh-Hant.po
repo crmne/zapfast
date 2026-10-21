@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-21 13:45+0200\n"
+"POT-Creation-Date: 2026-10-21 15:48-0300\n"
 "PO-Revision-Date: 2026-10-02 18:51+0800\n"
 "Last-Translator: Alang Hsu <alang.hsu@gmail.com>\n"
 "Language-Team: Chinese (Traditional)\n"
@@ -67,136 +67,136 @@ msgid ""
 "allow it."
 msgstr "無法將 {names} 加入群組。對方的隱私設定可能不允許。"
 
-#: src/model.rs:196 src/model.rs:233
+#: src/model.rs:219 src/model.rs:256
 msgid "All"
 msgstr "全部"
 
-#: src/model.rs:197
+#: src/model.rs:220
 msgid "Unread"
 msgstr "未讀"
 
-#: src/model.rs:198
+#: src/model.rs:221
 msgid "Private"
 msgstr "私聊"
 
-#: src/model.rs:199 src/ui/picker.rs:1195
+#: src/model.rs:222 src/ui/picker.rs:1195
 msgid "Favorites"
 msgstr "最愛"
 
-#: src/model.rs:200 src/settings.rs:382
+#: src/model.rs:223 src/settings.rs:382
 msgid "Groups"
 msgstr "群組"
 
-#: src/model.rs:201
+#: src/model.rs:224
 msgid "Channels"
 msgstr "頻道"
 
-#: src/model.rs:234
+#: src/model.rs:257
 msgid "Missed"
 msgstr "未接"
 
-#: src/model.rs:1536 src/ui/image_preview.rs:1024 src/ui/info.rs:1065
+#: src/model.rs:1559 src/ui/image_preview.rs:1024 src/ui/info.rs:1065
 msgid "Photo"
 msgstr "相片"
 
-#: src/model.rs:1537 src/ui/image_preview.rs:1022 src/ui/info.rs:1063
+#: src/model.rs:1560 src/ui/image_preview.rs:1022 src/ui/info.rs:1063
 msgid "Video"
 msgstr "影片"
 
-#: src/model.rs:1538
+#: src/model.rs:1561
 msgid "GIF"
 msgstr "GIF"
 
-#: src/model.rs:1539
+#: src/model.rs:1562
 msgid "Video message"
 msgstr "影片訊息"
 
-#: src/model.rs:1540
+#: src/model.rs:1563
 msgid "Voice message"
 msgstr "語音訊息"
 
-#: src/model.rs:1541 src/ui/conversation.rs:9485
+#: src/model.rs:1564 src/ui/conversation.rs:9485
 msgid "Audio"
 msgstr "音訊"
 
-#: src/model.rs:1542
+#: src/model.rs:1565
 msgid "Document"
 msgstr "文件"
 
-#: src/model.rs:1543
+#: src/model.rs:1566
 msgid "Sticker"
 msgstr "貼圖"
 
-#: src/model.rs:1544 src/ui/dialogs.rs:1061
+#: src/model.rs:1567 src/ui/dialogs.rs:1061
 msgid "Sticker pack"
 msgstr "貼圖集"
 
-#: src/model.rs:1545 src/ui/conversation.rs:6532
+#: src/model.rs:1568 src/ui/conversation.rs:6532
 msgid "Location"
 msgstr "位置"
 
-#: src/model.rs:1546 src/ui/conversation.rs:6579 src/ui/conversation.rs:6802
+#: src/model.rs:1569 src/ui/conversation.rs:6579 src/ui/conversation.rs:6802
 msgid "Live location"
 msgstr "即時位置"
 
-#: src/model.rs:1547 src/ui/conversation.rs:6577
+#: src/model.rs:1570 src/ui/conversation.rs:6577
 msgid "Live location ended"
 msgstr "即時位置已結束"
 
-#: src/model.rs:1548
+#: src/model.rs:1571
 msgid "Contact"
 msgstr "聯絡人"
 
-#: src/model.rs:1549
+#: src/model.rs:1572
 msgid "Poll"
 msgstr "投票"
 
-#: src/model.rs:1550
+#: src/model.rs:1573
 msgid "This message was deleted"
 msgstr "此訊息已刪除"
 
-#: src/model.rs:1551
+#: src/model.rs:1574
 msgid "Unsupported message"
 msgstr "不支援的訊息"
 
-#: src/model.rs:1552
+#: src/model.rs:1575
 msgid "View once photo"
 msgstr "一次性相片"
 
-#: src/model.rs:1553
+#: src/model.rs:1576
 msgid "View once video"
 msgstr "一次性影片"
 
-#: src/model.rs:1554
+#: src/model.rs:1577
 msgid "View once voice message"
 msgstr "一次性語音訊息"
 
-#: src/model.rs:1555
+#: src/model.rs:1578
 msgid "View once audio"
 msgstr "一次性音訊"
 
-#: src/model.rs:1556
+#: src/model.rs:1579
 msgid "View once message"
 msgstr "一次性訊息"
 
-#: src/model.rs:1557
+#: src/model.rs:1580
 msgid "Message on your phone"
 msgstr "手機上的訊息"
 
-#: src/model.rs:1558 src/ui/calls.rs:94
+#: src/model.rs:1581 src/ui/calls.rs:94
 msgid "Missed voice call"
 msgstr "未接語音通話"
 
-#: src/model.rs:1559 src/ui/calls.rs:95
+#: src/model.rs:1582 src/ui/calls.rs:95
 msgid "Missed video call"
 msgstr "未接視訊通話"
 
-#: src/model.rs:1560 src/ui/conversation.rs:734 src/ui/conversation.rs:4211
+#: src/model.rs:1583 src/ui/conversation.rs:734 src/ui/conversation.rs:4211
 #: src/ui/calls.rs:98 src/ui/calls.rs:383
 msgid "Voice call"
 msgstr "語音通話"
 
-#: src/model.rs:1561 src/ui/conversation.rs:762 src/ui/conversation.rs:4219
+#: src/model.rs:1584 src/ui/conversation.rs:762 src/ui/conversation.rs:4219
 #: src/ui/calls.rs:99 src/ui/calls.rs:381
 msgid "Video call"
 msgstr "視訊通話"
@@ -365,7 +365,7 @@ msgstr "{hours} 小時"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} 小時 {minutes} 分鐘"
 
-#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3182
+#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3183
 msgid "Starred"
 msgstr "已加星號"
 
@@ -397,7 +397,7 @@ msgstr "在訊息上按右鍵並選擇「加上星號」，即可保留在這裡
 msgid "No favorites yet"
 msgstr "尚無最愛"
 
-#: src/ui/chats.rs:1359 src/app.rs:2561
+#: src/ui/chats.rs:1359 src/app.rs:2562
 msgid "Message yourself"
 msgstr "傳訊息給自己"
 
@@ -542,7 +542,7 @@ msgid_plural "{} unread messages"
 msgstr[0] "{} 則未讀訊息"
 
 #: src/ui/conversation.rs:3061 src/ui/call.rs:1009 src/app/calls.rs:135
-#: src/app.rs:2543 src/app.rs:2562
+#: src/app.rs:2544 src/app.rs:2563
 msgid "You"
 msgstr "您"
 
@@ -797,7 +797,7 @@ msgid "Add to my stickers"
 msgstr "加入我的貼圖"
 
 #: src/ui/dialogs.rs:1097 src/ui/message_info.rs:28 src/ui/labels.rs:234
-#: src/ui/info.rs:254 src/ui/mod.rs:869
+#: src/ui/info.rs:254 src/ui/mod.rs:870
 msgid "Close"
 msgstr "關閉"
 
@@ -1036,7 +1036,7 @@ msgstr "「系統」是您桌面的介面字型。Inter 在每台電腦上呈現
 msgid "Wallpaper"
 msgstr "桌布"
 
-#: src/ui/settings.rs:369 src/app.rs:3037 src/ui/image_preview.rs:212
+#: src/ui/settings.rs:369 src/app.rs:3038 src/ui/image_preview.rs:212
 msgid "Image"
 msgstr "圖片"
 
@@ -1607,7 +1607,7 @@ msgstr "無法連線"
 msgid "No answer"
 msgstr "無人接聽"
 
-#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4120
+#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4118
 msgid "Connection lost"
 msgstr "連線中斷"
 
@@ -1896,7 +1896,7 @@ msgstr "此號碼未使用 WhatsApp"
 msgid "Not connected to WhatsApp"
 msgstr "未連線至 WhatsApp"
 
-#: src/app.rs:889 src/app.rs:7691
+#: src/app.rs:889 src/app.rs:7690
 msgid "Enter a valid international phone number"
 msgstr "請輸入有效的國際電話號碼"
 
@@ -1904,49 +1904,49 @@ msgstr "請輸入有效的國際電話號碼"
 msgid "Could not delete the removed account's files"
 msgstr "無法刪除已移除帳號的檔案"
 
-#: src/app.rs:2453
+#: src/app.rs:2454
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已有名為「{name}」的標籤。"
 
-#: src/app.rs:2542
+#: src/app.rs:2543
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（您）"
 
-#: src/app.rs:3104
+#: src/app.rs:3105
 msgid "Media cache cleared"
 msgstr "媒體快取已清除"
 
-#: src/app.rs:3184
+#: src/app.rs:3185
 msgid "Star removed"
 msgstr "已移除星號"
 
-#: src/app.rs:3220
+#: src/app.rs:3221
 msgid "Pinned for 7 days"
 msgstr "已釘選 7 天"
 
-#: src/app.rs:3222
+#: src/app.rs:3223
 msgid "Pin removed"
 msgstr "已取消釘選"
 
-#: src/app.rs:3721
+#: src/app.rs:3719
 msgid "Loading chat history"
 msgstr "正在載入對話記錄"
 
-#: src/app.rs:3815
+#: src/app.rs:3813
 msgid "Could not use this image"
 msgstr "無法使用這張圖片"
 
-#: src/app.rs:3873
+#: src/app.rs:3871
 msgid "Could not use this picture."
 msgstr "無法使用此圖片。"
 
-#: src/app.rs:4050 src/app.rs:7591
+#: src/app.rs:4048 src/app.rs:7590
 msgid "This chat already has three pinned messages"
 msgstr "這個對話已有三則釘選訊息"
 
-#: src/app.rs:4055
+#: src/app.rs:4053
 msgid ""
 "WhatsApp hasn't turned on group calls from a computer for your account yet. "
 "Ask someone in the group to call it, and answer here."
@@ -1954,66 +1954,66 @@ msgstr ""
 "WhatsApp 尚未為你的帳號開啟電腦版群組通話。請群組中的其他人發起通話，然後在這"
 "裡接聽。"
 
-#: src/app.rs:4060 src/app.rs:6649
+#: src/app.rs:4058 src/app.rs:6648
 msgid "ZapFast can't join group calls yet: open the link on your phone."
 msgstr "ZapFast 暫時無法加入群組通話：請在手機上開啟此連結。"
 
-#: src/app.rs:4130
+#: src/app.rs:4128
 msgid "Connecting"
 msgstr "正在連線"
 
-#: src/app.rs:4761
+#: src/app.rs:4760
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未送出：ZapFast 尚未連線至 WhatsApp。"
 
-#: src/app.rs:4765
+#: src/app.rs:4764
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 "未送出：您要回覆的訊息在這部電腦上無法使用。取消回覆即可不附帶引用內容送出。"
 
-#: src/app.rs:6813
+#: src/app.rs:6812
 msgid "A selected chat is no longer writable"
 msgstr "所選的對話已無法傳送訊息"
 
-#: src/app.rs:7349
+#: src/app.rs:7348
 msgid "Added to favorites"
 msgstr "已加入最愛"
 
-#: src/app.rs:7426
+#: src/app.rs:7425
 msgid "Sending the sticker pack…"
 msgstr "正在傳送貼圖集…"
 
-#: src/app.rs:7811 src/ui/labels.rs:257
+#: src/app.rs:7810 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:8398
+#: src/app.rs:8409
 #, rust-format
 msgid "{}: {}"
 msgstr "{}：{}"
 
-#: src/app.rs:8852
+#: src/app.rs:8863
 msgid "App lock password saved"
 msgstr "已儲存應用程式鎖密碼"
 
-#: src/app.rs:8860
+#: src/app.rs:8871
 msgid "App lock turned off"
 msgstr "已關閉應用程式鎖"
 
-#: src/app.rs:8994
+#: src/app.rs:9005
 msgid "This video opens in your system player"
 msgstr "此影片會在您的系統播放器中開啟"
 
-#: src/app.rs:9612
+#: src/app.rs:9623
 msgid "Copied image"
 msgstr "已複製圖片"
 
-#: src/app.rs:9615 src/app.rs:9620
+#: src/app.rs:9626 src/app.rs:9631
 msgid "Failed to copy image"
 msgstr "複製圖片失敗"
 
@@ -2488,7 +2488,7 @@ msgstr "個人對話"
 msgid "Direct messages and groups"
 msgstr "個人對話和群組"
 
-#: src/account.rs:304
+#: src/account.rs:308
 #, rust-format
 msgid "Account {id}"
 msgstr "帳號 {id}"
@@ -2549,7 +2549,7 @@ msgstr "{}+"
 msgid "Could not list the media."
 msgstr "無法列出媒體。"
 
-#: src/ui/info.rs:883 src/ui/login.rs:114
+#: src/ui/info.rs:883 src/ui/login.rs:138
 msgid "Try again"
 msgstr "再試一次"
 
@@ -2626,9 +2626,50 @@ msgstr "儲存名稱（Enter）"
 msgid "Cancel (Escape)"
 msgstr "取消（Escape）"
 
-#: src/ui/login.rs:125
+#: src/ui/login.rs:149
 msgid "Start over…"
 msgstr "重新開始…"
+
+#: src/ui/login.rs:200
+msgid "History to request"
+msgstr ""
+
+#: src/ui/login.rs:210
+msgctxt "message history"
+msgid "Recent"
+msgstr "最近"
+
+#: src/ui/login.rs:212
+msgid "Full"
+msgstr ""
+
+#: src/ui/login.rs:219 src/ui/login.rs:234
+msgid "2 years"
+msgstr ""
+
+#: src/ui/login.rs:220 src/ui/login.rs:239
+msgid "3 years"
+msgstr ""
+
+#: src/ui/login.rs:221 src/ui/login.rs:229
+msgid "1 year"
+msgstr ""
+
+#: src/ui/login.rs:246
+msgid ""
+"Ask for older history during linking. Your phone may supply less. Longer "
+"periods can take more time and disk space."
+msgstr ""
+
+#: src/ui/login.rs:257
+msgid ""
+"Start with recent conversations for a quicker setup. Older messages can "
+"still be requested when you scroll up."
+msgstr ""
+
+#: src/ui/login.rs:273
+msgid "Continue to linking"
+msgstr ""
 
 #: src/ui/rail.rs:301
 msgid "Calls"
@@ -2646,15 +2687,15 @@ msgstr "封存"
 msgid "Locked"
 msgstr "已鎖定"
 
-#: src/ui/mod.rs:866
+#: src/ui/mod.rs:867
 msgid "Minimize"
 msgstr "最小化"
 
-#: src/ui/mod.rs:867
+#: src/ui/mod.rs:868
 msgid "Maximize"
 msgstr "最大化"
 
-#: src/ui/mod.rs:868
+#: src/ui/mod.rs:869
 msgid "Restore"
 msgstr "還原"
 

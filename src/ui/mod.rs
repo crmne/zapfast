@@ -505,6 +505,7 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 /// and a button.
 const BANNER_MIN_CONTENT: f32 = 320.0;
 
+/// Shows update or link status while keeping the unlinked history chooser in the linking flow.
 fn banner(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let update = app.update.clone();
@@ -551,7 +552,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             true,
             None,
         ),
-        LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
+        LinkStatus::ChooseHistory | LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
             "Not linked to a phone".to_owned(),
             palette.warning,

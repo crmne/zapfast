@@ -33,6 +33,7 @@ use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
 use whatsapp_rust::wacore::history_sync::{HistorySyncStream, MAX_DECOMPRESSED};
 use whatsapp_rust::wacore::iq::abprops;
 use whatsapp_rust::wacore::store::DevicePropsOverride;
+use whatsapp_rust::wacore::store::traits::DeviceStore as _;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
@@ -45,6 +46,8 @@ mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
+mod history_diagnostics;
+use history_diagnostics::{Flow as HistoryFlow, Record as HistoryRecord, Stage as HistoryStage};
 mod interactive;
 mod link_watch;
 mod new_group;
@@ -67,7 +70,7 @@ use crate::model::{
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
-/// Delay after the last history chunk before sync is complete.
+/// Inactivity delay for the indicator, not confirmation of complete history.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
@@ -581,6 +584,38 @@ fn device_name() -> String {
     }
 }
 
+/// Existing sessions keep the original startup path and never wait for a choice.
+fn pairing_history_for_device(
+    linked: bool,
+    selected: Option<crate::model::PairingHistory>,
+) -> Option<crate::model::PairingHistory> {
+    if linked {
+        Some(crate::model::PairingHistory::Recent)
+    } else {
+        selected
+    }
+}
+
+/// Use the library's supported full-sync profile as a complete unit.
+fn pairing_device_props(history: crate::model::PairingHistory) -> DevicePropsOverride {
+    let props = DevicePropsOverride::new()
+        .with_os(device_name())
+        .with_version(app_version());
+    match history.days() {
+        None => props.with_platform_type(wa::device_props::PlatformType::DESKTOP),
+        Some(days) => {
+            let mut config = whatsapp_rust::wacore::store::device::default_history_sync_config();
+            config.full_sync_days_limit = Some(days);
+            config.on_demand_ready = Some(true);
+            config.complete_on_demand_ready = Some(true);
+            props
+                .with_platform_type(wa::device_props::PlatformType::UWP)
+                .with_require_full_sync(true)
+                .with_history_sync_config(config)
+        }
+    }
+}
+
 /// App version in WhatsApp device-property format.
 fn app_version() -> wa::device_props::AppVersion {
     let mut parts = env!("CARGO_PKG_VERSION")
@@ -721,6 +756,7 @@ pub async fn run(
         lid_to_pn: HashMap::new(),
         contacts: HashMap::new(),
         status: LinkStatus::Starting,
+        pairing_history: None,
         pairing_phone: None,
         pair_code: None,
         qr: None,
@@ -855,6 +891,7 @@ pub async fn run(
                 }
             } => {
                 worker.sync_deadline = None;
+                worker.history_record(HistoryFlow::Initial, HistoryStage::Quiet).emit();
                 worker.set_syncing(false);
                 worker.emit_chats();
             }
@@ -1112,6 +1149,8 @@ struct Worker {
     lid_to_pn: HashMap<String, String>,
     contacts: HashMap<String, Contact>,
     status: LinkStatus,
+    /// Confirmed only for this new pairing attempt, never loaded from settings.
+    pairing_history: Option<crate::model::PairingHistory>,
     pairing_phone: Option<String>,
     pair_code: Option<String>,
     qr: Option<String>,
@@ -2364,6 +2403,19 @@ impl Worker {
                 return;
             }
         };
+        let linked = match store.load().await {
+            Ok(device) => device.is_some_and(|device| device.pn.is_some()),
+            Err(error) => {
+                self.set_status(LinkStatus::Failed(format!(
+                    "Could not load the linked device: {error}"
+                )));
+                return;
+            }
+        };
+        let Some(history) = pairing_history_for_device(linked, self.pairing_history) else {
+            self.set_status(LinkStatus::ChooseHistory);
+            return;
+        };
         let sender = self.wa_sender.clone();
         let builder = host_owned_presence(Bot::builder().with_backend(store))
             .with_watched_ab_props([
@@ -2388,12 +2440,7 @@ impl Worker {
         };
         let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
-            .with_device_props(
-                DevicePropsOverride::new()
-                    .with_os(device_name())
-                    .with_version(app_version())
-                    .with_platform_type(wa::device_props::PlatformType::DESKTOP),
-            )
+            .with_device_props(pairing_device_props(history))
             .with_event_handler(UiEvents {
                 sender,
                 generation: self.privacy_generation,
@@ -3712,6 +3759,7 @@ impl Worker {
         self.pair_code = None;
         self.pairing_phone = None;
         self.set_syncing(false);
+        self.pairing_history = None;
         let session = self.dirs.session_db();
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut path = session.clone().into_os_string();
@@ -4981,11 +5029,23 @@ impl Worker {
 
     // --- history ---------------------------------------------------------
 
+    /// Creates a diagnostic using the local account folder number, never a protocol identity.
+    fn history_record(&self, flow: HistoryFlow, stage: HistoryStage) -> HistoryRecord {
+        // Local generated account folder number, never a WhatsApp identity.
+        HistoryRecord::new(self.dirs.id.as_str().parse().unwrap_or(0), flow, stage)
+    }
+
+    /// Parses and applies a history chunk, recording transfer stages without claiming complete storage or coverage.
     async fn on_history_sync(&mut self, lazy: &wa_events::LazyHistorySync) {
         // The id of the request an on-demand chunk answers.
         let session = lazy.peer_data_request_session_id().map(str::to_owned);
-        let on_demand =
-            lazy.sync_type() == ON_DEMAND || lazy.peer_data_request_session_id().is_some();
+        let flow = HistoryFlow::incoming(lazy.sync_type(), session.is_some());
+        let on_demand = flow == HistoryFlow::OnDemand;
+        let started = Instant::now();
+        let mut diagnostic = self.history_record(flow, HistoryStage::Received);
+        diagnostic.sync_type = lazy.sync_type();
+        diagnostic.percent = lazy.progress().map_or(-1, |p| p.min(100) as i32);
+        diagnostic.emit();
         if !on_demand {
             self.sync_deadline = Some(Instant::now() + SYNC_QUIET);
             self.set_syncing(true);
@@ -4997,6 +5057,8 @@ impl Worker {
         let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
         match parsed {
             Ok(Ok(parsed)) => {
+                diagnostic.chats = parsed.chats.len();
+                diagnostic.entries = parsed.chats.iter().map(|chat| chat.messages.len()).sum();
                 if on_demand {
                     log::info!(
                         "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
@@ -5024,17 +5086,29 @@ impl Worker {
                     }
                 }
                 let filed = self.apply_history(parsed, !on_demand);
+                // Applied means processing returned, not verified storage.
+                diagnostic.stage = HistoryStage::Applied;
+                diagnostic.elapsed_ms = started.elapsed().as_millis();
+                diagnostic.emit();
                 if on_demand {
                     self.answer_older(filed, session.as_deref());
                 }
             }
             Ok(Err(error)) => {
+                diagnostic.stage = HistoryStage::ParseFailed;
+                diagnostic.elapsed_ms = started.elapsed().as_millis();
+                diagnostic.emit();
                 log::warn!("a history chunk could not be read");
                 self.emit(Event::Error(format!(
                     "Could not read part of the chat history: {error}"
                 )));
             }
-            Err(_error) => log::warn!("history parsing worker failed"),
+            Err(_error) => {
+                diagnostic.stage = HistoryStage::ParseFailed;
+                diagnostic.elapsed_ms = started.elapsed().as_millis();
+                diagnostic.emit();
+                log::warn!("history parsing worker failed");
+            }
         }
         if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
@@ -5616,6 +5690,8 @@ impl Worker {
             let Some(request) = self.pending_older.remove(&chat) else {
                 continue;
             };
+            self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestTimeout)
+                .emit();
             let (explicit, background) = (request.explicit, request.background);
             self.remember_late(chat.clone(), request);
             if background {
@@ -5793,7 +5869,11 @@ impl Worker {
             .find(|late| late.serial == serial)
         {
             late.request = Some(request);
+        } else {
+            return;
         }
+        self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestSent)
+            .emit();
     }
 
     /// A history request that could not be sent. Only the request it belongs
@@ -5808,6 +5888,8 @@ impl Worker {
             self.late_older.retain(|late| late.serial != serial);
             return;
         }
+        self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestFailed)
+            .emit();
         let Some(request) = self.pending_older.remove(&chat) else {
             return;
         };
@@ -7447,6 +7529,12 @@ impl Worker {
                 }
                 self.stop_bot().await;
                 self.emit(Event::AccountRemoved);
+            }
+            Command::StartPairing(history) => {
+                if self.status == LinkStatus::ChooseHistory && self.client.is_none() {
+                    self.pairing_history = Some(history);
+                    self.start_bot().await;
+                }
             }
             Command::Reconnect => {
                 if let Some(client) = self.client.clone() {
@@ -16695,6 +16783,7 @@ mod receipt_tests {
             lid_to_pn: HashMap::new(),
             contacts: HashMap::new(),
             status: LinkStatus::Connected,
+            pairing_history: None,
             pairing_phone: None,
             pair_code: None,
             qr: None,
@@ -21418,6 +21507,39 @@ mod older_history_tests {
 
     const CHAT: &str = "4915700000002@s.whatsapp.net";
 
+    /// Stale send completions cannot add outcomes to a newer request's diagnostics.
+    #[test]
+    fn request_diagnostics_only_count_correlated_completions() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        asked(&mut worker, true, false, 2, None);
+        let stages = history_diagnostics::capture(|| {
+            worker.older_sent(CHAT.into(), 1, "stale".into());
+            worker.older_failed(CHAT.into(), 1, "stale".into());
+        });
+        assert!(stages.is_empty());
+        assert_eq!(worker.pending_older[CHAT].request, None);
+        let stages = history_diagnostics::capture(|| {
+            worker.older_sent(CHAT.into(), 2, "current".into());
+            worker.older_failed(CHAT.into(), 2, "current".into());
+        });
+        assert_eq!(
+            stages,
+            [HistoryStage::RequestSent, HistoryStage::RequestFailed]
+        );
+        assert!(!worker.pending_older.contains_key(CHAT));
+
+        asked(&mut worker, true, false, 3, None);
+        worker.pending_older.get_mut(CHAT).unwrap().asked =
+            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
+        worker.expire_older_requests();
+        let stages = history_diagnostics::capture(|| {
+            worker.older_sent(CHAT.into(), 3, "late".into());
+            worker.older_failed(CHAT.into(), 3, "late".into());
+        });
+        assert_eq!(stages, [HistoryStage::RequestSent]);
+        assert!(worker.late_older.is_empty());
+    }
+
     /// A phone-history request that has waited past the patience.
     fn waiting(worker: &mut Worker, explicit: bool) {
         asked(worker, explicit, false, 0, None);
@@ -21839,5 +21961,81 @@ mod older_history_tests {
         worker.apply_history(history, true);
         worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
         assert!(!worker.archive.history_start(CHAT).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod pairing_history_tests {
+    use super::*;
+    use crate::model::PairingHistory;
+
+    #[test]
+    fn only_a_new_device_waits_for_a_history_choice() {
+        assert_eq!(pairing_history_for_device(false, None), None);
+        assert_eq!(
+            pairing_history_for_device(false, Some(PairingHistory::FullThreeYears)),
+            Some(PairingHistory::FullThreeYears)
+        );
+        for selected in [None, Some(PairingHistory::FullThreeYears)] {
+            assert_eq!(
+                pairing_history_for_device(true, selected),
+                Some(PairingHistory::Recent)
+            );
+        }
+    }
+
+    #[test]
+    fn recent_profile_preserves_the_existing_defaults() {
+        let props = pairing_device_props(PairingHistory::Recent);
+        assert_eq!(
+            props.platform_type,
+            Some(wa::device_props::PlatformType::DESKTOP)
+        );
+        assert_eq!(props.require_full_sync, None);
+        assert!(props.history_sync_config.is_none());
+    }
+
+    #[test]
+    fn full_profiles_reach_the_library_registration_payload() {
+        for (history, days) in [
+            (PairingHistory::FullOneYear, 365),
+            (PairingHistory::FullTwoYears, 730),
+            (PairingHistory::FullThreeYears, 1095),
+        ] {
+            let mut device = whatsapp_rust::wacore::store::Device::new();
+            device.set_device_props(pairing_device_props(history));
+            let payload = device.get_client_payload();
+            let bytes = payload
+                .device_pairing_data
+                .into_option()
+                .unwrap()
+                .device_props
+                .unwrap();
+            let props = wa::DeviceProps::decode_from_slice(&bytes).unwrap();
+            assert_eq!(
+                props.platform_type,
+                Some(wa::device_props::PlatformType::UWP)
+            );
+            assert_eq!(props.require_full_sync, Some(true));
+            let config = props.history_sync_config.into_option().unwrap();
+            assert_eq!(config.full_sync_days_limit, Some(days));
+            assert_eq!(config.on_demand_ready, Some(true));
+            assert_eq!(config.complete_on_demand_ready, Some(true));
+            assert_eq!(config.support_message_association, Some(true));
+            // Linked-device login has no registration properties and cannot
+            // request a second initial sync or replace a linked identity.
+            device.pn = Some("15550001111@s.whatsapp.net".parse().unwrap());
+            assert!(device.get_client_payload().device_pairing_data.is_unset());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_late_pairing_command_does_not_reconfigure_a_connected_worker() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker
+            .handle_command(Command::StartPairing(PairingHistory::FullThreeYears))
+            .await;
+        assert_eq!(worker.status, LinkStatus::Connected);
+        assert_eq!(worker.pairing_history, None);
     }
 }

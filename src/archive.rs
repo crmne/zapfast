@@ -412,7 +412,12 @@ impl Archive {
         Self::prepare(Connection::open_in_memory()?)
     }
 
-    fn prepare(connection: Connection) -> Result<Self> {
+    fn prepare(mut connection: Connection) -> Result<Self> {
+        // Reserve the writer before reading. A second connection can otherwise
+        // commit between the read and write, making a WAL snapshot impossible
+        // to upgrade even when a busy timeout is installed.
+        connection.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
+        connection.busy_timeout(std::time::Duration::from_secs(10))?;
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
         connection.execute_batch(labels::SCHEMA)?;
@@ -2448,6 +2453,40 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn writer_transaction_reserves_before_a_competing_connection_can_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("synthetic.db");
+        let archive = Archive::prepare(Connection::open(&path).unwrap()).unwrap();
+        let other = Connection::open(&path).unwrap();
+        other.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let transaction = archive.connection.unchecked_transaction().unwrap();
+        transaction
+            .query_row("SELECT COUNT(*) FROM chats", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        let error = other
+            .execute(
+                "INSERT INTO meta(key,value) VALUES ('synthetic-writer','waiting')",
+                [],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseBusy)
+        );
+        archive
+            .ensure_chat("synthetic@s.whatsapp.net", "Fixture")
+            .unwrap();
+        transaction.commit().unwrap();
+        other
+            .execute(
+                "INSERT INTO meta(key,value) VALUES ('synthetic-writer','saved')",
+                [],
+            )
+            .unwrap();
+        assert!(archive.chat("synthetic@s.whatsapp.net").unwrap().is_some());
+    }
+
     pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
