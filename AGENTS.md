@@ -165,7 +165,41 @@ protocol. These notes are for coding agents and new contributors.
   `src/call_audio.rs` bridges the engine's 16 kHz frames to a
   fastframe-audio microphone and a speaker output of the call's own behind
   stable channels, so a device change rebinds a stream instead of the call;
-  its pickers list and open devices by the system's id (`DeviceId`). `backend/worker/calls.rs` owns at most one
+  its pickers list and open devices by the system's id (`DeviceId`).
+  `call_audio/echo.rs` cancels the speaker's echo from the microphone through
+  `call_audio/chain.rs`: sonora's high-pass filter, WebRTC's AEC3
+  (`sonora-aec3`'s block processor, driven directly and framed as sonora's
+  wrapper frames it, because sonora's pipeline takes no AEC3 configuration),
+  then sonora's pipeline for noise suppression and AGC2 only; all Rust, no
+  C++ or system library. AEC3 runs `chain::tuned`: a 60-block main filter and
+  an adaptive reverberation model starting at a one-second tail
+  (`ep_strength.default_len = -0.985`), measured on a recording of desk
+  speakers in an untreated room (11 dB of echo removed with the stock
+  settings, 26 with these); a fixed long tail instead suppressed double talk
+  in a synthetic reverberant room. The call's `MixOutput` hands every block
+  it plays to a `Monitor` (`echo::Tap`) that mixes it mono into an `rtrb`
+  ring on the audio thread, never waiting or allocating, and the microphone's
+  reading thread drains it and runs both sides in 10 ms chunks at 16 kHz
+  before packing the engine's frames. The reference is taken as played, not
+  as the engine queued it, so the queue's depth never shifts the alignment;
+  the devices' reported latencies are only AEC3's starting hint, and it finds
+  the delay itself (within about 600 ms), so the microphone's reader never
+  waits for the engine: `call_audio::offer` lets the oldest queued frame go
+  instead, or a call answered before its media is up leaves the microphone a
+  second behind and the canceller cancels nothing. One `FarEnd` per call
+  links the two sides across device changes.
+  `ZAPFAST_CALL_AUDIO_DUMP=<folder>` (`call_audio/dump.rs`, never by
+  default) writes each microphone stream's reference, raw microphone and
+  output as 16 kHz float WAV in the canceller's 10 ms chunks, plus the order
+  they were fed in; `examples/aec_replay.rs` replays one exactly (a test
+  checks it is sample for sample) with other AEC3 settings (`--set`, by
+  `chain::apply_setting`'s names), scores far-end-only seconds and a voice
+  mixed in, and measures the true echo delay by cross-correlation. Recordings
+  are real voices and never enter the repository:
+  `ZAPFAST_ECHO_RECORDING=<…-reference.wav>` runs the recorded-room test on
+  one, which passes untouched without it. AGC2 applies digital gain only, from 0 up to 20 dB (normalize's
+  cap), never the system's microphone volume. Headphones need no setting:
+  AEC3's transparent mode stops suppressing when it hears no echo. `backend/worker/calls.rs` owns at most one
   call per account; the window (`app/calls.rs`) holds one call across all
   accounts with its `AccountId`, routes call actions to that account's
   backend, and declines another account's offer while one is up.
@@ -236,9 +270,9 @@ protocol. These notes are for coding agents and new contributors.
   cameras through linuxvideo on Linux (pure Rust, no build-time bindings) and
   nokhwa on macOS and Windows, converts every layout to YUV 4:2:0, and the
   call's capture thread encodes it with openh264 (Constrained Baseline, 720p
-  at most, 20 fps) into the library's timed `VideoSource`. `src/video_rate.rs`
+  at most, 25 fps) into the library's timed `VideoSource`. `src/video_rate.rs`
   adapts the bitrate (from 700 kbit/s) and the step of size and frame rate
-  (480p15, 540p20, 720p20) to the peer's RTCP loss, its REMB, dropped video,
+  (480p, 540p and 720p, all at 25 fps, preferring motion to size) to the peer's RTCP loss, its REMB, dropped video,
   and queue delay (the round trip from its reports' LSR/DLSR above the call's
   shortest, since a deep buffer holds seconds before it loses), and climbs
   quickly back only to just under where loss was last reported, slowly past it;

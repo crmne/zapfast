@@ -27,6 +27,16 @@ pub(crate) struct Mix {
     format: (u32, u16),
     slot: MixSlot,
     idle: bool,
+    monitor: Option<Box<dyn Monitor>>,
+}
+
+/// Watches what an output hands its device, on the audio thread, so it must never wait or
+/// allocate: a call's echo canceller hears the far end's voice through one, as it is played.
+pub(crate) trait Monitor: Send {
+    /// The stream's rate and channel count, told before its first block and on every reopen.
+    fn configure(&mut self, sample_rate: u32, channels: u16);
+    /// One block of interleaved samples, as the device is handed them.
+    fn rendered(&mut self, out: &[f32]);
 }
 
 /// Where [`Mix`] leaves each mixer it makes.
@@ -40,13 +50,14 @@ impl MixSlot {
 }
 
 impl Mix {
-    fn new() -> (Self, MixSlot) {
+    fn new(monitor: Option<Box<dyn Monitor>>) -> (Self, MixSlot) {
         let slot = MixSlot::default();
         let mix = Self {
             source: None,
             format: (0, 0),
             slot: slot.clone(),
             idle: true,
+            monitor,
         };
         (mix, slot)
     }
@@ -54,6 +65,9 @@ impl Mix {
 
 impl Render for Mix {
     fn configure(&mut self, sample_rate: u32, channels: u16) {
+        if let Some(monitor) = &mut self.monitor {
+            monitor.configure(sample_rate, channels);
+        }
         if self.source.is_some() && self.format == (sample_rate, channels) {
             return;
         }
@@ -68,19 +82,22 @@ impl Render for Mix {
     }
 
     fn render(&mut self, out: &mut [f32]) {
-        let Some(source) = &mut self.source else {
+        if let Some(source) = &mut self.source {
+            // The mixer ends (`None`) while it has nothing playing or waiting, and starts again
+            // from the next sample once something is added.
+            let mut ended = self.idle;
+            for sample in out.iter_mut() {
+                let next = source.next();
+                ended = next.is_none();
+                *sample = next.unwrap_or(0.0);
+            }
+            self.idle = ended;
+        } else {
             out.fill(0.0);
-            return;
-        };
-        // The mixer ends (`None`) while it has nothing playing or waiting, and starts again from
-        // the next sample once something is added.
-        let mut ended = self.idle;
-        for sample in out.iter_mut() {
-            let next = source.next();
-            ended = next.is_none();
-            *sample = next.unwrap_or(0.0);
         }
-        self.idle = ended;
+        if let Some(monitor) = &mut self.monitor {
+            monitor.rendered(out);
+        }
     }
 
     fn idle(&self) -> bool {
@@ -108,12 +125,14 @@ pub(crate) struct Kept {
 impl MixOutput {
     /// Opens `device` in stereo at 48 kHz where the device takes it (the rate voice messages
     /// decode at), so the mixer seldom has to be made again. `call` names it as a call's sound in
-    /// the system's volume mixer, which lowers other sound while it plays. Opening asks the device,
-    /// which can take a moment: never on the UI thread.
+    /// the system's volume mixer, which lowers other sound while it plays; `monitor` is handed
+    /// every block the device plays. Opening asks the device, which can take a moment: never on
+    /// the UI thread.
     pub(crate) fn open(
         device: Device,
         pause_when_idle: Option<Duration>,
         call: bool,
+        monitor: Option<Box<dyn Monitor>>,
     ) -> Result<Self, String> {
         let follow_default = matches!(device, Device::Default);
         let options = fastframe_audio::OutputOptions {
@@ -125,7 +144,7 @@ impl MixOutput {
             role: call.then_some(fastframe_audio::StreamRole::Communication),
             ..fastframe_audio::OutputOptions::default()
         };
-        let (mix, slot) = Mix::new();
+        let (mix, slot) = Mix::new(monitor);
         let output =
             fastframe_audio::Output::open(options, mix).map_err(|error| error.to_string())?;
         let mixer = slot
@@ -149,6 +168,11 @@ impl MixOutput {
 
     pub(crate) fn device_id(&self) -> &fastframe_audio::DeviceId {
         self.output.device_id()
+    }
+
+    /// How far the output has played, and its latency as the device reports it.
+    pub(crate) fn clock(&self) -> fastframe_audio::Clock {
+        self.output.clock()
     }
 
     pub(crate) fn resume(&mut self) {
@@ -307,7 +331,7 @@ fn run_shared(requests: &mpsc::Receiver<Request>, generation: &AtomicU64) {
             wakers.retain(|wake| wake.strong_count() > 0);
             wakers.extend(wake);
             if output.is_none() {
-                match MixOutput::open(Device::Default, Some(IDLE_PAUSE), false) {
+                match MixOutput::open(Device::Default, Some(IDLE_PAUSE), false, None) {
                     Ok(opened) => {
                         log::info!(
                             "sound output: playing through {} ({})",
@@ -364,7 +388,7 @@ mod tests {
 
     #[test]
     fn the_mix_plays_what_is_added_and_is_idle_once_it_ends() {
-        let (mut mix, slot) = Mix::new();
+        let (mut mix, slot) = Mix::new(None);
         let mut out = [1.0_f32; 64];
         mix.render(&mut out);
         assert!(
@@ -385,7 +409,7 @@ mod tests {
 
     #[test]
     fn a_connected_player_keeps_the_mix_busy_until_it_is_dropped() {
-        let (mut mix, slot) = Mix::new();
+        let (mut mix, slot) = Mix::new(None);
         mix.configure(48_000, 2);
         let mixer = slot.take().expect("configuring makes a mixer");
         let player = rodio::Player::connect_new(&mixer);
@@ -399,9 +423,46 @@ mod tests {
         assert!(mix.idle());
     }
 
+    /// What a monitor was told: the format, and every sample.
+    type Told = (Option<(u32, u16)>, Vec<f32>);
+
+    /// Records what a monitor is told, as a call's echo tap would hear it.
+    struct Heard(Arc<Mutex<Told>>);
+
+    impl Monitor for Heard {
+        fn configure(&mut self, sample_rate: u32, channels: u16) {
+            self.0.lock().expect("unpoisoned").0 = Some((sample_rate, channels));
+        }
+
+        fn rendered(&mut self, out: &[f32]) {
+            self.0.lock().expect("unpoisoned").1.extend_from_slice(out);
+        }
+    }
+
+    #[test]
+    fn a_monitor_hears_every_block_played_silence_included() {
+        let heard = Arc::new(Mutex::new((None, Vec::new())));
+        let (mut mix, slot) = Mix::new(Some(Box::new(Heard(Arc::clone(&heard)))));
+        mix.configure(48_000, 2);
+        let mixer = slot.take().expect("configuring makes a mixer");
+        let mut out = [0.0_f32; 64];
+        mix.render(&mut out);
+        mixer.add(tone(32));
+        mix.render(&mut out);
+        let heard = heard.lock().expect("unpoisoned");
+        assert_eq!(heard.0, Some((48_000, 2)));
+        assert_eq!(heard.1.len(), 128, "the idle block and the playing one");
+        assert!(heard.1[..64].iter().all(|sample| *sample == 0.0));
+        assert_eq!(
+            &heard.1[64..],
+            &out[..],
+            "exactly what the device was handed"
+        );
+    }
+
     #[test]
     fn only_another_format_makes_a_new_mixer() {
-        let (mut mix, slot) = Mix::new();
+        let (mut mix, slot) = Mix::new(None);
         mix.configure(48_000, 2);
         assert!(slot.take().is_some());
         mix.configure(48_000, 2);

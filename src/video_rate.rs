@@ -32,27 +32,29 @@ pub struct Tier {
     pub name: &'static str,
 }
 
-/// The steps, smallest first. The top one is the budget a call's camera was always encoded within.
+/// The steps, smallest first. Every step keeps 25 frames a second: a call reads as live through
+/// smooth motion more than through a larger picture, so a slower path gets a smaller picture, never
+/// a choppier one. 720p only comes once the path clearly carries it.
 pub const TIERS: [Tier; 3] = [
     Tier {
         long_side: 854,
         short_side: 480,
-        fps: 15,
+        fps: 25,
         max_bitrate: 600_000,
         name: "480p",
     },
     Tier {
         long_side: 960,
         short_side: 540,
-        fps: 20,
-        max_bitrate: 1_000_000,
+        fps: 25,
+        max_bitrate: 1_300_000,
         name: "540p",
     },
     Tier {
         long_side: 1280,
         short_side: 720,
-        fps: 20,
-        max_bitrate: 1_500_000,
+        fps: 25,
+        max_bitrate: 1_800_000,
         name: "720p",
     },
 ];
@@ -67,7 +69,7 @@ pub const START_BITRATE: u32 = 700_000;
 const STEP_UP: [u32; 2] = [TIERS[0].max_bitrate, TIERS[1].max_bitrate];
 /// The rate below which the picture steps down from tier `n + 1` to `n`. Lower than the step up,
 /// so a rate hovering at a boundary does not flip the picture size back and forth.
-const STEP_DOWN: [u32; 2] = [450_000, 850_000];
+const STEP_DOWN: [u32; 2] = [450_000, 1_100_000];
 /// How long a rate has to hold before the picture grows, the first time.
 const STEP_UP_HOLD: Duration = Duration::from_secs(4);
 /// How soon after a step up a sign of congestion means the larger picture is what the path could
@@ -708,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn loss_lowers_the_rate_and_a_lot_of_it_drops_the_picture_to_480p_at_15_fps() {
+    fn loss_lowers_the_rate_and_a_lot_of_it_drops_the_picture_to_480p() {
         let (mut control, share) = control();
         let now = Instant::now();
         // A quarter of the video lost: the rate comes down by an eighth.
@@ -720,7 +722,7 @@ mod tests {
         let setting = control.setting();
         assert!(setting.bitrate < 450_000, "{setting:?}");
         assert_eq!(setting.tier().name, "480p");
-        assert_eq!(setting.tier().fps, 15);
+        assert_eq!(setting.tier().fps, 25);
         assert_eq!(share.load(), setting);
         // And never below the floor.
         for step in 0..30 {

@@ -303,3 +303,18 @@ video it sends and the video it receives there, as raw H.264
 players read. Nothing is written without the variable. The files are the
 picture of both people on the call, so only set it for a call whose other side
 agreed, and delete the files when you are done.
+
+### Saving a call's audio for diagnosis
+
+To work on echo cancellation, start ZapFast with `ZAPFAST_CALL_AUDIO_DUMP` set
+to a folder. Each call's microphone stream then writes four files there,
+`<time>-<stream>-reference.wav` (the other side's voice as your speaker played
+it), `-microphone.wav` (your microphone before any processing), `-output.wav`
+(what was sent after echo cancellation, noise suppression and level control),
+all mono 16 kHz, and `-order.csv`, which lets a developer replay the recording
+through the echo canceller exactly as the call ran it
+(`cargo run --release --example aec_replay -- <folder>/<time>-<stream>-reference.wav`,
+with the options listed at the top of `examples/aec_replay.rs`).
+Nothing is written without the variable. The files are both people's voices,
+so only set it for a call whose other side agreed, and delete the files when
+you are done.

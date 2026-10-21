@@ -107,6 +107,11 @@ impl Microphone {
         self.opened.0
     }
 
+    /// How much the input has captured, and its latency as the device reports it.
+    pub fn clock(&self) -> fastframe_audio::Clock {
+        self.input.clock()
+    }
+
     /// The id of the device recording, which is the default's when a picked one was missing.
     pub fn device_id(&self) -> &fastframe_audio::DeviceId {
         self.input.device_id()

@@ -138,6 +138,13 @@ rodio = { git = "https://github.com/crmne/rodio", rev = "742090d57a4c83b23bd990b
 # The ring a microphone's samples cross from the audio thread to the reader,
 # which never waits or allocates on the audio thread. Already in the tree.
 rtrb = "0.3"
+# Echo cancellation for calls: WebRTC's audio processing (AEC3, its noise
+# suppressor and AGC2) ported to Rust, so it builds wherever Rust does with no
+# C++, meson or system library. Its C++ test suite runs against the port.
+sonora = "0.2"
+# AEC3 itself, driven directly with a configuration for speakers in a room,
+# which sonora's pipeline does not take. Already included through sonora.
+sonora-aec3 = "0.2"
 # rodio's own copy, named to decode a video's AAC track that `mp4` reads:
 # symphonia 0.5's MP4 reader refuses the sound of WhatsApp's videos (#265).
 symphonia = { version = "0.5.5", default-features = false, features = ["aac"] }
