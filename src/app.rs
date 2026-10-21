@@ -1190,6 +1190,8 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
+        app.sync_saving_allowed();
+        app.sync_download_saving();
         let folder = app.settings.download_folder.clone();
         for account in &app.accounts {
             account
@@ -1728,6 +1730,13 @@ impl App {
                 }
             }
         };
+        account.backend.send(Command::SetDownloadSavingAllowed(
+            !self.app_lock.is_locked(),
+        ));
+        account.backend.send(Command::SetDownloadSaving {
+            preferences: self.settings.download_preferences.clone(),
+            automatic: account.settings.automatic_saving.clone(),
+        });
         account.backend.send(Command::SetDownloadFolder(
             self.settings.download_folder.clone(),
         ));
@@ -2332,6 +2341,50 @@ impl App {
             self.dialog = None;
             self.recording = None;
             self.player.stop();
+        }
+    }
+
+    /// Sends the process-wide lock permission to every account only when it changes.
+    fn sync_saving_allowed(&mut self) {
+        let allowed = !self.app_lock.is_locked();
+        for account in &mut self.accounts {
+            if account.saving_allowed_sent != Some(allowed) {
+                account.saving_allowed_sent = Some(allowed);
+                account
+                    .backend
+                    .send(Command::SetDownloadSavingAllowed(allowed));
+            }
+        }
+    }
+
+    /// Adopts shared save controls without discarding older accounts' explicit folder choices.
+    fn adopt_download_preferences(&mut self, preferences: crate::settings::DownloadPreferences) {
+        // A legacy custom folder already saved automatically downloaded files.
+        // Adopting new controls must preserve that choice in the other accounts.
+        if self.settings.download_preferences.is_none() && self.settings.download_folder.is_some() {
+            for account in &mut self.accounts {
+                if account.settings.auto_download
+                    && account.settings.automatic_saving.since.is_none()
+                {
+                    account.settings.automatic_saving = crate::settings::AutomaticSaving {
+                        since: Some(0),
+                        include_older: true,
+                    };
+                    account.settings_dirty = true;
+                }
+            }
+        }
+        self.settings.download_preferences = Some(preferences);
+        self.mark_settings_dirty();
+    }
+
+    /// Sends shared destination preferences and each account's own automatic-saving policy.
+    fn sync_download_saving(&self) {
+        for account in &self.accounts {
+            account.backend.send(Command::SetDownloadSaving {
+                preferences: self.settings.download_preferences.clone(),
+                automatic: account.settings.automatic_saving.clone(),
+            });
         }
     }
 
@@ -3798,6 +3851,7 @@ impl App {
                     sound: Some(crate::settings::NotificationSound::Custom(path)),
                 });
             }
+            Event::AttachmentSaved(result) => self.download_save_status = Some(result),
             Event::DownloadFolderPicked(path) => {
                 if live {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
@@ -6623,12 +6677,19 @@ impl App {
                 }
             }
             Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
-            Action::SaveAttachmentAs { path, name } => {
-                self.backend
-                    .send(Command::SaveAttachmentAs { source: path, name });
+            Action::SaveAttachmentAs {
+                path,
+                name,
+                attachment,
+            } => {
+                self.backend.send(Command::SaveAttachmentAs {
+                    source: path,
+                    name,
+                    attachment,
+                });
             }
-            Action::SaveAttachments { files } => {
-                self.backend.send(Command::SaveAttachments { files });
+            Action::SaveAttachments { files, chat } => {
+                self.backend.send(Command::SaveAttachments { files, chat });
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
@@ -8196,6 +8257,33 @@ impl App {
             }
             Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
             Action::SetChatVoiceSpeed { chat, speed } => self.set_chat_voice_speed(chat, speed),
+            Action::SetDownloadPreferences(preferences) => {
+                self.adopt_download_preferences(preferences);
+                self.sync_download_saving();
+            }
+            Action::SetAutomaticSaving {
+                enabled,
+                include_older,
+            } => {
+                if self.settings.download_preferences.is_none() {
+                    self.adopt_download_preferences(crate::settings::DownloadPreferences {
+                        organization: crate::settings::DownloadOrganization::Flat,
+                        naming: crate::settings::DownloadNaming::Original,
+                    });
+                }
+                let previous = self.account().settings.automatic_saving.since;
+                let since = match previous {
+                    Some(0) if !include_older => crate::util::now(),
+                    Some(since) => since,
+                    None => crate::util::now(),
+                };
+                self.account_mut().settings.automatic_saving = crate::settings::AutomaticSaving {
+                    since: enabled.then_some(since),
+                    include_older,
+                };
+                self.account_mut().settings_dirty = true;
+                self.sync_download_saving();
+            }
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
@@ -8606,6 +8694,7 @@ impl App {
         }
         self.tick_app_lock(ctx);
         self.tick_login_item();
+        self.sync_saving_allowed();
         // Nobody reads behind the lock screen: messages stay unread, the
         // phone keeps notifying, and notifications here say nothing.
         if self.app_lock.is_locked() {
@@ -8747,6 +8836,7 @@ impl App {
             return;
         }
         self.app_lock.lock();
+        self.sync_saving_allowed();
         // Nothing private stays readable in the tree behind the lock screen.
         self.announcer.forget_private();
         self.window_focused = false;
@@ -11642,6 +11732,122 @@ mod tests {
                 .any(|command| matches!(command, Command::SetKeepChatsArchived(false))),
             "the hidden account unarchives on new messages too"
         );
+    }
+
+    #[test]
+    fn download_layout_is_shared_but_automatic_saving_belongs_to_one_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let preferences = crate::settings::DownloadPreferences {
+            organization: crate::settings::DownloadOrganization::ByChatMonth,
+            naming: crate::settings::DownloadNaming::DatePrefixed,
+        };
+        app.apply(Action::SetDownloadPreferences(preferences.clone()), &ctx);
+        app.apply(
+            Action::SetAutomaticSaving {
+                enabled: true,
+                include_older: false,
+            },
+            &ctx,
+        );
+        assert!(
+            app.accounts[app.active]
+                .settings
+                .automatic_saving
+                .since
+                .is_some()
+        );
+        assert!(
+            app.accounts[1 - app.active]
+                .settings
+                .automatic_saving
+                .since
+                .is_none()
+        );
+        assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+            command, Command::SetDownloadSaving { preferences: Some(ref received), automatic: ref policy }
+                if received == &preferences && policy.since.is_none()
+        )), "the hidden account gets layout, without inheriting automatic saving");
+        let since = app.account().settings.automatic_saving.since;
+        app.apply(
+            Action::SetAutomaticSaving {
+                enabled: true,
+                include_older: true,
+            },
+            &ctx,
+        );
+        assert_eq!(app.account().settings.automatic_saving.since, since);
+        app.apply(
+            Action::SetAutomaticSaving {
+                enabled: false,
+                include_older: false,
+            },
+            &ctx,
+        );
+        assert!(app.account().settings.automatic_saving.since.is_none());
+    }
+
+    #[test]
+    fn adopting_save_controls_preserves_legacy_accounts_without_reenabling_the_disabled_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        app.settings.download_preferences = None;
+        app.settings.download_folder = Some(directory.path().join("Downloads"));
+        for account in &mut app.accounts {
+            account.settings.auto_download = true;
+        }
+        app.apply(
+            Action::SetAutomaticSaving {
+                enabled: false,
+                include_older: false,
+            },
+            &egui::Context::default(),
+        );
+        assert_eq!(
+            app.settings
+                .download_preferences
+                .as_ref()
+                .unwrap()
+                .organization,
+            crate::settings::DownloadOrganization::Flat
+        );
+        assert!(
+            app.accounts[app.active]
+                .settings
+                .automatic_saving
+                .since
+                .is_none()
+        );
+        assert_eq!(
+            app.accounts[1 - app.active].settings.automatic_saving.since,
+            Some(0)
+        );
+        assert!(
+            app.accounts[1 - app.active]
+                .settings
+                .automatic_saving
+                .include_older
+        );
+    }
+
+    #[test]
+    fn excluding_older_files_after_legacy_adoption_starts_a_real_cutoff() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        app.settings.download_preferences = None;
+        app.settings.download_folder = Some(directory.path().join("Downloads"));
+        app.account_mut().settings.auto_download = true;
+        let before = crate::util::now();
+        app.apply(
+            Action::SetAutomaticSaving {
+                enabled: true,
+                include_older: false,
+            },
+            &egui::Context::default(),
+        );
+        assert!(app.account().settings.automatic_saving.since.unwrap() >= before);
+        assert!(!app.account().settings.automatic_saving.include_older);
     }
 
     /// `zapfast quit` takes the tray's Quit path, and does even behind the
