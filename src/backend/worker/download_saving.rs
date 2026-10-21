@@ -182,6 +182,10 @@ impl Worker {
         if !manual && self.download_saving.automatic.since.is_none() {
             return;
         }
+        let attachment = (chat.to_owned(), id.to_owned(), card);
+        if self.download_saving.saved.contains(&attachment) {
+            return;
+        }
         let Ok(Some(message)) = self.archive.message(chat, id) else {
             return;
         };
@@ -199,7 +203,6 @@ impl Worker {
         let Some(target) = self.copy_destination(&root, chat, id, card) else {
             return;
         };
-        let attachment = (chat.to_owned(), id.to_owned(), card);
         if !self.download_saving.saved.insert(attachment.clone()) {
             return;
         }
