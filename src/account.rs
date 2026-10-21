@@ -39,6 +39,9 @@ pub struct Account {
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
+    /// Whether the open chat had a draft when opened. Keep its list priority
+    /// stable while the reader types, clears, or sends that draft.
+    pub(crate) open_draft_priority: bool,
     /// This account's media cache as last measured, for Settings. `None`
     /// until a measurement succeeds, so a failed one shows no numbers
     /// rather than zeroes.
@@ -165,6 +168,7 @@ impl Account {
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
+            open_draft_priority: false,
             storage_stats: None,
             storage_token: 0,
             storage_clearing: false,

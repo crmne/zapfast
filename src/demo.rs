@@ -8488,6 +8488,61 @@ mod tests {
         );
     }
 
+    /// Actual composer input leaves the list steady; parking or discarding
+    /// that draft changes its priority only after leaving the conversation.
+    #[test]
+    fn typing_and_clearing_a_draft_do_not_reorder_the_chat_list() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let ids = |app: &App| -> Vec<String> {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.id.clone())
+                .collect()
+        };
+        let original = ids(&app);
+        let draft = SAMPLES[3].id;
+        let pinned = SAMPLES[0].id;
+        app.actions
+            .push(crate::model::Action::OpenChat(draft.into()));
+        app.focus_composer = true;
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Synthetic unfinished reply".into())],
+        );
+        assert_eq!(app.composer, "Synthetic unfinished reply");
+        assert_eq!(ids(&app), original, "typing cannot promote the open chat");
+        app.actions
+            .push(crate::model::Action::OpenChat(pinned.into()));
+        frame_with(&mut app, &ctx, vec![]);
+        let parked = ids(&app);
+        assert_eq!(parked[0], pinned, "the pin stays first");
+        assert_eq!(parked[1], draft, "the parked draft follows the pin");
+        app.actions
+            .push(crate::model::Action::OpenChat(draft.into()));
+        app.focus_composer = true;
+        render(&mut app, &ctx);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Backspace, egui::Modifiers::NONE)],
+        );
+        assert!(app.composer.is_empty());
+        assert_eq!(ids(&app), parked, "clearing cannot demote the open chat");
+        app.actions
+            .push(crate::model::Action::OpenChat(pinned.into()));
+        frame_with(&mut app, &ctx, vec![]);
+        assert_eq!(ids(&app), original, "leaving drops the cleared draft");
+    }
+
     #[test]
     fn enter_sends_and_shift_enter_breaks_the_line() {
         let mut app = app();
@@ -18696,6 +18751,13 @@ mod bubble_detail_tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         apply_flags(&mut app, Some("drafts"));
+        let ordered = app.visible_chats();
+        assert_eq!(ordered[0].id, SAMPLES[0].id, "the pin stays above drafts");
+        assert_eq!(ordered[1].id, SAMPLES[2].id, "the newer draft follows pins");
+        assert_eq!(
+            ordered[2].id, SAMPLES[3].id,
+            "drafts precede newer messages"
+        );
         let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
         let texts: Vec<(String, egui::Color32)> = shapes
             .iter()
