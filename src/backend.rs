@@ -612,7 +612,7 @@ pub enum Command {
     /// Internal: a saved copy finished. File failures never replace media state.
     AttachmentSaved {
         generation: u64,
-        destination: PathBuf,
+        attachment: (String, String, Option<usize>),
         result: Result<PathBuf, String>,
     },
     /// Where new downloads go; `None` is the cache.

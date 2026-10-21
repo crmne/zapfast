@@ -103,7 +103,10 @@ fn copy_verified_with_gate(
         .strip_prefix(root)
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "Export outside selected folder"))?;
     std::fs::create_dir_all(root)?;
-    if !plain(root)?.is_dir() {
+    // The reader may choose a linked folder. Resolve that choice once, while
+    // continuing to reject links anywhere below the selected root.
+    let root = std::fs::canonicalize(root)?;
+    if !plain(&root)?.is_dir() {
         return Err(Error::new(ErrorKind::InvalidInput, "Invalid export folder"));
     }
     let mut current = root.to_path_buf();
@@ -121,10 +124,16 @@ fn copy_verified_with_gate(
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid export folder"));
         }
     }
+    let folder = current;
+    let destination = folder.join(
+        destination
+            .file_name()
+            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Invalid export name"))?,
+    );
     let mut input = std::fs::File::open(source)?;
     let mut staging = tempfile::Builder::new()
         .prefix(".zapfast-export-")
-        .tempfile_in(folder)?;
+        .tempfile_in(&folder)?;
     let mut buffer = [0u8; 64 * 1024];
     loop {
         check()?;
@@ -364,6 +373,42 @@ fn original_filename(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both managed subfolders and direct picker destinations accept a linked root.
+    #[cfg(unix)]
+    #[test]
+    fn selected_linked_roots_preserve_confinement_below_the_resolved_directory() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("cache.pdf");
+        std::fs::write(&source, b"synthetic attachment").unwrap();
+        let actual = directory.path().join("actual");
+        std::fs::create_dir(&actual).unwrap();
+        let selected = directory.path().join("selected");
+        symlink(&actual, &selected).unwrap();
+        for name in ["Account-1/chat/invoice.pdf", "picker.pdf"] {
+            let target = selected.join(name);
+            let copied = if name.starts_with("Account-") {
+                copy_verified_guarded(
+                    &source,
+                    &selected,
+                    &target,
+                    || true,
+                    &std::sync::Mutex::new(()),
+                )
+            } else {
+                copy_verified_when(&source, &selected, &target, || true)
+            }
+            .unwrap();
+            assert_eq!(copied, std::fs::canonicalize(&actual).unwrap().join(name));
+            assert_eq!(std::fs::read(copied).unwrap(), b"synthetic attachment");
+        }
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(&outside, actual.join("escape")).unwrap();
+        assert!(copy_verified(&source, &selected, &selected.join("escape/hidden.pdf")).is_err());
+        assert_eq!(std::fs::read_dir(outside).unwrap().count(), 0);
+    }
 
     #[test]
     fn revoked_copy_never_publishes_a_partial_attachment() {

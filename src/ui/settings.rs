@@ -1050,7 +1050,7 @@ fn download_management_rows(files: &mut Section, app: &App) {
             let automatic = app.account().settings.automatic_saving.clone();
             let legacy = app.settings.download_preferences.is_none() && app.settings.download_folder.is_some() && app.account().settings.auto_download;
             let mut enabled = automatic.since.is_some() || legacy;
-            ui.add_enabled_ui(app.settings.download_folder.is_some(), |ui| {
+            ui.add_enabled_ui(enabled || app.settings.download_folder.is_some(), |ui| {
                 let response = widgets::switch(ui, &app.palette, &mut enabled);
                 theme::reveal_focus(&response);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), enabled, crate::i18n::gettext(app.locale, "Save received attachments automatically")));
@@ -1065,7 +1065,7 @@ fn download_management_rows(files: &mut Section, app: &App) {
             let automatic = app.account().settings.automatic_saving.clone();
             let legacy = app.settings.download_preferences.is_none() && app.settings.download_folder.is_some() && app.account().settings.auto_download;
             let mut include_older = automatic.include_older || legacy;
-            ui.add_enabled_ui((automatic.since.is_some() || legacy) && app.settings.download_folder.is_some(), |ui| {
+            ui.add_enabled_ui(automatic.since.is_some() || legacy, |ui| {
                 let response = widgets::switch(ui, &app.palette, &mut include_older);
                 theme::reveal_focus(&response);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), include_older, crate::i18n::gettext(app.locale, "Include older attachments")));

@@ -14,7 +14,7 @@ pub(super) struct State {
     pub preferences: Option<DownloadPreferences>,
     automatic: AutomaticSaving,
     pub manual: HashSet<(String, String, Option<usize>)>,
-    saved: HashSet<PathBuf>,
+    saved: HashSet<(String, String, Option<usize>)>,
     pool: Option<Arc<tokio::sync::Semaphore>>,
     generation: Arc<AtomicU64>,
     publication: Arc<Mutex<()>>,
@@ -45,7 +45,7 @@ impl Default for State {
 }
 
 impl State {
-    /// Revokes queued publication and forgets completed destination deduplication.
+    /// Revokes queued publication and forgets completed attachment deduplication.
     pub fn invalidate(&mut self) {
         let _publication = self
             .publication
@@ -62,12 +62,17 @@ impl State {
         self.allowed = allowed;
     }
     /// Accepts callbacks only for the current settings and allows failed copies to retry.
-    pub fn completed(&mut self, generation: u64, destination: &Path, success: bool) -> bool {
+    pub fn completed(
+        &mut self,
+        generation: u64,
+        attachment: &(String, String, Option<usize>),
+        success: bool,
+    ) -> bool {
         if self.generation.load(Ordering::SeqCst) != generation {
             return false;
         }
         if !success {
-            self.saved.remove(destination);
+            self.saved.remove(attachment);
         }
         true
     }
@@ -194,11 +199,11 @@ impl Worker {
         let Some(target) = self.copy_destination(&root, chat, id, card) else {
             return;
         };
-        if !self.download_saving.saved.insert(target.clone()) {
+        let attachment = (chat.to_owned(), id.to_owned(), card);
+        if !self.download_saving.saved.insert(attachment.clone()) {
             return;
         }
         let source = source.to_owned();
-        let destination = target.clone();
         let epoch = self.download_saving.generation.clone();
         let publication = self.download_saving.publication.clone();
         let generation = epoch.load(Ordering::SeqCst);
@@ -218,7 +223,7 @@ impl Worker {
                 .and_then(|result| result.map_err(|_| "Could not save the attachment copy. Check the download folder and available space.".to_owned()));
             let _ = commands.send(Command::AttachmentSaved {
                 generation,
-                destination,
+                attachment,
                 result,
             });
         });
@@ -422,9 +427,12 @@ mod tests {
             revoked_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
             "a winning publication is already visible when revocation finishes"
         );
-        assert_eq!(copying.join().unwrap().unwrap(), target);
+        assert_eq!(
+            copying.join().unwrap().unwrap(),
+            std::fs::canonicalize(&target).unwrap()
+        );
         let mut state = revoking.join().unwrap();
-        assert!(!state.completed(generation, &target, true));
+        assert!(!state.completed(generation, &("chat".into(), "message".into(), None), true));
         let revoked_generation = state.generation.clone();
         let gate = state.publication.clone();
         let late_target = target.with_file_name("late.pdf");
@@ -459,7 +467,7 @@ mod tests {
         );
         state.set_allowed(false);
         assert_ne!(state.generation.load(Ordering::SeqCst), generation);
-        assert!(!state.completed(generation, Path::new("synthetic.pdf"), true));
+        assert!(!state.completed(generation, &("chat".into(), "message".into(), None), true));
         // Teardown also recovers the poisoned gate and invalidates without panicking.
         drop(state);
     }
@@ -715,6 +723,64 @@ mod tests {
         assert!(destination(&worker).is_none());
     }
 
+    /// Equal document names must not suppress another attachment or repeat an export.
+    #[tokio::test]
+    async fn distinct_attachments_with_the_same_name_are_each_saved_once() {
+        let (mut worker, _, mut commands, _) = super::super::receipt_tests::worker();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("exports");
+        worker.download_folder = Some(root.clone());
+        worker.download_saving.configure(
+            Some(DownloadPreferences {
+                organization: DownloadOrganization::Flat,
+                ..Default::default()
+            }),
+            AutomaticSaving {
+                since: Some(100),
+                include_older: false,
+            },
+        );
+        let mut attachments = Vec::new();
+        for (id, bytes) in [
+            ("first", b"first attachment"),
+            ("other", b"other attachment"),
+        ] {
+            let mut message = document(&worker, 101);
+            message.id = id.into();
+            worker.archive.insert_message(&message, None).unwrap();
+            let source = directory.path().join(id);
+            std::fs::write(&source, bytes).unwrap();
+            worker.save_download_copy(&message.chat, &message.id, None, &source, false);
+            attachments.push((message, source));
+        }
+        let mut saved = Vec::new();
+        for _ in 0..2 {
+            let command = tokio::time::timeout(std::time::Duration::from_secs(10), commands.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let Command::AttachmentSaved {
+                result: Ok(path), ..
+            } = &command
+            else {
+                panic!("successful saved-copy callback")
+            };
+            saved.push(std::fs::read(path).unwrap());
+            worker.handle_command(command).await;
+        }
+        saved.sort();
+        assert_eq!(
+            saved,
+            vec![b"first attachment".to_vec(), b"other attachment".to_vec()]
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        for (message, source) in attachments {
+            worker.save_download_copy(&message.chat, &message.id, None, &source, false);
+        }
+        assert!(commands.try_recv().is_err());
+        assert_eq!(worker.download_saving.saved.len(), 2);
+    }
+
     #[tokio::test]
     async fn automatic_copy_failure_keeps_playable_media_and_can_retry() {
         let (mut worker, _, mut commands, _) = super::super::receipt_tests::worker();
@@ -743,7 +809,7 @@ mod tests {
             .unwrap();
         let Command::AttachmentSaved {
             generation,
-            destination,
+            attachment,
             result,
         } = finished
         else {
@@ -752,7 +818,7 @@ mod tests {
         assert!(result.is_err());
         worker
             .download_saving
-            .completed(generation, &destination, false);
+            .completed(generation, &attachment, false);
         assert_eq!(
             worker
                 .archive

@@ -6341,12 +6341,12 @@ impl Worker {
             Command::SetDownloadSavingAllowed(allowed) => self.download_saving.set_allowed(allowed),
             Command::AttachmentSaved {
                 generation,
-                destination,
+                attachment,
                 result,
             } => {
                 if self
                     .download_saving
-                    .completed(generation, &destination, result.is_ok())
+                    .completed(generation, &attachment, result.is_ok())
                 {
                     self.emit(Event::AttachmentSaved(result));
                 }
