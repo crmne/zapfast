@@ -22,6 +22,9 @@ mod pins;
 pub use pins::{Pinned, Pinner};
 mod polls;
 mod receipts;
+mod reconcile;
+#[cfg(test)]
+mod reconcile_tests;
 mod stars;
 mod stickers;
 pub use polls::PollVote;
@@ -1138,6 +1141,7 @@ impl Archive {
                 history_order = COALESCE(messages.history_order, excluded.history_order)",
             params![lid_chat, phone_chat],
         )?;
+        Self::move_message_metadata(&transaction, &lid_chat, &phone_chat)?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],

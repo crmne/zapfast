@@ -17,6 +17,11 @@ Each linked device can have one connection. Two clients using the same device
 keys will disconnect each other. A second ZapFast launch reopens the existing
 window instead of starting another instance.
 
+**Development builds:** when WhatsApp identifies a contact previously known
+by a private id, ZapFast merges that chat into the contact's phone-number
+chat. Messages keep their stars, pins, and motion-photo clips. Newer star and pin
+changes take precedence, including removing a star or pin.
+
 ## What the phone is for
 
 - **History.** WhatsApp replays only recent history to a fresh device.
