@@ -47,20 +47,19 @@ pub fn group_invite_code(value: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let lower = trimmed.to_ascii_lowercase();
-    let url_to_parse =
-        if lower.starts_with("chat.whatsapp.com/") || lower.starts_with("www.chat.whatsapp.com/") {
-            format!("https://{trimmed}")
-        } else {
-            trimmed.to_owned()
-        };
-    let url = reqwest::Url::parse(&url_to_parse).ok()?;
-    if matches!(url.scheme(), "whatsapp" | "whatsapp-send") {
+    if let Ok(url) = reqwest::Url::parse(trimmed)
+        && matches!(url.scheme(), "whatsapp" | "whatsapp-send")
+    {
         let host = url.host_str().unwrap_or_default();
         if host.eq_ignore_ascii_case("chat") {
             for (key, val) in url.query_pairs() {
-                if key == "code" && is_valid_group_invite_code(&val) {
-                    return Some(val.into_owned());
+                if key == "code" {
+                    if is_valid_group_invite_code(&val) {
+                        return Some(val.into_owned());
+                    }
+                    if let Some(code) = http_group_invite_code(&val) {
+                        return Some(code);
+                    }
                 }
             }
         } else if host.eq_ignore_ascii_case("invite")
@@ -76,8 +75,28 @@ pub fn group_invite_code(value: &str) -> Option<String> {
         }
         return None;
     }
-    if !matches!(url.scheme(), "http" | "https")
-        || !url.host_str()?.eq_ignore_ascii_case("chat.whatsapp.com")
+    http_group_invite_code(trimmed)
+}
+
+fn http_group_invite_code(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let url_to_parse =
+        if lower.starts_with("chat.whatsapp.com/") || lower.starts_with("www.chat.whatsapp.com/") {
+            format!("https://{trimmed}")
+        } else {
+            trimmed.to_owned()
+        };
+    let url = reqwest::Url::parse(&url_to_parse).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?;
+    if !host.eq_ignore_ascii_case("chat.whatsapp.com")
+        && !host.eq_ignore_ascii_case("www.chat.whatsapp.com")
     {
         return None;
     }
@@ -210,11 +229,15 @@ mod tests {
         let code = "AbCdEf1234567890XyZ";
         for link in [
             format!("https://chat.whatsapp.com/{code}"),
+            format!("https://www.chat.whatsapp.com/{code}"),
             format!("https://chat.whatsapp.com/invite/{code}"),
             format!("http://CHAT.whatsapp.com/{code}/"),
             format!("https://chat.whatsapp.com/{code}?utm=1"),
             format!("chat.whatsapp.com/{code}"),
+            format!("www.chat.whatsapp.com/{code}"),
             format!("whatsapp://chat/?code={code}"),
+            format!("whatsapp://chat/?code=https%3A%2F%2Fchat.whatsapp.com%2F{code}"),
+            format!("whatsapp://chat/?code=https://chat.whatsapp.com/{code}"),
             format!("whatsapp://chat?code={code}"),
             format!("whatsapp-send://chat?code={code}"),
             format!("whatsapp://invite/{code}"),
@@ -229,6 +252,8 @@ mod tests {
             "https://chat.whatsapp.com/AbCdEf1234567890XyZ/extra",
             "https://chat.whatsapp.com/AbCd-Ef1234567890XyZ",
             "whatsapp://chat.whatsapp.com/AbCdEf1234567890XyZ",
+            "whatsapp://chat/?code=https://evil.example/AbCdEf1234567890XyZ",
+            "whatsapp://chat/?code=https%3A%2F%2Fevil.example%2FAbCdEf1234567890XyZ",
         ] {
             assert_eq!(group_invite_code(link), None, "{link}");
         }
