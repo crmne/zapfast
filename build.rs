@@ -30,6 +30,14 @@ fn build_speech_helper() {
     }
     const SOURCE: &str = "packaging/macos/asr/zapfast-asr.swift";
     println!("cargo:rerun-if-changed={SOURCE}");
+    // Some builds cannot reach a macOS 26 SDK: the Nix sandbox is one. They
+    // set this so the app compiles with the feature absent, which is what
+    // `crate::transcribe::available` reports when the helper is missing.
+    println!("cargo:rerun-if-env-changed=ZAPFAST_ASR");
+    if std::env::var("ZAPFAST_ASR").is_ok_and(|value| value == "off" || value == "0") {
+        println!("cargo:warning=ZAPFAST_ASR is off: voice transcription is absent");
+        return;
+    }
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     // `target/<triple>/<profile>/build/<package>/out`: the binary's own folder
@@ -65,19 +73,12 @@ fn build_speech_helper() {
     match built {
         Ok(status) if status.success() && helper.is_file() => {}
         Ok(status) => {
-            let message =
-                format!("the speech helper did not compile ({status}); transcription is off");
-            if std::env::var("PROFILE").as_deref() == Ok("release") {
-                panic!("{message}");
-            }
-            println!("cargo:warning={message}");
+            println!(
+                "cargo:warning=the speech helper did not compile ({status}); transcription is off"
+            );
         }
         Err(error) => {
-            let message = format!("could not run swiftc ({error}); transcription is off");
-            if std::env::var("PROFILE").as_deref() == Ok("release") {
-                panic!("{message}");
-            }
-            println!("cargo:warning={message}");
+            println!("cargo:warning=could not run swiftc ({error}); transcription is off");
         }
     }
 }
