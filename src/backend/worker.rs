@@ -1463,6 +1463,25 @@ struct ParsedMessage {
     receipts: Vec<wa::UserReceipt>,
 }
 
+/// The range WhatsApp checks before it archives or unarchives a chat on the
+/// phone: the chat's newest message. The phone ignores an archive change
+/// without one. Local call entries were never sent, so they name no message.
+fn archive_range(jid: &Jid, last: Option<&Message>) -> whatsapp_rust::SyncActionMessageRange {
+    let Some(last) = last else {
+        return whatsapp_rust::message_range(crate::util::now(), None, Vec::new());
+    };
+    let participant = (jid.is_group() && !last.from_me)
+        .then(|| Worker::jid_of(&last.sender))
+        .flatten();
+    let key = (!last.id.starts_with(crate::model::CALL_ENTRY_PREFIX))
+        .then(|| whatsapp_rust::MessageId::new(&last.id).ok())
+        .flatten()
+        .and_then(|id| {
+            whatsapp_rust::MessageRef::new(jid, id, participant.as_ref(), last.from_me).ok()
+        });
+    whatsapp_rust::message_range(last.timestamp, None, key.map(|key| (key, last.timestamp)))
+}
+
 impl Worker {
     fn ephemeral_expiration(&self, chat: &str) -> Option<u32> {
         self.archive
@@ -1539,6 +1558,14 @@ impl Worker {
                 log::warn!("could not synchronize a chat preference");
             }
         });
+    }
+
+    /// The chat's newest archived message, if any.
+    fn last_message(&self, chat: &str) -> Option<Message> {
+        self.archive
+            .messages(chat, None, 1)
+            .ok()
+            .and_then(|mut page| page.pop())
     }
 
     /// Stars or unstars one message for every linked device.
@@ -7129,11 +7156,13 @@ impl Worker {
             Command::SetArchived(chat, archived) => {
                 let _ = self.archive.set_archived(&chat, archived);
                 self.emit_chat(&chat);
+                let last = self.last_message(&chat);
                 self.tell_phone(&chat, move |client, jid| async move {
+                    let range = Some(archive_range(&jid, last.as_ref()));
                     if archived {
-                        client.chat_actions().archive_chat(&jid, None).await
+                        client.chat_actions().archive_chat(&jid, range).await
                     } else {
-                        client.chat_actions().unarchive_chat(&jid, None).await
+                        client.chat_actions().unarchive_chat(&jid, range).await
                     }
                     .map_err(|error| error.to_string())
                 });
@@ -7851,10 +7880,11 @@ impl Worker {
         let _ = self.archive.set_left(chat, true);
         if archive {
             let _ = self.archive.set_archived(chat, true);
+            let last = self.last_message(chat);
             self.tell_phone(chat, move |client, jid| async move {
                 client
                     .chat_actions()
-                    .archive_chat(&jid, None)
+                    .archive_chat(&jid, Some(archive_range(&jid, last.as_ref())))
                     .await
                     .map_err(|error| error.to_string())
             });
@@ -19222,6 +19252,29 @@ mod receipt_tests {
             .set_archived_at(&id, false, time.timestamp_millis() + 1)
             .unwrap();
         assert!(!worker.archive.chat(PEER).unwrap().unwrap().archived);
+    }
+
+    #[test]
+    fn archive_range_names_the_newest_message() {
+        let jid: Jid = PEER.parse().unwrap();
+        let last = incoming("newest", 300);
+        let range = archive_range(&jid, Some(&last));
+        assert_eq!(range.last_message_timestamp, Some(300));
+        assert_eq!(range.messages.len(), 1);
+        assert_eq!(range.messages[0].timestamp, Some(300));
+        assert_eq!(range.messages[0].key.id.as_deref(), Some("newest"));
+    }
+
+    #[test]
+    fn archive_range_leaves_local_call_entries_out() {
+        let jid: Jid = PEER.parse().unwrap();
+        let last = incoming(&format!("{}1", crate::model::CALL_ENTRY_PREFIX), 400);
+        let range = archive_range(&jid, Some(&last));
+        assert_eq!(range.last_message_timestamp, Some(400));
+        assert!(range.messages.is_empty());
+        let empty = archive_range(&jid, None);
+        assert!(empty.messages.is_empty());
+        assert!(empty.last_message_timestamp.is_some());
     }
 
     #[tokio::test]
