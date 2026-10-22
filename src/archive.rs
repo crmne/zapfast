@@ -1190,6 +1190,22 @@ impl Archive {
             params![lid_chat, phone_chat],
         )?;
         Self::move_message_metadata(&transaction, &lid_chat, &phone_chat)?;
+        // The messages now live under the phone chat; their transcripts must
+        // move before the LID rows are purged, or the delete trigger takes
+        // them along. Only rows whose message was actually copied come over,
+        // so no transcript is left without a message.
+        transaction.execute(
+            "INSERT INTO transcripts (chat, id, text, engine, created_at)
+             SELECT ?2, t.id, t.text, t.engine, t.created_at
+             FROM transcripts t
+             WHERE t.chat = ?1
+               AND EXISTS (SELECT 1 FROM messages m WHERE m.chat = ?2 AND m.id = t.id)
+             ON CONFLICT(chat, id) DO UPDATE SET
+                text = excluded.text,
+                engine = excluded.engine,
+                created_at = excluded.created_at",
+            params![lid_chat, phone_chat],
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],
@@ -2949,6 +2965,41 @@ pub(crate) mod tests {
         assert!(
             archive
                 .transcripts(chat, &["voice-1".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_transcript_follows_its_message_when_a_lid_chat_becomes_a_phone_chat() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "hello there", "test")
+                .unwrap()
+        );
+
+        archive.put_lid(lid, pn).unwrap();
+
+        assert_eq!(
+            archive
+                .transcripts(&phone_chat, &["voice".to_owned()])
+                .unwrap()
+                .get("voice")
+                .map(String::as_str),
+            Some("hello there")
+        );
+        assert!(
+            archive
+                .transcripts(&lid_chat, &["voice".to_owned()])
                 .unwrap()
                 .is_empty()
         );
