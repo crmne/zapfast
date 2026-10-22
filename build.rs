@@ -30,14 +30,6 @@ fn build_speech_helper() {
     }
     const SOURCE: &str = "packaging/macos/asr/zapfast-asr.swift";
     println!("cargo:rerun-if-changed={SOURCE}");
-    // Some builds cannot reach a macOS 26 SDK: the Nix sandbox is one. They
-    // set this so the app compiles with the feature absent, which is what
-    // `crate::transcribe::available` reports when the helper is missing.
-    println!("cargo:rerun-if-env-changed=ZAPFAST_ASR");
-    if std::env::var("ZAPFAST_ASR").is_ok_and(|value| value == "off" || value == "0") {
-        println!("cargo:warning=ZAPFAST_ASR is off: voice transcription is absent");
-        return;
-    }
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     // `target/<triple>/<profile>/build/<package>/out`: the binary's own folder
@@ -46,6 +38,19 @@ fn build_speech_helper() {
         return;
     };
     let helper = profile.join("zapfast-asr");
+
+    // Some builds cannot reach a macOS 26 SDK: the Nix sandbox is one. They
+    // set this so the app compiles with the feature absent, which is what
+    // `crate::transcribe::available` reports when the helper is missing. A
+    // helper left by an earlier build is removed too, or an incremental build
+    // would keep offering the feature it was told to leave out.
+    println!("cargo:rerun-if-env-changed=ZAPFAST_ASR");
+    if std::env::var("ZAPFAST_ASR").is_ok_and(|value| value == "off" || value == "0") {
+        let _ = std::fs::remove_file(&helper);
+        println!("cargo:warning=ZAPFAST_ASR is off: voice transcription is absent");
+        return;
+    }
+
     if is_fresh(&helper, Path::new(SOURCE)) {
         return;
     }
