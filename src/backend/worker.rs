@@ -1857,16 +1857,17 @@ impl Worker {
     }
 
     /// Moves a message we sent to the time WhatsApp's server acknowledged it.
-    /// Only the first ack counts: a resend after a retry receipt is acked
-    /// again, later, and must not move the message down the chat.
+    /// Only the first ack with a time counts: a resend after a retry receipt
+    /// is acked again, later, and must not move the message down the chat.
+    /// An ack without a usable time leaves the message waiting for one.
     fn server_ack(&mut self, ack: &wa_events::ServerAck) {
         if ack.class.as_deref() != Some("message") {
             return;
         }
-        let Some(chat) = self.awaiting_ack.remove(&ack.id) else {
+        let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
             return;
         };
-        let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
+        let Some(chat) = self.awaiting_ack.remove(&ack.id) else {
             return;
         };
         if let Ok(true) = self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
@@ -19593,6 +19594,39 @@ mod receipt_tests {
         );
         worker.server_ack(&ack("other", "receipt", 90));
         assert_eq!(stamp(&worker, "other"), 300);
+    }
+
+    #[test]
+    fn an_ack_without_a_time_leaves_our_message_waiting_for_one() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+        );
+        let untimed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .build();
+        worker.server_ack(&untimed);
+        let timed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .build();
+        worker.server_ack(&timed);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            140
+        );
     }
 
     #[test]
