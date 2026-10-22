@@ -1560,12 +1560,26 @@ impl Worker {
         });
     }
 
-    /// The chat's newest archived message, if any.
-    fn last_message(&self, chat: &str) -> Option<Message> {
-        self.archive
-            .messages(chat, None, 1)
-            .ok()
-            .and_then(|mut page| page.pop())
+    /// Archives or unarchives a chat on the phone, naming its newest message.
+    /// A chat whose messages cannot be read is left alone there: a range made
+    /// up without them could move it past messages the phone has.
+    fn archive_on_phone(&self, chat: &str, archived: bool) {
+        let last = match self.archive.messages(chat, None, 1) {
+            Ok(mut page) => page.pop(),
+            Err(error) => {
+                log::warn!("could not read a chat to archive it on the phone: {error}");
+                return;
+            }
+        };
+        self.tell_phone(chat, move |client, jid| async move {
+            let range = Some(archive_range(&jid, last.as_ref()));
+            if archived {
+                client.chat_actions().archive_chat(&jid, range).await
+            } else {
+                client.chat_actions().unarchive_chat(&jid, range).await
+            }
+            .map_err(|error| error.to_string())
+        });
     }
 
     /// Stars or unstars one message for every linked device.
@@ -7156,16 +7170,7 @@ impl Worker {
             Command::SetArchived(chat, archived) => {
                 let _ = self.archive.set_archived(&chat, archived);
                 self.emit_chat(&chat);
-                let last = self.last_message(&chat);
-                self.tell_phone(&chat, move |client, jid| async move {
-                    let range = Some(archive_range(&jid, last.as_ref()));
-                    if archived {
-                        client.chat_actions().archive_chat(&jid, range).await
-                    } else {
-                        client.chat_actions().unarchive_chat(&jid, range).await
-                    }
-                    .map_err(|error| error.to_string())
-                });
+                self.archive_on_phone(&chat, archived);
             }
             Command::DeleteChat(chat) => {
                 // The phone deletes first. Deleting here while offline would
@@ -7880,14 +7885,7 @@ impl Worker {
         let _ = self.archive.set_left(chat, true);
         if archive {
             let _ = self.archive.set_archived(chat, true);
-            let last = self.last_message(chat);
-            self.tell_phone(chat, move |client, jid| async move {
-                client
-                    .chat_actions()
-                    .archive_chat(&jid, Some(archive_range(&jid, last.as_ref())))
-                    .await
-                    .map_err(|error| error.to_string())
-            });
+            self.archive_on_phone(chat, true);
         }
         self.emit_chat(chat);
     }
