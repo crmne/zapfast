@@ -233,7 +233,7 @@ fn run() -> eframe::Result<()> {
         && target.is_none()
         && invite.is_none()
     {
-        eprintln!("ZapFast cannot read a phone number from {argument}");
+        eprintln!("ZapFast cannot read a phone number or group invite link from {argument}");
         std::process::exit(2);
     }
     let waker = backend::Waker::default();
@@ -884,6 +884,25 @@ mod target_cli_tests {
             let request = zapfast::target::parse(cli.target.as_deref().unwrap()).unwrap();
             assert_eq!(request.chat, "20123456789@s.whatsapp.net", "{argument}");
             assert_eq!(request.text, None, "{argument}");
+        }
+    }
+
+    #[test]
+    fn an_invite_argument_is_recognised() {
+        for argument in [
+            "https://chat.whatsapp.com/KqTP1zA4tFJLolS2usUzpA",
+            "chat.whatsapp.com/KqTP1zA4tFJLolS2usUzpA",
+            "whatsapp://chat/?code=KqTP1zA4tFJLolS2usUzpA",
+            "whatsapp://chat?code=KqTP1zA4tFJLolS2usUzpA",
+        ] {
+            let cli = Cli::try_parse_from(["zapfast", argument]).unwrap();
+            assert_eq!(
+                cli.target
+                    .as_deref()
+                    .and_then(zapfast::safety::group_invite_code),
+                Some("KqTP1zA4tFJLolS2usUzpA".into()),
+                "{argument}"
+            );
         }
     }
 
