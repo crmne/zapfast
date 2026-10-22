@@ -1867,15 +1867,18 @@ impl Worker {
         let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
             return;
         };
-        let Some(chat) = self.awaiting_ack.remove(&ack.id) else {
+        let Some(chat) = self.awaiting_ack.get(&ack.id).cloned() else {
             return;
         };
         match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
-            Ok(true) => {
-                self.emit_message(&chat, &ack.id);
-                self.emit_chat(&chat);
+            Ok(changed) => {
+                self.awaiting_ack.remove(&ack.id);
+                if changed {
+                    self.emit_message(&chat, &ack.id);
+                    self.emit_chat(&chat);
+                }
             }
-            Ok(false) => {}
+            // Still awaited, so a later ack can place it.
             Err(error) => log::warn!("could not move a sent message to the server's time: {error}"),
         }
     }

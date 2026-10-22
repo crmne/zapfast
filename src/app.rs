@@ -4081,7 +4081,10 @@ impl App {
             }
             Event::AccountRemoved => {}
         }
-        self.prune_selection();
+        // A hidden account's events never touch the window's selection.
+        if !self.events_hidden {
+            self.prune_selection();
+        }
     }
 
     fn prune_selection(&mut self) {
@@ -18691,6 +18694,30 @@ mod tests {
             app.selection.as_ref().map(|(_, ids)| ids.as_slice()),
             Some(["mine".to_owned(), "reply".to_owned()].as_slice()),
             "the selection follows the chat's order"
+        );
+    }
+
+    /// Events of a hidden account are checked against that account's chats,
+    /// so they must not prune the selection the window holds.
+    #[test]
+    fn a_hidden_accounts_event_keeps_the_window_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let chat = "15550003333@s.whatsapp.net";
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "reply", 150)], false);
+        app.selection = Some((chat.into(), vec!["reply".into()]));
+        app.active = 1;
+        app.events_hidden = true;
+        app.apply_backend_event(Event::Info("Contact saved".into()), false);
+        app.events_hidden = false;
+        app.active = 0;
+        assert_eq!(
+            app.selection,
+            Some((chat.into(), vec!["reply".into()])),
+            "the window's selection survives another account's event"
         );
     }
 
