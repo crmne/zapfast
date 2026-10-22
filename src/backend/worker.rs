@@ -695,11 +695,11 @@ pub async fn run(
             recorded
         });
     // The phone's own setting, read before the archive moves into the worker.
-    let phone_unarchive_chats = match archive.unarchive_chats() {
-        Ok(setting) => setting,
+    let (phone_unarchive_chats, phone_unarchive_unread) = match archive.unarchive_chats() {
+        Ok(setting) => (setting, false),
         Err(error) => {
             log::warn!("could not read the phone's Keep chats archived: {error}");
-            None
+            (None, true)
         }
     };
     // Likewise only contacts synced before first names were kept lack them.
@@ -767,6 +767,7 @@ pub async fn run(
         download_folder: None,
         keep_chats_archived: true,
         phone_unarchive_chats,
+        phone_unarchive_unread,
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
@@ -1186,6 +1187,9 @@ struct Worker {
     /// The phone's own "Keep chats archived", inverted as WhatsApp sends it
     /// (`Some(true)`: a new message unarchives). It wins over Settings'.
     phone_unarchive_chats: Option<bool>,
+    /// The stored phone setting could not be read at startup; it is read
+    /// again when needed, and chats stay archived until it is.
+    phone_unarchive_unread: bool,
     /// Whether the window is focused and visible.
     online_wanted: bool,
     /// When `online_wanted` last changed.
@@ -3618,7 +3622,10 @@ impl Worker {
                     update.unarchive_chats,
                     update.timestamp.timestamp_millis(),
                 ) {
-                    Ok(unarchive) => self.phone_unarchive_chats = Some(unarchive),
+                    Ok(unarchive) => {
+                        self.phone_unarchive_chats = Some(unarchive);
+                        self.phone_unarchive_unread = false;
+                    }
                     Err(error) => {
                         log::warn!("could not store the phone's archive setting: {error}")
                     }
@@ -3773,6 +3780,7 @@ impl Worker {
         self.privacy_confirmed = false;
         self.privacy_snapshot = false;
         self.phone_unarchive_chats = None;
+        self.phone_unarchive_unread = false;
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
         self.early.clear();
@@ -4796,7 +4804,18 @@ impl Worker {
     }
 
     /// The phone's "Keep chats archived" once it has said, else Settings'.
-    fn keeps_chats_archived(&self) -> bool {
+    /// A stored setting that could not be read is read again here, and
+    /// keeps chats archived while it stays unreadable.
+    fn keeps_chats_archived(&mut self) -> bool {
+        if self.phone_unarchive_unread {
+            match self.archive.unarchive_chats() {
+                Ok(setting) => {
+                    self.phone_unarchive_chats = setting;
+                    self.phone_unarchive_unread = false;
+                }
+                Err(_) => return true,
+            }
+        }
         self.phone_unarchive_chats
             .map_or(self.keep_chats_archived, |unarchive| !unarchive)
     }
@@ -16813,6 +16832,7 @@ mod receipt_tests {
             download_folder: None,
             keep_chats_archived: true,
             phone_unarchive_chats: None,
+            phone_unarchive_unread: false,
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,
@@ -19364,6 +19384,20 @@ mod receipt_tests {
         worker.handle_wa_event(setting(false)).await;
         worker.store_message(incoming("kept", 500), None, None);
         assert!(archived(&worker));
+    }
+
+    #[test]
+    fn an_unread_phone_setting_is_read_again_before_settings_decide() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.keep_chats_archived = true;
+        // Stored by an earlier session, but unreadable at this one's start.
+        worker.archive.set_unarchive_chats_at(true, 100).unwrap();
+        worker.phone_unarchive_unread = true;
+        assert!(
+            !worker.keeps_chats_archived(),
+            "the phone's stored setting decides"
+        );
+        assert!(!worker.phone_unarchive_unread);
     }
 
     #[test]
