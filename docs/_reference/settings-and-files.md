@@ -155,6 +155,12 @@ name or description, in the interface language or in English.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
+- **Transcribe voice messages** (macOS 26 and later, hidden elsewhere): on by
+  default. Each voice message that comes into view is transcribed on this
+  computer, and the text shows under its player. The model is macOS's own, so
+  nothing is downloaded from ZapFast and the audio never leaves the Mac. The
+  temporary WAV is written to `cache/accounts/<id>/transcriptions/` and removed
+  after each clip; the text is kept in the encrypted archive.
 - **Fetch older history**: off by default, and set for
   each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently

@@ -441,6 +441,16 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
+    if crate::transcribe::available() {
+        chats.toggle(
+            translated(locale, "Transcribe voice messages"),
+            translated(
+                locale,
+                "Writes what they say under each one as it comes into view. The audio never leaves this Mac.",
+            ),
+            |settings| &mut settings.transcribe_voice_notes,
+        );
+    }
     chats.account_toggle(
         translated(locale, "Fetch older history"),
         translated(

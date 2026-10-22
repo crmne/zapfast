@@ -97,7 +97,8 @@ const SHELF_REFRESH_EVERY: usize = 4;
 const STARRED_LIMIT: usize = 200;
 const ATTACHMENT_LIMIT_ERROR: &str =
     "This attachment is larger than the 64 MiB automatic download limit";
-
+/// How many times a clip that failed here is tried again in one session.
+const MAX_TRANSCRIPTION_TRIES: u32 = 2;
 /// The deadline of a download of unknown or small size.
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// The slowest transfer the deadline allows for beyond that: 128 KiB/s, so a
@@ -769,6 +770,10 @@ pub async fn run(
         }
     };
     let (wa_sender, wa_events) = mpsc::unbounded_channel();
+    // The speech helper runs on its own thread; its answers come back here so
+    // the archive is only ever touched from this loop.
+    let (transcription_tx, mut transcription_done) = mpsc::unbounded_channel();
+    let transcription_scratch = dirs.cache.join("transcriptions");
     let privacy_confirmed = archive
         .meta("chat_privacy_ready_v1")
         .ok()
@@ -920,6 +925,12 @@ pub async fn run(
         stars_recovered,
         stars_recovering: false,
         downloads: HashSet::new(),
+        transcription_queue: VecDeque::new(),
+        transcribing: None,
+        transcription_tries: HashMap::new(),
+        transcription_locale: String::new(),
+        transcription_tx,
+        transcription_scratch,
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
@@ -993,6 +1004,7 @@ pub async fn run(
                     succeeded,
                 } => worker.presence_sent(generation, online, succeeded),
             },
+            Some(done) = transcription_done.recv() => worker.transcription_done(done),
             Some(event) = async {
                 match call_events.as_mut() {
                     Some(events) => events.recv().await.ok(),
@@ -1037,6 +1049,13 @@ pub async fn run(
     }
     worker.shutdown_call().await;
     worker.stop_bot().await;
+}
+
+/// What the speech helper made of one clip.
+struct TranscriptionDone {
+    chat: ChatId,
+    message: String,
+    text: Result<String, String>,
 }
 
 enum RuntimeEvent {
@@ -1400,6 +1419,21 @@ struct Worker {
     stars_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Voice messages waiting to be transcribed, in the order they appear on
+    /// screen. A newer list replaces it; a message that left the screen before
+    /// its turn is simply never transcribed.
+    transcription_queue: VecDeque<(ChatId, String)>,
+    /// The voice message the helper is working on now.
+    transcribing: Option<(ChatId, String)>,
+    /// Failures per message this session, so a broken clip is not retried
+    /// forever.
+    transcription_tries: HashMap<(ChatId, String), u32>,
+    /// The language the queue transcribes in.
+    transcription_locale: String,
+    /// Hands a clip to the thread that runs the speech helper.
+    transcription_tx: mpsc::UnboundedSender<TranscriptionDone>,
+    /// Where the helper's temporary WAV goes, never kept afterwards.
+    transcription_scratch: PathBuf,
     /// Serial forward in flight. The next send waits for the running one.
     forward_queue: Option<ForwardQueue<ForwardJob>>,
     call: Option<calls::CallRuntime>,
@@ -1690,6 +1724,149 @@ impl Worker {
 
     fn apply_ephemeral(&self, chat: &str, message: &mut wa::Message) -> Option<u32> {
         apply_ephemeral_expiration(message, self.ephemeral_expiration(chat))
+    }
+
+    /// Replaces the transcription queue with the voice messages on screen now,
+    /// in their order. Reaching this chat again with the same list is a no-op:
+    /// the worker only holds what it still has to do.
+    fn transcribe_on_screen(&mut self, chat: ChatId, ids: Vec<String>, locale: String) {
+        if !crate::transcribe::available() {
+            return;
+        }
+        self.transcription_locale = locale;
+        let current = self.transcribing.clone();
+        self.transcription_queue = ids
+            .into_iter()
+            .filter(|id| {
+                current
+                    .as_ref()
+                    .is_none_or(|(open, now)| open != &chat || now != id)
+            })
+            .map(|id| (chat.clone(), id))
+            .collect();
+        self.pump_transcription();
+    }
+
+    /// Starts the next queued clip. One at a time keeps the speech model's
+    /// memory and the machine's fans in check.
+    fn pump_transcription(&mut self) {
+        // Private content stays unread while the archive recovers its locks.
+        if !crate::transcribe::available() || !self.privacy_ready {
+            self.transcription_queue.clear();
+            return;
+        }
+        if self.transcribing.is_some() {
+            return;
+        }
+        while let Some((chat, id)) = self.transcription_queue.pop_front() {
+            let key = (chat.clone(), id.clone());
+            if self.transcription_tries.get(&key).copied().unwrap_or(0) >= MAX_TRANSCRIPTION_TRIES {
+                continue;
+            }
+            let Ok(Some(message)) = self.archive.message(&chat, &id) else {
+                continue;
+            };
+            if message.transcript.is_some() {
+                continue;
+            }
+            let Content::Audio {
+                media,
+                voice_note: true,
+                ..
+            } = &message.content
+            else {
+                continue;
+            };
+            let Some(path) = media.path.as_ref().filter(|path| path.is_file()).cloned() else {
+                // Not downloaded yet; the next visit after it arrives asks
+                // again.
+                continue;
+            };
+            let locale = self.transcription_locale.clone();
+            let scratch = self.transcription_scratch.clone();
+            let sender = self.transcription_tx.clone();
+            self.transcribing = Some(key);
+            self.emit_transcription(Event::TranscriptionStarted {
+                chat: chat.clone(),
+                message: id.clone(),
+            });
+            std::thread::spawn(move || {
+                let text = crate::transcribe::transcribe(&path, &locale, &scratch);
+                let _ = sender.send(TranscriptionDone {
+                    chat,
+                    message: id,
+                    text,
+                });
+            });
+            return;
+        }
+    }
+
+    fn transcription_done(&mut self, done: TranscriptionDone) {
+        if self.transcribing.as_ref() == Some(&(done.chat.clone(), done.message.clone())) {
+            self.transcribing = None;
+        }
+        let key = (done.chat.clone(), done.message.clone());
+        match done.text {
+            Ok(text) if !text.is_empty() => {
+                match self.archive.set_transcript(
+                    &done.chat,
+                    &done.message,
+                    &text,
+                    crate::transcribe::ENGINE,
+                ) {
+                    Ok(true) => self.emit_transcription(Event::Transcription {
+                        chat: done.chat,
+                        message: done.message,
+                        text: Some(text),
+                    }),
+                    // The message was deleted or revoked while it was being
+                    // transcribed: nothing is stored and nothing is shown, but
+                    // the bubble that said "Transcribing…" is told to stop.
+                    Ok(false) => self.emit_transcription(Event::Transcription {
+                        chat: done.chat,
+                        message: done.message,
+                        text: None,
+                    }),
+                    Err(error) => log::warn!("could not store a voice transcript: {error}"),
+                }
+            }
+            Ok(_) => {
+                // Silence, a music clip: another try would say the same.
+                self.transcription_tries
+                    .insert(key, MAX_TRANSCRIPTION_TRIES);
+                self.emit_transcription(Event::Transcription {
+                    chat: done.chat,
+                    message: done.message,
+                    text: None,
+                });
+            }
+            Err(error) => {
+                // The helper's message names the failure, never what was said.
+                log::warn!("could not transcribe a voice message: {error}");
+                let tries = self.transcription_tries.entry(key).or_insert(0);
+                *tries += 1;
+                if *tries < MAX_TRANSCRIPTION_TRIES {
+                    self.transcription_queue
+                        .push_front((done.chat.clone(), done.message.clone()));
+                } else {
+                    self.emit_transcription(Event::Transcription {
+                        chat: done.chat,
+                        message: done.message,
+                        text: None,
+                    });
+                }
+            }
+        }
+        self.pump_transcription();
+    }
+
+    /// Transcription answers carry message text, so they are sent straight to
+    /// the interface instead of through `emit`, which withholds content during
+    /// privacy recovery: the queue never runs then.
+    fn emit_transcription(&self, event: Event) {
+        let _ = self.events.send(event);
+        self.waker.wake();
     }
 
     fn emit(&self, mut event: Event) {
@@ -4620,6 +4797,7 @@ impl Worker {
             mentions,
             forwarded: forwarded_of(base),
             thumbnail: thumbnail_of(base),
+            transcript: None,
         };
         let is_poll = matches!(row.content, Content::Poll { .. });
         self.remember_poll(&row, message, &info.source.sender.to_non_ad_string(), None);
@@ -5200,6 +5378,7 @@ impl Worker {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         let id = row.id.clone();
         let chat = row.chat.clone();
@@ -5804,6 +5983,7 @@ impl Worker {
                     mentions,
                     forwarded: message.forwarded,
                     thumbnail: message.thumbnail,
+                    transcript: None,
                 };
                 let mut poll_history_received = false;
                 let raw =
@@ -6719,6 +6899,9 @@ impl Worker {
                 chat,
                 message,
             } => self.download_media(chat, message, card, manual),
+            Command::Transcribe { chat, ids, locale } => {
+                self.transcribe_on_screen(chat, ids, locale);
+            }
             Command::FetchAvatar { id, full } => self.fetch_avatar(id, full),
             Command::LoadChatMedia { chat, around } => self.emit_chat_media(chat, around),
             Command::EditText {
@@ -8596,6 +8779,7 @@ impl Worker {
             mentions,
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         self.store_message(row, Some(message.encode_to_vec()), None);
         tokio::spawn(send_outgoing(
@@ -8660,6 +8844,7 @@ impl Worker {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         self.store_message(row, Some(message.encode_to_vec()), None);
         tokio::spawn(send_outgoing(
@@ -12561,6 +12746,7 @@ pub(super) async fn file_outbound(
             .collect(),
         forwarded: false,
         thumbnail,
+        transcript: None,
     };
     Ok((row, prepared.message.encode_to_vec()))
 }
@@ -13508,6 +13694,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
@@ -16704,6 +16891,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: Some(vec![1]),
+            transcript: None,
         };
         let mention = MentionRef {
             user: "3".into(),
@@ -18108,6 +18296,12 @@ mod receipt_tests {
             stars_recovered: true,
             stars_recovering: false,
             downloads: HashSet::new(),
+            transcription_queue: VecDeque::new(),
+            transcribing: None,
+            transcription_tries: HashMap::new(),
+            transcription_locale: String::new(),
+            transcription_tx: mpsc::unbounded_channel().0,
+            transcription_scratch: PathBuf::new(),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
@@ -18275,6 +18469,7 @@ mod receipt_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

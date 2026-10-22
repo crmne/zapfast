@@ -21,6 +21,14 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
 cp "$binary" "$app/Contents/MacOS/zapfast"
 chmod 755 "$app/Contents/MacOS/zapfast"
+# The Swift speech helper, built beside the binary by build.rs.
+helper="$(cd "$(dirname "$binary")" && pwd)/zapfast-asr"
+if [ ! -f "$helper" ]; then
+    echo "missing $helper: build it first (cargo build compiles it with swiftc)" >&2
+    exit 1
+fi
+cp "$helper" "$app/Contents/MacOS/zapfast-asr"
+chmod 755 "$app/Contents/MacOS/zapfast-asr"
 sed "s/__VERSION__/$numeric_version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
 # Starting in the tray at login: a login item cannot pass --start-hidden, so
@@ -46,7 +54,16 @@ cp "$sounds/receive.wav" "$app/Contents/Resources/zapfast-receive.wav"
 cp "$sounds/alert.wav" "$app/Contents/Resources/zapfast-alert.wav"
 
 # Attach the microphone entitlement before native-packages preserves it when
-# replacing the ad-hoc signature with a hardened Developer ID signature.
+# replacing the ad-hoc signature with a hardened Developer ID signature. The
+# speech helper is nested code and must be signed before the app that seals it.
+if [ -f "$app/Contents/MacOS/zapfast-asr" ]; then
+    if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+        codesign --force --timestamp --options runtime --sign "$CODESIGN_IDENTITY" \
+            "$app/Contents/MacOS/zapfast-asr"
+    else
+        codesign --force --sign - "$app/Contents/MacOS/zapfast-asr"
+    fi
+fi
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     codesign --force --timestamp --options runtime \
         --entitlements "$here/entitlements.plist" --sign "$CODESIGN_IDENTITY" "$app"

@@ -29,6 +29,7 @@ mod reconcile;
 mod reconcile_tests;
 mod stars;
 mod stickers;
+mod transcripts;
 pub use polls::PollVote;
 pub use stars::Starred;
 pub use stickers::FavoriteSticker;
@@ -353,6 +354,7 @@ fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         mentions: serde_json::from_str(&mentions).unwrap_or_default(),
         forwarded: row.get(13)?,
         thumbnail: row.get(11)?,
+        transcript: None,
     })
 }
 
@@ -440,6 +442,7 @@ impl Archive {
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
+        connection.execute_batch(transcripts::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -1401,10 +1404,12 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
                     thumbnail: row.get(10)?,
+                    transcript: None,
                 })
             })?;
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
+        self.attach_transcripts(chat, &mut messages)?;
         Ok(messages)
     }
 
@@ -1570,10 +1575,13 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
                     thumbnail: row.get(10)?,
+                    transcript: None,
                 })
             },
         )?;
-        rows.collect()
+        let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
+        self.attach_transcripts(chat, &mut messages)?;
+        Ok(messages)
     }
 
     /// Returns downloaded stickers we sent (`from_me`) or received, newest
@@ -2216,7 +2224,7 @@ impl Archive {
             "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
              FROM messages WHERE chat = ?1 AND id = ?2",
         )?;
-        statement
+        let message = statement
             .query_row(params![chat, id], |row| {
                 let content: String = row.get(4)?;
                 let quoted: Option<String> = row.get(6)?;
@@ -2242,9 +2250,15 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(11)?,
                     thumbnail: row.get(9)?,
+                    transcript: None,
                 })
             })
-            .optional()
+            .optional()?;
+        let mut message = message;
+        if let Some(message) = &mut message {
+            self.attach_transcripts(chat, std::slice::from_mut(message))?;
+        }
+        Ok(message)
     }
 
     /// Returns the earliest message for phone-history requests.
@@ -2878,7 +2892,66 @@ pub(crate) mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
+    }
+
+    #[test]
+    fn a_transcript_is_read_with_its_message_and_deleted_with_it() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "voice-1", 10, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "voice-2", 11, false), None)
+            .unwrap();
+
+        assert!(
+            archive
+                .set_transcript(chat, "voice-1", "hello there", "test")
+                .unwrap()
+        );
+        // A message that is gone by the time the text arrives keeps no row.
+        assert!(!archive.set_transcript(chat, "gone", "no", "test").unwrap());
+
+        let page = archive.messages(chat, None, 10).unwrap();
+        let first = page.iter().find(|row| row.id == "voice-1").unwrap();
+        assert_eq!(first.transcript.as_deref(), Some("hello there"));
+        let second = page.iter().find(|row| row.id == "voice-2").unwrap();
+        assert!(second.transcript.is_none());
+        // The single-message lookup attaches it too.
+        assert_eq!(
+            archive
+                .message(chat, "voice-1")
+                .unwrap()
+                .unwrap()
+                .transcript
+                .as_deref(),
+            Some("hello there")
+        );
+
+        // A new engine's answer replaces the old text.
+        archive
+            .set_transcript(chat, "voice-1", "hello again", "other")
+            .unwrap();
+        assert_eq!(
+            archive
+                .transcripts(chat, &["voice-1".to_owned()])
+                .unwrap()
+                .get("voice-1")
+                .map(String::as_str),
+            Some("hello again")
+        );
+
+        archive.delete_message(chat, "voice-1").unwrap();
+        assert!(
+            archive
+                .transcripts(chat, &["voice-1".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -5409,6 +5482,7 @@ mod sticker_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
@@ -5589,6 +5663,7 @@ mod media_path_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

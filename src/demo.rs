@@ -289,6 +289,7 @@ fn message(chat: &str, id: &str, from_me: bool, timestamp: i64, content: Content
         mentions: Vec::new(),
         forwarded: false,
         thumbnail: None,
+        transcript: None,
     }
 }
 
@@ -3019,6 +3020,34 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.at_bottom = false;
                 app.scroll_anchor = Some(target.clone());
                 app.jump_highlight = Some(crate::app::JumpHighlight::new(group.to_owned(), target));
+            }
+            "voice-transcript" => {
+                // The sample voice note, last in the conversation, with the
+                // transcript drawn under its player.
+                let chat = SAMPLES[0].id.to_owned();
+                if let Some(conversation) = app.conversations.get_mut(&chat)
+                    && let Some(position) = conversation
+                        .messages
+                        .iter()
+                        .position(|message| message.id == "ada-voice")
+                {
+                    let mut row = conversation.messages.remove(position);
+                    row.timestamp = conversation
+                        .messages
+                        .last()
+                        .map_or(row.timestamp + 60, |last| last.timestamp + 60);
+                    // What the sample voice note says, as the on-device
+                    // transcription draws it under the player.
+                    row.transcript = Some(
+                        "Hi! I'm running about ten minutes late, but I'll meet you at the usual \
+                         place. Could you save me a seat by the window?"
+                            .to_owned(),
+                    );
+                    conversation.messages.push(row);
+                }
+                app.open_chat = Some(chat);
+                app.typing.clear();
+                app.scroll_to_bottom = true;
             }
             "unread-divider" => {
                 let id = SAMPLES[1].id.to_owned();
@@ -22793,6 +22822,38 @@ mod bubble_detail_tests {
         assert!(
             footer.top() >= picture.bottom(),
             "with a caption the time stays below the picture ({footer:?}, {picture:?})"
+        );
+    }
+
+    /// A transcribed voice message draws what it says under its player,
+    /// inside the bubble, and its time stays on the player's line.
+    #[test]
+    fn a_transcribed_voice_message_shows_its_text_under_the_player() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("voice-transcript"));
+        frames(&mut app, &ctx, egui::vec2(1180.0, 900.0));
+        let chat = SAMPLES[0].id;
+        let bubble = crate::ui::conversation::bubble_id(chat, "ada-voice").with("rect");
+        let bubble = rect(&ctx, bubble).expect("the bubble was drawn");
+        let footer = rect(&ctx, crate::ui::conversation::footer_id(chat, "ada-voice"))
+            .expect("the time was drawn");
+        let id = crate::ui::conversation::bubble_id(chat, "ada-voice")
+            .with("transcript")
+            .with("rect");
+        let transcript = rect(&ctx, id).expect("the transcript was drawn");
+        assert!(
+            transcript.top() >= footer.bottom() - 1.0,
+            "the text is under the player ({transcript:?}, {footer:?})"
+        );
+        assert!(
+            bubble.contains_rect(transcript),
+            "the text stays inside the bubble ({transcript:?} in {bubble:?})"
+        );
+        assert!(
+            bubble.contains_rect(footer),
+            "the time stays inside the bubble ({footer:?} in {bubble:?})"
         );
     }
 

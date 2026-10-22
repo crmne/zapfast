@@ -600,6 +600,11 @@ pub struct Message {
     /// JPEG preview sent with an attachment or link.
     #[serde(default)]
     pub thumbnail: Option<Vec<u8>>,
+    /// What a voice message says, transcribed on this computer. It is derived
+    /// here and never sent anywhere; the archive keeps it in its own table,
+    /// so this field is not part of the message's stored content.
+    #[serde(skip)]
+    pub transcript: Option<String>,
 }
 
 /// Raw WhatsApp mention token and its canonical id.
@@ -4069,6 +4074,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

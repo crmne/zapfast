@@ -1184,6 +1184,7 @@ mod tests {
                 mentions: Vec::new(),
                 forwarded: false,
                 thumbnail: None,
+                transcript: None,
             });
         }
         app.open_chat = Some(chat.clone());

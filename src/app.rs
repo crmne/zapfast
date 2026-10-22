@@ -397,6 +397,10 @@ struct PendingFollow {
     answered: bool,
 }
 
+/// The voice messages drawn in the open conversation, with their chat, as the
+/// view reports them each frame.
+pub type VoicesOnScreen = std::sync::Mutex<Option<(ChatId, Vec<String>)>>;
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -626,6 +630,16 @@ pub struct App {
     pub viewer_media_state: HashMap<String, MediaState>,
     /// Message bodies registered for transcript copy formatting.
     pub copy_rows: std::sync::Arc<std::sync::Mutex<Vec<crate::transcript::Row>>>,
+    /// Voice messages drawn in the conversation this frame, with their chat.
+    /// The view fills it; the app turns it into one transcription request once
+    /// the reader stops moving.
+    pub voices_on_screen: VoicesOnScreen,
+    /// The last settled list of voice messages wanting a transcript.
+    voices_wanted: Option<(ChatId, Vec<String>)>,
+    /// The list last sent to the backend.
+    voices_sent: Option<(ChatId, Vec<String>)>,
+    /// When `voices_wanted` last changed, for the debounce.
+    voices_changed: Instant,
     /// Previous message-list rect used by the selection hook.
     pub selection_view: std::sync::Arc<std::sync::Mutex<Option<egui::Rect>>>,
     pub gif_query: String,
@@ -1494,6 +1508,10 @@ impl App {
             viewer_media_chat: None,
             viewer_media_state: HashMap::new(),
             copy_rows: Default::default(),
+            voices_on_screen: Default::default(),
+            voices_wanted: None,
+            voices_sent: None,
+            voices_changed: Instant::now(),
             selection_view: Default::default(),
             gif_query: String::new(),
             gif_results: Vec::new(),
@@ -3378,6 +3396,25 @@ impl App {
                 }
             }
             Event::StarredList(list) => self.starred = list,
+            Event::TranscriptionStarted { chat, message } => {
+                self.transcribing.insert((chat, message));
+            }
+            Event::Transcription {
+                chat,
+                message,
+                text,
+            } => {
+                self.transcribing.remove(&(chat.clone(), message.clone()));
+                if let Some(text) = text
+                    && let Some(conversation) = self.conversations.get_mut(&chat)
+                    && let Some(found) = conversation
+                        .messages
+                        .iter_mut()
+                        .find(|candidate| candidate.id == message)
+                {
+                    found.transcript = Some(text);
+                }
+            }
             Event::Pins { chat, items } => {
                 // A pin carries the message's own words, so a locked chat
                 // keeps them off the window until its folder is open, the
@@ -5337,6 +5374,25 @@ impl App {
                     self.voice_wanted = None;
                 }
             }
+        }
+        // A voice message that only now has its file can be transcribed: ask
+        // again for the list on screen, which now includes it.
+        if card.is_none()
+            && self
+                .conversations
+                .get(chat)
+                .and_then(|conversation| conversation.messages.iter().find(|row| row.id == id))
+                .is_some_and(|row| {
+                    matches!(
+                        row.content,
+                        Content::Audio {
+                            voice_note: true,
+                            ..
+                        }
+                    )
+                })
+        {
+            self.voices_sent = None;
         }
     }
 
@@ -9559,6 +9615,22 @@ impl App {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
+        // Voice messages left behind stop queueing: the next account asks for
+        // its own. The one in flight may finish, and its text waits in that
+        // account's archive.
+        if let Some((chat, _)) = self.voices_sent.take() {
+            self.backend.send(Command::Transcribe {
+                chat,
+                ids: Vec::new(),
+                locale: self.locale.tag().to_owned(),
+            });
+        }
+        self.voices_wanted = None;
+        *self
+            .voices_on_screen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+        self.transcribing.clear();
     }
 
     /// Queues what a request held by the app lock asked for, in its own
@@ -10302,6 +10374,10 @@ impl App {
             .unwrap_or_else(|p| p.into_inner())
             .clear();
         *self
+            .voices_on_screen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+        *self
             .selection_view
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = None;
@@ -10348,6 +10424,7 @@ impl App {
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
         crate::ui::overlay::settle(self, ctx);
+        self.queue_transcriptions(ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         // Release the image caches of everything that scrolled away.
@@ -10360,6 +10437,84 @@ impl App {
         {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
+    }
+
+    /// Asks the backend to transcribe the voice messages on screen, once the
+    /// reader has stopped moving through them for a moment. A quick scroll
+    /// through a long chat therefore transcribes nothing it only passed by.
+    fn queue_transcriptions(&mut self, ctx: &egui::Context) {
+        let clear = |app: &mut App| {
+            if let Some((chat, _)) = app.voices_sent.take() {
+                app.backend.send(Command::Transcribe {
+                    chat,
+                    ids: Vec::new(),
+                    locale: app.locale.tag().to_owned(),
+                });
+            }
+            app.voices_wanted = None;
+        };
+        if !crate::transcribe::available() || !self.settings.transcribe_voice_notes {
+            clear(self);
+            return;
+        }
+        let drawn = self
+            .voices_on_screen
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let Some((chat, ids)) = drawn else {
+            clear(self);
+            return;
+        };
+        // The click that changes chats is applied after the frame is drawn, so
+        // this frame's list can still belong to the chat that just left.
+        if self.open_chat.as_deref() != Some(chat.as_str()) {
+            return;
+        }
+        let messages = self
+            .conversations
+            .get(&chat)
+            .map_or(&[][..], |conversation| conversation.messages.as_slice());
+        let pending: Vec<String> = ids
+            .into_iter()
+            .filter(|id| {
+                messages.iter().any(|message| {
+                    message.id == *id
+                        && message.transcript.is_none()
+                        && matches!(
+                            &message.content,
+                            Content::Audio {
+                                media,
+                                voice_note: true,
+                                ..
+                            } if media.path.as_ref().is_some_and(|path| path.is_file())
+                        )
+                })
+            })
+            .collect();
+        let wanted = Some((chat, pending));
+        if self.voices_wanted != wanted {
+            self.voices_wanted = wanted;
+            self.voices_changed = Instant::now();
+        }
+        if self.voices_wanted == self.voices_sent {
+            return;
+        }
+        let hold = Duration::from_millis(300);
+        let waited = self.voices_changed.elapsed();
+        if waited < hold {
+            ctx.request_repaint_after(hold - waited);
+            return;
+        }
+        let Some((chat, ids)) = self.voices_wanted.clone() else {
+            return;
+        };
+        self.backend.send(Command::Transcribe {
+            chat,
+            ids,
+            locale: self.locale.tag().to_owned(),
+        });
+        self.voices_sent = self.voices_wanted.clone();
     }
 
     /// Inserts text at the composer cursor or end.
@@ -13160,6 +13315,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         let arrives = |app: &mut App, id: &str| {
             app.active = 1;
@@ -18149,6 +18305,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
@@ -23175,6 +23332,7 @@ mod name_tests {
             }],
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         assert_eq!(app.message_text(&message), "ciao @Carmine");
 
@@ -23491,6 +23649,7 @@ mod app_lock_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

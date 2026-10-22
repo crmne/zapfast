@@ -284,7 +284,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # Reaches the window behind eframe's view, for the Messages theme's vibrancy.
 raw-window-handle = "0.6"
 # Reads the locale's clock format.
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString", "NSProcessInfo"] }
 # The camera for video calls, through AVFoundation.
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
 

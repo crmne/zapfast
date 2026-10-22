@@ -75,6 +75,9 @@ pub struct Account {
     pub location_draft: String,
     pub poll_creating: bool,
     pub poll_voting: HashSet<(ChatId, String)>,
+    /// Voice messages being transcribed now, by chat and message id, so their
+    /// bubble can say so while the text is not ready.
+    pub transcribing: HashSet<(ChatId, String)>,
     pub contact_edit: Option<(String, String)>,
     pub new_contact_phone: String,
     pub new_contact_name: String,
@@ -196,6 +199,7 @@ impl Account {
             location_draft: String::new(),
             poll_creating: false,
             poll_voting: HashSet::new(),
+            transcribing: HashSet::new(),
             contact_edit: None,
             new_contact_phone: String::new(),
             new_contact_name: String::new(),

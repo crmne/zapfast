@@ -2275,6 +2275,12 @@ struct View<'a> {
     /// The speed this chat's voice messages play at.
     voice_speed: f32,
     video: &'a crate::video::Player,
+    /// Voice messages being transcribed now, so their bubble says so.
+    transcribing: &'a HashSet<(ChatId, String)>,
+    /// Whether voice messages are transcribed as they come into view.
+    transcribe_voices: bool,
+    /// Fills the ids of the voice messages on screen, in order, for the queue.
+    voices: Option<&'a crate::app::VoicesOnScreen>,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
 }
 
@@ -2659,6 +2665,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
         video: &app.video,
+        transcribing: &app.transcribing,
+        transcribe_voices: app.settings.transcribe_voice_notes,
+        voices: Some(&app.voices_on_screen),
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
@@ -3528,6 +3537,26 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             && before < viewport.bottom()
                         {
                             visible_day = Some((message.timestamp, day_separator_top));
+                        }
+                        if view.transcribe_voices
+                            && message.transcript.is_none()
+                            && matches!(
+                                message.content,
+                                Content::Audio {
+                                    voice_note: true,
+                                    ..
+                                }
+                            )
+                            && before < viewport.bottom()
+                            && before + measured > viewport.top()
+                            && let Some(slot) = view.voices
+                        {
+                            let mut slot = slot.lock().unwrap_or_else(|p| p.into_inner());
+                            let entry =
+                                slot.get_or_insert_with(|| (view.chat.id.clone(), Vec::new()));
+                            if entry.0 == view.chat.id {
+                                entry.1.push(message.id.clone());
+                            }
                         }
                         if before + height <= viewport.top() {
                             grew_above += measured - height;
@@ -6308,6 +6337,9 @@ pub(crate) fn list_menu(
         voice_speed: app.voice_speed_in(Some(&chat.id)),
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
+        transcribing: &app.transcribing,
+        transcribe_voices: false,
+        voices: None,
         copy_rows: Some(app.copy_rows.as_ref()),
         selecting: false,
         motion_playing: None,
@@ -7337,10 +7369,15 @@ fn content(
         _ => false,
     };
     if !has_body && let Some(copy_rows) = view.copy_rows {
+        let body = if view.transcribe_voices {
+            message.transcript.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
         copy_rows
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .push(transcript_row(view, message, String::new(), Vec::new()));
+            .push(transcript_row(view, message, body, Vec::new()));
     }
     match &message.content {
         Content::Interactive { text, card } => {
@@ -8022,6 +8059,7 @@ fn carousel_row(message: &Message, index: usize, card: &crate::model::Interactiv
         mentions: message.mentions.clone(),
         forwarded: false,
         thumbnail: None,
+        transcript: None,
     }
 }
 
@@ -10376,6 +10414,36 @@ fn bottom_filler(viewport: f32, natural: Option<f32>, spacing: f32) -> f32 {
     natural.map_or(0.0, |natural| (viewport - natural - spacing).max(0.0))
 }
 
+/// What a voice message says, under its player: a rule, then the text, which
+/// can be selected and copied like any other message body.
+fn transcript_block(ui: &mut egui::Ui, view: &View<'_>, message: &Message, text: &str, width: f32) {
+    let palette = view.palette;
+    ui.add_space(8.0);
+    let (rule, _) = ui.allocate_exact_size(vec2(width, 1.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rule, 0.0, palette.secondary.gamma_multiply(0.35));
+    ui.add_space(6.0);
+    let style = markup::Style {
+        size: 13.0,
+        color: palette.text,
+        secondary: palette.secondary,
+        link: palette.link,
+        mention: palette.accent,
+    };
+    let laid = markup::layout(ui, text, &[], &style, width);
+    let size = laid.galley.size();
+    let (_, rect) = ui.allocate_space(vec2(width, size.y));
+    let id = bubble_id(&view.chat.id, &message.id).with("transcript");
+    let response = ui.interact(rect, id, Sense::CLICK | Sense::DRAG);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("rect"), rect));
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
+    if ui.is_rect_visible(rect) {
+        markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, true);
+    }
+}
+
 /// Draws the in-chat player with a waveform for voice notes or a track and music badge
 /// for audio files. Playback, seeking and speed controls remain shared between both types.
 #[allow(clippy::too_many_arguments)]
@@ -10677,6 +10745,19 @@ fn voice_player(
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
+    }
+    // What the clip says, under the player. The time keeps the player's line.
+    if view.transcribe_voices {
+        if let Some(text) = &message.transcript {
+            transcript_block(ui, view, message, text, width);
+        } else if view
+            .transcribing
+            .contains(&(view.chat.id.clone(), message.id.clone()))
+        {
+            ui.add_space(6.0);
+            let label = crate::i18n::gettext(view.locale, "Transcribing…");
+            widgets::rich_text(ui, &label, theme::regular(12.5), palette.secondary);
+        }
     }
     // The time and ticks share the duration's line, as on the phone. A long
     // error leaves them no room, so they keep a line of their own.
@@ -11063,6 +11144,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         let mut second = first.clone();
         second.id = "second".into();
@@ -11285,6 +11367,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
@@ -11349,6 +11432,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
             history_order: None,
         }
     }
@@ -11829,6 +11913,9 @@ mod tests {
             voice_speed: app.settings.voice_speed,
             video: &app.video,
             account_receipts_off: false,
+            transcribing: &app.transcribing,
+            transcribe_voices: false,
+            voices: None,
             copy_rows: Some(app.copy_rows.as_ref()),
             selecting: false,
             motion_playing: None,
@@ -11942,6 +12029,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         let mut widths = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -12133,6 +12221,7 @@ mod reaction_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
