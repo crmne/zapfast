@@ -2725,7 +2725,7 @@ msgstr "Mulai dari awal…"
 
 #: src/ui/login.rs:200
 msgid "History to request"
-msgstr ""
+msgstr "Riwayat yang diminta"
 
 #: src/ui/login.rs:210
 msgctxt "message history"
@@ -2734,35 +2734,35 @@ msgstr "Pesan terbaru"
 
 #: src/ui/login.rs:212
 msgid "Full"
-msgstr ""
+msgstr "Lengkap"
 
 #: src/ui/login.rs:219 src/ui/login.rs:234
 msgid "2 years"
-msgstr ""
+msgstr "2 tahun"
 
 #: src/ui/login.rs:220 src/ui/login.rs:239
 msgid "3 years"
-msgstr ""
+msgstr "3 tahun"
 
 #: src/ui/login.rs:221 src/ui/login.rs:229
 msgid "1 year"
-msgstr ""
+msgstr "1 tahun"
 
 #: src/ui/login.rs:246
 msgid ""
 "Ask for older history during linking. Your phone may supply less. Longer "
 "periods can take more time and disk space."
-msgstr ""
+msgstr "Minta riwayat yang lebih lama saat menautkan perangkat. Ponsel Anda mungkin menyediakan lebih sedikit. Periode yang lebih panjang dapat memerlukan lebih banyak waktu dan ruang penyimpanan."
 
 #: src/ui/login.rs:257
 msgid ""
 "Start with recent conversations for a quicker setup. Older messages can "
 "still be requested when you scroll up."
-msgstr ""
+msgstr "Mulai dengan percakapan terbaru agar penyiapan lebih cepat. Pesan yang lebih lama masih dapat diminta saat Anda menggulir ke atas."
 
 #: src/ui/login.rs:273
 msgid "Continue to linking"
-msgstr ""
+msgstr "Lanjutkan penautan"
 
 #: src/ui/rail.rs:301
 msgid "Calls"

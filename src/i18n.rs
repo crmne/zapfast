@@ -582,9 +582,10 @@ mod tests {
         );
     }
 
+    /// Every supported non-English locale must translate the complete history chooser.
     #[test]
-    fn portuguese_pairing_choices_do_not_fall_back_to_english() {
-        for source in [
+    fn pairing_choices_do_not_fall_back_to_english() {
+        let sources = [
             "History to request",
             "Full",
             "1 year",
@@ -593,8 +594,25 @@ mod tests {
             "Ask for older history during linking. Your phone may supply less. Longer periods can take more time and disk space.",
             "Start with recent conversations for a quicker setup. Older messages can still be requested when you scroll up.",
             "Continue to linking",
-        ] {
-            assert_ne!(gettext(Locale::PortugueseBrazil, source), source);
+        ];
+        for locale in Locale::ALL {
+            if locale == Locale::English {
+                continue;
+            }
+            for source in sources {
+                let translated = gettext(locale, source);
+                assert!(
+                    !translated.trim().is_empty() && translated != source,
+                    "Missing {} translation for {source}",
+                    locale.label()
+                );
+            }
+            let recent = pgettext(locale, "message history", "Recent");
+            assert!(
+                !recent.trim().is_empty() && recent != "Recent",
+                "Missing {} history-specific Recent label",
+                locale.label()
+            );
         }
         assert_eq!(
             pgettext(Locale::PortugueseBrazil, "message history", "Recent"),

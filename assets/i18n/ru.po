@@ -2743,7 +2743,7 @@ msgstr "Начать заново…"
 
 #: src/ui/login.rs:200
 msgid "History to request"
-msgstr ""
+msgstr "История для запроса"
 
 #: src/ui/login.rs:210
 msgctxt "message history"
@@ -2752,35 +2752,35 @@ msgstr "Недавняя"
 
 #: src/ui/login.rs:212
 msgid "Full"
-msgstr ""
+msgstr "Полная"
 
 #: src/ui/login.rs:219 src/ui/login.rs:234
 msgid "2 years"
-msgstr ""
+msgstr "2 года"
 
 #: src/ui/login.rs:220 src/ui/login.rs:239
 msgid "3 years"
-msgstr ""
+msgstr "3 года"
 
 #: src/ui/login.rs:221 src/ui/login.rs:229
 msgid "1 year"
-msgstr ""
+msgstr "1 год"
 
 #: src/ui/login.rs:246
 msgid ""
 "Ask for older history during linking. Your phone may supply less. Longer "
 "periods can take more time and disk space."
-msgstr ""
+msgstr "Запросить более старые сообщения при привязке. Телефон может передать меньше сообщений. Для более длительных периодов может потребоваться больше времени и места на диске."
 
 #: src/ui/login.rs:257
 msgid ""
 "Start with recent conversations for a quicker setup. Older messages can "
 "still be requested when you scroll up."
-msgstr ""
+msgstr "Начать с недавних чатов для более быстрой настройки. Более старые сообщения можно запросить позже, прокрутив чат вверх."
 
 #: src/ui/login.rs:273
 msgid "Continue to linking"
-msgstr ""
+msgstr "Перейти к привязке"
 
 #: src/ui/rail.rs:301
 msgid "Calls"

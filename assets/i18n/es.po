@@ -2729,7 +2729,7 @@ msgstr "Empezar de nuevo…"
 
 #: src/ui/login.rs:200
 msgid "History to request"
-msgstr ""
+msgstr "Historial que se solicitará"
 
 #: src/ui/login.rs:210
 msgctxt "message history"
@@ -2738,35 +2738,35 @@ msgstr "Reciente"
 
 #: src/ui/login.rs:212
 msgid "Full"
-msgstr ""
+msgstr "Completo"
 
 #: src/ui/login.rs:219 src/ui/login.rs:234
 msgid "2 years"
-msgstr ""
+msgstr "2 años"
 
 #: src/ui/login.rs:220 src/ui/login.rs:239
 msgid "3 years"
-msgstr ""
+msgstr "3 años"
 
 #: src/ui/login.rs:221 src/ui/login.rs:229
 msgid "1 year"
-msgstr ""
+msgstr "1 año"
 
 #: src/ui/login.rs:246
 msgid ""
 "Ask for older history during linking. Your phone may supply less. Longer "
 "periods can take more time and disk space."
-msgstr ""
+msgstr "Solicitar mensajes anteriores al vincular. Es posible que tu teléfono envíe menos. Los períodos más largos pueden requerir más tiempo y espacio en disco."
 
 #: src/ui/login.rs:257
 msgid ""
 "Start with recent conversations for a quicker setup. Older messages can "
 "still be requested when you scroll up."
-msgstr ""
+msgstr "Empieza con conversaciones recientes para configurar la aplicación más rápido. Podrás solicitar mensajes anteriores al desplazarte hacia arriba."
 
 #: src/ui/login.rs:273
 msgid "Continue to linking"
-msgstr ""
+msgstr "Continuar con la vinculación"
 
 #: src/ui/rail.rs:301
 msgid "Calls"

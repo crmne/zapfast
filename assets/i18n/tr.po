@@ -2728,7 +2728,7 @@ msgstr "Baştan başla…"
 
 #: src/ui/login.rs:200
 msgid "History to request"
-msgstr ""
+msgstr "İstenecek geçmiş"
 
 #: src/ui/login.rs:210
 msgctxt "message history"
@@ -2737,35 +2737,35 @@ msgstr "Son mesajlar"
 
 #: src/ui/login.rs:212
 msgid "Full"
-msgstr ""
+msgstr "Tam"
 
 #: src/ui/login.rs:219 src/ui/login.rs:234
 msgid "2 years"
-msgstr ""
+msgstr "2 yıl"
 
 #: src/ui/login.rs:220 src/ui/login.rs:239
 msgid "3 years"
-msgstr ""
+msgstr "3 yıl"
 
 #: src/ui/login.rs:221 src/ui/login.rs:229
 msgid "1 year"
-msgstr ""
+msgstr "1 yıl"
 
 #: src/ui/login.rs:246
 msgid ""
 "Ask for older history during linking. Your phone may supply less. Longer "
 "periods can take more time and disk space."
-msgstr ""
+msgstr "Bağlama sırasında eski mesajları isteyin. Telefonunuz daha az mesaj sağlayabilir. Daha uzun dönemler daha fazla zaman ve disk alanı gerektirebilir."
 
 #: src/ui/login.rs:257
 msgid ""
 "Start with recent conversations for a quicker setup. Older messages can "
 "still be requested when you scroll up."
-msgstr ""
+msgstr "Kurulumu hızlandırmak için son sohbetlerle başlayın. Yukarı kaydırdığınızda eski mesajları yine de isteyebilirsiniz."
 
 #: src/ui/login.rs:273
 msgid "Continue to linking"
-msgstr ""
+msgstr "Bağlamaya devam et"
 
 #: src/ui/rail.rs:301
 msgid "Calls"
