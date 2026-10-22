@@ -632,10 +632,10 @@ filter applies only to this list: search and the archive still show everything.
 ZapFast remembers the chip or label each account last showed and comes back
 to it at the next start.
 As on the phone, the list leaves out people you have never exchanged a
-message with, though your phone sends them along with your chats. One stays
-listed while it is pinned, a favorite, labeled, unread, open, or holds an
-unsent draft. Search still finds them, and the first message brings one into
-the list.
+message or call with, though your phone sends their chats along with the
+others. One stays listed while it is pinned, a favorite, labeled, unread,
+locked, open, or holds an unsent draft. Search still finds them, and the
+first message or call brings one into the list.
 When the chips do not fit the chat list's width, the row fades at its edge:
 scroll it with the mouse wheel or a touchpad, or drag the scroll bar that
 appears while the pointer is over the row. The label row scrolls the same way.

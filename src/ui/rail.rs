@@ -465,6 +465,7 @@ mod tests {
         assert!(!Destination::Locked.offered(&app));
         let mut chat = crate::model::Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         chat.archived = true;
+        chat.last_activity = 1;
         app.chats.push(chat);
         assert!(Destination::Archived.offered(&app));
         app.sidebar_visible = false;
