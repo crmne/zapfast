@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS transcripts (
 CREATE TRIGGER IF NOT EXISTS delete_transcripts AFTER DELETE ON messages BEGIN
     DELETE FROM transcripts WHERE chat = OLD.chat AND id = OLD.id;
 END;
+-- A delete for everyone keeps the row and replaces its content; the text the
+-- sender removed must go with it.
+CREATE TRIGGER IF NOT EXISTS revoke_transcripts AFTER UPDATE OF content ON messages
+WHEN json_valid(NEW.content) AND json_extract(NEW.content, '$.kind') = 'revoked' BEGIN
+    DELETE FROM transcripts WHERE chat = NEW.chat AND id = NEW.id;
+END;
 ";
 
 impl Archive {
@@ -33,7 +39,8 @@ impl Archive {
         let stored = self.connection.execute(
             "INSERT INTO transcripts (chat, id, text, engine, created_at)
              SELECT ?1, ?2, ?3, ?4, ?5
-             WHERE EXISTS (SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2)
+             WHERE EXISTS (SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2
+                 AND NOT (json_valid(content) AND json_extract(content, '$.kind') = 'revoked'))
              ON CONFLICT(chat, id) DO UPDATE SET
                 text = excluded.text,
                 engine = excluded.engine,

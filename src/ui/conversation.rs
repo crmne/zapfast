@@ -10439,8 +10439,16 @@ fn transcript_block(ui: &mut egui::Ui, view: &View<'_>, message: &Message, text:
         .data_mut(|data| data.insert_temp(id.with("rect"), rect));
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
-    if ui.is_rect_visible(rect) {
-        markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, true);
+    // Keep a selected galley registered when the row scrolls away, as message
+    // bodies do: egui drops the selection when a widget misses a frame.
+    let visible = ui.is_rect_visible(rect);
+    let selection_alive = ui.input(|input| input.pointer.primary_down())
+        || ui
+            .ctx()
+            .plugin_opt::<egui::text_selection::LabelSelectionState>()
+            .is_some_and(|plugin| plugin.lock().has_selection());
+    if visible || selection_alive {
+        markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, visible);
     }
 }
 

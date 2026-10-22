@@ -2955,6 +2955,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_revoked_message_loses_its_transcript_and_keeps_it_off() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(chat, "voice", "hello there", "test")
+                .unwrap()
+        );
+
+        // A delete for everyone keeps the row and replaces its content.
+        archive
+            .set_content(chat, "voice", &Content::Revoked, false)
+            .unwrap();
+        assert!(
+            archive
+                .transcripts(chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+        // A clip that finishes after the revoke writes nothing either.
+        assert!(
+            !archive
+                .set_transcript(chat, "voice", "hello again", "test")
+                .unwrap()
+        );
+        assert!(
+            archive
+                .transcripts(chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn starring_a_message_survives_a_restart() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("fixture.db");

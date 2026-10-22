@@ -90,7 +90,11 @@ pub fn transcribe(ogg: &Path, locale: &str, scratch: &Path) -> Result<String, St
         std::process::id(),
         SERIAL.fetch_add(1, Ordering::Relaxed)
     ));
-    write_wav(&wav, &samples)?;
+    if let Err(error) = write_wav(&wav, &samples) {
+        // A partial file must not outlive the failure that made it.
+        let _ = std::fs::remove_file(&wav);
+        return Err(error);
+    }
     let answer = run_helper(&helper, locale, &wav);
     let _ = std::fs::remove_file(&wav);
     answer

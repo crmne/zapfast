@@ -1828,7 +1828,14 @@ impl Worker {
                         message: done.message,
                         text: None,
                     }),
-                    Err(error) => log::warn!("could not store a voice transcript: {error}"),
+                    Err(error) => {
+                        log::warn!("could not store a voice transcript: {error}");
+                        self.emit_transcription(Event::Transcription {
+                            chat: done.chat,
+                            message: done.message,
+                            text: None,
+                        });
+                    }
                 }
             }
             Ok(_) => {
