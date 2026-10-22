@@ -2774,6 +2774,13 @@ pub enum Action {
         anchor: String,
         to: String,
     },
+    /// The voice messages drawn on screen this frame, in their order, for the
+    /// transcription queue. Sent by the open conversation; an empty list
+    /// clears whatever was queued.
+    VoicesOnScreen {
+        chat: ChatId,
+        ids: Vec<String>,
+    },
     /// The mouse button that swept messages was released.
     EndSweep,
     /// Leaves selection mode.

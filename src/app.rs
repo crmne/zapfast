@@ -397,10 +397,6 @@ struct PendingFollow {
     answered: bool,
 }
 
-/// The voice messages drawn in the open conversation, with their chat, as the
-/// view reports them each frame.
-pub type VoicesOnScreen = std::sync::Mutex<Option<(ChatId, Vec<String>)>>;
-
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -631,9 +627,10 @@ pub struct App {
     /// Message bodies registered for transcript copy formatting.
     pub copy_rows: std::sync::Arc<std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// Voice messages drawn in the conversation this frame, with their chat.
-    /// The view fills it; the app turns it into one transcription request once
-    /// the reader stops moving.
-    pub voices_on_screen: VoicesOnScreen,
+    /// The conversation reports them through `Action::VoicesOnScreen`; the app
+    /// turns the list into one transcription request once the reader stops
+    /// moving.
+    pub voices_on_screen: Option<(ChatId, Vec<String>)>,
     /// The last settled list of voice messages wanting a transcript.
     voices_wanted: Option<(ChatId, Vec<String>)>,
     /// The list last sent to the backend.
@@ -1512,7 +1509,7 @@ impl App {
             viewer_media_chat: None,
             viewer_media_state: HashMap::new(),
             copy_rows: Default::default(),
-            voices_on_screen: Default::default(),
+            voices_on_screen: None,
             voices_wanted: None,
             voices_sent: None,
             voices_resend: false,
@@ -7408,6 +7405,9 @@ impl App {
                 self.selection = Some((chat, ids));
                 self.selection_anchor = Some(id);
             }
+            Action::VoicesOnScreen { chat, ids } => {
+                self.voices_on_screen = Some((chat, ids));
+            }
             Action::SweepMessages { anchor, to } => {
                 let Some(chat) = self.open_chat.clone() else {
                     return;
@@ -10375,10 +10375,7 @@ impl App {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
-        *self
-            .voices_on_screen
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
+        self.voices_on_screen = None;
         *self
             .selection_view
             .lock()
@@ -10457,10 +10454,7 @@ impl App {
         }
         self.voices_wanted = None;
         self.voices_resend = false;
-        *self
-            .voices_on_screen
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
+        self.voices_on_screen = None;
     }
 
     fn queue_transcriptions(&mut self, ctx: &egui::Context) {
@@ -10468,11 +10462,7 @@ impl App {
             self.cancel_transcriptions();
             return;
         }
-        let drawn = self
-            .voices_on_screen
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
+        let drawn = self.voices_on_screen.clone();
         let Some((chat, ids)) = drawn else {
             self.cancel_transcriptions();
             return;

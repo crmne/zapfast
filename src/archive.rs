@@ -1193,17 +1193,22 @@ impl Archive {
         // The messages now live under the phone chat; their transcripts must
         // move before the LID rows are purged, or the delete trigger takes
         // them along. Only rows whose message was actually copied come over,
-        // so no transcript is left without a message.
+        // and never onto a message the sender has since revoked; a newer text
+        // already in the phone chat wins over an older one from the LID chat.
         transaction.execute(
             "INSERT INTO transcripts (chat, id, text, engine, created_at)
              SELECT ?2, t.id, t.text, t.engine, t.created_at
              FROM transcripts t
              WHERE t.chat = ?1
-               AND EXISTS (SELECT 1 FROM messages m WHERE m.chat = ?2 AND m.id = t.id)
+               AND EXISTS (SELECT 1 FROM messages m
+                   WHERE m.chat = ?2 AND m.id = t.id
+                     AND NOT (json_valid(m.content)
+                         AND json_extract(m.content, '$.kind') = 'revoked'))
              ON CONFLICT(chat, id) DO UPDATE SET
                 text = excluded.text,
                 engine = excluded.engine,
-                created_at = excluded.created_at",
+                created_at = excluded.created_at
+             WHERE excluded.created_at > transcripts.created_at",
             params![lid_chat, phone_chat],
         )?;
         transaction.execute(
@@ -3003,6 +3008,89 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_transcript_does_not_follow_its_message_onto_a_revoked_phone_row() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive.ensure_chat(&phone_chat, "Phone").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        let mut revoked = message(&phone_chat, "voice", 10, false);
+        revoked.content = Content::Revoked;
+        archive.insert_message(&revoked, None).unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "lid text", "test")
+                .unwrap()
+        );
+
+        archive.put_lid(lid, pn).unwrap();
+
+        // The phone row is the one that survives, and it was revoked: the
+        // text the sender removed must not come back with the merge.
+        assert!(
+            archive
+                .transcripts(&phone_chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Moves a LID chat with a transcript onto its phone chat, with the named
+    /// side 100 seconds older, and answers what the phone chat ended with.
+    fn merge_lid_transcript(lid_is_newer: bool) -> Option<String> {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive.ensure_chat(&phone_chat, "Phone").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(&phone_chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "lid text", "test")
+                .unwrap()
+        );
+        assert!(
+            archive
+                .set_transcript(&phone_chat, "voice", "phone text", "test")
+                .unwrap()
+        );
+        let newer = if lid_is_newer { &lid_chat } else { &phone_chat };
+        archive
+            .connection
+            .execute(
+                "UPDATE transcripts SET created_at = created_at + 100
+                 WHERE chat = ?1 AND id = 'voice'",
+                [newer.as_str()],
+            )
+            .unwrap();
+
+        archive.put_lid(lid, pn).unwrap();
+        archive
+            .transcripts(&phone_chat, &["voice".to_owned()])
+            .unwrap()
+            .get("voice")
+            .cloned()
+    }
+
+    #[test]
+    fn the_newer_transcript_survives_the_lid_merge() {
+        assert_eq!(merge_lid_transcript(false).as_deref(), Some("phone text"));
+        assert_eq!(merge_lid_transcript(true).as_deref(), Some("lid text"));
     }
 
     #[test]
