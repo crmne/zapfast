@@ -80,10 +80,13 @@ would be on its own.
 **Delete chat** and **Clear chat** already sync in 0.19.0, as described under
 [Chats](#chats).
 
+**Development builds** place a message you send at the time WhatsApp's
+server acknowledged it, so a reply no longer sorts above it when this
+computer's clock runs ahead. Until the server answers, and for a poll, the
+message keeps this computer's time.
+
 **Development builds** preserve edited replies and the phone's order for
-messages sent within the same second when loading history. A message you
-send takes the time WhatsApp's server gave it, so a reply no longer sorts
-above it when this computer's clock runs ahead. If an earlier
+messages sent within the same second when loading history. If an earlier
 build missed a message or put nearby messages in the wrong order, right-click
 a message just after the affected area and choose **Reload earlier messages**.
 This asks your phone for up to 50 messages before that point and merges them

@@ -3551,7 +3551,8 @@ impl App {
                         conversation.sort();
                     }
                 }
-                if let Some(chat) = restamped {
+                // A hidden account's events never touch the window's selection.
+                if let Some(chat) = restamped.filter(|_| !self.events_hidden) {
                     self.order_selection(&chat);
                 }
             }

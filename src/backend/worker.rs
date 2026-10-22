@@ -1870,9 +1870,13 @@ impl Worker {
         let Some(chat) = self.awaiting_ack.remove(&ack.id) else {
             return;
         };
-        if let Ok(true) = self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
-            self.emit_message(&chat, &ack.id);
-            self.emit_chat(&chat);
+        match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
+            Ok(true) => {
+                self.emit_message(&chat, &ack.id);
+                self.emit_chat(&chat);
+            }
+            Ok(false) => {}
+            Err(error) => log::warn!("could not move a sent message to the server's time: {error}"),
         }
     }
 
@@ -4821,13 +4825,14 @@ impl Worker {
             message.content.keep_local_paths(&existing.content);
             keep_live_location_notice(&mut message.content, existing);
         }
-        if message.from_me && message.status == Delivery::Pending {
-            self.awaiting_ack
-                .insert(message.id.clone(), message.chat.clone());
-        }
         if let Err(error) = self.archive.insert_message(&message, raw.as_deref()) {
             log::warn!("could not store a message: {error}");
             return;
+        }
+        // Only a stored message can be moved to the server's time.
+        if message.from_me && message.status == Delivery::Pending {
+            self.awaiting_ack
+                .insert(message.id.clone(), message.chat.clone());
         }
         self.retire_local_call_twins(&message);
         if existing
@@ -19612,6 +19617,51 @@ mod receipt_tests {
             .class("message".to_owned())
             .build();
         worker.server_ack(&untimed);
+        let timed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .build();
+        worker.server_ack(&timed);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            140
+        );
+    }
+
+    #[test]
+    fn an_error_ack_leaves_our_message_at_its_time() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+        );
+        let refused = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .error("479".to_owned())
+            .build();
+        worker.server_ack(&refused);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            200
+        );
+        // The refused ack did not drop the entry: a plain ack still places it.
         let timed = wa_events::ServerAck::builder()
             .id("mine".to_owned())
             .class("message".to_owned())
