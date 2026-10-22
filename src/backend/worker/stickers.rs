@@ -911,7 +911,7 @@ impl Worker {
             return;
         };
         self.favorites_recovering = true;
-        log::info!("reading favorite stickers from the phone");
+        log::info!("reading favorite stickers and chat settings from the phone");
         let commands = self.commands.clone();
         tokio::spawn(async move {
             use whatsapp_rust::WAPatchName;
@@ -924,7 +924,9 @@ impl Worker {
             {
                 Ok(report) => report.synced.contains(&WAPatchName::RegularLow),
                 Err(error) => {
-                    log::warn!("could not read favorite stickers from the phone: {error}");
+                    log::warn!(
+                        "could not read favorite stickers and chat settings from the phone: {error}"
+                    );
                     false
                 }
             };
@@ -938,7 +940,7 @@ impl Worker {
         self.favorites_recovering = false;
         if !complete {
             log::warn!(
-                "favorite stickers from the phone not read yet; retrying on the next connection"
+                "favorite stickers and chat settings from the phone not read yet; retrying on the next connection"
             );
             return;
         }

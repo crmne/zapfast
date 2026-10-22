@@ -682,12 +682,26 @@ pub async fn run(
     let favorites_recovered = replayed
         .iter()
         .all(|key| archive.meta(key).ok().flatten().as_deref() == Some("complete"))
-        || (archive.chats().is_ok_and(|chats| chats.is_empty())
-            && replayed
-                .iter()
-                .all(|key| archive.set_meta(key, "complete").is_ok()));
+        || (archive.chats().is_ok_and(|chats| chats.is_empty()) && {
+            // Every key is written, so one failure does not leave the other
+            // unrecorded.
+            let mut recorded = true;
+            for key in replayed {
+                if let Err(error) = archive.set_meta(key, "complete") {
+                    log::warn!("could not record the chat settings replay: {error}");
+                    recorded = false;
+                }
+            }
+            recorded
+        });
     // The phone's own setting, read before the archive moves into the worker.
-    let phone_unarchive_chats = archive.unarchive_chats().ok().flatten();
+    let phone_unarchive_chats = match archive.unarchive_chats() {
+        Ok(setting) => setting,
+        Err(error) => {
+            log::warn!("could not read the phone's Keep chats archived: {error}");
+            None
+        }
+    };
     // Likewise only contacts synced before first names were kept lack them.
     let first_names_recovered = archive
         .meta(contact_names::FIRST_NAMES_RECOVERED)
