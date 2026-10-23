@@ -788,6 +788,14 @@ pub enum Content {
     },
     /// "This message was deleted."
     Revoked,
+    /// A disappearing-message timer change, drawn as a centred system row
+    /// rather than a bubble. The message's `from_me` and `sender` say who
+    /// changed it.
+    #[serde(rename = "disappearing_timer")]
+    DisappearingTimer {
+        /// The new duration in seconds; `0` means the timer was turned off.
+        seconds: u32,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -829,6 +837,10 @@ pub const CALL_ENTRY_PREFIX: &str = "zapfast-call-";
 /// under. No chat has it: such a call belongs to none, so its entries show on
 /// the Calls page alone, never in the chat list.
 pub const CALL_LINK_CHAT: &str = "zapfast-call-link";
+
+/// The id prefix of the disappearing-timer notices ZapFast files from live
+/// setting changes. They are local system rows, never sent anywhere.
+pub const TIMER_NOTICE_PREFIX: &str = "zapfast-timer-";
 
 /// How far apart, in seconds, two entries for one call may be: the phone's
 /// call-log message and the call's record are stamped by different clocks.
@@ -1296,6 +1308,10 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::DisappearingTimer { seconds } => {
+                crate::util::disappearing_line(crate::i18n::Locale::English, Some(*seconds))
+                    .unwrap_or_else(|| "Disappearing messages changed".to_owned())
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {
@@ -2945,6 +2961,11 @@ pub enum Action {
     },
     /// Asks for an audio file for one chat's notifications.
     PickChatSound(ChatId),
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
     /// Sets a chat's own voice message speed; `None` follows Settings.
     SetChatVoiceSpeed {
         chat: ChatId,

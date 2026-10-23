@@ -334,6 +334,7 @@ pub(crate) fn can_select(content: &Content) -> bool {
             | Content::Poll { .. }
             | Content::Interactive { .. }
             | Content::Call { .. }
+            | Content::DisappearingTimer { .. }
     )
 }
 
@@ -531,6 +532,9 @@ pub struct App {
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
+    /// Demo/test: keep the info panel's disappearing-timer menu open.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_timer_menu: Option<ChatId>,
     /// Demo/test: keep the selection bar's delete menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_selection_delete_menu: bool,
@@ -1368,6 +1372,8 @@ impl App {
             open_chat_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            open_timer_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_selection_delete_menu: false,
             emoji_jump: None,
@@ -4037,6 +4043,13 @@ impl App {
                     self.group_saving.insert(chat);
                 } else {
                     self.group_saving.remove(&chat);
+                }
+            }
+            Event::TimerSaving { chat, saving } => {
+                if saving {
+                    self.timer_saving.insert(chat);
+                } else {
+                    self.timer_saving.remove(&chat);
                 }
             }
             Event::Error(message) => {
@@ -8195,6 +8208,10 @@ impl App {
                 self.backend.send(Command::SetChatSound { chat, sound });
             }
             Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
+            Action::SetDisappearingTimer { chat, seconds } => {
+                self.backend
+                    .send(Command::SetDisappearingTimer { chat, seconds });
+            }
             Action::SetChatVoiceSpeed { chat, speed } => self.set_chat_voice_speed(chat, speed),
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();

@@ -73,6 +73,14 @@ const SYNC_QUIET: Duration = Duration::from_secs(20);
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
 /// Phone history-request timeout.
 const PHONE_PATIENCE: Duration = Duration::from_secs(30);
+/// How long a sent disappearing-timer change waits for its server ack before
+/// the control is re-enabled and the change is reported as failed.
+const TIMER_ACK_PATIENCE: Duration = Duration::from_secs(30);
+/// How long after that a late ack is still applied, without a second report.
+const TIMER_LATE_ACK_PATIENCE: Duration = Duration::from_secs(5 * 60);
+/// How long a message ack that outran its `TimerSet` is held, and how many.
+const TIMER_ACK_BUFFER_TTL: Duration = Duration::from_secs(60);
+const TIMER_ACK_BUFFER_LIMIT: usize = 256;
 /// Phone history-request batch size.
 const PHONE_BATCH: i32 = 50;
 /// `HistorySync.sync_type` for on-demand history responses.
@@ -709,6 +717,9 @@ pub async fn run(
         privacy_retry: Instant::now(),
         star_generation: HashMap::new(),
         star_session: 0,
+        account_session: 0,
+        timer_attempt: 0,
+        recent_acks: HashMap::new(),
         pin_generation: HashMap::new(),
         withheld_pages: Vec::new(),
         dirs,
@@ -738,6 +749,8 @@ pub async fn run(
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
         group_pictures_sent: HashMap::new(),
+        group_saving: HashSet::new(),
+        pending_timers: HashMap::new(),
         description_generation: HashMap::new(),
         group_info_generation: HashMap::new(),
         edits: HashMap::new(),
@@ -885,6 +898,7 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
             }
@@ -1048,6 +1062,34 @@ struct EditGenerations {
     applied: u64,
 }
 
+/// A direct disappearing-timer change whose sent message is waiting for the
+/// server's ack. `Ok` from the send only means the stanza reached the socket.
+struct PendingTimer {
+    chat: ChatId,
+    seconds: u32,
+    /// The sent message's id, once the stanza has left the socket.
+    id: Option<String>,
+    /// When the send task called the send, the setting's own time. The
+    /// server's ack time is a different clock and must not version the timer.
+    sent_at: i64,
+    /// When to report the change as unanswered.
+    deadline: Instant,
+    /// The deadline was already reported; the control is enabled again and an
+    /// ack that arrives later still applies the timer without a second report.
+    reported: bool,
+    /// The account session the change was sent under. A completion from a
+    /// departed session must not touch the next account.
+    session: u64,
+}
+
+/// A server ack that arrived before its `TimerSet`, held until the send names
+/// the id it belongs to. Exact id matching keeps an ordinary message's ack
+/// from being mistaken for a timer change.
+struct BufferedAck {
+    error: Option<String>,
+    at: Instant,
+}
+
 struct Worker {
     /// Private content may reach the UI.
     privacy_ready: bool,
@@ -1146,6 +1188,24 @@ struct Worker {
     /// accepted one shows at once rather than after a lookup the server may
     /// still answer with the old picture.
     group_pictures_sent: HashMap<ChatId, Vec<u8>>,
+    /// Groups with a name, photo or timer change in flight. A completion that
+    /// a logout discards cannot clear the saving state, so logout does.
+    group_saving: HashSet<ChatId>,
+    /// Direct timer changes whose sent message is still waiting for the
+    /// server's ack, by attempt. A retry adds an entry rather than replacing
+    /// the earlier one, so a change the server accepted is not forgotten if a
+    /// later attempt fails; the archive's timestamp gate orders the two.
+    pending_timers: HashMap<u64, PendingTimer>,
+    /// The last timer attempt, so a superseded send's completion or error is
+    /// not applied to its replacement.
+    timer_attempt: u64,
+    /// Message acks seen before their `TimerSet`, by message id and bounded in
+    /// time and count.
+    recent_acks: HashMap<String, BufferedAck>,
+    /// Bumped when the account unlinks, so a late completion (a timer's or a
+    /// group edit's) or ack from the old session is ignored rather than
+    /// written to the next one.
+    account_session: u64,
     /// Description notices must outlive metadata requested before they arrived.
     description_generation: HashMap<String, u64>,
     /// Superseded metadata operations cannot update the archive or retry queue.
@@ -3394,6 +3454,8 @@ impl Worker {
                 });
             }
             E::ContactUpdate(update) => self.on_contact_update(update),
+            // A sent stanza's server ack decides a direct timer change.
+            E::ServerAck(ack) => self.timer_acked(ack),
             E::GroupUpdate(update) => {
                 let chat = self.canonical(&update.group_jid);
                 use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
@@ -3421,18 +3483,78 @@ impl Worker {
                     }
                 }
                 if let GroupNotificationAction::Ephemeral { expiration, .. } = &*update.action {
-                    self.ensure_chat(&chat, None);
                     let timestamp = update.timestamp.timestamp();
-                    let accepted = self
-                        .archive
-                        .set_ephemeral(&chat, *expiration, timestamp)
-                        .unwrap_or(false);
-                    log::debug!(
-                        target: "zapfast::disappearing",
-                        "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
-                    );
-                    if accepted {
-                        self.emit_chat(&chat);
+                    // Message removal does not order a timer setting, so a
+                    // newer setting that predates a clear still applies. Only
+                    // a chat removed outright is not brought back by one.
+                    let deleted = self.archive.chat(&chat).ok().flatten().is_none()
+                        && self.predates_removal(&chat, timestamp);
+                    if !deleted {
+                        self.ensure_chat(&chat, None);
+                        let accepted = self
+                            .archive
+                            .set_ephemeral(&chat, *expiration, timestamp)
+                            .unwrap_or(false);
+                        log::debug!(
+                            target: "zapfast::disappearing",
+                            "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
+                        );
+                        if accepted {
+                            // The actor may arrive as a LID or a phone number.
+                            // With neither, the notice names nobody rather than
+                            // claiming we made a change we did not.
+                            // A notice may name the actor only by a privacy
+                            // id. The notification carries the phone number
+                            // beside it, so learn the pair and name the
+                            // contact rather than "Unknown".
+                            if let (Some(lid), Some(pn)) =
+                                (&update.participant, &update.participant_pn)
+                            {
+                                self.learn_pair(lid, pn);
+                            }
+                            let raw_actor = update
+                                .participant_pn
+                                .as_ref()
+                                .or(update.participant.as_ref());
+                            let actor =
+                                raw_actor.map(|jid| self.canonical(jid)).unwrap_or_default();
+                            let from_me = !actor.is_empty() && actor == self.me();
+                            // Two notifications without an id must not share a
+                            // key: the fallback carries the timestamp, action,
+                            // actor and duration that tell them apart. The key
+                            // uses the server's own actor id, not the resolved
+                            // name, so learning a privacy-id mapping cannot
+                            // change it and duplicate the notice on redelivery.
+                            let key_actor = raw_actor
+                                .map(|jid| jid.to_string())
+                                .unwrap_or_else(|| "unknown".to_owned());
+                            let id = match update.notification_id.as_deref() {
+                                Some(notification) => format!(
+                                    "{}{}-{}",
+                                    crate::model::TIMER_NOTICE_PREFIX,
+                                    notification,
+                                    update.action_index
+                                ),
+                                None => format!(
+                                    "{}{}-{}-{}-{}",
+                                    crate::model::TIMER_NOTICE_PREFIX,
+                                    timestamp,
+                                    update.action_index,
+                                    key_actor,
+                                    expiration
+                                ),
+                            };
+                            self.file_timer_notice(
+                                &chat,
+                                &id,
+                                actor,
+                                from_me,
+                                timestamp,
+                                *expiration,
+                                update.notify.as_deref(),
+                            );
+                            self.emit_chat(&chat);
+                        }
                     }
                 }
                 // Who may edit the group's info changes at once; the refresh
@@ -3675,6 +3797,23 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        // The interface may track a pending timer under the chat's phone id
+        // after a privacy-id mapping was learned, so resolve those before the
+        // mapping is cleared below and the stored id takes over again.
+        let mut timer_targets: Vec<ChatId> = self
+            .pending_timers
+            .values()
+            .flat_map(|pending| {
+                let canonical = self.canonical_str(&pending.chat);
+                if canonical == pending.chat {
+                    vec![pending.chat.clone()]
+                } else {
+                    vec![pending.chat.clone(), canonical]
+                }
+            })
+            .collect();
+        timer_targets.sort();
+        timer_targets.dedup();
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.message_removals_in_flight.clear();
@@ -3716,6 +3855,28 @@ impl Worker {
         self.pin_generation.clear();
         // Pin answers carry the same session as star answers.
         self.star_session = self.star_session.wrapping_add(1);
+        // A timer change sent under the old account, and any ack it still
+        // expects, belongs to that account: the next one must not inherit it.
+        // The control is re-enabled under every id it may be tracked by, or
+        // the next account could show it saving with no entry left to expire.
+        self.pending_timers.clear();
+        self.recent_acks.clear();
+        self.account_session = self.account_session.wrapping_add(1);
+        for chat in timer_targets {
+            self.emit(Event::TimerSaving {
+                chat,
+                saving: false,
+            });
+        }
+        // A discarded group-edit completion cannot clear its own saving state.
+        let saving: Vec<ChatId> = self.group_saving.drain().collect();
+        for chat in saving {
+            self.emit(Event::GroupSaving {
+                chat,
+                saving: false,
+            });
+        }
+        self.group_pictures_sent.clear();
         self.me_pn = None;
         self.me_lid = None;
         self.me_name = None;
@@ -4093,6 +4254,14 @@ impl Worker {
                         .ephemeral_setting_timestamp
                         .unwrap_or_else(|| info.timestamp.timestamp());
                     let used_fallback = protocol.ephemeral_setting_timestamp.is_none();
+                    // Message removal does not order a timer setting, so a
+                    // newer setting that predates a clear still applies. Only
+                    // a chat removed outright is not brought back by one.
+                    if self.archive.chat(&chat).ok().flatten().is_none()
+                        && self.predates_removal(&chat, timestamp)
+                    {
+                        return;
+                    }
                     self.ensure_chat(&chat, push_name.as_deref());
                     let accepted = self
                         .archive
@@ -4103,6 +4272,15 @@ impl Worker {
                         "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
                     );
                     if accepted {
+                        self.file_timer_notice(
+                            &chat,
+                            &format!("{}{}", crate::model::TIMER_NOTICE_PREFIX, info.id),
+                            sender.clone(),
+                            from_me,
+                            timestamp,
+                            expiration,
+                            push_name.as_deref(),
+                        );
                         self.emit_chat(&chat);
                     }
                 } else {
@@ -6488,7 +6666,27 @@ impl Worker {
                 result,
                 picture,
             } => self.group_created(request, result, picture),
-            Command::GroupEdited { chat, edit, result } => self.group_edited(chat, edit, result),
+            Command::GroupEdited {
+                chat,
+                edit,
+                session,
+                result,
+            } => {
+                // A completion from a departed session belongs to the account
+                // that left; it must not clear the next one's state.
+                if session == self.account_session {
+                    self.group_edited(chat, edit, result);
+                }
+            }
+            Command::SetDisappearingTimer { chat, seconds } => {
+                self.set_disappearing_timer(chat, seconds)
+            }
+            Command::TimerSet {
+                chat,
+                session,
+                attempt,
+                result,
+            } => self.timer_set(chat, session, attempt, result),
             Command::ProfileSaved {
                 name,
                 about,
@@ -7674,6 +7872,8 @@ impl Worker {
             chat: chat.clone(),
             saving: true,
         });
+        self.group_saving.insert(chat.clone());
+        let session = self.account_session;
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         tokio::spawn(async move {
@@ -7685,6 +7885,7 @@ impl Worker {
             let _ = commands.send(Command::GroupEdited {
                 chat,
                 edit: GroupEdit::Name(name),
+                session,
                 result,
             });
             waker.wake();
@@ -7706,10 +7907,12 @@ impl Worker {
             chat: chat.clone(),
             saving: true,
         });
+        self.group_saving.insert(chat.clone());
         match &jpeg {
             Some(jpeg) => self.group_pictures_sent.insert(chat.clone(), jpeg.clone()),
             None => self.group_pictures_sent.remove(&chat),
         };
+        let session = self.account_session;
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         tokio::spawn(async move {
@@ -7723,6 +7926,7 @@ impl Worker {
             let _ = commands.send(Command::GroupEdited {
                 chat,
                 edit: GroupEdit::Picture { removed },
+                session,
                 result,
             });
             waker.wake();
@@ -7731,13 +7935,14 @@ impl Worker {
 
     /// Applies WhatsApp's answer to a group name or photo change.
     fn group_edited(&mut self, chat: ChatId, edit: GroupEdit, result: Result<(), String>) {
+        self.group_saving.remove(&chat);
         self.emit(Event::GroupSaving {
             chat: chat.clone(),
             saving: false,
         });
         let sent_picture = match edit {
             GroupEdit::Picture { .. } => self.group_pictures_sent.remove(&chat),
-            GroupEdit::Name(_) => None,
+            GroupEdit::Name(_) | GroupEdit::Timer(_) => None,
         };
         match (result, edit) {
             (Ok(()), GroupEdit::Name(name)) => {
@@ -7750,14 +7955,28 @@ impl Worker {
                 self.show_sent_picture(chat, sent_picture.unwrap_or_default());
             }
             (Ok(()), GroupEdit::Picture { removed }) => self.refresh_avatar(chat, removed),
+            // A group's timer is applied from the server's own group
+            // notification, which carries the change's timestamp and actor,
+            // and files the notice. The accepted IQ only refreshes the
+            // metadata, so a newer change is never overwritten and no notice
+            // is invented here.
+            (Ok(()), GroupEdit::Timer(_)) => self.request_group_info(&chat, true),
             (Err(error), edit) => {
                 let refused = group_edit_refused(&error);
                 log::warn!(
                     "could not change group info ({})",
                     if refused { "refused" } else { "failed" }
                 );
+                let timer = matches!(&edit, GroupEdit::Timer(_));
                 self.emit(Event::Error(if refused {
-                    GROUP_EDIT_REFUSED.to_owned()
+                    // The refusal names what was being changed: a timer has
+                    // nothing to do with the group's name and photo.
+                    if timer {
+                        "Only admins can change disappearing messages."
+                    } else {
+                        GROUP_EDIT_REFUSED
+                    }
+                    .to_owned()
                 } else {
                     match edit {
                         GroupEdit::Name(_) => "Could not rename the group.",
@@ -7767,6 +7986,7 @@ impl Worker {
                         GroupEdit::Picture { removed: true } => {
                             "Could not remove the group's photo."
                         }
+                        GroupEdit::Timer(_) => "Could not change disappearing messages.",
                     }
                     .to_owned()
                 }));
@@ -7777,6 +7997,393 @@ impl Worker {
                 }
             }
         }
+    }
+
+    /// Changes a chat's disappearing-message timer using the direct or group
+    /// WhatsApp API, and only updates the archive after acceptance.
+    fn set_disappearing_timer(&mut self, chat: ChatId, seconds: u32) {
+        let is_group = ChatKind::from_id(&chat) == ChatKind::Group;
+        // A send on a dropped socket would fail as "client is not connected";
+        // say to reconnect instead, as the other send paths do.
+        let (Some(client), Some(jid)) = (self.connected_client(), Self::jid_of(&chat)) else {
+            self.emit(Event::Error(
+                "Connect to WhatsApp to change disappearing messages.".to_owned(),
+            ));
+            return;
+        };
+        let session = self.account_session;
+        let attempt = if is_group {
+            0
+        } else {
+            // Registered before the send, so a server ack that arrives before
+            // the send's own completion is held by id until the send names it.
+            let attempt = self.begin_timer(&chat, seconds);
+            self.report_timer_saving(&chat);
+            attempt
+        };
+        if is_group {
+            self.emit(Event::GroupSaving {
+                chat: chat.clone(),
+                saving: true,
+            });
+            self.group_saving.insert(chat.clone());
+        }
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            if is_group {
+                let result = client
+                    .groups()
+                    .set_ephemeral(jid, seconds)
+                    .await
+                    .map_err(|error| error.to_string());
+                let _ = commands.send(Command::GroupEdited {
+                    chat,
+                    edit: GroupEdit::Timer(seconds),
+                    session,
+                    result,
+                });
+            } else {
+                // The send's `Ok` only means the stanza left the socket: the
+                // timer waits for the server's ack. The library embeds the
+                // setting's own timestamp in the message it sent, so version
+                // the timer by that exact value, not by any other clock.
+                let result = client
+                    .set_chat_disappearing_timer(jid, seconds)
+                    .await
+                    .map(|sent| {
+                        let setting = sent
+                            .message
+                            .get_base_message()
+                            .protocol_message
+                            .as_option()
+                            .and_then(|protocol| protocol.ephemeral_setting_timestamp);
+                        (
+                            sent.message_id.to_string(),
+                            setting.unwrap_or_else(crate::util::now),
+                        )
+                    })
+                    .map_err(|error| error.to_string());
+                let _ = commands.send(Command::TimerSet {
+                    chat,
+                    session,
+                    attempt,
+                    result,
+                });
+            }
+            waker.wake();
+        });
+    }
+
+    /// Registers a direct timer change the moment its send begins, before the
+    /// send can be acked, and returns the attempt token that identifies it.
+    /// `timer_set` fills in the sent id; `timer_acked` resolves it.
+    fn begin_timer(&mut self, chat: &ChatId, seconds: u32) -> u64 {
+        self.timer_attempt = self.timer_attempt.wrapping_add(1);
+        let attempt = self.timer_attempt;
+        self.pending_timers.insert(
+            attempt,
+            PendingTimer {
+                chat: chat.clone(),
+                seconds,
+                id: None,
+                sent_at: crate::util::now(),
+                deadline: Instant::now() + TIMER_ACK_PATIENCE,
+                reported: false,
+                session: self.account_session,
+            },
+        );
+        attempt
+    }
+
+    /// Tells the interface whether any change for `chat` is still waiting for
+    /// its first answer. An attempt whose wait already reported is kept for a
+    /// late ack but is no longer saving, so the control is not held disabled
+    /// by a change the reader was already told failed.
+    fn report_timer_saving(&mut self, chat: &ChatId) {
+        // The interface tracks saving by chat id, and a privacy-id mapping
+        // learned mid-flight can change ours. Emit for the stored id and the
+        // current canonical one, so neither is left saving.
+        let waiting: Vec<ChatId> = self
+            .pending_timers
+            .values()
+            .filter(|pending| !pending.reported)
+            .map(|pending| self.canonical_str(&pending.chat))
+            .collect();
+        let canonical = self.canonical_str(chat);
+        let mut targets = vec![chat.clone()];
+        if canonical != *chat {
+            targets.push(canonical);
+        }
+        for target in targets {
+            let saving = waiting.contains(&target);
+            self.emit(Event::TimerSaving {
+                chat: target,
+                saving,
+            });
+        }
+    }
+
+    /// Takes a direct timer change off the wire. `Ok` carries the sent
+    /// message's id and send time, filling in the entry registered when the
+    /// send began: the change is written only when the server acks it, so the
+    /// control stays disabled until then. A send that never left the socket
+    /// clears it and reports.
+    fn timer_set(
+        &mut self,
+        chat: ChatId,
+        session: u64,
+        attempt: u64,
+        result: Result<(String, i64), String>,
+    ) {
+        if session != self.account_session {
+            return;
+        }
+        match result {
+            Ok((id, sent_at)) => {
+                let Some(pending) = self.pending_timers.get_mut(&attempt) else {
+                    // The ack already resolved this change, or logout dropped
+                    // it: do not resurrect it.
+                    return;
+                };
+                if pending.session != session {
+                    return;
+                }
+                pending.id = Some(id.clone());
+                pending.sent_at = sent_at;
+                // A send that completes after its wait already reported still
+                // gets a full window for its ack; otherwise the entry could be
+                // discarded the instant the completion lands.
+                pending.deadline = Instant::now()
+                    + if pending.reported {
+                        TIMER_LATE_ACK_PATIENCE
+                    } else {
+                        TIMER_ACK_PATIENCE
+                    };
+                // An ack that arrived before this completion waited by id.
+                if let Some(ack) = self.take_buffered_ack(&id) {
+                    self.resolve_timer_ack(attempt, &id, ack.error.as_deref());
+                }
+            }
+            Err(error) => {
+                let Some(pending) = self.pending_timers.get(&attempt) else {
+                    return;
+                };
+                if pending.session != session {
+                    return;
+                }
+                let reported = pending.reported;
+                self.pending_timers.remove(&attempt);
+                self.report_timer_saving(&chat);
+                // The timeout already reported this attempt; a late send
+                // error does not say it twice.
+                if !reported {
+                    log::warn!("could not change disappearing messages ({error})");
+                    self.emit(Event::Error(
+                        "Could not change disappearing messages.".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Applies the server's ack of a direct timer change. Only the sent id
+    /// matches, so an ordinary message's ack can never be taken for a timer
+    /// change. An ack that beats its `TimerSet` is held by id until the send
+    /// names it.
+    fn timer_acked(&mut self, ack: &wa_events::ServerAck) {
+        if ack.class.as_deref().is_some_and(|class| class != "message") {
+            return;
+        }
+        let attempt = self
+            .pending_timers
+            .iter()
+            .find(|(_, pending)| pending.id.as_deref() == Some(ack.id.as_str()))
+            .map(|(attempt, _)| *attempt);
+        match attempt {
+            Some(attempt) => self.resolve_timer_ack(attempt, &ack.id, ack.error.as_deref()),
+            None => self.buffer_ack(ack),
+        }
+    }
+
+    /// Holds a message ack that has no pending timer yet, bounded in age and
+    /// count, so an ack that outran its `TimerSet` still lands.
+    fn buffer_ack(&mut self, ack: &wa_events::ServerAck) {
+        let now = Instant::now();
+        self.recent_acks
+            .retain(|_, held| now.duration_since(held.at) < TIMER_ACK_BUFFER_TTL);
+        if self.recent_acks.len() >= TIMER_ACK_BUFFER_LIMIT
+            && let Some(oldest) = self
+                .recent_acks
+                .iter()
+                .min_by_key(|(_, held)| held.at)
+                .map(|(id, _)| id.clone())
+        {
+            self.recent_acks.remove(&oldest);
+        }
+        self.recent_acks.insert(
+            ack.id.clone(),
+            BufferedAck {
+                error: ack.error.clone(),
+                at: now,
+            },
+        );
+    }
+
+    /// Takes a held ack for `id`, unless it sat past its age bound.
+    fn take_buffered_ack(&mut self, id: &str) -> Option<BufferedAck> {
+        let held = self.recent_acks.remove(id)?;
+        (Instant::now().duration_since(held.at) < TIMER_ACK_BUFFER_TTL).then_some(held)
+    }
+
+    /// Writes the change an ack accepted, or reports its nack. The change is
+    /// versioned by the send task's own time, the clock the archive compares
+    /// against the phone's settings; the server's ack time is a different
+    /// clock and ordering by it could overwrite a newer phone change. A
+    /// privacy-id mapping learned since the send may have merged the chat, so
+    /// the destination is resolved again here.
+    fn resolve_timer_ack(&mut self, attempt: u64, id: &str, error: Option<&str>) {
+        let Some(pending) = self.pending_timers.remove(&attempt) else {
+            return;
+        };
+        // Report by the stored id so the emitted targets cover both it and
+        // the canonical one a mapping may have moved the chat to.
+        self.report_timer_saving(&pending.chat);
+        let chat = self.canonical_str(&pending.chat);
+        if let Some(error) = error {
+            if !pending.reported {
+                log::warn!("WhatsApp refused a disappearing-messages change ({error})");
+                self.emit(Event::Error(
+                    "Could not change disappearing messages.".to_owned(),
+                ));
+            }
+            return;
+        }
+        let timestamp = pending.sent_at;
+        if self
+            .archive
+            .set_ephemeral(&chat, pending.seconds, timestamp)
+            .unwrap_or(false)
+        {
+            self.file_timer_notice(
+                &chat,
+                &format!("{}{}", crate::model::TIMER_NOTICE_PREFIX, id),
+                self.me(),
+                true,
+                timestamp,
+                pending.seconds,
+                None,
+            );
+            self.emit_chat(&chat);
+        }
+    }
+
+    /// Reports timer changes the server never acked, re-enabling the control.
+    /// The entry is kept a while longer, so an ack that arrives late still
+    /// applies the timer it accepted without a second report; only then is the
+    /// entry dropped.
+    fn expire_timer_acks(&mut self) {
+        let now = Instant::now();
+        // The held acks age out here too, so their TTL holds without traffic
+        // even when no timer change is pending.
+        self.recent_acks
+            .retain(|_, held| now.duration_since(held.at) < TIMER_ACK_BUFFER_TTL);
+        if self.pending_timers.is_empty() {
+            return;
+        }
+        let due: Vec<(u64, ChatId, bool, bool)> = self
+            .pending_timers
+            .iter()
+            .filter(|(_, pending)| pending.deadline <= now)
+            .map(|(attempt, pending)| {
+                (
+                    *attempt,
+                    pending.chat.clone(),
+                    pending.reported,
+                    pending.id.is_some(),
+                )
+            })
+            .collect();
+        for (attempt, chat, reported, sent) in due {
+            if reported {
+                // A send that has not reported yet is kept however long it
+                // takes, so a late success is not forgotten; a completed send
+                // past its late window is let go.
+                if !sent {
+                    if let Some(pending) = self.pending_timers.get_mut(&attempt) {
+                        pending.deadline = now + TIMER_ACK_PATIENCE;
+                    }
+                    continue;
+                }
+                self.pending_timers.remove(&attempt);
+                self.report_timer_saving(&chat);
+                continue;
+            }
+            if let Some(pending) = self.pending_timers.get_mut(&attempt) {
+                pending.reported = true;
+                pending.deadline = now + TIMER_LATE_ACK_PATIENCE;
+            }
+            // This attempt is no longer saving; another unreported attempt for
+            // the chat, if any, still is.
+            self.report_timer_saving(&chat);
+            self.emit(Event::Error(
+                "Could not change disappearing messages.".to_owned(),
+            ));
+        }
+    }
+
+    /// Files the system row for a timer change the archive accepted. The row
+    /// shares the change's stable id, so a redelivery replaces it rather than
+    /// making a second notice.
+    #[allow(clippy::too_many_arguments)]
+    fn file_timer_notice(
+        &mut self,
+        chat: &str,
+        id: &str,
+        sender: String,
+        from_me: bool,
+        timestamp: i64,
+        seconds: u32,
+        push_name: Option<&str>,
+    ) {
+        // A notice removed by clearing or deleting the chat must stay gone,
+        // even if the same change is delivered again.
+        if self.predates_removal(chat, timestamp) {
+            return;
+        }
+        let notice = Message {
+            id: id.to_owned(),
+            chat: chat.to_owned(),
+            sender,
+            sender_name: if from_me {
+                None
+            } else {
+                push_name.map(str::to_owned)
+            },
+            from_me,
+            timestamp,
+            content: Content::DisappearingTimer { seconds },
+            status: Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+            history_order: None,
+        };
+        if let Err(error) = self.archive.insert_message(&notice, None) {
+            log::warn!("could not file a disappearing-messages notice: {error}");
+            return;
+        }
+        self.emit(Event::Messages {
+            chat: chat.to_owned(),
+            messages: vec![notice],
+            older: false,
+            complete: false,
+        });
     }
 
     /// Tells the phone we are leaving, then keeps the local history.
@@ -8324,6 +8931,7 @@ impl Worker {
                 | Content::PhoneOnly { .. }
                 | Content::Poll { .. }
                 | Content::Interactive { .. }
+                | Content::DisappearingTimer { .. }
         ) {
             self.emit(Event::Error("This message cannot be forwarded".to_owned()));
             return None;
@@ -16180,6 +16788,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Name("Trip".into()),
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -16213,6 +16822,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Name("Trip".into()),
+                session: 0,
                 result: Err("received a server error response: code=403, text='forbidden'".into()),
             })
             .await;
@@ -16223,6 +16833,30 @@ mod receipt_tests {
         assert_eq!(
             worker.archive.chat(chat).unwrap().unwrap().name,
             "Weekend plans"
+        );
+        assert_eq!(
+            worker.group_info_queue.front().map(String::as_str),
+            Some(chat)
+        );
+
+        // A refused timer names the timer, not the group's name and photo,
+        // and relearns the rights the same way.
+        worker.group_info_queue.clear();
+        worker.group_info_requested.clear();
+        worker
+            .handle_command(Command::GroupEdited {
+                chat: chat.into(),
+                edit: GroupEdit::Timer(604_800),
+                session: 0,
+                result: Err("received a server error response: code=403, text='forbidden'".into()),
+            })
+            .await;
+        assert_eq!(
+            errors(&events),
+            vec![
+                "saving".to_owned(),
+                "Only admins can change disappearing messages.".to_owned()
+            ]
         );
         assert_eq!(
             worker.group_info_queue.front().map(String::as_str),
@@ -16244,11 +16878,16 @@ mod receipt_tests {
                 GroupEdit::Picture { removed: true },
                 "Could not remove the group's photo.",
             ),
+            (
+                GroupEdit::Timer(604_800),
+                "Could not change disappearing messages.",
+            ),
         ] {
             worker
                 .handle_command(Command::GroupEdited {
                     chat: chat.into(),
                     edit,
+                    session: 0,
                     result: Err("IQ request timed out".into()),
                 })
                 .await;
@@ -16269,6 +16908,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: true },
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -16299,6 +16939,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: false },
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -16327,9 +16968,62 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: false },
+                session: 0,
                 result: Err("IQ request timed out".into()),
             })
             .await;
+        assert!(worker.group_pictures_sent.is_empty());
+    }
+
+    /// A group-edit completion from a departed session is discarded: it must
+    /// not clear the next account's saving state or ask for its metadata.
+    #[tokio::test]
+    async fn a_group_edit_completion_from_an_old_session_is_discarded() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let chat = "fixture@g.us";
+        worker.archive.ensure_chat(chat, "Weekend plans").unwrap();
+        let old = worker.account_session;
+        worker.account_session = old + 1;
+        worker
+            .handle_command(Command::GroupEdited {
+                chat: chat.into(),
+                edit: GroupEdit::Timer(604_800),
+                session: old,
+                result: Ok(()),
+            })
+            .await;
+        assert!(
+            events.try_iter().next().is_none(),
+            "a stale completion emits nothing"
+        );
+        assert!(worker.group_info_queue.is_empty());
+    }
+
+    /// Logging out clears the saving state of group edits whose completions
+    /// the session check discards, and forgets the photos sent.
+    #[tokio::test]
+    async fn logout_clears_group_edit_saving() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let chat = "fixture@g.us";
+        worker.ensure_chat(chat, None);
+        worker.group_saving.insert(chat.into());
+        worker
+            .group_pictures_sent
+            .insert(chat.into(), vec![1, 2, 3]);
+        events.try_iter().for_each(drop);
+        worker.on_logged_out().await;
+        let cleared: Vec<String> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::GroupSaving {
+                    chat,
+                    saving: false,
+                } => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert!(cleared.contains(&chat.to_owned()), "{cleared:?}");
+        assert!(worker.group_saving.is_empty());
         assert!(worker.group_pictures_sent.is_empty());
     }
 
@@ -16732,6 +17426,9 @@ mod receipt_tests {
             privacy_retry: Instant::now(),
             star_generation: HashMap::new(),
             star_session: 0,
+            account_session: 0,
+            timer_attempt: 0,
+            recent_acks: HashMap::new(),
             pin_generation: HashMap::new(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
@@ -16761,6 +17458,8 @@ mod receipt_tests {
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
             group_pictures_sent: HashMap::new(),
+            group_saving: HashSet::new(),
+            pending_timers: HashMap::new(),
             description_generation: HashMap::new(),
             group_info_generation: HashMap::new(),
             edits: HashMap::new(),
@@ -18472,6 +19171,689 @@ mod receipt_tests {
         assert_eq!(badges.last(), Some(&None));
     }
 
+    /// A direct timer change is written only once the server acks the sent
+    /// message, and with the ack's own timestamp; a send that never left the
+    /// socket, a nack, and silence all leave the old timer and report.
+    #[tokio::test]
+    async fn a_direct_timer_change_lands_only_when_the_server_acks_it() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let timer = |worker: &Worker| {
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer()
+        };
+        let ack = |id: &str, at: i64| {
+            wa_events::ServerAck::builder()
+                .id(id.to_owned())
+                .class("message".to_owned())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                .build()
+        };
+
+        // A send that reached the socket is not yet an accepted change.
+        let session = worker.account_session;
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("sent-1".into(), 100)),
+            })
+            .await;
+        assert_eq!(
+            timer(&worker),
+            Some(86_400),
+            "nothing is written before ack"
+        );
+
+        // The server's ack applies it, stamped by the server's own time.
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack("sent-1", 150))))
+            .await;
+        assert_eq!(timer(&worker), Some(604_800));
+
+        // A newer phone change survives a late ack from before it.
+        worker.archive.set_ephemeral(PEER, 0, 200).unwrap();
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("sent-2".into(), 100)),
+            })
+            .await;
+        // The ack's own timestamp is later than the phone's change; only the
+        // send's own time may version ours, so the phone still wins.
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack("sent-2", 250))))
+            .await;
+        assert_eq!(timer(&worker), None, "the phone's newer change wins");
+
+        // A nack, and a send that never left the socket, change nothing.
+        let attempt = worker.begin_timer(&PEER.into(), 86_400);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("sent-3".into(), 100)),
+            })
+            .await;
+        let nack = wa_events::ServerAck::builder()
+            .id("sent-3".to_owned())
+            .class("message".to_owned())
+            .error("479".to_owned())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(nack)))
+            .await;
+        assert_eq!(timer(&worker), None);
+        let attempt = worker.begin_timer(&PEER.into(), 86_400);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Err("boom".into()),
+            })
+            .await;
+        assert_eq!(timer(&worker), None);
+
+        let errors: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Error(message) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            errors.contains(&"Could not change disappearing messages.".to_owned()),
+            "{errors:?}"
+        );
+    }
+
+    /// An ack can outrun the send's own completion. It is held by id, then
+    /// applied when the completion names it; an ordinary message's ack for the
+    /// same chat must never be mistaken for the timer's.
+    #[tokio::test]
+    async fn an_ack_that_outruns_the_send_completion_still_applies() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        let early = wa_events::ServerAck::builder()
+            .id("sent-early".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(early)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(86_400),
+            "an ack with no id matching yet is held, not applied"
+        );
+        // The completion names the id, so the held ack resolves it now.
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("sent-early".into(), 100)),
+            })
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800)
+        );
+        assert!(worker.pending_timers.is_empty());
+    }
+
+    /// An ordinary message's ack or nack for the same chat must not touch a
+    /// timer change that is still waiting for its own ack.
+    #[tokio::test]
+    async fn an_ordinary_message_ack_does_not_resolve_a_timer_change() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("timer-1".into(), 100)),
+            })
+            .await;
+        // A different message's nack for the same chat.
+        let nack = wa_events::ServerAck::builder()
+            .id("an-ordinary-message".to_owned())
+            .class("message".to_owned())
+            .from(PEER.parse().unwrap())
+            .error("479".to_owned())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(nack)))
+            .await;
+        assert!(
+            worker
+                .pending_timers
+                .values()
+                .any(|pending| pending.chat == PEER),
+            "the timer still waits for its own ack"
+        );
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(86_400)
+        );
+        // The timer's own ack still applies it.
+        let ack = wa_events::ServerAck::builder()
+            .id("timer-1".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800)
+        );
+    }
+
+    /// A retry does not forget a change the server already accepted: if the
+    /// later attempt fails, the earlier attempt's late ack still applies it,
+    /// ordered by the archive's own timestamp gate.
+    #[tokio::test]
+    async fn a_retry_keeps_an_earlier_attempts_accepted_outcome() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        // A asks for seven days; its send completes and its ack is delayed.
+        let first = worker.begin_timer(&PEER.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt: first,
+                result: Ok(("a-1".into(), 100)),
+            })
+            .await;
+        // A times out and the user retries with Off, which fails.
+        let second = worker.begin_timer(&PEER.into(), 0);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt: second,
+                result: Err("boom".into()),
+            })
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(86_400),
+            "the failed retry changes nothing"
+        );
+        // A's accepted change is still the truth.
+        let ack = wa_events::ServerAck::builder()
+            .id("a-1".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800),
+            "the accepted earlier change still lands"
+        );
+        assert!(worker.pending_timers.is_empty());
+    }
+
+    /// A late ack still applies the change it accepted, after the wait had
+    /// already re-enabled the control and reported.
+    #[tokio::test]
+    async fn a_late_ack_applies_after_the_wait_reported() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        worker.begin_timer(&PEER.into(), 604_800);
+        if let Some(pending) = worker
+            .pending_timers
+            .values_mut()
+            .find(|pending| pending.chat == PEER)
+        {
+            pending.id = Some("sent-late".into());
+            pending.deadline = Instant::now() - Duration::from_secs(1);
+        }
+        worker.expire_timer_acks();
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_))),
+            "the wait reports once"
+        );
+        assert!(
+            worker
+                .pending_timers
+                .values()
+                .any(|pending| pending.chat == PEER),
+            "the entry is kept for a late ack"
+        );
+        let ack = wa_events::ServerAck::builder()
+            .id("sent-late".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800),
+            "the accepted change lands even after the report"
+        );
+        assert!(worker.pending_timers.is_empty());
+    }
+
+    /// A completion from a departed session is ignored rather than written to
+    /// the account that replaced it.
+    #[tokio::test]
+    async fn a_timer_completion_from_an_old_session_is_ignored() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let old = worker.account_session;
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        worker.account_session = old + 1;
+        // The entry stays, with its original session, so only the account
+        // session check can reject the completion; without it the id would be
+        // filled in and the waiting change applied under the new account.
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session: old,
+                attempt,
+                result: Ok(("sent-old".into(), 100)),
+            })
+            .await;
+        assert_eq!(
+            worker
+                .pending_timers
+                .get(&attempt)
+                .and_then(|pending| pending.id.clone()),
+            None,
+            "a stale completion must not fill in the current entry"
+        );
+    }
+
+    /// A failed retry does not stay disabled behind an earlier attempt that
+    /// already timed out and is kept only for a late ack.
+    #[tokio::test]
+    async fn a_failed_retry_is_not_held_saving_by_an_earlier_timeout() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        let first = worker.begin_timer(&PEER.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt: first,
+                result: Ok(("a-1".into(), 100)),
+            })
+            .await;
+        // A times out and is kept for a late ack; the control re-enables.
+        if let Some(pending) = worker.pending_timers.get_mut(&first) {
+            pending.deadline = Instant::now() - Duration::from_secs(1);
+        }
+        worker.expire_timer_acks();
+        // The user retries, and the retry fails.
+        let second = worker.begin_timer(&PEER.into(), 0);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt: second,
+                result: Err("boom".into()),
+            })
+            .await;
+        let last = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TimerSaving { saving, .. } => Some(saving),
+                _ => None,
+            })
+            .last();
+        assert_eq!(
+            last,
+            Some(false),
+            "the earlier, already-reported attempt must not hold the control disabled"
+        );
+    }
+
+    /// The held-ack buffer ages out on the timer tick even when no timer
+    /// change is pending.
+    #[tokio::test]
+    async fn held_acks_age_out_without_pending_timers() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let ack = wa_events::ServerAck::builder()
+            .id("held".to_owned())
+            .class("message".to_owned())
+            .build();
+        worker.buffer_ack(&ack);
+        assert_eq!(worker.recent_acks.len(), 1);
+        if let Some(held) = worker.recent_acks.get_mut("held") {
+            held.at = Instant::now() - Duration::from_secs(90);
+        }
+        worker.expire_timer_acks();
+        assert!(worker.recent_acks.is_empty());
+    }
+
+    /// A privacy-id mapping learned while a change is in flight must not lose
+    /// its accepted outcome: the destination is resolved when the ack lands.
+    #[tokio::test]
+    async fn an_ack_after_a_lid_merge_lands_on_the_phone_chat() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let lid = "123456789012345@lid";
+        let phone = "4915112345678@s.whatsapp.net";
+        worker.ensure_chat(lid, None);
+        worker.archive.set_ephemeral(lid, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        let attempt = worker.begin_timer(&lid.into(), 604_800);
+        worker
+            .handle_command(Command::TimerSet {
+                chat: lid.into(),
+                session,
+                attempt,
+                result: Ok(("merged-1".into(), 150)),
+            })
+            .await;
+        // The mapping is learned, merging the chat under its phone number,
+        // before the ack arrives.
+        worker.learn_pair(&lid.parse().unwrap(), &phone.parse().unwrap());
+        let ack = wa_events::ServerAck::builder()
+            .id("merged-1".to_owned())
+            .class("message".to_owned())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(phone)
+                .unwrap()
+                .map(|chat| chat.disappearing_timer()),
+            Some(Some(604_800)),
+            "the accepted change lands on the merged chat"
+        );
+        // The saving flag is cleared under the old privacy id too, so the
+        // control is not left disabled after the merge.
+        let cleared: Vec<String> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TimerSaving {
+                    chat,
+                    saving: false,
+                } => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert!(cleared.contains(&lid.to_owned()), "{cleared:?}");
+        assert!(cleared.contains(&phone.to_owned()), "{cleared:?}");
+    }
+
+    /// Logging out clears the saving flag under both the stored privacy id and
+    /// the phone id a mapping moved it to, before that mapping is forgotten.
+    #[tokio::test]
+    async fn logout_clears_timer_saving_under_every_identity() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let lid = "123456789012345@lid";
+        let phone = "4915112345678@s.whatsapp.net";
+        worker.ensure_chat(lid, None);
+        let _ = worker.begin_timer(&lid.into(), 604_800);
+        worker.learn_pair(&lid.parse().unwrap(), &phone.parse().unwrap());
+        events.try_iter().for_each(drop);
+        worker.on_logged_out().await;
+        let cleared: Vec<String> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TimerSaving {
+                    chat,
+                    saving: false,
+                } => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert!(cleared.contains(&lid.to_owned()), "{cleared:?}");
+        assert!(cleared.contains(&phone.to_owned()), "{cleared:?}");
+    }
+
+    /// A send still in flight past the first timeout is not forgotten: when it
+    /// finally completes and is acked, the change still lands.
+    #[tokio::test]
+    async fn a_send_that_finishes_after_the_first_timeout_still_lands() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 86_400, 100).unwrap();
+        let session = worker.account_session;
+        let attempt = worker.begin_timer(&PEER.into(), 604_800);
+        // No id yet: the send is still in flight when the wait reports.
+        if let Some(pending) = worker.pending_timers.get_mut(&attempt) {
+            pending.deadline = Instant::now() - Duration::from_secs(1);
+        }
+        worker.expire_timer_acks();
+        assert!(
+            worker.pending_timers.contains_key(&attempt),
+            "an in-flight send is kept past the first timeout"
+        );
+        // A later tick finds it still in flight and keeps it again.
+        if let Some(pending) = worker.pending_timers.get_mut(&attempt) {
+            pending.deadline = Instant::now() - Duration::from_secs(1);
+        }
+        worker.expire_timer_acks();
+        assert!(
+            worker.pending_timers.contains_key(&attempt),
+            "an in-flight send is kept across later ticks"
+        );
+        // It completes and is acked, both after the wait already reported.
+        worker
+            .handle_command(Command::TimerSet {
+                chat: PEER.into(),
+                session,
+                attempt,
+                result: Ok(("late-1".into(), 150)),
+            })
+            .await;
+        assert!(
+            worker.pending_timers.contains_key(&attempt),
+            "a completing send gets a fresh window for its ack"
+        );
+        let ack = wa_events::ServerAck::builder()
+            .id("late-1".to_owned())
+            .class("message".to_owned())
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ServerAck(ack)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(PEER)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800)
+        );
+    }
+
+    /// A group notification that names the actor only by an unmapped privacy
+    /// id is still attributed to the contact, using the phone number it
+    /// carries.
+    #[tokio::test]
+    async fn a_group_timer_notice_uses_the_phone_identity_it_carries() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let lid = "123456789012345@lid";
+        let phone = "4915112345678@s.whatsapp.net";
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(group.parse().unwrap())
+            .maybe_notification_id(Some("act-1".to_owned()))
+            .participant(lid.parse().unwrap())
+            .participant_pn(phone.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Ephemeral {
+                expiration: 86_400,
+                trigger: None,
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        let filed = worker
+            .archive
+            .messages(group, None, 100)
+            .unwrap()
+            .into_iter()
+            .find(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .expect("a notice");
+        assert_eq!(filed.sender, phone);
+    }
+
+    /// An accepted direct timer change files one centred system row; a stale
+    /// change files none, and a redelivery replaces rather than duplicates it.
+    #[test]
+    fn a_protocol_timer_change_files_one_notice() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ensure_chat(PEER, None);
+        worker.archive.set_ephemeral(PEER, 604_800, 100).unwrap();
+        let setting = |expiration: u32, setting_time: Option<i64>, envelope: i64, id: &str| {
+            let mut raw = wa::Message::default();
+            raw.protocol_message = MessageField::some({
+                let mut proto = wa::message::ProtocolMessage::default();
+                proto.r#type = Some(wa::message::protocol_message::Type::EPHEMERAL_SETTING);
+                proto.ephemeral_expiration = Some(expiration);
+                proto.ephemeral_setting_timestamp = setting_time;
+                proto
+            });
+            let info = MessageInfo {
+                id: id.into(),
+                source: MessageSource {
+                    chat: PEER.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(envelope).unwrap(),
+                ..Default::default()
+            };
+            (Arc::new(raw), info)
+        };
+        let notice = |id: &str| format!("{}{}", crate::model::TIMER_NOTICE_PREFIX, id);
+
+        let (raw, info) = setting(86_400, Some(200), 200, "change-1");
+        worker.ingest(&raw, &info);
+        let filed = worker
+            .archive
+            .message(PEER, &notice("change-1"))
+            .unwrap()
+            .expect("an accepted change leaves a notice");
+        assert_eq!(
+            filed.content,
+            Content::DisappearingTimer { seconds: 86_400 }
+        );
+
+        // A stale change is refused by the archive, so it leaves no notice.
+        let (raw, info) = setting(7_776_000, Some(150), 150, "stale");
+        worker.ingest(&raw, &info);
+        assert!(
+            worker
+                .archive
+                .message(PEER, &notice("stale"))
+                .unwrap()
+                .is_none(),
+            "a stale change leaves no notice"
+        );
+
+        // The same change redelivered replaces its row rather than adding one.
+        let (raw, info) = setting(86_400, Some(200), 200, "change-1");
+        worker.ingest(&raw, &info);
+        let notices = worker
+            .archive
+            .messages(PEER, None, 100)
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .count();
+        assert_eq!(notices, 1, "one change, one notice");
+
+        // A change the reader cleared away stays gone when it is delivered
+        // again: the removal barrier outlives the notice's own id.
+        worker
+            .archive
+            .remove_chat_through(PEER, 300, false)
+            .unwrap();
+        worker.ingest(&raw, &info);
+        assert!(
+            worker
+                .archive
+                .message(PEER, &notice("change-1"))
+                .unwrap()
+                .is_none(),
+            "a cleared notice stays gone"
+        );
+    }
+
     #[tokio::test]
     async fn group_timer_updates_work_before_history_and_keep_disable_versions() {
         let (mut worker, _events, _inbox, _wa) = worker();
@@ -18499,6 +19881,311 @@ mod receipt_tests {
             assert_eq!(chat.ephemeral_expiration, stored, "stored at {timestamp}");
             assert_eq!(chat.disappearing_timer(), badge, "badge at {timestamp}");
         }
+    }
+
+    /// A group timer change is written from the server's own group
+    /// notification, not from the accepted IQ: the notification's timestamp
+    /// orders it, and a newer phone change is never overwritten. A failure
+    /// keeps the old value and only reports.
+    #[tokio::test]
+    async fn a_group_timer_change_lands_only_when_whatsapp_accepts_it() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        worker.archive.set_ephemeral(group, 86_400, 100).unwrap();
+
+        // The accepted IQ alone writes nothing: the server's notification does.
+        worker
+            .handle_command(Command::GroupEdited {
+                chat: group.into(),
+                edit: GroupEdit::Timer(604_800),
+                session: 0,
+                result: Ok(()),
+            })
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(86_400),
+            "the IQ alone does not change the timer"
+        );
+
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(group.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Ephemeral {
+                expiration: 604_800,
+                trigger: None,
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800),
+            "the server's notification applies the change"
+        );
+
+        worker
+            .handle_command(Command::GroupEdited {
+                chat: group.into(),
+                edit: GroupEdit::Timer(0),
+                session: 0,
+                result: Err("boom".into()),
+            })
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            Some(604_800),
+            "a failure changes nothing"
+        );
+        let errors: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Error(message) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            errors.contains(&"Could not change disappearing messages.".to_owned()),
+            "{errors:?}"
+        );
+    }
+
+    /// A timer change that predates a chat's removal leaves no notice and does
+    /// not bring the chat back when the same change is delivered again.
+    #[tokio::test]
+    async fn a_removed_chat_keeps_a_redelivered_timer_change_out() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let chat = "123-456@g.us";
+        worker.archive.ensure_chat(chat, "Weekend plans").unwrap();
+        // The chat was cleared through 300: anything at or before then is gone.
+        worker
+            .archive
+            .remove_chat_through(chat, 300, false)
+            .unwrap();
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(chat.parse().unwrap())
+            .notification_id("notice-1".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Ephemeral {
+                expiration: 86_400,
+                trigger: None,
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        let notices = worker
+            .archive
+            .messages(chat, None, 100)
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .count();
+        assert_eq!(notices, 0, "a removed change leaves no notice behind");
+    }
+
+    /// A timer setting newer than the stored value still applies when it
+    /// predates a chat clear: message removal does not order timer metadata.
+    /// Only its notice is kept out.
+    #[tokio::test]
+    async fn a_newer_timer_survives_a_clear_that_postdates_it() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        worker.archive.set_ephemeral(group, 604_800, 100).unwrap();
+        // Cleared through 200, then the phone's Off at 150 finally arrives.
+        worker
+            .archive
+            .remove_chat_through(group, 200, false)
+            .unwrap();
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(group.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Ephemeral {
+                expiration: 0,
+                trigger: None,
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .unwrap()
+                .disappearing_timer(),
+            None,
+            "the newer setting is not discarded as a removed message"
+        );
+        let notices = worker
+            .archive
+            .messages(group, None, 100)
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .count();
+        assert_eq!(notices, 0, "its notice stays out of the cleared range");
+    }
+
+    /// A chat removed outright is not brought back by a timer setting from
+    /// before its removal.
+    #[tokio::test]
+    async fn a_deleted_chat_is_not_brought_back_by_an_older_timer_change() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        worker
+            .archive
+            .remove_chat_through(group, 300, true)
+            .unwrap();
+        let update = wa_events::GroupUpdate::builder()
+            .group_jid(group.parse().unwrap())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(GroupNotificationAction::Ephemeral {
+                expiration: 86_400,
+                trigger: None,
+            }))
+            .build();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+            .await;
+        assert!(
+            worker.archive.chat(group).unwrap().is_none(),
+            "the deleted chat stays gone"
+        );
+    }
+
+    /// An accepted group timer change files one centred notice naming the
+    /// admin who made it, and a redelivery replaces it rather than adding one.
+    #[tokio::test]
+    async fn a_group_timer_change_files_one_notice() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let admin = "111@s.whatsapp.net";
+        let notice_id = format!("{}{}-{}", crate::model::TIMER_NOTICE_PREFIX, "notice-1", 0);
+        let update = |expiration: u32| {
+            wa_events::GroupUpdate::builder()
+                .group_jid(group.parse().unwrap())
+                .notification_id("notice-1".to_owned())
+                .participant(admin.parse().unwrap())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
+                .is_lid_addressing_mode(false)
+                .action(Box::new(GroupNotificationAction::Ephemeral {
+                    expiration,
+                    trigger: None,
+                }))
+                .build()
+        };
+
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update(86_400))))
+            .await;
+        let filed = worker
+            .archive
+            .message(group, &notice_id)
+            .unwrap()
+            .expect("an accepted change leaves a notice");
+        assert_eq!(
+            filed.content,
+            Content::DisappearingTimer { seconds: 86_400 }
+        );
+        assert_eq!(filed.sender, admin);
+        assert!(!filed.from_me);
+
+        // The same change redelivered replaces its row rather than adding one.
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update(86_400))))
+            .await;
+        let notices = worker
+            .archive
+            .messages(group, None, 100)
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .count();
+        assert_eq!(notices, 1, "one change, one notice");
+    }
+
+    /// A group timer notice survives a notification that names no actor and
+    /// one that carries no id: the actor is left unknown rather than blamed on
+    /// us, and two id-less changes at different times do not share a row.
+    #[tokio::test]
+    async fn group_timer_notices_handle_a_missing_actor_and_missing_id() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let update = |at: i64, expiration: u32, id: Option<&str>| {
+            wa_events::GroupUpdate::builder()
+                .group_jid(group.parse().unwrap())
+                .maybe_notification_id(id.map(str::to_owned))
+                .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                .is_lid_addressing_mode(false)
+                .action(Box::new(GroupNotificationAction::Ephemeral {
+                    expiration,
+                    trigger: None,
+                }))
+                .build()
+        };
+
+        // No participant at all: the notice names nobody, not "You".
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update(
+                200, 86_400, None,
+            ))))
+            .await;
+        let filed = worker
+            .archive
+            .messages(group, None, 100)
+            .unwrap()
+            .into_iter()
+            .find(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .expect("an accepted change leaves a notice");
+        assert!(!filed.from_me, "an absent actor is not us");
+        assert_ne!(filed.sender, ME);
+
+        // A second id-less change in the same second, with a different
+        // duration, is a second notice rather than an overwrite.
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update(
+                200, 0, None,
+            ))))
+            .await;
+        let notices = worker
+            .archive
+            .messages(group, None, 100)
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message.content, Content::DisappearingTimer { .. }))
+            .count();
+        assert_eq!(notices, 2, "id-less changes do not overwrite each other");
     }
 
     #[tokio::test]

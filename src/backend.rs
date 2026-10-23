@@ -542,6 +542,21 @@ pub enum Command {
     },
     /// Asks for an audio file for one chat's notifications.
     PickChatSound(ChatId),
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
+    /// message's id and send time, whose server ack decides whether the timer
+    /// is written. `session` and `attempt` identify the account and the send
+    /// this completion belongs to.
+    TimerSet {
+        chat: ChatId,
+        session: u64,
+        attempt: u64,
+        result: Result<(String, i64), String>,
+    },
     /// Stores a chat's own voice message speed.
     SetChatVoiceSpeed {
         chat: ChatId,
@@ -592,10 +607,13 @@ pub enum Command {
         result: Result<CreatedGroup, crate::new_group::CreateFailure>,
         picture: Option<std::path::PathBuf>,
     },
-    /// Internal: WhatsApp answered a change to a group's name or photo.
+    /// Internal: WhatsApp answered a change to a group's name, photo or
+    /// timer. `session` is the account session the change was sent under; a
+    /// completion from a departed session is discarded.
     GroupEdited {
         chat: ChatId,
         edit: GroupEdit,
+        session: u64,
         result: Result<(), String>,
     },
     /// Internal: the server accepted a profile change.
@@ -1332,6 +1350,12 @@ pub enum Event {
         chat: ChatId,
         saving: bool,
     },
+    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
+    /// answered it. The chat keeps its current timer until the answer.
+    TimerSaving {
+        chat: ChatId,
+        saving: bool,
+    },
 }
 
 /// A change to a group's info, as sent to WhatsApp.
@@ -1341,6 +1365,8 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+    /// The new disappearing-message duration in seconds; zero turns it off.
+    Timer(u32),
 }
 
 /// A group WhatsApp created for `Command::CreateGroup`, read on the runtime
