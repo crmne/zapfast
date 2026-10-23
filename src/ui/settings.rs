@@ -102,6 +102,9 @@ enum Control {
     Toggle(fn(&mut Settings) -> &mut bool),
     /// A switch bound to the active WhatsApp account.
     AccountToggle(fn(&mut crate::settings::AccountSettings) -> &mut bool),
+    /// The legacy recent-history switch, whose backend authority waits for a
+    /// durable account-settings save.
+    HistoryPrefetch,
     /// Something that lays itself out, like the account card.
     Block(Draw),
 }
@@ -162,6 +165,15 @@ impl Section {
         self.entries.push((row, Control::AccountToggle(field)));
     }
 
+    fn history_prefetch(&mut self, title: impl Into<Text>, description: impl Into<Text>) {
+        let row = Row {
+            title: title.into(),
+            description: description.into(),
+            keywords: Vec::new(),
+        };
+        self.entries.push((row, Control::HistoryPrefetch));
+    }
+
     fn block(&mut self, keywords: Vec<Text>, draw: impl FnOnce(&mut egui::Ui, &mut App) + 'static) {
         let row = Row {
             keywords,
@@ -202,6 +214,9 @@ impl Section {
                     }
                     Control::AccountToggle(field) => {
                         account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
+                    }
+                    Control::HistoryPrefetch => {
+                        history_prefetch_toggle(ui, app, &row.title.shown, &row.description.shown)
                     }
                     Control::Block(draw) => draw(ui, app),
                 }
@@ -441,13 +456,12 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
-    chats.account_toggle(
+    chats.history_prefetch(
         translated(locale, "Fetch older history"),
         translated(
             locale,
             "Asks your phone in the background for older messages in the open, pinned and ten most recent chats.",
         ),
-        |settings| &mut settings.history_prefetch,
     );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
@@ -1147,7 +1161,17 @@ fn archive_import_controls(ui: &mut egui::Ui, app: &mut App) {
         ),
     ] {
         ui.horizontal(|ui| {
-            media_changed |= widgets::switch(ui, &palette, value).changed();
+            let response = widgets::switch(ui, &palette, value);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    *value,
+                    label.as_ref(),
+                )
+            });
+            media_changed |= response.changed();
             theme::text(ui, label, theme::regular(13.0), palette.text);
         });
     }
@@ -2321,6 +2345,23 @@ fn account_toggle(
     if changed {
         *field(&mut app.account_mut().settings) = value;
         app.account_mut().mark_settings_dirty();
+    }
+}
+
+fn history_prefetch_toggle(ui: &mut egui::Ui, app: &mut App, label: &str, description: &str) {
+    let palette = app.palette;
+    let mut value = app.account().settings.history_prefetch;
+    let mut changed = false;
+    widgets::setting_row(ui, &palette, label, description, |ui| {
+        let response = widgets::switch(ui, &palette, &mut value);
+        theme::reveal_focus(&response);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, label)
+        });
+        changed = response.changed();
+    });
+    if changed {
+        app.actions.push(Action::SetHistoryPrefetch(value));
     }
 }
 

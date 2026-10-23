@@ -5798,6 +5798,22 @@ impl App {
         }
     }
 
+    /// Import policy becomes backend authority immediately after this call,
+    /// so first drain older queued account snapshots, then require the new
+    /// snapshot itself to reach disk before sending any command.
+    fn save_import_settings(
+        &self,
+        settings: &crate::settings::AccountSettings,
+    ) -> std::io::Result<()> {
+        if !self.files.flush(fastframe_file::FLUSH_TIMEOUT) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "older account settings were still being saved",
+            ));
+        }
+        settings.save(&self.account().dirs.settings_file())
+    }
+
     /// Remembers the window's size, position and maximized state in the
     /// settings, in logical pixels, so a window saved while zoomed opens at
     /// the same size; see [`fastframe_shell::window::Geometry`].
@@ -8342,7 +8358,7 @@ impl App {
                     settings.history_import_since = target_since;
                     settings.history_import_paused = false;
                     settings.full_sync_days = full_sync_days;
-                    if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                    if let Err(error) = self.save_import_settings(&settings) {
                         self.toast_error(format!("Could not save your history choice: {error}"));
                         return;
                     }
@@ -8354,7 +8370,18 @@ impl App {
             Action::SetHistoryImportPaused(paused) => {
                 let mut settings = self.account().settings.clone();
                 settings.history_import_paused = paused;
-                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                if let Err(error) = self.save_import_settings(&settings) {
+                    self.toast_error(format!("Could not save the history import state: {error}"));
+                    return;
+                }
+                self.account_mut().settings = settings;
+                self.account_mut().reported_history = None;
+                self.sync_prefetch();
+            }
+            Action::SetHistoryPrefetch(enabled) => {
+                let mut settings = self.account().settings.clone();
+                settings.history_prefetch = enabled;
+                if let Err(error) = self.save_import_settings(&settings) {
                     self.toast_error(format!("Could not save the history import state: {error}"));
                     return;
                 }
@@ -8374,7 +8401,7 @@ impl App {
                 settings.archive_media = enabled;
                 settings.media_phone_recovery = phone_recovery;
                 settings.media_import_large_files = large_files;
-                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                if let Err(error) = self.save_import_settings(&settings) {
                     self.toast_error(format!("Could not save the file import choice: {error}"));
                     return;
                 }
@@ -8391,7 +8418,7 @@ impl App {
                 settings.history_requests_per_day = history_requests_per_day.clamp(1, 4000);
                 settings.media_phone_requests_per_day = media_phone_requests_per_day.clamp(1, 4000);
                 settings.background_media_budget_mib = background_media_budget_mib;
-                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                if let Err(error) = self.save_import_settings(&settings) {
                     self.toast_error(format!("Could not save the import limits: {error}"));
                     return;
                 }
@@ -8426,7 +8453,7 @@ impl App {
                     settings.full_sync_days = days.unwrap_or(1);
                     settings.history_prefetch = false;
                     settings.archive_media = target_since.is_some();
-                    if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                    if let Err(error) = self.save_import_settings(&settings) {
                         self.toast_error(format!("Could not save your sync choice: {error}"));
                         return;
                     }
@@ -10107,7 +10134,8 @@ mod tests {
 
     #[test]
     fn pairing_choice_defaults_to_recent_and_starts_only_once() {
-        let mut app = app();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
         let ctx = egui::Context::default();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -10124,7 +10152,8 @@ mod tests {
 
     #[test]
     fn pairing_choice_cannot_change_an_existing_link() {
-        let mut app = app();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
         let ctx = egui::Context::default();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -10158,7 +10187,8 @@ mod tests {
 
     #[test]
     fn custom_pairing_date_is_frozen_before_the_worker_starts() {
-        let mut app = app();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
         let ctx = egui::Context::default();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -10183,10 +10213,88 @@ mod tests {
             Some(target_since)
         );
         assert_eq!(app.account().settings.full_sync_days, 42);
+        assert!(app.files.flush(Duration::from_secs(10)));
         let persisted = crate::settings::AccountSettings::load(&app.account().dirs.settings_file());
         assert_eq!(persisted.history_import_since, Some(target_since));
         assert_eq!(persisted.full_sync_days, 42);
         assert!(matches!(commands.try_recv(), Ok(Command::StartPairing(sent)) if sent == history));
+    }
+
+    #[test]
+    fn pairing_settings_save_failure_does_not_start_the_worker() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let ctx = egui::Context::default();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::ChooseHistory;
+        let history = crate::model::PairingHistory::FullThreeYears;
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history,
+            },
+            &ctx,
+        );
+        std::fs::create_dir(app.account().dirs.settings_file()).unwrap();
+
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+
+        assert_eq!(
+            app.account().settings,
+            crate::settings::AccountSettings::default()
+        );
+        assert!(
+            commands.try_recv().is_err(),
+            "pairing must not start before its settings are durable"
+        );
+
+        app.apply(Action::SetHistoryPrefetch(true), &ctx);
+        assert!(!app.account().settings.history_prefetch);
+        assert!(
+            commands.try_recv().is_err(),
+            "legacy history must not start before its settings are durable"
+        );
+    }
+
+    #[test]
+    fn an_older_queued_snapshot_cannot_overwrite_a_new_import_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let settings_path = app.account().dirs.settings_file();
+        let (started, old_started) = std::sync::mpsc::channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let gate = std::sync::Mutex::new(gate);
+        app.files = fastframe_file::Writer::with_write(move |path, contents, _| {
+            started.send(()).unwrap();
+            gate.lock().unwrap().recv().unwrap();
+            fastframe_file::write(path, contents)
+        });
+        app.account()
+            .settings
+            .save_to(&app.files, &settings_path)
+            .unwrap();
+        old_started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            release.send(()).unwrap();
+        });
+        let target_since =
+            crate::model::PairingHistory::target_for_days(crate::util::now(), 42).unwrap();
+
+        app.apply(
+            Action::SetSyncMode {
+                mode: crate::settings::SyncMode::Full,
+                target_since: Some(target_since),
+                full_sync_days: 42,
+            },
+            &egui::Context::default(),
+        );
+        releaser.join().unwrap();
+
+        let persisted = crate::settings::AccountSettings::load(&settings_path);
+        assert_eq!(persisted.history_import_since, Some(target_since));
+        assert_eq!(persisted.full_sync_days, 42);
     }
 
     #[test]

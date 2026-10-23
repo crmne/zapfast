@@ -67,6 +67,15 @@ impl MediaDiagnostic {
     }
 }
 
+fn media_budget_reached(used: Option<u64>, reserved: u64, limit: u64) -> bool {
+    limit != 0 && used.is_none_or(|used| used.saturating_add(reserved) >= limit)
+}
+
+fn media_budget_would_exceed(used: Option<u64>, reserved: u64, admitted: u64, limit: u64) -> bool {
+    limit != 0
+        && used.is_none_or(|used| used.saturating_add(reserved).saturating_add(admitted) > limit)
+}
+
 impl Worker {
     pub(super) fn start_media_usage_scan(&mut self) {
         if self.media_scan_in_flight.is_some() {
@@ -176,8 +185,7 @@ impl Worker {
             ATTACHMENT_DOWNLOAD_LIMIT
         };
         let reserved = self.background_media_reserved_bytes(download_limit);
-        let budget_reached =
-            bytes.is_none_or(|bytes| limit != 0 && bytes.saturating_add(reserved) >= limit);
+        let budget_reached = media_budget_reached(bytes, reserved, limit);
         // Accounts which enabled archival media before date-scoped recovery keep
         // their original unscoped behaviour.
         let target_since = self.background_media_target_since.unwrap_or(i64::MIN);
@@ -350,13 +358,12 @@ impl Worker {
                 }
                 continue;
             }
-            if limit != 0
-                && bytes
-                    .unwrap_or(0)
-                    .saturating_add(self.background_media_reserved_bytes(download_limit))
-                    .saturating_add(declared)
-                    > limit
-            {
+            if media_budget_would_exceed(
+                bytes,
+                self.background_media_reserved_bytes(download_limit),
+                declared,
+                limit,
+            ) {
                 break;
             }
             let path = if job.card == -2 {
@@ -426,9 +433,7 @@ impl Worker {
             .background_media_usage
             .as_ref()
             .and_then(|(_, bytes)| *bytes);
-        if admitted > download_limit
-            || used.is_none_or(|used| budget != 0 && used.saturating_add(admitted) > budget)
-        {
+        if admitted > download_limit || media_budget_would_exceed(used, 0, admitted, budget) {
             if admitted > download_limit
                 && self.archive.mark_media_job_policy_too_large(&job).is_err()
             {
@@ -684,6 +689,19 @@ fn managed_file_missing(root: &std::path::Path, path: &std::path::Path) -> std::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unlimited_budget_accepts_unknown_usage_while_finite_budget_fails_closed() {
+        assert!(!media_budget_reached(None, 64, 0));
+        assert!(!media_budget_would_exceed(None, 64, 128, 0));
+
+        assert!(media_budget_reached(None, 64, 1024));
+        assert!(media_budget_would_exceed(None, 64, 128, 1024));
+        assert!(!media_budget_reached(Some(800), 100, 1024));
+        assert!(!media_budget_would_exceed(Some(800), 100, 124, 1024));
+        assert!(media_budget_reached(Some(924), 100, 1024));
+        assert!(media_budget_would_exceed(Some(800), 100, 125, 1024));
+    }
 
     #[test]
     fn media_diagnostic_contains_only_fixed_policy_and_aggregate_fields() {

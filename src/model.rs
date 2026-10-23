@@ -3143,6 +3143,7 @@ pub enum Action {
         full_sync_days: u32,
     },
     SetHistoryImportPaused(bool),
+    SetHistoryPrefetch(bool),
     ResumeHistoryImport,
     SetMediaImportPolicy {
         enabled: bool,
