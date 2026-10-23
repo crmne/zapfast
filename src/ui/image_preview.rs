@@ -409,7 +409,15 @@ fn header(
                         .clicked()
                         {
                             actions.push(Action::CloseImagePreview);
-                            actions.push(Action::SaveAttachmentAs { path, name });
+                            actions.push(Action::SaveAttachmentAs {
+                                path,
+                                name,
+                                attachment: Some((
+                                    chat.to_owned(),
+                                    message.clone(),
+                                    item.and_then(|item| item.card),
+                                )),
+                            });
                         }
                     }
                     // Not here yet: fetch it, and return to the chat with it.
@@ -624,6 +632,13 @@ fn still(
                                         app.actions.push(Action::SaveAttachmentAs {
                                             path: path.to_owned(),
                                             name,
+                                            attachment: (!message.is_empty()).then(|| {
+                                                (
+                                                    chat.to_owned(),
+                                                    message.to_owned(),
+                                                    preview.card(),
+                                                )
+                                            }),
                                         });
                                     }
                                     if crate::ui::widgets::menu_item(

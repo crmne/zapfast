@@ -6092,6 +6092,7 @@ fn context_menu(
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
                         name: attachment_name(&message.content, path),
+                        attachment: Some((view.chat.id.clone(), message.id.clone(), None)),
                     });
                 }
                 if let Some(folder) = path.parent()
@@ -7169,11 +7170,15 @@ fn album_content(
                 .is_some_and(|media| media.path.is_none())
         })
         .collect();
-    let files: Vec<(PathBuf, String)> = messages
+    let files: Vec<(PathBuf, String, String)> = messages
         .iter()
         .filter_map(|message| {
             let path = message.content.media()?.path.as_ref()?;
-            Some((path.clone(), attachment_name(&message.content, path)))
+            Some((
+                path.clone(),
+                attachment_name(&message.content, path),
+                message.id.clone(),
+            ))
         })
         .collect();
     if !files.is_empty()
@@ -7185,7 +7190,10 @@ fn album_content(
         )
         .clicked()
     {
-        actions.push(Action::SaveAttachments { files });
+        actions.push(Action::SaveAttachments {
+            files,
+            chat: view.chat.id.clone(),
+        });
     }
     if !missing.is_empty() {
         let downloading = missing.iter().all(|message| {

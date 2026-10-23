@@ -5,6 +5,55 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// Folder layout for copies saved outside the account cache.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DownloadOrganization {
+    #[default]
+    Flat,
+    ByChat,
+    ByChatMonth,
+}
+
+/// Filename policy shared by manual and automatic saving.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DownloadNaming {
+    #[default]
+    Original,
+    DatePrefixed,
+}
+
+/// New installations recommend chat folders. Older settings remain unchanged
+/// until the user chooses a download-management option.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DownloadPreferences {
+    pub organization: DownloadOrganization,
+    pub naming: DownloadNaming,
+}
+
+impl Default for DownloadPreferences {
+    fn default() -> Self {
+        Self {
+            organization: DownloadOrganization::ByChat,
+            naming: DownloadNaming::Original,
+        }
+    }
+}
+
+/// Automatic saving is an account-local opt-in, separate from downloading.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutomaticSaving {
+    pub since: Option<i64>,
+    pub include_older: bool,
+}
+
+impl AutomaticSaving {
+    pub fn includes(&self, timestamp: i64) -> bool {
+        self.since
+            .is_some_and(|since| self.include_older || timestamp >= since)
+    }
+}
+
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
 /// typed string. ponytail: fixed cost, revisit if it lags the search field.
 const CHAT_LOCK_ROUNDS: std::num::NonZeroU32 = std::num::NonZeroU32::new(200_000).unwrap();
@@ -494,6 +543,8 @@ pub struct Settings {
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub download_preferences: Option<DownloadPreferences>,
     /// Archived chats stay archived when a message arrives or is sent, as
     /// with the phone's "Keep chats archived". Off, a new message brings the
     /// chat back to the list.
@@ -584,6 +635,7 @@ impl Default for Settings {
             mention_sound: NotificationSound::Alert,
             group_sounds: true,
             download_folder: None,
+            download_preferences: Some(DownloadPreferences::default()),
             keep_chats_archived: true,
             proxy: String::new(),
             check_for_updates: true,
@@ -835,6 +887,7 @@ pub struct AccountSettings {
     /// background. Off by default: it asks the phone for history nobody
     /// scrolled to, so an account that has never turned it on does not.
     pub history_prefetch: bool,
+    pub automatic_saving: AutomaticSaving,
     /// The chip or label the chat list last showed, as
     /// [`crate::model::ListFilter::key`] writes it; `None` shows every chat.
     pub list_filter: Option<String>,
@@ -855,6 +908,7 @@ impl Default for AccountSettings {
             save_contacts_to_phone: true,
             wallpaper_image: None,
             history_prefetch: false,
+            automatic_saving: AutomaticSaving::default(),
             list_filter: None,
             call_filter: None,
         }
@@ -873,6 +927,7 @@ impl AccountSettings {
             save_contacts_to_phone: settings.save_contacts_to_phone,
             wallpaper_image: settings.wallpaper_image.clone(),
             history_prefetch: false,
+            automatic_saving: AutomaticSaving::default(),
             list_filter: None,
             call_filter: None,
         }
@@ -970,6 +1025,37 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_management_preserves_legacy_settings_and_is_explicitly_opted_in() {
+        let old: Settings = serde_json::from_str(r#"{"download_folder":"chosen-folder"}"#).unwrap();
+        assert!(old.download_preferences.is_none());
+        let new = Settings::default();
+        assert_eq!(
+            new.download_preferences.unwrap().organization,
+            DownloadOrganization::ByChat
+        );
+        let account: AccountSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(account.automatic_saving, AutomaticSaving::default());
+        let policy = AutomaticSaving {
+            since: Some(100),
+            include_older: false,
+        };
+        assert!(!policy.includes(99));
+        assert!(policy.includes(100));
+        let policy = AutomaticSaving {
+            include_older: true,
+            ..policy
+        };
+        assert!(policy.includes(99));
+        assert!(
+            !AutomaticSaving {
+                since: None,
+                include_older: true
+            }
+            .includes(101)
+        );
+    }
 
     #[test]
     fn earlier_bundled_sound_names_still_load() {

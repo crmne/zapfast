@@ -2630,14 +2630,21 @@ pub enum Action {
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
     OpenFolder(PathBuf),
+    SetDownloadPreferences(crate::settings::DownloadPreferences),
+    SetAutomaticSaving {
+        enabled: bool,
+        include_older: bool,
+    },
     /// Saves a copy of a downloaded attachment where the person chooses.
     SaveAttachmentAs {
         path: PathBuf,
         name: String,
+        attachment: Option<(ChatId, String, Option<usize>)>,
     },
     /// Saves a group of downloaded album attachments into one chosen folder.
     SaveAttachments {
-        files: Vec<(PathBuf, String)>,
+        files: Vec<(PathBuf, String, String)>,
+        chat: ChatId,
     },
     OpenUrl(String),
     CopyText(String),
