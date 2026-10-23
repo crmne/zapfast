@@ -29,3 +29,4 @@ src/ui/login.rs
 src/ui/rail.rs
 src/ui/mod.rs
 src/ui/new_group.rs
+src/a11y.rs

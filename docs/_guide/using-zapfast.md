@@ -808,3 +808,24 @@ shortcuts.
 ZapFast announces confirmations, errors, connection changes and history loading
 through the screen reader without moving focus. While the app is locked, only
 connection and history changes are announced.
+
+Each message, or album, is exposed as one item that reads its sender, text,
+time and delivery status, then any quote, forward, edit and reactions; the
+first message of a day starts with the day and the first unread one with
+Unread.
+
+The messages form one list, named for the chat, such as "Messages with Ada" or
+"Messages in Rust Berlin", and each message, or album, reports its position in
+it. The list is a single Tab stop: Alt+2 (Control+2 on macOS) also moves there.
+In the list, Up and Down move one item, Home and End go to the oldest loaded
+and the newest message, and PgUp and PgDn move about a screen; Home on the
+oldest loaded message loads older history. The current message stays put when
+new messages arrive, and follows when ZapFast itself takes you to a message:
+the next voice message playing on, a quoted message, or a search result. After
+keyboard navigation it is outlined like any other focused control.
+
+In the chat view, Tab moves through the message input and its buttons, phone
+numbers in messages, chat search, the chat info panel, the message list, the
+rail, the chat list's header, search and the chat filters, then returns to the
+input. Shift+Tab goes back; hidden controls are skipped. Single messages,
+reactions and chat rows are not stops; Alt+Up/Down switches conversations.

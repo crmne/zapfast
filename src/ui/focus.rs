@@ -1,5 +1,6 @@
 //! Deliberate Tab navigation for the main chat view. Message text and chat rows
-//! remain pointer/accessibility targets; phone links join the primary cycle.
+//! remain pointer/accessibility targets; phone links join the primary cycle, and
+//! the message list as a whole is one stop.
 
 use egui::{Context, FocusDirection, Id, Response};
 
@@ -22,6 +23,8 @@ pub enum Stop {
     /// pointer and accessibility targets, like chat rows.
     InfoClose,
     InfoControl(u8),
+    /// The open chat's message list: one stop, the arrows walk its messages.
+    Messages,
     /// The rail on the left, top to bottom, then the list header's Back
     /// and buttons. Show the chat list takes the rail's top while the
     /// list is hidden, and keeps Hide the chat list's place in the order.
