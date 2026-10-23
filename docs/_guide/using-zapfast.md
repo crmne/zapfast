@@ -432,6 +432,17 @@ button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 
+### Transcripts
+
+On macOS 26 and later, a voice message that comes into view is transcribed on
+this computer, and the text appears under its player, selectable and copyable
+like any other message. The speech model is the one macOS ships, so ZapFast
+downloads nothing for it and the audio never leaves the Mac; the first message
+in a language may make the system install that language's model. Transcribing
+is on by default and can be turned off in Settings, under **Chats**. The text
+is kept in the encrypted archive and disappears with the message. A message
+still being transcribed says **Transcribing…**.
+
 ## Calls
 
 The phone and camera buttons in a one-to-one chat's header start a voice or a

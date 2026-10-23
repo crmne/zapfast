@@ -1045,6 +1045,7 @@ impl Worker {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         };
         if let Err(error) = self.archive.insert_message(&message, None) {
             log::warn!("[CALL] a call entry could not be filed: {error}");

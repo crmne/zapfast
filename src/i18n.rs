@@ -71,6 +71,23 @@ impl Locale {
         }
     }
 
+    /// The BCP 47 tag the system's speech model expects.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::English => "en-US",
+            Self::PortugueseBrazil => "pt-BR",
+            Self::German => "de-DE",
+            Self::Spanish => "es-ES",
+            Self::Italian => "it-IT",
+            Self::French => "fr-FR",
+            Self::Russian => "ru-RU",
+            Self::ChineseSimplified => "zh-Hans",
+            Self::ChineseTraditional => "zh-Hant",
+            Self::Turkish => "tr-TR",
+            Self::Indonesian => "id-ID",
+        }
+    }
+
     /// Maps a system language tag (BCP 47 or POSIX) to a supported locale by
     /// its language subtag, so `pt-PT` and `pt_BR` both resolve to Portuguese.
     /// Chinese is the exception: its script decides, so a reader who asked for

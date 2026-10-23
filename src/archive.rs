@@ -24,6 +24,7 @@ mod polls;
 mod receipts;
 mod stars;
 mod stickers;
+mod transcripts;
 pub use polls::PollVote;
 pub use stars::Starred;
 pub use stickers::FavoriteSticker;
@@ -339,6 +340,7 @@ fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         mentions: serde_json::from_str(&mentions).unwrap_or_default(),
         forwarded: row.get(13)?,
         thumbnail: row.get(11)?,
+        transcript: None,
     })
 }
 
@@ -422,6 +424,7 @@ impl Archive {
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
+        connection.execute_batch(transcripts::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -1138,6 +1141,27 @@ impl Archive {
                 history_order = COALESCE(messages.history_order, excluded.history_order)",
             params![lid_chat, phone_chat],
         )?;
+        // The messages now live under the phone chat; their transcripts must
+        // move before the LID rows are purged, or the delete trigger takes
+        // them along. Only rows whose message was actually copied come over,
+        // and never onto a message the sender has since revoked; a newer text
+        // already in the phone chat wins over an older one from the LID chat.
+        transaction.execute(
+            "INSERT INTO transcripts (chat, id, text, engine, created_at)
+             SELECT ?2, t.id, t.text, t.engine, t.created_at
+             FROM transcripts t
+             WHERE t.chat = ?1
+               AND EXISTS (SELECT 1 FROM messages m
+                   WHERE m.chat = ?2 AND m.id = t.id
+                     AND NOT (json_valid(m.content)
+                         AND json_extract(m.content, '$.kind') = 'revoked'))
+             ON CONFLICT(chat, id) DO UPDATE SET
+                text = excluded.text,
+                engine = excluded.engine,
+                created_at = excluded.created_at
+             WHERE excluded.created_at > transcripts.created_at",
+            params![lid_chat, phone_chat],
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],
@@ -1352,10 +1376,12 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
                     thumbnail: row.get(10)?,
+                    transcript: None,
                 })
             })?;
         let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
         messages.reverse();
+        self.attach_transcripts(chat, &mut messages)?;
         Ok(messages)
     }
 
@@ -1515,10 +1541,13 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(12)?,
                     thumbnail: row.get(10)?,
+                    transcript: None,
                 })
             },
         )?;
-        rows.collect()
+        let mut messages: Vec<Message> = rows.collect::<Result<_>>()?;
+        self.attach_transcripts(chat, &mut messages)?;
+        Ok(messages)
     }
 
     /// Returns downloaded stickers we sent (`from_me`) or received, newest
@@ -2161,7 +2190,7 @@ impl Archive {
             "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
              FROM messages WHERE chat = ?1 AND id = ?2",
         )?;
-        statement
+        let message = statement
             .query_row(params![chat, id], |row| {
                 let content: String = row.get(4)?;
                 let quoted: Option<String> = row.get(6)?;
@@ -2187,9 +2216,15 @@ impl Archive {
                     mentions: serde_json::from_str(&mentions).unwrap_or_default(),
                     forwarded: row.get(11)?,
                     thumbnail: row.get(9)?,
+                    transcript: None,
                 })
             })
-            .optional()
+            .optional()?;
+        let mut message = message;
+        if let Some(message) = &mut message {
+            self.attach_transcripts(chat, std::slice::from_mut(message))?;
+        }
+        Ok(message)
     }
 
     /// Returns the earliest message for phone-history requests.
@@ -2747,7 +2782,222 @@ pub(crate) mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
+    }
+
+    #[test]
+    fn a_transcript_is_read_with_its_message_and_deleted_with_it() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "voice-1", 10, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "voice-2", 11, false), None)
+            .unwrap();
+
+        assert!(
+            archive
+                .set_transcript(chat, "voice-1", "hello there", "test")
+                .unwrap()
+        );
+        // A message that is gone by the time the text arrives keeps no row.
+        assert!(!archive.set_transcript(chat, "gone", "no", "test").unwrap());
+
+        let page = archive.messages(chat, None, 10).unwrap();
+        let first = page.iter().find(|row| row.id == "voice-1").unwrap();
+        assert_eq!(first.transcript.as_deref(), Some("hello there"));
+        let second = page.iter().find(|row| row.id == "voice-2").unwrap();
+        assert!(second.transcript.is_none());
+        // The single-message lookup attaches it too.
+        assert_eq!(
+            archive
+                .message(chat, "voice-1")
+                .unwrap()
+                .unwrap()
+                .transcript
+                .as_deref(),
+            Some("hello there")
+        );
+
+        // A new engine's answer replaces the old text.
+        archive
+            .set_transcript(chat, "voice-1", "hello again", "other")
+            .unwrap();
+        assert_eq!(
+            archive
+                .transcripts(chat, &["voice-1".to_owned()])
+                .unwrap()
+                .get("voice-1")
+                .map(String::as_str),
+            Some("hello again")
+        );
+
+        archive.delete_message(chat, "voice-1").unwrap();
+        assert!(
+            archive
+                .transcripts(chat, &["voice-1".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_transcript_follows_its_message_when_a_lid_chat_becomes_a_phone_chat() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "hello there", "test")
+                .unwrap()
+        );
+
+        archive.put_lid(lid, pn).unwrap();
+
+        assert_eq!(
+            archive
+                .transcripts(&phone_chat, &["voice".to_owned()])
+                .unwrap()
+                .get("voice")
+                .map(String::as_str),
+            Some("hello there")
+        );
+        assert!(
+            archive
+                .transcripts(&lid_chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_transcript_does_not_follow_its_message_onto_a_revoked_phone_row() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive.ensure_chat(&phone_chat, "Phone").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        let mut revoked = message(&phone_chat, "voice", 10, false);
+        revoked.content = Content::Revoked;
+        archive.insert_message(&revoked, None).unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "lid text", "test")
+                .unwrap()
+        );
+
+        archive.put_lid(lid, pn).unwrap();
+
+        // The phone row is the one that survives, and it was revoked: the
+        // text the sender removed must not come back with the merge.
+        assert!(
+            archive
+                .transcripts(&phone_chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Moves a LID chat with a transcript onto its phone chat, with the named
+    /// side 100 seconds older, and answers what the phone chat ended with.
+    fn merge_lid_transcript(lid_is_newer: bool) -> Option<String> {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "5511999999999";
+        let pn = "5511888888888";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        archive.ensure_chat(&lid_chat, "Lid").unwrap();
+        archive.ensure_chat(&phone_chat, "Phone").unwrap();
+        archive
+            .insert_message(&message(&lid_chat, "voice", 10, false), None)
+            .unwrap();
+        archive
+            .insert_message(&message(&phone_chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(&lid_chat, "voice", "lid text", "test")
+                .unwrap()
+        );
+        assert!(
+            archive
+                .set_transcript(&phone_chat, "voice", "phone text", "test")
+                .unwrap()
+        );
+        let newer = if lid_is_newer { &lid_chat } else { &phone_chat };
+        archive
+            .connection
+            .execute(
+                "UPDATE transcripts SET created_at = created_at + 100
+                 WHERE chat = ?1 AND id = 'voice'",
+                [newer.as_str()],
+            )
+            .unwrap();
+
+        archive.put_lid(lid, pn).unwrap();
+        archive
+            .transcripts(&phone_chat, &["voice".to_owned()])
+            .unwrap()
+            .get("voice")
+            .cloned()
+    }
+
+    #[test]
+    fn the_newer_transcript_survives_the_lid_merge() {
+        assert_eq!(merge_lid_transcript(false).as_deref(), Some("phone text"));
+        assert_eq!(merge_lid_transcript(true).as_deref(), Some("lid text"));
+    }
+
+    #[test]
+    fn a_revoked_message_loses_its_transcript_and_keeps_it_off() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive
+            .insert_message(&message(chat, "voice", 10, false), None)
+            .unwrap();
+        assert!(
+            archive
+                .set_transcript(chat, "voice", "hello there", "test")
+                .unwrap()
+        );
+
+        // A delete for everyone keeps the row and replaces its content.
+        archive
+            .set_content(chat, "voice", &Content::Revoked, false)
+            .unwrap();
+        assert!(
+            archive
+                .transcripts(chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
+        // A clip that finishes after the revoke writes nothing either.
+        assert!(
+            !archive
+                .set_transcript(chat, "voice", "hello again", "test")
+                .unwrap()
+        );
+        assert!(
+            archive
+                .transcripts(chat, &["voice".to_owned()])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -5128,6 +5378,7 @@ mod sticker_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 
@@ -5308,6 +5559,7 @@ mod media_path_tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

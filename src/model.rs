@@ -526,6 +526,11 @@ pub struct Message {
     /// JPEG preview sent with an attachment or link.
     #[serde(default)]
     pub thumbnail: Option<Vec<u8>>,
+    /// What a voice message says, transcribed on this computer. It is derived
+    /// here and never sent anywhere; the archive keeps it in its own table,
+    /// so this field is not part of the message's stored content.
+    #[serde(skip)]
+    pub transcript: Option<String>,
 }
 
 /// Raw WhatsApp mention token and its canonical id.
@@ -2676,6 +2681,13 @@ pub enum Action {
         anchor: String,
         to: String,
     },
+    /// The voice messages drawn on screen this frame, in their order, for the
+    /// transcription queue. Sent by the open conversation; an empty list
+    /// clears whatever was queued.
+    VoicesOnScreen {
+        chat: ChatId,
+        ids: Vec<String>,
+    },
     /// The mouse button that swept messages was released.
     EndSweep,
     /// Leaves selection mode.
@@ -3935,6 +3947,7 @@ mod tests {
             mentions: Vec::new(),
             forwarded: false,
             thumbnail: None,
+            transcript: None,
         }
     }
 

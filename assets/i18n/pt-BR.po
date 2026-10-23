@@ -1141,6 +1141,22 @@ msgstr "Arquivos de até 64 MiB são baixados quando aparecem na tela."
 msgid "Fetch older history"
 msgstr "Buscar histórico anterior"
 
+#: src/ui/settings.rs:446
+msgid "Transcribe voice messages"
+msgstr "Transcrever mensagens de voz"
+
+#: src/ui/settings.rs:449
+msgid ""
+"Writes what they say under each one as it comes into view. The audio never "
+"leaves this Mac."
+msgstr ""
+"Escreve o que elas dizem embaixo de cada uma conforme aparecem. O áudio "
+"nunca sai deste Mac."
+
+#: src/ui/conversation.rs:9625
+msgid "Transcribing…"
+msgstr "Transcrevendo…"
+
 #: src/ui/settings.rs:448
 msgid ""
 "Asks your phone in the background for older messages in the open, pinned and "

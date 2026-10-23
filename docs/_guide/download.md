@@ -38,6 +38,10 @@ NixOS configurations can add the repository as a flake input and include
 `inputs.zapfast.packages.${pkgs.system}.default` in
 `environment.systemPackages`.
 
+On macOS, the Nix package is built without the speech helper that transcribes
+voice messages, because its sandbox has no macOS 26 SDK. That feature is
+absent there; the app downloaded from the DMG includes it.
+
 For other distributions, download a tarball with the binary, desktop file,
 and icon:
 

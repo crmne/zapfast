@@ -2684,3 +2684,17 @@ msgstr[1] ""
 #: src/ui/new_group.rs:410
 msgid "Creating the group…"
 msgstr ""
+
+#: src/ui/conversation.rs:9625
+msgid "Transcribing…"
+msgstr ""
+
+#: src/ui/settings.rs:446
+msgid "Transcribe voice messages"
+msgstr ""
+
+#: src/ui/settings.rs:449
+msgid ""
+"Writes what they say under each one as it comes into view. The audio never "
+"leaves this Mac."
+msgstr ""

@@ -200,6 +200,10 @@ jobs:
             target/aarch64-apple-darwin/release/zapfast \
             target/x86_64-apple-darwin/release/zapfast \
             -output universal/zapfast
+          lipo -create \
+            target/aarch64-apple-darwin/release/zapfast-asr \
+            target/x86_64-apple-darwin/release/zapfast-asr \
+            -output universal/zapfast-asr
           # The two release builds fill most of the runner's disk; the DMG
           # and its notarization copy need room of their own.
           rm -rf target

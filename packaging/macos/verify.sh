@@ -19,6 +19,7 @@ app="$mount/ZapFast.app"
 codesign --verify --strict --deep "$app"
 spctl --assess --type execute --verbose=2 "$app"
 lipo "$app/Contents/MacOS/zapfast" -verify_arch x86_64 arm64
+lipo "$app/Contents/MacOS/zapfast-asr" -verify_arch x86_64 arm64
 codesign --display --entitlements - --xml "$app" > "$temporary/entitlements.plist"
 
 python3 - "$app/Contents/Info.plist" "$temporary/entitlements.plist" <<'PY'

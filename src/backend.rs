@@ -277,6 +277,14 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
+    /// Transcribes the voice messages on screen, in `ids` order, in `locale`.
+    /// Replaces whatever was queued for another chat; an id that leaves the
+    /// screen before its turn is dropped without being transcribed.
+    Transcribe {
+        chat: ChatId,
+        ids: Vec<String>,
+        locale: String,
+    },
     /// Requests a profile picture; `full` selects the info-dialog size.
     FetchAvatar {
         id: String,
@@ -1053,6 +1061,18 @@ pub enum Event {
     },
     /// The starred messages, newest star first.
     StarredList(Vec<crate::archive::Starred>),
+    /// A voice message started transcribing here.
+    TranscriptionStarted {
+        chat: ChatId,
+        message: String,
+    },
+    /// A voice message left the transcription queue: what it says, or `None`
+    /// when it could not be transcribed.
+    Transcription {
+        chat: ChatId,
+        message: String,
+        text: Option<String>,
+    },
     /// Messages in one chat matching a search, newest first, echoing the
     /// query and range asked for so a stale answer can be told apart.
     ChatHits {
