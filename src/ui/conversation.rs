@@ -1343,6 +1343,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 selection_bar(app, ui, &chat.id, &selected);
                 return;
             }
+            // An upload already under way stays cancellable if the chat turns read-only.
+            upload_strips(app, ui, &chat.id);
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     // A channel we left says so; the rest are only read-only.
@@ -1416,7 +1418,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 unsent_voice_strip(app, ui, samples);
             }
-            upload_strips(app, ui, &chat.id);
             if app.editing.is_some() {
                 edit_strip(app, ui);
             } else if let Some(reply_id) = app.reply_to.clone() {
@@ -2126,7 +2127,7 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
 /// long the rest should take, and a button to stop it.
 fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     let palette = app.palette;
-    let cancel = crate::i18n::gettext(app.locale, "Cancel sending");
+    let cancel = crate::i18n::gettext(app.locale, "Cancel sending {name}");
     let mut cancelled = None;
     for upload in app.uploads.iter().filter(|upload| upload.chat == chat) {
         let name = if upload.name.is_empty() {
@@ -2135,6 +2136,7 @@ fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             upload.name.clone()
         };
         let label = crate::i18n::gettext(app.locale, "Sending {name}").replace("{name}", &name);
+        let cancel = cancel.replace("{name}", &name);
         let amount = match upload.seconds_left {
             Some(seconds) => format!(
                 "{}% · {}",
@@ -2157,7 +2159,7 @@ fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                         16.0,
                         palette.secondary,
                         palette.text,
-                        cancel.as_ref(),
+                        &cancel,
                     );
                     #[cfg(test)]
                     ui.ctx().data_mut(|data| {

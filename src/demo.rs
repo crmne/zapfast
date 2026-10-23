@@ -8382,6 +8382,13 @@ mod tests {
         app.actions.push(crate::model::Action::OpenChat(own));
         render(&mut app, &ctx);
         assert!(strip(&ctx).is_some(), "its own chat shows it");
+        // A chat that turns read-only mid-upload keeps the strip and its X.
+        for row in app.chats.iter_mut().filter(|row| row.id == SAMPLES[0].id) {
+            row.read_only = true;
+        }
+        ctx.data_mut(|data| data.remove::<egui::Rect>(egui::Id::new(("upload-strip", 1_u64))));
+        render(&mut app, &ctx);
+        assert!(strip(&ctx).is_some(), "a read-only chat still shows it");
         let pos = ctx
             .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-cancel", 1_u64))))
             .expect("a cancel button")
