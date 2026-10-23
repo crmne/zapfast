@@ -2032,7 +2032,7 @@ impl App {
 
     /// Sends a desktop notification for an unseen incoming message.
     fn maybe_notify(&mut self, chat_id: &str, message: &Message) {
-        if !self.account().settings.notifications {
+        if !self.account().settings.notifications || self.power.conditions().display_off {
             return;
         }
         let Some(chat) = self.chat(chat_id) else {
@@ -8878,7 +8878,8 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        let looking = self.window_focused && !self.window_hidden;
+        let looking =
+            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
             let online = looking && index == active;
@@ -16384,6 +16385,28 @@ mod tests {
     }
 
     #[test]
+    fn presence_goes_offline_while_the_display_is_off() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.window_focused = true;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+
+        app.power.set_conditions(fastframe_power::Conditions {
+            display_off: true,
+            ..Default::default()
+        });
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(false))));
+
+        app.power.set_conditions(Default::default());
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
     fn a_deleted_chat_leaves_only_after_the_phone_confirmed_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -22165,6 +22188,24 @@ mod app_lock_tests {
             shown.sound, app.settings.message_sound,
             "the chat's own sound would name it"
         );
+    }
+
+    #[test]
+    fn messages_do_not_notify_while_the_display_is_off() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.power.set_conditions(fastframe_power::Conditions {
+            display_off: true,
+            ..Default::default()
+        });
+
+        app.maybe_notify(CHAT, &message);
+        assert!(app.notifications.shown.is_empty());
+        assert!(!app.wants_attention);
+
+        app.power.set_conditions(Default::default());
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
     }
 
     #[test]
