@@ -8448,6 +8448,7 @@ impl App {
                     } else {
                         crate::settings::SyncMode::Recent
                     });
+                    settings.full_pairing_profile = days.is_some();
                     settings.history_import_since = target_since;
                     settings.history_import_paused = false;
                     settings.full_sync_days = days.unwrap_or(1);
@@ -10213,10 +10214,12 @@ mod tests {
             Some(target_since)
         );
         assert_eq!(app.account().settings.full_sync_days, 42);
+        assert!(app.account().settings.full_pairing_profile);
         assert!(app.files.flush(Duration::from_secs(10)));
         let persisted = crate::settings::AccountSettings::load(&app.account().dirs.settings_file());
         assert_eq!(persisted.history_import_since, Some(target_since));
         assert_eq!(persisted.full_sync_days, 42);
+        assert!(persisted.full_pairing_profile);
         assert!(matches!(commands.try_recv(), Ok(Command::StartPairing(sent)) if sent == history));
     }
 
@@ -10244,6 +10247,7 @@ mod tests {
             app.account().settings,
             crate::settings::AccountSettings::default()
         );
+        assert!(!app.account().settings.full_pairing_profile);
         assert!(
             commands.try_recv().is_err(),
             "pairing must not start before its settings are durable"
@@ -10295,6 +10299,10 @@ mod tests {
         let persisted = crate::settings::AccountSettings::load(&settings_path);
         assert_eq!(persisted.history_import_since, Some(target_since));
         assert_eq!(persisted.full_sync_days, 42);
+        assert!(
+            !persisted.full_pairing_profile,
+            "changing recovery on a linked account must not change its pairing identity"
+        );
     }
 
     #[test]

@@ -849,6 +849,9 @@ pub struct MediaImportPolicy {
 pub struct AccountSettings {
     /// None means a new, unpaired account still needs its setup choice.
     pub sync_mode: Option<SyncMode>,
+    /// Connection identity selected while this account was unlinked. Legacy
+    /// accounts stay on the ordinary web profile regardless of recovery mode.
+    pub full_pairing_profile: bool,
     /// Fixed inclusive UTC boundary for the durable history import.
     pub history_import_since: Option<i64>,
     pub history_import_paused: bool,
@@ -892,6 +895,7 @@ impl Default for AccountSettings {
     fn default() -> Self {
         Self {
             sync_mode: None,
+            full_pairing_profile: false,
             history_import_since: None,
             history_import_paused: false,
             full_sync_days: 1095,
@@ -940,6 +944,7 @@ impl AccountSettings {
     pub fn from_legacy(settings: &Settings) -> Self {
         Self {
             sync_mode: None,
+            full_pairing_profile: false,
             history_import_since: None,
             history_import_paused: false,
             full_sync_days: 1095,
@@ -1409,12 +1414,14 @@ mod tests {
         assert_eq!(policy.target_since, None);
         assert!(policy.legacy_recent_enabled);
         assert_eq!(settings.sync_mode, None);
+        assert!(!settings.full_pairing_profile);
     }
 
     #[test]
     fn dated_history_and_media_policy_round_trip_per_account() {
         let settings = AccountSettings {
             sync_mode: Some(SyncMode::Full),
+            full_pairing_profile: true,
             history_import_since: Some(1_700_000_000),
             history_import_paused: true,
             full_sync_days: 730,

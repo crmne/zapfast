@@ -36,7 +36,7 @@ use whatsapp_rust::wacore::store::DevicePropsOverride;
 use whatsapp_rust::wacore::store::traits::DeviceStore as _;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
-use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
+use whatsapp_rust::{ClientProfile, MediaRetryResult, MediaReuploadRequest, WebSubPlatform};
 
 mod bot_replies;
 mod calls;
@@ -636,6 +636,16 @@ fn sync_device_props(
     }
 }
 
+/// Keep the connection payload on the same browser or Windows-hybrid row as
+/// the pairing properties. These fields are independent in the protocol.
+fn sync_client_profile(full_pairing_profile: bool) -> ClientProfile {
+    if full_pairing_profile {
+        ClientProfile::web_with_sub_platform(WebSubPlatform::WIN_HYBRID)
+    } else {
+        ClientProfile::web()
+    }
+}
+
 /// App version in WhatsApp device-property format.
 fn app_version() -> wa::device_props::AppVersion {
     let mut parts = env!("CARGO_PKG_VERSION")
@@ -742,6 +752,7 @@ pub async fn run(
             && archive
                 .set_meta(contact_names::FIRST_NAMES_RECOVERED, "complete")
                 .is_ok());
+    let account_settings = crate::settings::AccountSettings::load(&dirs.settings_file());
     let mut worker = Worker {
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
@@ -854,6 +865,7 @@ pub async fn run(
         history_checkpoint_failed: false,
         background_media: HashSet::new(),
         sync_mode: None,
+        full_pairing_profile: account_settings.full_pairing_profile,
         full_sync_days: 1095,
         history_storage_ok: std::cell::Cell::new(true),
         poll_sending: HashSet::new(),
@@ -1219,6 +1231,7 @@ struct Worker {
     history_checkpoint_failed: bool,
     background_media: HashSet<(ChatId, String, i64)>,
     sync_mode: Option<crate::settings::SyncMode>,
+    full_pairing_profile: bool,
     full_sync_days: u32,
     history_storage_ok: std::cell::Cell<bool>,
     poll_sending: HashSet<(ChatId, String)>,
@@ -2564,6 +2577,9 @@ impl Worker {
             .await;
         match bot {
             Ok(bot) => {
+                bot.client()
+                    .set_client_profile(sync_client_profile(self.full_pairing_profile))
+                    .await;
                 let handle = bot.spawn();
                 self.client = Some(handle.client());
                 self.handle = Some(handle);
@@ -8486,6 +8502,7 @@ impl Worker {
                     } else {
                         crate::settings::SyncMode::Recent
                     });
+                    self.full_pairing_profile = history.days().is_some();
                     self.full_sync_days = history.days().unwrap_or(1);
                     self.start_bot().await;
                 }
@@ -18052,6 +18069,7 @@ mod receipt_tests {
             history_checkpoint_failed: false,
             background_media: HashSet::new(),
             sync_mode: Some(crate::settings::SyncMode::Recent),
+            full_pairing_profile: false,
             full_sync_days: 1,
             history_storage_ok: std::cell::Cell::new(true),
             poll_sending: HashSet::new(),
@@ -23808,7 +23826,15 @@ mod pairing_history_tests {
 
         let mut device = Device::new();
         device.set_device_props(sync_device_props(crate::settings::SyncMode::Full, 1095).unwrap());
+        device.set_client_profile(sync_client_profile(true));
         let payload = device.get_client_payload();
+        assert_eq!(
+            payload
+                .web_info
+                .as_option()
+                .and_then(|web| web.web_sub_platform),
+            Some(WebSubPlatform::WIN_HYBRID)
+        );
         let bytes = payload
             .device_pairing_data
             .as_option()
@@ -23833,5 +23859,41 @@ mod pairing_history_tests {
         assert!(sync_device_props(crate::settings::SyncMode::Full, 1096).is_none());
         assert!(sync_device_props(crate::settings::SyncMode::Full, 1).is_some());
         assert!(sync_device_props(crate::settings::SyncMode::Recent, 0).is_some());
+    }
+
+    #[test]
+    fn saved_pairing_choice_selects_the_effective_connection_payload() {
+        use whatsapp_rust::wacore::store::device::Device;
+
+        let encoded = |full_pairing_profile| {
+            let mut device = Device::new();
+            device.set_client_profile(sync_client_profile(full_pairing_profile));
+            device.get_client_payload()
+        };
+        let recent = encoded(false);
+        let full = encoded(true);
+
+        for payload in [&recent, &full] {
+            assert_eq!(
+                payload
+                    .user_agent
+                    .as_option()
+                    .and_then(|agent| agent.platform),
+                Some(wa::client_payload::user_agent::Platform::WEB)
+            );
+        }
+        assert_eq!(
+            recent
+                .web_info
+                .as_option()
+                .and_then(|web| web.web_sub_platform),
+            Some(WebSubPlatform::WEB_BROWSER)
+        );
+        assert_eq!(
+            full.web_info
+                .as_option()
+                .and_then(|web| web.web_sub_platform),
+            Some(WebSubPlatform::WIN_HYBRID)
+        );
     }
 }

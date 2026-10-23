@@ -62,18 +62,21 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # compatibility retains the legacy created_at column. All carried fixes have
 # merged upstream, including video pacing, retransmission and loss recovery
 # (#1726, #1727, #1728). The crmne/whatsapp-rust fork (branch
-# `voip-reception-extension-pin`) is that commit plus two carried changes: the
+# `voip-reception-extension-pin`) is that commit plus three carried changes: the
 # 1:1 report extension states the bytes and rate received (merged upstream as
 # https://github.com/oxidezap/whatsapp-rust/pull/1761), without which an
 # iPhone peer lowered its video to 600 kbit/s mid-call, and counters of why the
 # peer's video packets never became pictures
 # (https://github.com/oxidezap/whatsapp-rust/pull/1763), which the call log
-# prints. Upstream main cannot be used yet: its sqlite-wasm-rs 0.6 conflicts
+# prints; and explicit Web sub-platform selection, proposed upstream in
+# https://github.com/oxidezap/whatsapp-rust/pull/1792 and carried for this fork
+# in https://github.com/crmne/whatsapp-rust/pull/1. Upstream main cannot be used
+# yet: its sqlite-wasm-rs 0.6 conflicts
 # with rusqlite 0.40 (https://github.com/oxidezap/whatsapp-rust/issues/1764).
 # Back to upstream once both are settled, and to crates.io once released. `voip` is the call stack: signaling,
 # the sans-IO media engine with MLOW and libopus codecs, and the native UDP
 # relay transport.
-whatsapp-rust = { git = "https://github.com/crmne/whatsapp-rust", rev = "55e45b8c88601bb9e8f817f884975577a78361b6", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
+whatsapp-rust = { git = "https://github.com/crmne/whatsapp-rust", rev = "869e471099c9450cddcd369347e19e0f624356a9", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Queue between the call's audio streams and the engine.
 async-channel = "2.5"

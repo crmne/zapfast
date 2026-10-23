@@ -57,9 +57,10 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 
 ## Link with your phone
 
-ZapFast links as a companion device, like WhatsApp Web. Before requesting a code
-for a new account, choose **Recent** (the default) for a quicker setup, or
-**Full** and select a UTC date from 1 to 1,095 days ago. The one-, two-, and
+ZapFast links as a companion device. Before requesting a code for a new account,
+choose **Recent** (the default) for the ordinary web profile and a quicker setup,
+or **Full** for WhatsApp's Windows-hybrid profile and select a UTC date from 1 to
+1,095 days ago. The one-, two-, and
 three-year presets fill the same exact date field. Your phone decides how much
 it can supply, so the selected period is a request, not a guarantee. Longer
 periods can take more time and disk space.
@@ -69,7 +70,9 @@ starts with recently active chats, follows only replies matched to its own
 requests, and keeps its place across restarts. Existing linked accounts can
 choose or change the date under **Settings > History archive** without
 relinking. Choosing **Recent** cancels a dated pass without deleting messages
-already archived.
+already archived. Changing this recovery date does not rewrite the account's
+pairing profile. Accounts linked by an older ZapFast version keep the ordinary
+web profile until they are explicitly linked again.
 
 The syncing indicator shows recent transfer activity. It can clear during a
 quiet period while the phone still has more history to send. A reported
