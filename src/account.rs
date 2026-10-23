@@ -60,6 +60,11 @@ pub struct Account {
     pub(crate) avatars_full: HashMap<String, Option<PathBuf>>,
     pub(crate) avatar_full_requests: HashSet<String>,
     pub(crate) played_told: HashSet<String>,
+    /// How far each downloading attachment has got, by chat and message, as
+    /// the worker last said.
+    pub download_progress: HashMap<ChatId, HashMap<String, u8>>,
+    /// Files going out, oldest first, for the strip above the composer.
+    pub uploads: Vec<crate::model::Upload>,
     pub stickers: Vec<PathBuf>,
     pub stickers_received: Vec<PathBuf>,
     pub stickers_saved: Vec<PathBuf>,
@@ -181,6 +186,8 @@ impl Account {
             avatars_full: HashMap::new(),
             avatar_full_requests: HashSet::new(),
             played_told: HashSet::new(),
+            download_progress: HashMap::new(),
+            uploads: Vec::new(),
             stickers: Vec::new(),
             stickers_received: Vec::new(),
             stickers_saved: Vec::new(),
