@@ -481,6 +481,20 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+
+    let mut archive_import = Section::new(translated(locale, "History archive"));
+    archive_import.block(
+        vec![
+            translated(locale, "Recent"),
+            translated(locale, "Custom date"),
+            translated(locale, "Pause"),
+            translated(locale, "Retry"),
+            translated(locale, "Media recovery"),
+            translated(locale, "Large files"),
+            translated(locale, "Storage budget"),
+        ],
+        archive_import_controls,
+    );
     chats.row(
         translated(locale, "Locked chats code"),
         translated(
@@ -879,6 +893,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
+        archive_import,
         notifications,
         privacy,
         system,
@@ -886,6 +901,396 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+fn archive_import_controls(ui: &mut egui::Ui, app: &mut App) {
+    use crate::model::ImportRunState;
+    use crate::settings::SyncMode;
+
+    let palette = app.palette;
+    let locale = app.locale;
+    let now = crate::util::now();
+    let settings = app.account().settings.clone();
+    let progress = app.account().archive_progress.clone().unwrap_or_default();
+    let current_days = settings
+        .history_import_since
+        .and_then(|target| crate::ui::login::days_for_target(now, target));
+    let mut choice = history_range_choice(settings.history_import_since, now);
+    let choice_label = match choice {
+        0 => crate::i18n::pgettext(locale, "message history", "Recent"),
+        1 => crate::i18n::gettext(locale, "1 year"),
+        2 => crate::i18n::gettext(locale, "2 years"),
+        3 => crate::i18n::gettext(locale, "3 years"),
+        _ => crate::i18n::gettext(locale, "Custom date"),
+    };
+    let old_choice = choice;
+    let response = egui::ComboBox::from_id_salt("archive-history-range")
+        .selected_text(choice_label)
+        .width(190.0_f32.min(ui.available_width()))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut choice,
+                0,
+                crate::i18n::pgettext(locale, "message history", "Recent"),
+            );
+            ui.selectable_value(&mut choice, 1, crate::i18n::gettext(locale, "1 year"));
+            ui.selectable_value(&mut choice, 2, crate::i18n::gettext(locale, "2 years"));
+            ui.selectable_value(&mut choice, 3, crate::i18n::gettext(locale, "3 years"));
+            ui.selectable_value(&mut choice, 4, crate::i18n::gettext(locale, "Custom date"));
+        });
+    theme::reveal_focus(&response.response);
+    if choice != old_choice {
+        if choice == 0 {
+            app.actions.push(Action::SetSyncMode {
+                mode: SyncMode::Recent,
+                target_since: None,
+                full_sync_days: 1,
+            });
+        } else {
+            let days = [0, 365, 730, 1095, current_days.unwrap_or(365)][choice];
+            if let Some(target_since) = crate::ui::login::target_for_days(now, days) {
+                app.actions.push(Action::SetSyncMode {
+                    mode: SyncMode::Full,
+                    target_since: Some(target_since),
+                    full_sync_days: days,
+                });
+            }
+        }
+    }
+    if let Some(target_since) = settings.history_import_since {
+        let date_id = history_settings_date_id(ui.id(), app.account().id.as_str(), target_since);
+        let mut date: String = ui.data_mut(|data| {
+            data.get_temp(date_id).unwrap_or_else(|| {
+                crate::ui::login::format_utc_date(target_since).unwrap_or_default()
+            })
+        });
+        let date_response = ui.add(
+            egui::TextEdit::singleline(&mut date)
+                .hint_text("YYYY-MM-DD")
+                .desired_width(150.0),
+        );
+        if date_response.changed() {
+            ui.data_mut(|data| data.insert_temp(date_id, date.clone()));
+        }
+        if date_response.lost_focus()
+            && let Some(target_since) = crate::ui::login::parse_utc_date(&date)
+            && let Some(days) = crate::ui::login::days_for_target(now, target_since)
+        {
+            app.actions.push(Action::SetSyncMode {
+                mode: SyncMode::Full,
+                target_since: Some(target_since),
+                full_sync_days: days,
+            });
+        }
+        let parsed_date = crate::ui::login::parse_utc_date(&date);
+        if parsed_date != Some(target_since)
+            && parsed_date
+                .and_then(|target| crate::ui::login::days_for_target(now, target))
+                .is_none()
+        {
+            theme::text(
+                ui,
+                crate::i18n::gettext(locale, "Choose a UTC date from 1 to 1,095 days ago."),
+                theme::regular(12.0),
+                palette.secondary,
+            );
+        }
+    }
+
+    let state = match progress.history.state {
+        ImportRunState::Idle => crate::i18n::gettext(locale, "Not running"),
+        ImportRunState::WaitingForInitialSync => {
+            crate::i18n::gettext(locale, "Waiting for initial sync")
+        }
+        ImportRunState::Running => crate::i18n::gettext(locale, "Request pass running"),
+        ImportRunState::BackingOff => crate::i18n::gettext(locale, "Waiting to retry"),
+        ImportRunState::Paused => crate::i18n::gettext(locale, "Paused"),
+        ImportRunState::NeedsAttention => crate::i18n::gettext(locale, "Needs attention"),
+        ImportRunState::Finished => crate::i18n::gettext(locale, "Request pass finished"),
+    };
+    let eligible = progress
+        .history
+        .total
+        .saturating_sub(progress.history.excluded);
+    theme::paragraph(
+        ui,
+        format!(
+            "{state} · {} / {}",
+            progress.history.completed.min(eligible),
+            eligible
+        ),
+        theme::regular(13.0),
+        palette.secondary,
+    );
+    if let Some(reason) = progress.history.reason {
+        theme::text(
+            ui,
+            format!(
+                "{}: {}",
+                crate::i18n::gettext(locale, "Current reason"),
+                import_reason(locale, reason)
+            ),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    } else if progress.history.state == ImportRunState::BackingOff
+        && progress.history.retry_at.is_some()
+    {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Daily history request limit"),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    if progress.history.failure_streak > 0 {
+        theme::text(
+            ui,
+            format!(
+                "{}: {}",
+                crate::i18n::gettext(locale, "Account failures"),
+                progress.history.failure_streak
+            ),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    if let Some(retry_at) = progress.history.retry_at {
+        theme::text(
+            ui,
+            format!(
+                "{} {}",
+                crate::i18n::gettext(locale, "Next attempt:"),
+                crate::util::moment_stamp(locale, retry_at)
+            ),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    for chat in progress.history.chats.iter().take(8) {
+        let name = app
+            .chat(&chat.chat)
+            .map(|chat| chat.name.clone())
+            .unwrap_or_else(|| crate::i18n::gettext(locale, "Unknown chat").into_owned());
+        let mut detail = format!(
+            "{} · {} {} · {} {}",
+            import_reason(locale, chat.reason),
+            chat.pages,
+            crate::i18n::gettext(locale, "pages"),
+            chat.messages,
+            crate::i18n::gettext(locale, "messages")
+        );
+        if let Some(frontier) = chat.frontier {
+            detail.push_str(&format!(
+                " · {}",
+                crate::util::moment_stamp(locale, frontier)
+            ));
+        }
+        if let Some(retry) = chat.retry_at {
+            detail.push_str(&format!(
+                " · {} {}",
+                crate::i18n::gettext(locale, "retry"),
+                crate::util::moment_stamp(locale, retry)
+            ));
+        }
+        theme::text(
+            ui,
+            format!("{name}: {detail}"),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    ui.horizontal(|ui| {
+        if settings.history_import_since.is_some() {
+            let label = if settings.history_import_paused {
+                crate::i18n::gettext(locale, "Resume")
+            } else {
+                crate::i18n::gettext(locale, "Pause")
+            };
+            if theme::soft_button(ui, &palette, None, &label, false).clicked() {
+                app.actions.push(Action::SetHistoryImportPaused(
+                    !settings.history_import_paused,
+                ));
+            }
+        }
+        if progress.history.state == ImportRunState::NeedsAttention
+            && theme::soft_button(
+                ui,
+                &palette,
+                None,
+                &crate::i18n::gettext(locale, "Retry"),
+                false,
+            )
+            .clicked()
+        {
+            app.actions.push(Action::ResumeHistoryImport);
+        }
+    });
+
+    ui.separator();
+    let mut media_enabled = settings.archive_media;
+    let mut phone_recovery = settings.media_phone_recovery;
+    let mut large_files = settings.media_import_large_files;
+    let mut media_changed = false;
+    for (label, value) in [
+        (
+            crate::i18n::gettext(locale, "Media recovery"),
+            &mut media_enabled,
+        ),
+        (
+            crate::i18n::gettext(locale, "Ask the phone for expired media"),
+            &mut phone_recovery,
+        ),
+        (
+            crate::i18n::gettext(locale, "Large files up to 2 GiB"),
+            &mut large_files,
+        ),
+    ] {
+        ui.horizontal(|ui| {
+            media_changed |= widgets::switch(ui, &palette, value).changed();
+            theme::text(ui, label, theme::regular(13.0), palette.text);
+        });
+    }
+    if media_changed {
+        app.actions.push(Action::SetMediaImportPolicy {
+            enabled: media_enabled,
+            phone_recovery,
+            large_files,
+        });
+    }
+    let media = &progress.media;
+    theme::paragraph(
+        ui,
+        format!(
+            "{} {} · {} {} · {} {} · {} {} · {} {} · {} {}",
+            media.downloaded,
+            crate::i18n::gettext(locale, "downloaded"),
+            media.cdn_pending,
+            crate::i18n::gettext(locale, "waiting"),
+            media.needs_phone,
+            crate::i18n::gettext(locale, "need the phone"),
+            media.unavailable,
+            crate::i18n::gettext(locale, "unavailable"),
+            media.policy_too_large,
+            crate::i18n::gettext(locale, "too large"),
+            media.cancelled,
+            crate::i18n::gettext(locale, "cancelled")
+        ),
+        theme::regular(12.0),
+        palette.secondary,
+    );
+    if media.budget_reached {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Storage budget reached"),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    if let Some(bytes) = media.bytes {
+        theme::text(
+            ui,
+            format!(
+                "{} MiB {}",
+                bytes / (1024 * 1024),
+                crate::i18n::gettext(locale, "stored")
+            ),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+    if !progress.connected {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "WhatsApp connection: disconnected"),
+            theme::regular(12.0),
+            palette.secondary,
+        );
+    }
+
+    ui.separator();
+    let mut history_daily = settings.history_requests_per_day;
+    let mut media_daily = settings.media_phone_requests_per_day;
+    let mut budget = settings.background_media_budget_mib;
+    let mut limits_changed = false;
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "History requests per day"),
+            theme::regular(12.0),
+            palette.text,
+        );
+        limits_changed |= ui
+            .add(egui::DragValue::new(&mut history_daily).range(1..=4000))
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Media phone requests per day"),
+            theme::regular(12.0),
+            palette.text,
+        );
+        limits_changed |= ui
+            .add(egui::DragValue::new(&mut media_daily).range(1..=4000))
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Storage budget (MiB, 0 is unlimited)"),
+            theme::regular(12.0),
+            palette.text,
+        );
+        limits_changed |= ui
+            .add(egui::DragValue::new(&mut budget).range(0..=1_048_576))
+            .changed();
+    });
+    if limits_changed {
+        app.actions.push(Action::SetImportLimits {
+            history_requests_per_day: history_daily,
+            media_phone_requests_per_day: media_daily,
+            background_media_budget_mib: budget,
+        });
+    }
+}
+
+fn history_range_choice(target_since: Option<i64>, now: i64) -> usize {
+    let Some(target_since) = target_since else {
+        return 0;
+    };
+    match crate::ui::login::days_for_target(now, target_since) {
+        Some(365) => 1,
+        Some(730) => 2,
+        Some(1095) => 3,
+        _ => 4,
+    }
+}
+
+fn history_settings_date_id(parent: egui::Id, account: &str, target_since: i64) -> egui::Id {
+    parent.with(("archive-history-date", account, target_since))
+}
+
+fn import_reason(locale: Locale, reason: crate::model::ChatImportReason) -> Cow<'static, str> {
+    use crate::model::ChatImportReason::*;
+    match reason {
+        Queued => crate::i18n::gettext(locale, "Queued"),
+        WaitingForPhone => crate::i18n::gettext(locale, "Waiting for phone"),
+        Advancing => crate::i18n::gettext(locale, "Requesting older pages"),
+        RetrySend => crate::i18n::gettext(locale, "Send failed"),
+        RetryTimeout => crate::i18n::gettext(locale, "Phone did not answer"),
+        RetryNoProgress => crate::i18n::gettext(locale, "No older page received"),
+        RetryParse => crate::i18n::gettext(locale, "Response could not be read"),
+        RetryStorage => crate::i18n::gettext(locale, "Archive write failed"),
+        WaitingForAnchor => crate::i18n::gettext(locale, "Waiting for a safe starting point"),
+        ReachedCutoff => crate::i18n::gettext(locale, "Reached selected date"),
+        PhoneExhausted => crate::i18n::gettext(locale, "Phone has no older page"),
+        ExcludedLocked => crate::i18n::gettext(locale, "Locked chat excluded"),
+        ExcludedLeft => crate::i18n::gettext(locale, "Left group excluded"),
+        ExcludedUnsupported => crate::i18n::gettext(locale, "Unsupported chat excluded"),
+        CorrelationUnavailable => crate::i18n::gettext(locale, "Response could not be matched"),
+        RetryLimitReached => crate::i18n::gettext(locale, "Retry limit reached"),
+    }
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form
@@ -2088,6 +2493,27 @@ fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selecte
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_history_dates_do_not_turn_into_recent_and_drafts_do_not_cross_accounts() {
+        let now = 2_000 * 86_400;
+        let aged_target = (2_000 - 1096) * 86_400;
+        assert_eq!(history_range_choice(None, now), 0);
+        assert_eq!(history_range_choice(Some(aged_target), now), 4);
+
+        let parent = egui::Id::new("history-settings");
+        let first = history_settings_date_id(parent, "1", aged_target);
+        assert_ne!(
+            first,
+            history_settings_date_id(parent, "2", aged_target),
+            "account switching must not reuse another account's typed date"
+        );
+        assert_ne!(
+            first,
+            history_settings_date_id(parent, "1", aged_target + 86_400),
+            "committing a preset must reset the cached date"
+        );
+    }
 
     fn titles(section: Section, filter: &Filter) -> Vec<String> {
         let (_, rows) = section.visible(filter);

@@ -3116,6 +3116,9 @@ impl App {
                     }
                 }
             }
+            Event::ArchiveProgress(progress) => {
+                self.account_mut().archive_progress = Some(progress);
+            }
             Event::Link(status) => self.handle_link(status, live),
             Event::Me {
                 id,
@@ -4159,6 +4162,8 @@ impl App {
             }
             LinkStatus::LoggedOut => {
                 self.pairing_history = crate::model::PairingHistory::default();
+                self.archive_progress = None;
+                self.reported_history = None;
                 // Account-scoped lookup results are discarded by the worker.
                 // End their UI requests too, so a later account can retry.
                 self.new_contact_request = None;
@@ -5757,26 +5762,27 @@ impl App {
         self.settings_dirty = true;
     }
 
-    /// Tells each account's worker whether it may fetch older history in the
-    /// background, and which chat is on screen so it goes first. Only the
-    /// account on screen has one: a hidden account's remembered chat is not
-    /// being read. Sent only when it changes, so it can run every frame and
-    /// follow every way a chat opens, closes or disappears.
+    /// Forwards account-local import policy only when settings, lock, or focus changes.
     fn sync_prefetch(&mut self) {
+        let privacy_paused = self.app_lock.is_locked();
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
             let wanted = (
-                account.settings.history_prefetch,
+                account.settings.history_import_policy(),
+                account.settings.media_import_policy(),
+                privacy_paused,
                 (index == active)
                     .then(|| account.open_chat.clone())
                     .flatten(),
             );
-            if account.prefetch_sent.as_ref() != Some(&wanted) {
-                account.backend.send(Command::SetHistoryPrefetch {
-                    on: wanted.0,
-                    focused: wanted.1.clone(),
+            if account.reported_history.as_ref() != Some(&wanted) {
+                account.reported_history = Some(wanted.clone());
+                account.backend.send(Command::ConfigureArchiveImport {
+                    history: wanted.0,
+                    media: wanted.1,
+                    privacy_paused: wanted.2,
+                    focused: wanted.3,
                 });
-                account.prefetch_sent = Some(wanted);
             }
         }
     }
@@ -8317,6 +8323,82 @@ impl App {
                 self.app_lock.note_input();
                 self.mark_settings_dirty();
             }
+            Action::SetSyncMode {
+                mode,
+                target_since,
+                full_sync_days,
+            } => {
+                let valid = match (mode, target_since) {
+                    (crate::settings::SyncMode::Recent, None) => full_sync_days == 1,
+                    (crate::settings::SyncMode::Full, Some(target)) => {
+                        crate::model::PairingHistory::days_for_target(crate::util::now(), target)
+                            == Some(full_sync_days)
+                    }
+                    _ => false,
+                };
+                if valid {
+                    let mut settings = self.account().settings.clone();
+                    settings.sync_mode = Some(mode);
+                    settings.history_import_since = target_since;
+                    settings.history_import_paused = false;
+                    settings.full_sync_days = full_sync_days;
+                    if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                        self.toast_error(format!("Could not save your history choice: {error}"));
+                        return;
+                    }
+                    self.account_mut().settings = settings;
+                    self.account_mut().reported_history = None;
+                    self.sync_prefetch();
+                }
+            }
+            Action::SetHistoryImportPaused(paused) => {
+                let mut settings = self.account().settings.clone();
+                settings.history_import_paused = paused;
+                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                    self.toast_error(format!("Could not save the history import state: {error}"));
+                    return;
+                }
+                self.account_mut().settings = settings;
+                self.account_mut().reported_history = None;
+                self.sync_prefetch();
+            }
+            Action::ResumeHistoryImport => {
+                self.backend.send(Command::ResumeArchiveImport);
+            }
+            Action::SetMediaImportPolicy {
+                enabled,
+                phone_recovery,
+                large_files,
+            } => {
+                let mut settings = self.account().settings.clone();
+                settings.archive_media = enabled;
+                settings.media_phone_recovery = phone_recovery;
+                settings.media_import_large_files = large_files;
+                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                    self.toast_error(format!("Could not save the file import choice: {error}"));
+                    return;
+                }
+                self.account_mut().settings = settings;
+                self.account_mut().reported_history = None;
+                self.sync_prefetch();
+            }
+            Action::SetImportLimits {
+                history_requests_per_day,
+                media_phone_requests_per_day,
+                background_media_budget_mib,
+            } => {
+                let mut settings = self.account().settings.clone();
+                settings.history_requests_per_day = history_requests_per_day.clamp(1, 4000);
+                settings.media_phone_requests_per_day = media_phone_requests_per_day.clamp(1, 4000);
+                settings.background_media_budget_mib = background_media_budget_mib;
+                if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                    self.toast_error(format!("Could not save the import limits: {error}"));
+                    return;
+                }
+                self.account_mut().settings = settings;
+                self.account_mut().reported_history = None;
+                self.sync_prefetch();
+            }
             Action::ChoosePairingHistory { account, history } => {
                 if self.account().id == account && self.link == LinkStatus::ChooseHistory {
                     self.pairing_history = history;
@@ -8325,6 +8407,31 @@ impl App {
             Action::StartPairing(account) => {
                 if self.account().id == account && self.link == LinkStatus::ChooseHistory {
                     let history = self.pairing_history;
+                    let days = history.days();
+                    let now = crate::util::now();
+                    let target_since = history.target_since(now);
+                    if let (Some(days), Some(target)) = (days, target_since)
+                        && crate::model::PairingHistory::days_for_target(now, target) != Some(days)
+                    {
+                        return;
+                    }
+                    let mut settings = self.account().settings.clone();
+                    settings.sync_mode = Some(if days.is_some() {
+                        crate::settings::SyncMode::Full
+                    } else {
+                        crate::settings::SyncMode::Recent
+                    });
+                    settings.history_import_since = target_since;
+                    settings.history_import_paused = false;
+                    settings.full_sync_days = days.unwrap_or(1);
+                    settings.history_prefetch = false;
+                    settings.archive_media = target_since.is_some();
+                    if let Err(error) = settings.save(&self.account().dirs.settings_file()) {
+                        self.toast_error(format!("Could not save your sync choice: {error}"));
+                        return;
+                    }
+                    self.account_mut().settings = settings;
+                    self.account_mut().reported_history = None;
                     self.backend.send(Command::StartPairing(history));
                     self.link = LinkStatus::Starting;
                 }
@@ -10050,6 +10157,39 @@ mod tests {
     }
 
     #[test]
+    fn custom_pairing_date_is_frozen_before_the_worker_starts() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::ChooseHistory;
+        let target_since =
+            crate::model::PairingHistory::target_for_days(crate::util::now(), 42).unwrap();
+        let history = crate::model::PairingHistory::FullCustom {
+            days: 42,
+            target_since,
+        };
+        app.apply(
+            Action::ChoosePairingHistory {
+                account: app.account().id.clone(),
+                history,
+            },
+            &ctx,
+        );
+        app.apply(Action::StartPairing(app.account().id.clone()), &ctx);
+
+        assert_eq!(
+            app.account().settings.history_import_since,
+            Some(target_since)
+        );
+        assert_eq!(app.account().settings.full_sync_days, 42);
+        let persisted = crate::settings::AccountSettings::load(&app.account().dirs.settings_file());
+        assert_eq!(persisted.history_import_since, Some(target_since));
+        assert_eq!(persisted.full_sync_days, 42);
+        assert!(matches!(commands.try_recv(), Ok(Command::StartPairing(sent)) if sent == history));
+    }
+
+    #[test]
     fn pairing_choices_belong_to_the_account_on_screen() {
         let root = tempfile::tempdir().unwrap();
         let dirs = AppDirs::under(root.path());
@@ -11555,7 +11695,9 @@ mod tests {
         let mut sent = || -> Vec<(bool, Option<ChatId>)> {
             std::iter::from_fn(|| commands.try_recv().ok())
                 .filter_map(|command| match command {
-                    Command::SetHistoryPrefetch { on, focused } => Some((on, focused)),
+                    Command::ConfigureArchiveImport {
+                        history, focused, ..
+                    } => Some((history.legacy_recent_enabled, focused)),
                     _ => None,
                 })
                 .collect()

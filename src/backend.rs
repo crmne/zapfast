@@ -251,12 +251,19 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
-    /// Whether the background may fetch older history, and the chat the reader
-    /// has open, so it is asked for its older messages first.
-    SetHistoryPrefetch {
-        on: bool,
+    /// Pairing profile for a new account. Existing sessions keep their original profile.
+    ConfigureSync {
+        mode: crate::settings::SyncMode,
+        full_sync_days: u32,
+    },
+    /// Account-local durable import policy, paused while private state is locked.
+    ConfigureArchiveImport {
+        history: crate::settings::HistoryImportPolicy,
+        media: crate::settings::MediaImportPolicy,
+        privacy_paused: bool,
         focused: Option<ChatId>,
     },
+    ResumeArchiveImport,
     /// A page of the chat's photos and playable videos, answered by
     /// `Event::ChatMedia`. `None` asks for the newest page; `around` centres it
     /// on one message, so a viewer opened on a photo older than the newest
@@ -335,18 +342,23 @@ pub enum Command {
         chat: ChatId,
         name: String,
     },
-    /// Internal: the id a phone-history request went out under, which the
-    /// phone's answer names. `serial` is the worker's number for the request.
-    OlderSent {
+    /// PDO request identity, registered only after the library's send completes.
+    HistoryRequested {
         chat: ChatId,
-        serial: u64,
-        request: String,
+        requested: std::time::Instant,
+        import_token: Option<i64>,
+        session: String,
     },
     /// Internal result for a failed phone-history request.
     OlderFailed {
         chat: ChatId,
-        serial: u64,
+        requested: std::time::Instant,
+        import_token: Option<i64>,
         error: String,
+    },
+    MediaScanFinished {
+        generation: u64,
+        result: Result<crate::archive::MediaScanResult, String>,
     },
     /// Internal group-metadata failure.
     GroupInfoFailed {
@@ -1116,6 +1128,8 @@ pub enum Event {
         token: u64,
         cleared: bool,
     },
+    /// Durable history and media import status for this account.
+    ArchiveProgress(crate::model::ArchiveRecoveryProgress),
     /// Files selected for the composer, to go as documents when `documents`.
     Picked {
         chat: ChatId,

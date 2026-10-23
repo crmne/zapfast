@@ -13,7 +13,16 @@ mod calls;
 pub use calls::CALL_LOG_LIMIT;
 mod drafts;
 mod encryption;
+pub mod history_import;
+mod media_jobs;
+pub mod storage;
 pub use encryption::{archive_key_identity, copy_archive_key, forget_archive_key};
+pub use history_import::{
+    HistoryAnchorKind, HistoryChatFailureOutcome, HistoryImportAnchorMetadata,
+    HistoryImportFailure, HistoryImportRequest, HistoryImportSnapshot, HistoryPageOutcome,
+};
+pub use media_jobs::{MediaJob, MediaJobCounts, MediaJobSchedule};
+pub use storage::MediaScanResult;
 mod favorites;
 pub use favorites::Favorite;
 mod labels;
@@ -69,6 +78,53 @@ const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.mo
       AND EXISTS (SELECT 1 FROM motion_clips c
                   WHERE c.chat = ?1 AND c.parent = ?2 AND c.sender = messages.sender)";
 
+/// Fills only missing local paths in an authoritative message snapshot.
+/// Canonical identity merges may find the same message under both a LID and a
+/// phone-number chat; neither copy may erase a file downloaded through the
+/// other identity, and an existing authoritative path keeps precedence.
+fn fill_missing_local_paths(content: &mut Content, source: &Content) {
+    if content.media().is_some_and(|media| media.path.is_none())
+        && let Some(path) = source.media().and_then(|media| media.path.clone())
+        && let Some(media) = content.media_mut()
+    {
+        media.path = Some(path);
+    }
+    if let (
+        Content::Image { motion, .. },
+        Content::Image {
+            motion: Some(source),
+            ..
+        },
+    ) = (&mut *content, source)
+        && motion.as_ref().is_none_or(|motion| motion.path.is_none())
+        && let Some(path) = source.path.clone()
+    {
+        motion.get_or_insert_default().path = Some(path);
+    }
+    if let (
+        Content::Interactive {
+            card: Some(content),
+            ..
+        },
+        Content::Interactive {
+            card: Some(source), ..
+        },
+    ) = (content, source)
+    {
+        for (content, source) in content.carousel.iter_mut().zip(&source.carousel) {
+            if content
+                .image
+                .as_ref()
+                .is_some_and(|image| image.path.is_none())
+                && let Some(path) = source.image.as_ref().and_then(|image| image.path.clone())
+                && let Some(image) = content.image.as_mut()
+            {
+                image.path = Some(path);
+            }
+        }
+    }
+}
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
@@ -102,6 +158,7 @@ CREATE TABLE IF NOT EXISTS motion_clips (
     parent TEXT NOT NULL,
     sender TEXT NOT NULL,
     raw BLOB NOT NULL,
+    child_id TEXT,
     PRIMARY KEY (chat, parent, sender)
 );
 CREATE TRIGGER IF NOT EXISTS delete_motion_clips AFTER DELETE ON messages BEGIN
@@ -186,6 +243,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
         "TEXT NOT NULL DEFAULT ''",
     ),
     ("messages", "history_order", "INTEGER"),
+    ("motion_clips", "child_id", "TEXT"),
     ("messages", "thumbnail", "BLOB"),
     ("messages", "mentions", "TEXT NOT NULL DEFAULT '[]'"),
     ("chats", "participants", "TEXT NOT NULL DEFAULT '[]'"),
@@ -438,6 +496,8 @@ impl Archive {
                 ))?;
             }
         }
+        history_import::install(&connection)?;
+        media_jobs::install(&connection)?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -958,12 +1018,29 @@ impl Archive {
         sender: &str,
         raw: &[u8],
     ) -> Result<bool> {
+        self.put_motion_clip_with_id(chat, parent, sender, raw, None)
+    }
+
+    /// Keeps the exact child identity needed to ask the phone to re-upload
+    /// this clip. Older rows retain no guessed identity.
+    pub fn put_motion_clip_with_id(
+        &self,
+        chat: &str,
+        parent: &str,
+        sender: &str,
+        raw: &[u8],
+        child_id: Option<&str>,
+    ) -> Result<bool> {
         if self.message_removed(chat, parent)? {
             return Ok(false);
         }
         self.connection.execute(
-            "INSERT OR REPLACE INTO motion_clips (chat, parent, sender, raw) VALUES (?1, ?2, ?3, ?4)",
-            params![chat, parent, sender, raw],
+            "INSERT INTO motion_clips (chat, parent, sender, raw, child_id) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(chat,parent,sender) DO UPDATE SET
+              child_id=CASE WHEN excluded.child_id IS NOT NULL THEN excluded.child_id
+                            WHEN motion_clips.raw=excluded.raw THEN motion_clips.child_id ELSE NULL END,
+              raw=excluded.raw",
+            params![chat, parent, sender, raw, child_id.filter(|id| !id.is_empty())],
         )?;
         Ok(self
             .connection
@@ -984,15 +1061,29 @@ impl Archive {
             .optional()
     }
 
-    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<()> {
+    /// Returns only a clip identity whose sender matches the parent photo.
+    pub fn motion_child_id(&self, chat: &str, parent: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT c.child_id FROM motion_clips c
+                 JOIN messages m ON m.chat=c.chat AND m.id=c.parent AND m.sender=c.sender
+                 WHERE c.chat=?1 AND c.parent=?2 AND c.child_id IS NOT NULL",
+                params![chat, parent],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<bool> {
         let Some(mut message) = self.message(chat, id)? else {
-            return Ok(());
+            return Ok(false);
         };
-        if let Content::Image { motion, .. } = &mut message.content {
-            motion.get_or_insert_default().path = path.map(Path::to_path_buf);
-            self.set_content(chat, id, &message.content, message.edited)?;
-        }
-        Ok(())
+        let Content::Image { motion, .. } = &mut message.content else {
+            return Ok(false);
+        };
+        motion.get_or_insert_default().path = path.map(Path::to_path_buf);
+        self.set_content(chat, id, &message.content, message.edited)?;
+        Ok(true)
     }
 
     /// Returns all recorded motion clip paths.
@@ -1115,6 +1206,32 @@ impl Archive {
             params![lid_chat],
             |row| row.get(0),
         )?;
+        let local_paths = {
+            let mut result = Vec::new();
+            // The canonical PN copy wins when both identities retain a path.
+            // The LID copy then fills only paths that are still absent.
+            for chat in [&phone_chat, &lid_chat] {
+                let mut statement = transaction.prepare(
+                    "SELECT id,content FROM messages WHERE chat=?1 AND json_valid(content) AND (
+                         json_extract(content,'$.media.path') IS NOT NULL
+                         OR json_extract(content,'$.motion.path') IS NOT NULL
+                         OR json_extract(content,'$.card.image.path') IS NOT NULL
+                         OR EXISTS(SELECT 1 FROM json_each(content,'$.card.carousel') item
+                          WHERE json_extract(item.value,'$.image.path') IS NOT NULL))",
+                )?;
+                let rows = statement.query_map([chat], |row| {
+                    let id: String = row.get(0)?;
+                    let content: String = row.get(1)?;
+                    Ok((id, serde_json::from_str::<Content>(&content).ok()))
+                })?;
+                for row in rows {
+                    if let (id, Some(content)) = row? {
+                        result.push((id, content));
+                    }
+                }
+            }
+            result
+        };
         transaction.execute(
             "INSERT OR IGNORE INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known)
              SELECT ?2, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known
@@ -1143,6 +1260,95 @@ impl Archive {
                 history_order = COALESCE(messages.history_order, excluded.history_order)",
             params![lid_chat, phone_chat],
         )?;
+        for (id, source) in local_paths {
+            let Some(serialized): Option<String> = transaction
+                .query_row(
+                    "SELECT content FROM messages WHERE chat=?1 AND id=?2",
+                    params![phone_chat, id],
+                    |row| row.get(0),
+                )
+                .optional()?
+            else {
+                continue;
+            };
+            let Ok(mut content) = serde_json::from_str::<Content>(&serialized) else {
+                continue;
+            };
+            fill_missing_local_paths(&mut content, &source);
+            let updated = serde_json::to_string(&content).unwrap_or(serialized);
+            transaction.execute(
+                "UPDATE messages SET content=?3 WHERE chat=?1 AND id=?2",
+                params![phone_chat, id, updated],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO motion_clips(chat,parent,sender,raw,child_id)
+             SELECT ?2,clip.parent,saved.sender,clip.raw,clip.child_id FROM motion_clips clip
+             JOIN messages source ON source.chat=clip.chat AND source.id=clip.parent
+              AND source.sender=clip.sender
+             JOIN messages saved ON saved.chat=?2 AND saved.id=clip.parent
+             WHERE clip.chat=?1
+             ON CONFLICT(chat,parent,sender) DO UPDATE SET
+              child_id=COALESCE(motion_clips.child_id,excluded.child_id),
+              raw=COALESCE(motion_clips.raw,excluded.raw)",
+            params![lid_chat, phone_chat],
+        )?;
+        transaction.execute(
+            "INSERT INTO media_jobs(chat,id,card,attempts,next_attempt,state)
+             SELECT ?2,q.id,q.card,
+              CASE WHEN q.state=1 AND NOT EXISTS(
+               SELECT 1 FROM messages saved WHERE saved.chat=?2 AND saved.id=q.id AND (
+                (q.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                OR (q.card=-1 AND COALESCE(json_extract(saved.content,'$.media.path'),json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                OR (q.card>=0 AND json_extract(saved.content,'$.card.carousel[' || q.card || '].image.path') IS NOT NULL))) THEN 0 ELSE q.attempts END,
+              CASE WHEN q.state=1 AND NOT EXISTS(
+               SELECT 1 FROM messages saved WHERE saved.chat=?2 AND saved.id=q.id AND (
+                (q.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                OR (q.card=-1 AND COALESCE(json_extract(saved.content,'$.media.path'),json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                OR (q.card>=0 AND json_extract(saved.content,'$.card.carousel[' || q.card || '].image.path') IS NOT NULL))) THEN 0 ELSE q.next_attempt END,
+              q.state FROM media_jobs q
+             WHERE q.chat=?1 AND EXISTS(
+              SELECT 1 FROM messages m WHERE m.chat=?2 AND m.id=q.id)
+             ON CONFLICT(chat,id,card) DO UPDATE SET
+              attempts=CASE WHEN (media_jobs.state=1 OR excluded.state=1) AND NOT EXISTS(
+               SELECT 1 FROM messages saved WHERE saved.chat=excluded.chat AND saved.id=excluded.id AND (
+                (excluded.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                OR (excluded.card=-1 AND COALESCE(json_extract(saved.content,'$.media.path'),json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                OR (excluded.card>=0 AND json_extract(saved.content,'$.card.carousel[' || excluded.card || '].image.path') IS NOT NULL))) THEN 0 ELSE MAX(media_jobs.attempts,excluded.attempts) END,
+              next_attempt=CASE WHEN (media_jobs.state=1 OR excluded.state=1) AND NOT EXISTS(
+               SELECT 1 FROM messages saved WHERE saved.chat=excluded.chat AND saved.id=excluded.id AND (
+                (excluded.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                OR (excluded.card=-1 AND COALESCE(json_extract(saved.content,'$.media.path'),json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                OR (excluded.card>=0 AND json_extract(saved.content,'$.card.carousel[' || excluded.card || '].image.path') IS NOT NULL))) THEN 0 ELSE MAX(media_jobs.next_attempt,excluded.next_attempt) END,
+              state=CASE WHEN media_jobs.state=3 OR excluded.state=3 THEN 3
+                         WHEN (media_jobs.state=1 OR excluded.state=1) AND EXISTS(
+                          SELECT 1 FROM messages saved WHERE saved.chat=excluded.chat
+                           AND saved.id=excluded.id AND (
+                            (excluded.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                            OR (excluded.card=-1 AND COALESCE(
+                             json_extract(saved.content,'$.media.path'),
+                             json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                            OR (excluded.card>=0 AND json_extract(saved.content,
+                             '$.card.carousel[' || excluded.card || '].image.path') IS NOT NULL))) THEN 1
+                         WHEN media_jobs.state=5 OR excluded.state=5 THEN 5
+                         WHEN media_jobs.state=4 OR excluded.state=4 THEN 4
+                         WHEN media_jobs.state=2 OR excluded.state=2 THEN 2 ELSE 0 END",
+            params![lid_chat, phone_chat],
+        )?;
+        transaction.execute(
+            "UPDATE media_jobs SET state=0,attempts=0,next_attempt=0
+             WHERE chat=?1 AND state=1 AND NOT EXISTS(
+              SELECT 1 FROM messages saved WHERE saved.chat=media_jobs.chat
+               AND saved.id=media_jobs.id AND (
+                (media_jobs.card=-2 AND json_extract(saved.content,'$.motion.path') IS NOT NULL)
+                OR (media_jobs.card=-1 AND COALESCE(
+                 json_extract(saved.content,'$.media.path'),
+                 json_extract(saved.content,'$.card.image.path')) IS NOT NULL)
+                OR (media_jobs.card>=0 AND json_extract(saved.content,
+                 '$.card.carousel[' || media_jobs.card || '].image.path') IS NOT NULL)))",
+            [phone_chat.as_str()],
+        )?;
+        history_import::merge_chat(&transaction, &lid_chat, &phone_chat)?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],
@@ -1907,6 +2113,7 @@ impl Archive {
         for table in [
             "messages",
             "motion_clips",
+            "media_jobs",
             "group_receipts",
             "polls",
             "poll_history",
@@ -2446,8 +2653,20 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM history_import_frontiers; DELETE FROM history_import_chats; DELETE FROM history_import_job; DELETE FROM media_jobs; DELETE FROM media_import_state; DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_meta_fixture_writes(&self, reject: bool) {
+        self.connection
+            .execute_batch(if reject {
+                "CREATE TRIGGER reject_meta_fixture BEFORE INSERT ON meta
+                 BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+            } else {
+                "DROP TRIGGER reject_meta_fixture"
+            })
+            .unwrap();
     }
 }
 
@@ -3796,6 +4015,57 @@ pub(crate) mod tests {
         assert_eq!(left, 2);
     }
 
+    #[test]
+    fn motion_path_reports_only_a_persisted_image_update() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "synthetic@s.whatsapp.net";
+        archive.ensure_chat(chat, "Synthetic").unwrap();
+
+        assert!(
+            !archive
+                .put_motion_path(chat, "missing", Some(std::path::Path::new("missing.mp4")))
+                .unwrap()
+        );
+        archive
+            .insert_message(&message(chat, "text", 100, false), None)
+            .unwrap();
+        assert!(
+            !archive
+                .put_motion_path(chat, "text", Some(std::path::Path::new("text.mp4")))
+                .unwrap()
+        );
+
+        let mut image = message(chat, "image", 101, false);
+        image.content = Content::Image {
+            motion: None,
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+        };
+        archive.insert_message(&image, None).unwrap();
+        assert!(
+            archive
+                .put_motion_path(chat, "image", Some(std::path::Path::new("saved.mp4")))
+                .unwrap()
+        );
+        let saved = archive.message(chat, "image").unwrap().unwrap();
+        let Content::Image {
+            motion: Some(motion),
+            ..
+        } = saved.content
+        else {
+            panic!("image motion path was not persisted")
+        };
+        assert_eq!(motion.path, Some("saved.mp4".into()));
+    }
+
     fn furnished_chat(archive: &Archive, chat: &str, media: &Path) -> String {
         archive.ensure_chat(chat, "Somebody").expect("chat");
         archive
@@ -4127,6 +4397,135 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(ephemeral_timestamp, None);
+    }
+
+    #[test]
+    fn late_privacy_mapping_preserves_downloads_from_both_identities() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "9@lid";
+        let phone = "1@s.whatsapp.net";
+        archive.ensure_chat(lid, "Ada").unwrap();
+        archive.ensure_chat(phone, "1").unwrap();
+        let media = |path: Option<&str>| crate::model::Media {
+            mime: "image/jpeg".into(),
+            size: 1,
+            width: None,
+            height: None,
+            album: None,
+            path: path.map(PathBuf::from),
+            state: Default::default(),
+        };
+        let card = |path: Option<&str>| crate::model::InteractiveCard {
+            image: Some(media(path)),
+            ..Default::default()
+        };
+        let mut phone_copy = message(phone, "same", 100, false);
+        phone_copy.content = Content::Image {
+            caption: None,
+            media: media(Some("phone-image.jpg")),
+            motion: Some(crate::model::Motion {
+                path: Some("phone-motion.mp4".into()),
+                state: Default::default(),
+            }),
+        };
+        archive.insert_message(&phone_copy, None).unwrap();
+        let mut lid_copy = message(lid, "same", 100, false);
+        lid_copy.edited = true;
+        lid_copy.content = Content::Image {
+            caption: Some("newer snapshot".into()),
+            media: media(None),
+            motion: Some(Default::default()),
+        };
+        archive.insert_message(&lid_copy, None).unwrap();
+        archive
+            .put_motion_clip_with_id(lid, "same", lid, b"clip", Some("child"))
+            .unwrap();
+
+        let mut phone_carousel = message(phone, "carousel", 101, false);
+        phone_carousel.content = Content::Interactive {
+            text: "old".into(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card(Some("phone-card.jpg"))],
+                ..Default::default()
+            })),
+        };
+        archive.insert_message(&phone_carousel, None).unwrap();
+        let mut lid_carousel = message(lid, "carousel", 101, false);
+        lid_carousel.edited = true;
+        lid_carousel.content = Content::Interactive {
+            text: "new".into(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card(None)],
+                ..Default::default()
+            })),
+        };
+        archive.insert_message(&lid_carousel, None).unwrap();
+
+        let mut lid_only = message(lid, "lid-only", 102, false);
+        lid_only.content = Content::Image {
+            caption: None,
+            media: media(Some("lid-image.jpg")),
+            motion: None,
+        };
+        archive.insert_message(&lid_only, None).unwrap();
+        let mut pathless = message(lid, "pathless", 103, false);
+        pathless.content = Content::Image {
+            caption: None,
+            media: media(None),
+            motion: None,
+        };
+        let pathless_job = MediaJob {
+            chat: lid.into(),
+            id: pathless.id.clone(),
+            card: -1,
+        };
+        archive.insert_message(&pathless, Some(b"raw")).unwrap();
+        archive
+            .finish_media_job(&pathless_job, 1, true, false)
+            .unwrap();
+
+        assert!(archive.put_lid("9", "1").unwrap());
+
+        let same = archive.message(phone, "same").unwrap().unwrap();
+        let Content::Image { media, motion, .. } = same.content else {
+            panic!("image content");
+        };
+        assert_eq!(media.path, Some("phone-image.jpg".into()));
+        assert_eq!(motion.unwrap().path, Some("phone-motion.mp4".into()));
+        assert_eq!(
+            archive.motion_child_id(phone, "same").unwrap(),
+            Some("child".into())
+        );
+        let carousel = archive.message(phone, "carousel").unwrap().unwrap();
+        let Content::Interactive {
+            card: Some(card), ..
+        } = carousel.content
+        else {
+            panic!("carousel content");
+        };
+        assert_eq!(
+            card.carousel[0].image.as_ref().unwrap().path,
+            Some("phone-card.jpg".into())
+        );
+        assert_eq!(
+            archive
+                .message(phone, "lid-only")
+                .unwrap()
+                .unwrap()
+                .content
+                .media()
+                .unwrap()
+                .path,
+            Some("lid-image.jpg".into())
+        );
+        assert!(
+            archive
+                .due_media_jobs(2, 100)
+                .unwrap()
+                .iter()
+                .any(|job| job.chat == phone && job.id == "pathless" && job.card == -1),
+            "a Downloaded job without its exact retained path must be retried immediately"
+        );
     }
 
     #[test]

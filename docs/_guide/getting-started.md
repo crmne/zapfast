@@ -59,11 +59,17 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 
 ZapFast links as a companion device, like WhatsApp Web. Before requesting a code
 for a new account, choose **Recent** (the default) for a quicker setup, or
-**Full** to request **1 year**, **2 years**, or **3 years** of history
-(365, 730, or 1,095 days). Your phone decides how much it can supply, so the
-selected period is a request, not a guarantee. Longer periods can take more
-time and disk space. This choice does not change an already linked account,
-re-pair it, or enable background history or media recovery.
+**Full** and select a UTC date from 1 to 1,095 days ago. The one-, two-, and
+three-year presets fill the same exact date field. Your phone decides how much
+it can supply, so the selected period is a request, not a guarantee. Longer
+periods can take more time and disk space.
+
+The selected date is also saved as a resumable archive request pass. ZapFast
+starts with recently active chats, follows only replies matched to its own
+requests, and keeps its place across restarts. Existing linked accounts can
+choose or change the date under **Settings > History archive** without
+relinking. Choosing **Recent** cancels a dated pass without deleting messages
+already archived.
 
 The syncing indicator shows recent transfer activity. It can clear during a
 quiet period while the phone still has more history to send. A reported
@@ -104,7 +110,21 @@ notification, receipt, download, and wallpaper settings.
 After linking, the phone sends the history available for the requested profile.
 The chat list can appear before messages finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
-ZapFast asks your phone for older messages. The phone must be online.
+ZapFast asks your phone for older messages. The phone must be online. A phone
+may leave a request unanswered or return less than the selected period. The
+settings show a request pass as running, waiting, paused, finished, or needing
+attention. Finished means every eligible chat reached the date or the phone
+explicitly said it had nothing older. A retry limit remains **Needs attention**
+until you choose **Retry**; it is not reported as complete. This records what
+the request pass proved. It cannot guarantee that WhatsApp supplied every
+message inside the period.
+
+Media recovery is separate. When enabled, ZapFast downloads attachments in the
+same selected range, newest first, within the storage budget. Expired files may
+optionally be requested from the phone under their own daily limit. Files that
+need the phone, are unavailable, were cancelled, or exceed the automatic size
+policy remain separate in the displayed counts. Large-file recovery is an
+explicit opt-in and allows up to 2 GiB per file.
 
 ## Try it in your own chat
 

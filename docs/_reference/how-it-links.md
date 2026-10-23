@@ -19,8 +19,9 @@ window instead of starting another instance.
 
 ## What the phone is for
 
-- **History.** WhatsApp replays only recent history to a fresh device.
-  ZapFast archives new messages and asks the phone for older messages when
+- **History.** WhatsApp replays only the history it chooses to supply to a
+  companion. ZapFast can request Recent or an exact date during linking,
+  archives new messages, and asks the phone for older messages when
   you scroll past the archive, or in the background when **Fetch older
   history** is on in Settings > Chats. The phone must be online for these
   requests and to re-upload expired attachments.

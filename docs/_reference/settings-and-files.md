@@ -137,15 +137,25 @@ name or description, in the interface language or in English.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
-- **Fetch older history**: off by default, and set for
-  each number. When on, ZapFast asks the phone for older messages without you
-  scrolling: the open chat first, then pinned chats and the ten most recently
-  active ones (never channels). It sends at most one request every twenty
-  seconds, and only while no other history request is waiting. Each chat is
-  asked for at most five pages each time ZapFast runs, and a chat the phone
-  does not answer goes to the back of the queue. Pages fetched this way go into
-  the archive without moving the view. A chat the phone says has nothing older
-  is not asked again.
+- **Fetch older history**: off by default, and set for each number. This keeps
+  the existing Recent behavior: ZapFast asks for older messages in the open,
+  pinned, and ten most recently active chats without waiting for you to scroll.
+  Choosing it does not start a dated archive pass.
+- **History archive**: choose Recent or an exact UTC date from 1 to 1,095 days
+  ago for each number. A dated request pass resumes across restarts, tries
+  recently active chats first, then rotates fairly. Silence and no-progress
+  retries belong to that chat; transport or archive failures can pause the
+  account. Pause keeps every saved frontier. Retry reopens only unresolved
+  chats. Daily history requests have their own limit.
+- **Media recovery**: independently download archived attachments within a
+  storage budget. Optional phone recovery for expired files has a separate
+  daily allowance while sharing the account's phone pacing and backoff. CDN
+  downloads can continue while history is requested. Phone re-uploads wait
+  behind due history and poll requests, so a long history import can delay
+  them. Large files remain excluded at 64 MiB unless the explicit 2 GiB option
+  is enabled.
+  Cancelled, unavailable, too-large, and phone-needed items are counted
+  separately.
 - **Keep chats archived** (development builds): on by default. When off, a new
   message, received or sent, brings an archived chat back to the list. Applies
   to all accounts here; it does not read or change the phone's own setting.

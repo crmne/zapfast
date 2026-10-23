@@ -95,16 +95,20 @@ impl Worker {
     pub(super) fn pump_poll_history(&mut self) {
         let now = Instant::now();
         if let Some((chat, id)) = self.poll_history.expire(now) {
+            self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestTimeout)
+                .emit();
             log::info!("poll recovery: phone history timed out; retry scheduled");
             self.emit_message(&chat, &id);
         }
-        if !self.status.is_connected() || !self.pending_older.is_empty() {
+        if !self.automatic_history_ready() || !self.pending_older.is_empty() {
             return;
         }
         let Some(client) = self.client.clone() else {
             return;
         };
-        let Some((chat, id)) = self.poll_history.next(now) else {
+        let Some((chat, id)) = self.poll_history.next_for(now, |chat| {
+            self.background_history.owns(chat) && !self.background_history.poll_owned(chat)
+        }) else {
             return;
         };
         let prepared = (|| {
@@ -121,13 +125,29 @@ impl Worker {
             self.emit_message(&chat, &id);
             return;
         };
+        match self.reserve_automatic_history(&chat, Some(&id), (timestamp, anchor.clone())) {
+            automatic_history::Admission::Allowed => {}
+            automatic_history::Admission::Wait => {
+                self.poll_history.postpone(now);
+                self.emit_message(&chat, &id);
+                return;
+            }
+            automatic_history::Admission::Stopped => {
+                self.poll_history.stop(&chat, &id);
+                self.background_history.stop_poll(&chat);
+                self.emit_message(&chat, &id);
+                return;
+            }
+        }
+        self.background_history.claim_poll(chat.clone());
+        self.background_history.started(&chat, now, None);
         log::info!(
             "poll recovery: requesting phone history; anchor_present={}",
             !anchor.is_empty()
         );
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if client
+            match client
                 .fetch_message_history(
                     &jid,
                     &anchor,
@@ -139,16 +159,24 @@ impl Worker {
                     PHONE_BATCH,
                 )
                 .await
-                .is_err()
             {
-                log::info!("poll recovery: phone history request failed");
-                let _ = commands.send(Command::PollHistoryFailed {
-                    chat,
-                    message: id,
-                    requested: now,
-                });
-            } else {
-                log::info!("poll recovery: phone history request sent");
+                Err(_) => {
+                    log::info!("poll recovery: phone history request failed");
+                    let _ = commands.send(Command::PollHistoryFailed {
+                        chat,
+                        message: id,
+                        requested: now,
+                    });
+                }
+                Ok(session) => {
+                    let _ = commands.send(Command::HistoryRequested {
+                        chat,
+                        requested: now,
+                        import_token: None,
+                        session,
+                    });
+                    log::info!("poll recovery: phone history request sent");
+                }
             }
         });
     }

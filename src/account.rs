@@ -34,9 +34,6 @@ pub struct Account {
     pub contacts: HashMap<String, Contact>,
     pub conversations: HashMap<ChatId, Conversation>,
     pub open_chat: Option<ChatId>,
-    /// The background-history state last sent to this account's worker: the
-    /// switch and the chat on screen.
-    pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
     /// This account's media cache as last measured, for Settings. `None`
@@ -87,6 +84,7 @@ pub struct Account {
     /// its group and opens nothing.
     pub(crate) new_group_request: Option<u64>,
     pub pair_phone: String,
+    pub archive_progress: Option<crate::model::ArchiveRecoveryProgress>,
     /// View state for the history chooser, never applied to an existing link.
     pub pairing_history: crate::model::PairingHistory,
     pub show_archived: bool,
@@ -113,6 +111,12 @@ pub struct Account {
     pub interactive_sending: HashSet<(ChatId, String)>,
     pub group_saving: HashSet<ChatId>,
     pub(crate) reported_online: Option<bool>,
+    pub(crate) reported_history: Option<(
+        crate::settings::HistoryImportPolicy,
+        crate::settings::MediaImportPolicy,
+        bool,
+        Option<crate::model::ChatId>,
+    )>,
     /// Chats this account may pin; WhatsApp Plus raises it once known.
     pub pin_limit: usize,
     /// The call entries the Calls page lists, newest first, once read.
@@ -164,7 +168,6 @@ impl Account {
             contacts: HashMap::new(),
             conversations: HashMap::new(),
             open_chat,
-            prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             storage_stats: None,
@@ -206,6 +209,7 @@ impl Account {
             new_group_sequence: 0,
             new_group_request: None,
             pair_phone: String::new(),
+            archive_progress: None,
             pairing_history: crate::model::PairingHistory::default(),
             show_archived: false,
             chat_filter,
@@ -221,6 +225,7 @@ impl Account {
             interactive_sending: HashSet::new(),
             group_saving: HashSet::new(),
             reported_online: None,
+            reported_history: None,
             pin_limit: crate::backend::PINNED_CHATS,
             call_log: Vec::new(),
             call_log_loaded: false,

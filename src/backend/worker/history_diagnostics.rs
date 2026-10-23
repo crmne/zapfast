@@ -1,4 +1,4 @@
-//! Fixed labels and numeric counters only, never protocol identities or payloads.
+//! Counter-only history diagnostics. No protocol identifiers or payloads enter a record.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Flow {
@@ -7,9 +7,8 @@ pub(super) enum Flow {
 }
 
 impl Flow {
-    /// Separates unsolicited history from chunks answering a phone-history request.
-    pub fn incoming(kind: i32, has_request_session: bool) -> Self {
-        if kind == super::ON_DEMAND || has_request_session {
+    pub fn incoming(sync_type: i32, has_request_session: bool) -> Self {
+        if sync_type == super::ON_DEMAND || has_request_session {
             Self::OnDemand
         } else {
             Self::Initial
@@ -17,12 +16,18 @@ impl Flow {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(super) enum Stage {
     Received,
-    Applied,
+    Stored,
     ParseFailed,
+    StoreFailed,
     Quiet,
+    DispatchStarted,
+    DispatchTimeout,
+    RequestRejectedNotConnected,
+    RequestRejectedInvalidChat,
+    RequestDeferred,
     RequestSent,
     RequestFailed,
     RequestTimeout,
@@ -35,12 +40,12 @@ pub(super) struct Record {
     pub sync_type: i32,
     pub percent: i32,
     pub chats: usize,
+    /// Supported entries processed, including duplicates, not newly added messages.
     pub entries: usize,
     pub elapsed_ms: u128,
 }
 
 impl Record {
-    /// Starts a count-only diagnostic with unknown protocol fields left unset.
     pub fn new(account: u32, flow: Flow, stage: Stage) -> Self {
         Self {
             account,
@@ -54,33 +59,12 @@ impl Record {
         }
     }
 
-    /// Writes fixed labels and aggregate counters without identifying chats or messages.
     pub fn emit(&self) {
-        #[cfg(test)]
-        CAPTURE.with(|capture| {
-            if let Some(stages) = capture.borrow_mut().as_mut() {
-                stages.push(self.stage);
-            }
-        });
         log::info!("{self}");
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static CAPTURE: std::cell::RefCell<Option<Vec<Stage>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Captures emitted diagnostic stages on this test thread without a process-wide logger.
-#[cfg(test)]
-pub(super) fn capture(operation: impl FnOnce()) -> Vec<Stage> {
-    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
-    operation();
-    CAPTURE.with(|capture| capture.borrow_mut().take().unwrap())
-}
-
 impl std::fmt::Display for Record {
-    /// Formats the versioned diagnostic using only fixed labels and numeric fields.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let flow = match self.flow {
             Flow::Initial => "initial",
@@ -88,9 +72,15 @@ impl std::fmt::Display for Record {
         };
         let stage = match self.stage {
             Stage::Received => "received",
-            Stage::Applied => "applied",
+            Stage::Stored => "stored",
             Stage::ParseFailed => "parse_failed",
+            Stage::StoreFailed => "store_failed",
             Stage::Quiet => "quiet",
+            Stage::DispatchStarted => "dispatch_started",
+            Stage::DispatchTimeout => "dispatch_timeout",
+            Stage::RequestRejectedNotConnected => "request_rejected_not_connected",
+            Stage::RequestRejectedInvalidChat => "request_rejected_invalid_chat",
+            Stage::RequestDeferred => "request_deferred",
             Stage::RequestSent => "request_sent",
             Stage::RequestFailed => "request_failed",
             Stage::RequestTimeout => "request_timeout",
@@ -108,7 +98,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn incoming_history_keeps_initial_and_requested_delivery_separate() {
+    fn requested_pages_stay_separate_from_initial_chunks_including_session_tagged_answers() {
         assert_eq!(Flow::incoming(2, false), Flow::Initial);
         assert_eq!(Flow::incoming(3, false), Flow::Initial);
         assert_eq!(
@@ -119,15 +109,20 @@ mod tests {
     }
 
     #[test]
-    fn received_applied_and_quiet_records_do_not_certify_storage_or_coverage() {
+    fn records_keep_delivery_and_storage_separate_without_claiming_completion() {
         let mut record = Record::new(4, Flow::Initial, Stage::Received);
-        record.sync_type = 3;
+        record.sync_type = 2;
         record.percent = 100;
-        for stage in [Stage::Received, Stage::Applied, Stage::Quiet] {
-            record.stage = stage;
-            let line = record.to_string();
-            assert!(line.contains("flow=initial"));
-            assert!(!line.contains("stored") && !line.contains("complete"));
-        }
+        assert!(
+            record
+                .to_string()
+                .contains("stage=received sync_type=2 percent=100")
+        );
+        record.stage = Stage::StoreFailed;
+        assert!(record.to_string().contains("stage=store_failed"));
+        assert!(!record.to_string().contains("complete"));
+        record.stage = Stage::Quiet;
+        assert!(record.to_string().contains("stage=quiet"));
+        assert!(!record.to_string().contains("complete"));
     }
 }

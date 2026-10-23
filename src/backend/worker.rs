@@ -45,6 +45,9 @@ mod contact_names;
 mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
+mod automatic_history;
+mod background_history;
+mod background_media;
 mod favorite_chats;
 mod history_diagnostics;
 use history_diagnostics::{Flow as HistoryFlow, Record as HistoryRecord, Stage as HistoryStage};
@@ -53,7 +56,6 @@ mod link_watch;
 mod new_group;
 mod poll_history;
 mod polls;
-mod prefetch;
 mod sticker_pace;
 mod stickers;
 
@@ -75,7 +77,16 @@ const SYNC_QUIET: Duration = Duration::from_secs(20);
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
 /// Phone history-request timeout.
-const PHONE_PATIENCE: Duration = Duration::from_secs(30);
+// Start this only after whatsapp-rust has completed its session preflight and
+// written the encrypted PDO stanza to the WebSocket. The preflight can itself
+// wait for offline delivery, so timing it as phone silence races a request that
+// has not left this device yet.
+const PHONE_PATIENCE: Duration = Duration::from_secs(120);
+// whatsapp-rust may spend 60 seconds draining offline delivery and then wait
+// on a 75-second pre-key IQ before it can write the PDO stanza. Beyond this
+// outer bound the send future is cancelled and the durable job pauses for an
+// explicit retry, because a cancelled transport write has uncertain delivery.
+const HISTORY_DISPATCH_PATIENCE: Duration = Duration::from_secs(180);
 /// Phone history-request batch size.
 const PHONE_BATCH: i32 = 50;
 /// `HistorySync.sync_type` for on-demand history responses.
@@ -96,6 +107,7 @@ const SHELF_REFRESH_EVERY: usize = 4;
 const STARRED_LIMIT: usize = 200;
 const ATTACHMENT_LIMIT_ERROR: &str =
     "This attachment is larger than the 64 MiB automatic download limit";
+const ATTACHMENT_PHONE_REQUIRED: &str = "This attachment needs phone recovery";
 /// The deadline of a download of unknown or small size.
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// The slowest transfer the deadline allows for beyond that: 128 KiB/s, so a
@@ -596,23 +608,31 @@ fn pairing_history_for_device(
     }
 }
 
-/// Use the library's supported full-sync profile as a complete unit.
-fn pairing_device_props(history: crate::model::PairingHistory) -> DevicePropsOverride {
+/// Full pairing opts into a three-year request; the phone controls availability.
+fn sync_device_props(
+    mode: crate::settings::SyncMode,
+    full_sync_days: u32,
+) -> Option<DevicePropsOverride> {
     let props = DevicePropsOverride::new()
         .with_os(device_name())
         .with_version(app_version());
-    match history.days() {
-        None => props.with_platform_type(wa::device_props::PlatformType::DESKTOP),
-        Some(days) => {
+    match mode {
+        crate::settings::SyncMode::Recent => {
+            Some(props.with_platform_type(wa::device_props::PlatformType::DESKTOP))
+        }
+        crate::settings::SyncMode::Full if (1..=1095).contains(&full_sync_days) => {
             let mut config = whatsapp_rust::wacore::store::device::default_history_sync_config();
-            config.full_sync_days_limit = Some(days);
+            config.full_sync_days_limit = Some(full_sync_days);
             config.on_demand_ready = Some(true);
             config.complete_on_demand_ready = Some(true);
-            props
-                .with_platform_type(wa::device_props::PlatformType::UWP)
-                .with_require_full_sync(true)
-                .with_history_sync_config(config)
+            Some(
+                props
+                    .with_platform_type(wa::device_props::PlatformType::UWP)
+                    .with_require_full_sync(true)
+                    .with_history_sync_config(config),
+            )
         }
+        crate::settings::SyncMode::Full => None,
     }
 }
 
@@ -806,15 +826,37 @@ pub async fn run(
         first_names_recovered,
         first_names_recovering: false,
         downloads: HashSet::new(),
+        motion_downloads: HashSet::new(),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
         poll_history: Default::default(),
+        automatic_history: Default::default(),
+        automatic_history_last_request: None,
+        background_history: Default::default(),
+        history_policy_paused: false,
+        history_privacy_paused: false,
+        background_media_enabled: false,
+        background_media_budget_mib: 20 * 1024,
+        background_media_usage: None,
+        background_media_diagnostic: None,
+        media_scan_generation: 0,
+        media_scan_in_flight: None,
+        media_scan_completed_bytes: 0,
+        media_scan_started_bytes: 0,
+        background_media_phone_recovery: false,
+        background_media_phone_requests_per_day: 50,
+        background_media_large_files: false,
+        background_media_target_since: None,
+        background_media_cancelled: HashSet::new(),
+        background_media_phone_permits: HashSet::new(),
+        background_media_phone_revocations: tokio::sync::watch::channel(0).0,
+        history_checkpoint_failed: false,
+        background_media: HashSet::new(),
+        sync_mode: None,
+        full_sync_days: 1095,
+        history_storage_ok: std::cell::Cell::new(true),
         poll_sending: HashSet::new(),
-        prefetch: prefetch::State::default(),
-        older_serial: 0,
-        late_older: VecDeque::new(),
-        older_ids_match: false,
         interactive_sending: HashMap::new(),
         receipts_watch: None,
         receipts_pruned: Instant::now(),
@@ -823,6 +865,48 @@ pub async fn run(
         forward_queue: None,
     };
     worker.load_state();
+    match worker.archive.meta("background_history_checkpoint_v1") {
+        Ok(Some(checkpoint)) => {
+            if worker.background_history.restore(&checkpoint).is_err() {
+                log::warn!("history recovery checkpoint is unreadable; recovery remains paused");
+                worker.history_checkpoint_failed = true;
+                worker.background_history.paused = true;
+            }
+        }
+        Err(_) => {
+            worker.history_checkpoint_failed = true;
+            log::warn!("could not load history recovery checkpoint; recovery remains paused");
+        }
+        _ => {}
+    }
+    let checkpoint = worker
+        .archive
+        .meta("automatic_history_checkpoint_v2")
+        .and_then(|value| match value {
+            Some(value) => Ok(Some(value)),
+            None => worker.archive.meta("automatic_history_checkpoint_v1"),
+        });
+    match checkpoint {
+        Ok(Some(value)) => match automatic_history::Budget::restore(&value) {
+            Ok(budget) => worker.automatic_history = budget,
+            Err(_) => worker.history_checkpoint_failed = true,
+        },
+        Err(_) => worker.history_checkpoint_failed = true,
+        Ok(None) => {}
+    }
+    // A mapping can have been saved after the last request reservation. Apply
+    // known mappings again after restore so changing chat identity cannot renew
+    // the saved retry allowance on restart.
+    for (lid, pn) in &worker.lid_to_pn {
+        let old = format!("{lid}@lid");
+        let new = format!("{pn}@s.whatsapp.net");
+        worker.automatic_history.canonicalize(&old, &new);
+        worker.background_history.canonicalize(&old, &new);
+    }
+    if worker.history_checkpoint_failed {
+        worker.background_history.paused = true;
+        log::warn!("automatic history accounting is unavailable; requests remain paused");
+    }
     worker.backfill();
     worker.backfill_media_albums();
     worker.backfill_video_notes();
@@ -909,7 +993,8 @@ pub async fn run(
                 worker.pump_favorite_chats();
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
-                worker.pump_prefetch();
+                worker.pump_background_history();
+                worker.pump_background_media().await;
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
             }
@@ -1110,6 +1195,32 @@ struct Worker {
     favorite_chats: favorite_chats::FavoriteChats,
     poll_decrypting: usize,
     poll_history: poll_history::Requests,
+    automatic_history: automatic_history::Budget,
+    automatic_history_last_request: Option<Instant>,
+    background_history: background_history::Recovery,
+    history_policy_paused: bool,
+    history_privacy_paused: bool,
+    background_media_enabled: bool,
+    background_media_budget_mib: u32,
+    background_media_usage: Option<(Instant, Option<u64>)>,
+    background_media_diagnostic: Option<(Instant, background_media::MediaDiagnostic)>,
+    media_scan_generation: u64,
+    media_scan_in_flight: Option<u64>,
+    media_scan_completed_bytes: u64,
+    media_scan_started_bytes: u64,
+    background_media_phone_recovery: bool,
+    background_media_phone_requests_per_day: u32,
+    background_media_large_files: bool,
+    background_media_target_since: Option<i64>,
+    background_media_cancelled: HashSet<(ChatId, String, i64)>,
+    background_media_phone_permits: HashSet<(ChatId, String, i64)>,
+    /// Revokes phone authorization captured by every in-flight background transfer.
+    background_media_phone_revocations: tokio::sync::watch::Sender<u64>,
+    history_checkpoint_failed: bool,
+    background_media: HashSet<(ChatId, String, i64)>,
+    sync_mode: Option<crate::settings::SyncMode>,
+    full_sync_days: u32,
+    history_storage_ok: std::cell::Cell<bool>,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
     /// The group message whose "Message info" is open.
@@ -1121,18 +1232,14 @@ struct Worker {
     /// Notices a link that stays open after a sleep but carries nothing.
     link_watch: link_watch::LinkWatch,
     /// Serial background phone-history prefetch.
-    prefetch: prefetch::State,
     /// Numbers phone-history requests, so a send result or a late answer is
     /// matched to the request it belongs to rather than to whichever request
     /// the chat has now.
-    older_serial: u64,
     /// Requests that timed out but whose answer may still arrive, oldest
     /// first and bounded. A late answer is matched to one of these instead of
     /// being taken for a newer request of the same chat.
-    late_older: VecDeque<LateOlder>,
     /// Whether an answer has carried the id of the request it answers. Until
     /// one has, an answer with an unknown id is still matched by its chat.
-    older_ids_match: bool,
     dirs: AccountDirs,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -1256,6 +1363,8 @@ struct Worker {
     first_names_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Motion transfers in flight, which use a distinct completion command.
+    motion_downloads: HashSet<(ChatId, String)>,
     /// Serial forward in flight. The next send waits for the running one.
     forward_queue: Option<ForwardQueue<ForwardJob>>,
     call: Option<calls::CallRuntime>,
@@ -1335,45 +1444,44 @@ struct ParsedHistory {
     stickers: Vec<wa::StickerMetadata>,
 }
 
+type HistoryPageBoundary = (i64, String, bool);
+type FiledHistory = Vec<(ChatId, usize, Option<bool>, Option<HistoryPageBoundary>)>;
+
 /// A phone-history request waiting for its chunk.
 struct OlderRequest {
     asked: Instant,
+    phase: OlderRequestPhase,
+    dispatch_abort: Option<tokio::task::AbortHandle>,
     /// The oldest archived message when it was asked.
     before: super::PageKey,
     /// Whether the reader asked by scrolling to the top. Only these report a
     /// phone that does not answer.
     explicit: bool,
-    /// Asked by the background prefetch: its answer fills the archive without
-    /// moving the view or counting against the phone. A reader who asks for
-    /// the same chat while it waits takes it over.
     background: bool,
-    /// Tells this request's send result from a later request's.
-    serial: u64,
-    /// The id the request went out under, once the send returns. The phone's
-    /// answer names it, which is how the answer is matched to the request.
-    request: Option<String>,
+    /// Durable history-import reservation, absent for reader and short-chat asks.
+    import_token: Option<i64>,
 }
 
-/// A request that timed out, kept in case its answer still arrives.
-struct LateOlder {
-    chat: ChatId,
-    serial: u64,
-    background: bool,
-    request: Option<String>,
+#[derive(Clone, Copy)]
+enum OlderRequestPhase {
+    Dispatching,
+    DispatchUncertain,
+    WaitingForPhone { since: Instant },
 }
 
-/// How many timed-out requests are remembered for a late answer.
-const LATE_OLDER_LIMIT: usize = 32;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistorySource {
+    Manual,
+    Automatic,
+    Background,
+}
 
-/// The request an on-demand history answer belongs to.
-#[derive(Debug, PartialEq)]
-enum AnswerOwner {
-    /// The chat's request still waiting.
-    Pending,
-    /// A request that timed out, by its place in `late_older`.
-    Late(usize),
-    /// No request here asked for it.
-    Unclaimed,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryRequestStart {
+    Started,
+    Deferred,
+    RejectedNotConnected,
+    RejectedInvalidChat,
 }
 
 struct ParsedChat {
@@ -1407,9 +1515,11 @@ struct ParsedChat {
 
 /// A motion photo's clip from history, filed for its photo.
 struct HistoryClip {
+    id: String,
     parent: String,
     sender: Option<String>,
     from_me: bool,
+    timestamp: Option<i64>,
     raw: Vec<u8>,
 }
 
@@ -1698,8 +1808,6 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
-                self.late_older.retain(|late| late.chat != chat);
-                self.prefetch.forget_chat(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
@@ -1735,8 +1843,6 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
-                self.late_older.retain(|late| late.chat != chat);
-                self.prefetch.forget_chat(chat);
                 if delete_media {
                     self.drop_cached_media(&removed.media);
                 }
@@ -1771,6 +1877,7 @@ impl Worker {
         match self.archive.message_removed(chat, id) {
             Ok(removed) => removed,
             Err(_) => {
+                self.history_storage_ok.set(false);
                 log::warn!("could not check a message's deletion state");
                 true
             }
@@ -1786,7 +1893,6 @@ impl Worker {
                 for chat in &mut chats {
                     self.polish_chat(chat);
                 }
-                self.prefetch.set_chats(&chats);
                 self.emit(Event::Chats(chats));
                 self.emit_labels();
                 self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
@@ -1891,10 +1997,6 @@ impl Worker {
     fn set_status(&mut self, status: LinkStatus) {
         if self.status != status {
             log::info!("link: {}", status.log_label());
-            if matches!(status, LinkStatus::Connected) {
-                // The phone may have history for us again.
-                self.prefetch.on_connected();
-            }
             self.status = status.clone();
             self.emit(Event::Link(status));
         }
@@ -2422,6 +2524,8 @@ impl Worker {
                 abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE,
                 abprops::web::ENABLE_WEB_CALLING,
                 abprops::web::ENABLE_WEB_GROUP_CALLING,
+                abprops::web::HISTORY_SYNC_ON_DEMAND,
+                abprops::web::HISTORY_SYNC_ON_DEMAND_COMPANION,
             ]);
         let builder = match crate::proxy::for_whatsapp() {
             Some(proxy) => {
@@ -2438,9 +2542,20 @@ impl Worker {
             None => builder
                 .with_transport_factory(crate::transport::HappyEyeballsTransportFactory::new()),
         };
+        let mode = if history.days().is_some() {
+            crate::settings::SyncMode::Full
+        } else {
+            crate::settings::SyncMode::Recent
+        };
+        let Some(device_props) = sync_device_props(mode, history.days().unwrap_or(1)) else {
+            self.set_status(LinkStatus::Failed(
+                "Choose a history date within the last three years".into(),
+            ));
+            return;
+        };
         let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
-            .with_device_props(pairing_device_props(history))
+            .with_device_props(device_props)
             .with_event_handler(UiEvents {
                 sender,
                 generation: self.privacy_generation,
@@ -2750,6 +2865,39 @@ impl Worker {
         }
         let chat = format!("{pn}@s.whatsapp.net");
         let lid_chat = format!("{lid}@lid");
+        self.background_history.canonicalize(&lid_chat, &chat);
+        self.automatic_history.canonicalize(&lid_chat, &chat);
+        self.poll_history.canonicalize(&lid_chat, &chat);
+        if let Some(request) = self.pending_older.remove(&lid_chat) {
+            let current = self
+                .pending_older
+                .entry(chat.clone())
+                .or_insert_with(|| OlderRequest {
+                    asked: request.asked,
+                    phase: request.phase,
+                    dispatch_abort: request.dispatch_abort.clone(),
+                    before: request.before.clone(),
+                    explicit: request.explicit,
+                    background: request.background,
+                    import_token: request.import_token,
+                });
+            let replace = match (current.import_token, request.import_token) {
+                (Some(current), Some(incoming)) => incoming > current,
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (None, None) => {
+                    (current.background && !request.background)
+                        || (current.background == request.background
+                            && request.asked > current.asked)
+                }
+            };
+            if replace {
+                *current = request;
+            }
+        }
+        if self.older_warned.remove(&lid_chat) {
+            self.older_warned.insert(chat.clone());
+        }
         match self.archive.removed_message_ids(&chat) {
             Ok(ids) => {
                 for id in ids {
@@ -2925,11 +3073,16 @@ impl Worker {
                 push_name: None,
             });
         if contact.push_name.as_deref() == Some(push_name) {
+            let result = self.archive.upsert_contact(contact);
+            if result.is_err() {
+                self.history_storage_ok.set(false);
+            }
             return;
         }
         contact.push_name = Some(push_name.to_owned());
         let contact = contact.clone();
         if let Err(error) = self.archive.upsert_contact(&contact) {
+            self.history_storage_ok.set(false);
             log::warn!("could not save a contact: {error}");
         }
         self.emit(Event::Contacts(vec![contact]));
@@ -3275,6 +3428,8 @@ impl Worker {
                 self.pump_read_sync();
                 self.pump_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
+                self.background_history.reconnect();
+                self.revoke_background_media_phone_permits();
                 self.push_favorites();
                 self.fetch_missing_favorites();
                 self.recover_favorites();
@@ -3355,6 +3510,7 @@ impl Worker {
                 }
             }
             E::Disconnected(disconnected) => {
+                self.revoke_background_media_phone_permits();
                 if matches!(self.status, LinkStatus::Connected | LinkStatus::Connecting) {
                     self.set_status(LinkStatus::Disconnected {
                         reason: disconnected.reason.to_string(),
@@ -3713,9 +3869,7 @@ impl Worker {
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.message_removals_in_flight.clear();
-        // End any call the old account was on before its data is cleared. A runtime left standing
-        // would keep running for an account that is gone, hold the next account's calls off, and
-        // later write its record into the archive this logout is about to clear.
+        self.revoke_background_media_phone_permits();
         self.shutdown_call().await;
         self.edits.clear();
         self.sticker_download_failed.clear();
@@ -3738,9 +3892,11 @@ impl Worker {
         self.poll_sending.clear();
         self.interactive_sending.clear();
         self.poll_history = Default::default();
-        self.prefetch.reset_session();
-        self.late_older.clear();
-        self.older_ids_match = false;
+        self.automatic_history = Default::default();
+        self.automatic_history_last_request = None;
+        self.background_history = Default::default();
+        self.background_media.clear();
+        self.background_media_cancelled.clear();
         self.forward_queue = None;
         self.pending_older.clear();
         self.pending_avatars.clear();
@@ -4061,7 +4217,10 @@ impl Worker {
         match self.archive.file_receipts(chat, id, &rows) {
             Ok(true) => self.emit_message(chat, id),
             Ok(false) => {}
-            Err(error) => log::warn!("could not keep history receipts: {error}"),
+            Err(error) => {
+                self.history_storage_ok.set(false);
+                log::warn!("could not keep history receipts: {error}");
+            }
         }
     }
 
@@ -4243,7 +4402,7 @@ impl Worker {
             return;
         }
         if let Some((parent, clip)) = motion_clip(base) {
-            self.file_motion_clip(&chat, &parent, &sender, &clip);
+            self.file_motion_clip(&chat, &parent, &sender, &clip, &info.id);
             return;
         }
         let Some(mut content) = classify(message) else {
@@ -4581,6 +4740,7 @@ impl Worker {
         {
             Ok(updated) => updated,
             Err(error) => {
+                self.history_storage_ok.set(false);
                 log::warn!("could not store a reaction: {error}");
                 None
             }
@@ -4590,12 +4750,12 @@ impl Worker {
     /// Applies the phone's read and the reactions that arrived before this
     /// message was filed. Returns whether the phone had read it.
     fn settle_early_events(&mut self, chat: &str, id: &str) -> bool {
-        let Ok(Some(message)) = self.archive.message(chat, id) else {
+        let Some(Some(message)) = self.history_write(self.archive.message(chat, id)) else {
             return false;
         };
         let read = self.early.take_read(chat, id) && !message.from_me;
         if read {
-            let _ = self.archive.mark_read_to(chat, id);
+            self.history_write(self.archive.mark_read_to(chat, id));
         }
         for waiting in self.early.take_reactions(chat, id) {
             // The sender's privacy id may have been mapped since.
@@ -4640,20 +4800,18 @@ impl Worker {
         iv: &[u8],
         secrets: Option<&HashMap<String, Vec<u8>>>,
     ) -> Option<String> {
-        let parent = self.archive.message(chat, target).ok().flatten()?;
+        let parent = self
+            .history_write(self.archive.message(chat, target))
+            .flatten()?;
         let secret = secrets
             .and_then(|secrets| secrets.get(target).cloned())
             .or_else(|| {
-                self.archive
-                    .poll_key(chat, target)
-                    .ok()
+                self.history_write(self.archive.poll_key(chat, target))
                     .flatten()
                     .map(|(_, secret)| secret)
             })
             .or_else(|| {
-                self.archive
-                    .raw(chat, target)
-                    .ok()
+                self.history_write(self.archive.raw(chat, target))
                     .flatten()
                     .as_deref()
                     .and_then(message_secret_from_raw)
@@ -4899,12 +5057,6 @@ impl Worker {
             older: false,
             complete: false,
         });
-        // The queue is a snapshot of the chat list. A chat outside it that has
-        // just become active has to be able to join, or the ten most recently
-        // active chats stay the ones that were active when it was read.
-        if !self.prefetch.holds(&chat) {
-            self.prefetch.touch();
-        }
         self.emit_chat(&chat);
         if let Some(message) = incoming {
             self.emit(Event::Incoming {
@@ -5035,7 +5187,65 @@ impl Worker {
         HistoryRecord::new(self.dirs.id.as_str().parse().unwrap_or(0), flow, stage)
     }
 
-    /// Parses and applies a history chunk, recording transfer stages without claiming complete storage or coverage.
+    fn log_history_job_status(&self) {
+        let now = crate::util::now();
+        let Ok(snapshot) = self.archive.history_import_progress(now) else {
+            return;
+        };
+        let mut status: crate::model::HistoryImportProgress = snapshot.into();
+        if matches!(
+            status.state,
+            crate::model::ImportRunState::Running | crate::model::ImportRunState::BackingOff
+        ) && let Some(retry_at) = self
+            .automatic_history
+            .history_daily_retry_at(self.background_history.daily_budget, now)
+        {
+            if status.retry_at.is_none_or(|at| retry_at >= at) {
+                // A missing reason distinguishes the configured daily quota
+                // from a phone, network, or per-chat retry in existing UI data.
+                status.reason = None;
+            }
+            status.state = crate::model::ImportRunState::BackingOff;
+            status.retry_at = Some(status.retry_at.map_or(retry_at, |at| at.max(retry_at)));
+        }
+        let state = match status.state {
+            crate::model::ImportRunState::Idle => "idle",
+            crate::model::ImportRunState::WaitingForInitialSync => "initial_sync",
+            crate::model::ImportRunState::Running => "running",
+            crate::model::ImportRunState::BackingOff => "backing_off",
+            crate::model::ImportRunState::Paused => "paused",
+            crate::model::ImportRunState::NeedsAttention => "needs_attention",
+            crate::model::ImportRunState::Finished => "finished",
+        };
+        let reason = status.reason.map_or("none", |reason| match reason {
+            crate::model::ChatImportReason::Queued => "queued",
+            crate::model::ChatImportReason::WaitingForPhone => "waiting_for_phone",
+            crate::model::ChatImportReason::Advancing => "advancing",
+            crate::model::ChatImportReason::RetrySend => "retry_send",
+            crate::model::ChatImportReason::RetryTimeout => "retry_timeout",
+            crate::model::ChatImportReason::RetryNoProgress => "retry_no_progress",
+            crate::model::ChatImportReason::RetryParse => "retry_parse",
+            crate::model::ChatImportReason::RetryStorage => "retry_storage",
+            crate::model::ChatImportReason::WaitingForAnchor => "waiting_for_anchor",
+            crate::model::ChatImportReason::ReachedCutoff => "reached_cutoff",
+            crate::model::ChatImportReason::PhoneExhausted => "phone_exhausted",
+            crate::model::ChatImportReason::ExcludedLocked => "excluded_locked",
+            crate::model::ChatImportReason::ExcludedLeft => "excluded_left",
+            crate::model::ChatImportReason::ExcludedUnsupported => "excluded_unsupported",
+            crate::model::ChatImportReason::CorrelationUnavailable => "correlation_unavailable",
+            crate::model::ChatImportReason::RetryLimitReached => "retry_limit_reached",
+        });
+        log::info!(
+            "[HISTORY_JOB] version=1 account={} state={state} reason={reason} failure_streak={} retry_at={} completed={} total={} excluded={}",
+            self.dirs.id.as_str().parse::<u32>().unwrap_or(0),
+            status.failure_streak,
+            status.retry_at.unwrap_or(0),
+            status.completed,
+            status.total,
+            status.excluded,
+        );
+    }
+
     async fn on_history_sync(&mut self, lazy: &wa_events::LazyHistorySync) {
         // The id of the request an on-demand chunk answers.
         let session = lazy.peer_data_request_session_id().map(str::to_owned);
@@ -5085,13 +5295,16 @@ impl Worker {
                         );
                     }
                 }
-                let filed = self.apply_history(parsed, !on_demand);
-                // Applied means processing returned, not verified storage.
-                diagnostic.stage = HistoryStage::Applied;
+                let (filed, stored) = self.apply_history_checked(parsed, !on_demand);
+                diagnostic.stage = if stored {
+                    HistoryStage::Stored
+                } else {
+                    HistoryStage::StoreFailed
+                };
                 diagnostic.elapsed_ms = started.elapsed().as_millis();
                 diagnostic.emit();
                 if on_demand {
-                    self.answer_older(filed, session.as_deref());
+                    self.answer_older_session(filed, lazy.peer_data_request_session_id(), stored);
                 }
             }
             Ok(Err(error)) => {
@@ -5102,30 +5315,123 @@ impl Worker {
                 self.emit(Event::Error(format!(
                     "Could not read part of the chat history: {error}"
                 )));
+                if on_demand {
+                    self.fail_import_response(
+                        lazy.peer_data_request_session_id(),
+                        crate::archive::HistoryImportFailure::Parse,
+                    );
+                }
             }
             Err(_error) => {
                 diagnostic.stage = HistoryStage::ParseFailed;
                 diagnostic.elapsed_ms = started.elapsed().as_millis();
                 diagnostic.emit();
                 log::warn!("history parsing worker failed");
+                if on_demand {
+                    self.fail_import_response(
+                        lazy.peer_data_request_session_id(),
+                        crate::archive::HistoryImportFailure::Parse,
+                    );
+                }
             }
         }
         if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
         }
+        if !on_demand
+            && self.background_history.full
+            && self.privacy_ready
+            && !self.history_privacy_paused
+        {
+            let _ = self.archive.reconcile_history_import(crate::util::now());
+        }
         self.emit_chats();
+    }
+
+    fn fail_import_response(
+        &mut self,
+        session: Option<&str>,
+        reason: crate::archive::HistoryImportFailure,
+    ) {
+        if let Some((chat, _, None)) = session.and_then(|id| self.background_history.session(id))
+            && self.background_history.poll_owned(chat)
+        {
+            let chat = chat.clone();
+            self.automatic_phone_failed(reason);
+            self.background_history.stop_poll(&chat);
+            return;
+        }
+        let owned = session
+            .and_then(|session| self.background_history.session(session))
+            .and_then(|(chat, _, token)| token.map(|token| (chat.clone(), token)))
+            .or_else(|| {
+                session.and_then(|session| {
+                    self.archive
+                        .history_import_request_for_session(session)
+                        .ok()
+                        .flatten()
+                })
+            })
+            .or_else(|| {
+                (session.is_none()).then(|| {
+                    self.pending_older.iter().find_map(|(chat, request)| {
+                        request.import_token.map(|token| (chat.clone(), token))
+                    })
+                })?
+            });
+        let Some((chat, token)) = owned else {
+            return;
+        };
+        let reason = if session.is_some() {
+            reason
+        } else {
+            crate::archive::HistoryImportFailure::CorrelationUnavailable
+        };
+        self.automatic_phone_failed(reason);
+        let _ = self
+            .archive
+            .fail_history_import(token, reason, self.automatic_history.retry_at());
+        if reason == crate::archive::HistoryImportFailure::CorrelationUnavailable {
+            let _ = self
+                .archive
+                .pause_history_import(reason, crate::util::now());
+        }
+        self.pending_older.remove(&chat);
+        self.background_history.stop(&chat);
     }
 
     /// Archives a history chunk. `metadata` controls chat-state updates.
     /// Returns each chat's message count and whether the phone has more.
-    fn apply_history(
+    #[cfg(test)]
+    fn apply_history(&mut self, parsed: ParsedHistory, metadata: bool) -> FiledHistory {
+        self.apply_history_checked(parsed, metadata).0
+    }
+
+    fn history_write<T>(&self, result: crate::archive::Result<T>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(_) => {
+                self.history_storage_ok.set(false);
+                None
+            }
+        }
+    }
+
+    fn apply_history_checked(
         &mut self,
         parsed: ParsedHistory,
         metadata: bool,
-    ) -> Vec<(ChatId, usize, Option<bool>)> {
-        // Chats whose listed pictures, documents or links changed, told
-        // once each rather than once per imported message.
-        let mut media_changed_in: HashSet<ChatId> = HashSet::new();
+    ) -> (FiledHistory, bool) {
+        self.apply_history_entries(parsed, metadata, true)
+    }
+
+    fn apply_history_entries(
+        &mut self,
+        parsed: ParsedHistory,
+        metadata: bool,
+        _store_entries: bool,
+    ) -> (FiledHistory, bool) {
+        self.history_storage_ok.set(true);
         for (lid, pn) in &parsed.lids {
             if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
                 self.learn_pair(&lid, &pn);
@@ -5150,6 +5456,7 @@ impl Worker {
                 seconds(sticker.last_sticker_sent_ts.unwrap_or(0)),
                 sticker.weight.unwrap_or(0.0),
             ) {
+                self.history_storage_ok.set(false);
                 log::warn!("could not store a sticker");
             }
         }
@@ -5161,12 +5468,33 @@ impl Worker {
             }
         }
         let mut filed = Vec::new();
+        // Chats whose listed pictures, documents or links changed, told once
+        // each rather than once per imported message.
+        let mut media_changed_in: HashSet<ChatId> = HashSet::new();
         for (id, name) in &parsed.push_names {
             let id = self.canonical_str(id);
             self.remember_push_name(&id, name);
         }
+        let mut new_rows = 0usize;
         for mut chat in parsed.chats {
             let id = self.canonical_str(&chat.id);
+            let page_oldest = chat
+                .messages
+                .iter()
+                .filter(|message| message.timestamp > 0 && !message.id.is_empty())
+                .min_by(|left, right| {
+                    (
+                        left.timestamp,
+                        left.history_order.unwrap_or(i64::MAX),
+                        left.id.as_str(),
+                    )
+                        .cmp(&(
+                            right.timestamp,
+                            right.history_order.unwrap_or(i64::MAX),
+                            right.id.as_str(),
+                        ))
+                })
+                .map(|message| (message.timestamp, message.id.clone(), message.from_me));
             if id.ends_with("@broadcast") {
                 continue;
             }
@@ -5237,21 +5565,22 @@ impl Worker {
                     .locked
                     .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
                 if self.archive.upsert_chat(&row).is_err() {
+                    self.history_storage_ok.set(false);
                     log::warn!("could not store a chat");
                     continue;
                 }
                 // History has no lock timestamp, so it must not supersede
                 // an app-state update already received from the phone.
                 if let Some(locked) = chat.locked {
-                    let _ = self.archive.set_locked_snapshot(&id, locked);
+                    let _ = self.history_write(self.archive.set_locked_snapshot(&id, locked));
                 }
             }
             if let Some(expiration) = chat.ephemeral_expiration {
-                let _ = self.archive.set_ephemeral(
+                let _ = self.history_write(self.archive.set_ephemeral(
                     &id,
                     expiration,
                     chat.ephemeral_setting_timestamp.unwrap_or_default(),
-                );
+                ));
             }
             if ChatKind::from_id(&id) == ChatKind::Group {
                 self.request_group_info(&id, false);
@@ -5406,6 +5735,7 @@ impl Worker {
                     .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
                 {
                     failed += 1;
+                    self.history_storage_ok.set(false);
                     log::warn!("could not store a history message: {error}");
                 } else {
                     if live_location_changed {
@@ -5429,8 +5759,11 @@ impl Worker {
                     self.file_history_receipts(&id, &row.id, &message.receipts);
                 }
                 if matches!(row.content, Content::Poll { .. }) {
-                    if poll_history_received {
-                        let _ = self.archive.mark_poll_history(&id, &row.id);
+                    if poll_history_received
+                        && self
+                            .history_write(self.archive.mark_poll_history(&id, &row.id))
+                            .is_some()
+                    {
                         self.poll_history.finish(&id, &row.id);
                     }
                     self.emit_message(&id, &row.id);
@@ -5441,6 +5774,7 @@ impl Worker {
                     "history reload: archived added={added}, repeated={repeated}, removed={removed}, failed={failed}"
                 );
             }
+            new_rows = new_rows.saturating_add(added);
             for reaction in chat.reactions {
                 self.apply_history_reaction(&id, reaction, &secrets);
             }
@@ -5464,6 +5798,7 @@ impl Worker {
                         .set_pin(&id, &pin.target, false, pin.at, 0, &pin.pinner)
                 };
                 if let Err(error) = written {
+                    self.history_storage_ok.set(false);
                     log::warn!("could not store a history pin: {error}");
                 }
             }
@@ -5495,11 +5830,27 @@ impl Worker {
                 {
                     media_changed_in.insert(id.clone());
                 }
-                let _ = self
+                let result = self
                     .archive
                     .set_content(&id, &revoked, &Content::Revoked, false);
+                self.history_write(result);
             }
             for clip in chat.clips {
+                let barred = match self.archive.removal_point(&id) {
+                    Ok(point) => point.is_some_and(|through| {
+                        clip.timestamp.is_none_or(|timestamp| timestamp <= through)
+                    }),
+                    Err(error) => {
+                        self.history_write::<Option<i64>>(Err(error));
+                        true
+                    }
+                };
+                if barred
+                    || self.message_was_removed(&id, &clip.parent)
+                    || self.message_was_removed(&id, &clip.id)
+                {
+                    continue;
+                }
                 let sender = if clip.from_me {
                     self.me()
                 } else {
@@ -5508,203 +5859,336 @@ impl Worker {
                         .map(|sender| self.canonical_str(sender))
                         .unwrap_or_else(|| id.clone())
                 };
-                self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+                self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw, &clip.id);
             }
             if (metadata || existing.is_none())
                 && let Some(snapshot_unread) = chat.unread
             {
                 if snapshot_unread == 0 {
-                    let _ = self.archive.mark_read_through(&id, chat.last_activity);
+                    let _ =
+                        self.history_write(self.archive.mark_read_through(&id, chat.last_activity));
                 } else {
                     let unread = self
-                        .archive
-                        .history_unread(&id, snapshot_unread)
+                        .history_write(self.archive.history_unread(&id, snapshot_unread))
                         .unwrap_or(0);
                     let unread = existing
                         .as_ref()
                         .map_or(unread, |existing| existing.unread.max(unread));
-                    let _ = self.archive.set_unread(&id, unread);
+                    let _ = self.history_write(self.archive.set_unread(&id, unread));
                 }
             }
             if (metadata || existing.is_none())
                 && let Some(marked) = chat.marked_unread
             {
-                let _ = self.archive.history_marked_unread(&id, marked);
+                let _ = self.history_write(self.archive.history_marked_unread(&id, marked));
             }
             if chat.more_on_phone == Some(false) {
                 // The phone holds nothing older (or will not share it): later
                 // sessions skip asking instead of waiting out a silent phone.
-                let _ = self.archive.set_history_start(&id);
+                let _ = self.history_write(self.archive.set_history_start(&id));
             }
-            filed.push((id, count, chat.more_on_phone));
+            filed.push((id, count, chat.more_on_phone, page_oldest));
         }
         self.pump_poll_votes();
         self.pump_poll_history();
-        for (id, _, _) in &filed {
+        for (id, _, _, _) in &filed {
             self.emit_chat(id);
         }
         for chat in media_changed_in {
             self.emit(Event::ChatSharedChanged(chat));
         }
-        filed
+        let durable = self.history_storage_ok.get();
+        log::info!(
+            "[HISTORY_ROWS] version=1 account={} snapshot_at={} added={}",
+            self.dirs.id.as_str().parse::<u32>().unwrap_or(0),
+            crate::util::now(),
+            if durable { new_rows } else { 0 },
+        );
+        (filed, durable)
     }
 
-    /// Completes the requests an on-demand history chunk answers. `session`
-    /// is the id of the request the phone says it is answering.
-    fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
-        for (chat, count, more_on_phone) in filed {
+    /// Completes pending requests covered by an on-demand history chunk.
+    #[cfg(test)]
+    fn answer_older(&mut self, filed: FiledHistory) {
+        self.answer_older_session(filed, None, true);
+    }
+
+    fn answer_older_session(&mut self, filed: FiledHistory, session: Option<&str>, durable: bool) {
+        let owner = session
+            .and_then(|id| self.background_history.session(id))
+            .cloned()
+            .map(|(chat, requested, token)| (chat, Some(requested), token))
+            .or_else(|| {
+                session.and_then(|id| {
+                    self.archive
+                        .history_import_request_for_session(id)
+                        .ok()
+                        .flatten()
+                        .map(|(chat, token)| (chat, None, Some(token)))
+                })
+            })
+            .map(|(chat, requested, token)| (self.canonical_str(&chat), requested, token));
+        if let Some(session) = session
+            && owner.is_none()
+        {
+            self.background_history
+                .early(session.to_owned(), filed, durable);
+            return;
+        }
+        for (chat, count, more_on_phone, page_oldest) in filed {
+            if session.is_none()
+                && let Some(token) = self
+                    .pending_older
+                    .get(&chat)
+                    .and_then(|request| request.import_token)
+            {
+                let _ = self.archive.fail_history_import(
+                    token,
+                    crate::archive::HistoryImportFailure::CorrelationUnavailable,
+                    0,
+                );
+                let _ = self.archive.pause_history_import(
+                    crate::archive::HistoryImportFailure::CorrelationUnavailable,
+                    crate::util::now(),
+                );
+                self.automatic_phone_failed(
+                    crate::archive::HistoryImportFailure::CorrelationUnavailable,
+                );
+                self.pending_older.remove(&chat);
+                self.background_history.stop(&chat);
+                continue;
+            }
+            if session.is_none()
+                && self.background_history.attempted(&chat)
+                && self.pending_older.get(&chat).is_some_and(|request| {
+                    !self.background_history.owns_attempt(&chat, request.asked)
+                })
+            {
+                // An id-less answer cannot distinguish the expired automatic
+                // attempt from a newer reader request. Archive it silently.
+                continue;
+            }
+            if let Some((ref owner_chat, requested, _)) = owner {
+                if owner_chat != &chat {
+                    continue;
+                }
+                if let Some(requested) = requested {
+                    let reader_matches = self
+                        .pending_older
+                        .get(&chat)
+                        .is_some_and(|request| request.asked == requested);
+                    if !reader_matches && !self.background_history.owns_attempt(&chat, requested) {
+                        continue;
+                    }
+                    if self
+                        .pending_older
+                        .get(&chat)
+                        .is_some_and(|request| request.asked != requested)
+                    {
+                        continue;
+                    }
+                }
+            }
             let more = count > 0 && more_on_phone != Some(false);
             if count > 0 {
                 // The phone answers for this chat again; a later silence is news.
                 self.older_warned.remove(&chat);
             }
-            match self.owner_of_answer(&chat, session) {
-                AnswerOwner::Pending => {
-                    let Some(request) = self.pending_older.remove(&chat) else {
-                        continue;
-                    };
-                    if request.background {
-                        // A background page fills the archive without moving
-                        // the view. The app only learns that the archive holds
-                        // more than it has paged.
-                        self.prefetch.finish_history(&chat, more, Instant::now());
-                        self.emit(Event::OlderFetched {
-                            chat,
-                            more,
-                            silent: true,
-                        });
-                        continue;
+            let progress = self.pending_older.get(&chat).is_none_or(|request| {
+                page_oldest.as_ref().is_some_and(|boundary| {
+                    boundary.0 < request.before.0
+                        || (boundary.0 == request.before.0 && boundary.1 != request.before.1)
+                })
+            });
+            if let Some((_, _, Some(token))) = owner.as_ref() {
+                match self.archive.finish_history_import_page(
+                    *token,
+                    page_oldest.clone(),
+                    count,
+                    more_on_phone,
+                    durable,
+                    crate::util::now(),
+                ) {
+                    Ok(crate::archive::HistoryPageOutcome::AppliedProgress)
+                    | Ok(crate::archive::HistoryPageOutcome::Exhausted) => {
+                        self.automatic_phone_succeeded();
                     }
-                    let (before_time, before_id) = request.before;
-                    match self
-                        .archive
-                        .messages(&chat, Some((before_time, &before_id)), 500)
-                    {
-                        Ok(mut messages) => {
-                            log::info!("history reload: displaying rows={}", messages.len());
-                            for message in &mut messages {
-                                self.polish(message);
-                            }
-                            self.emit(Event::Messages {
-                                chat: chat.clone(),
-                                messages,
-                                older: true,
-                                complete: false,
-                            })
+                    Ok(crate::archive::HistoryPageOutcome::NoProgress) => {
+                        if durable {
+                            // The phone answered and the page was stored, so the
+                            // account transport is healthy. The archive applies
+                            // this attempt's per-chat cooldown and retry bound.
+                            self.automatic_phone_succeeded();
+                        } else {
+                            self.automatic_phone_failed(
+                                crate::archive::HistoryImportFailure::Storage,
+                            );
                         }
-                        Err(error) => log::warn!("could not read older messages: {error}"),
                     }
-                    self.emit(Event::OlderFetched {
-                        chat,
-                        more,
-                        silent: false,
-                    });
+                    Ok(crate::archive::HistoryPageOutcome::Stale) => {}
+                    Err(error) => {
+                        log::warn!("could not save history import progress: {error}");
+                        self.automatic_phone_failed(crate::archive::HistoryImportFailure::Storage);
+                    }
                 }
-                AnswerOwner::Late(index) => {
-                    // The answer to a request that already timed out is
-                    // archived; tell the app to page again. A reader's
-                    // request shows it, a background one stays quiet.
-                    let silent = self
-                        .late_older
-                        .remove(index)
-                        .is_none_or(|late| late.background);
-                    self.emit(Event::OlderFetched { chat, more, silent });
-                }
-                AnswerOwner::Unclaimed => {
-                    // Nobody here asked for this page (a poll's history
-                    // request, or one from before a restart). It is archived
-                    // all the same, so the app pages the archive again, but
-                    // it is nobody's answer.
-                    self.emit(Event::OlderFetched {
-                        chat,
-                        more,
-                        silent: true,
-                    });
-                }
-            }
-        }
-    }
-
-    /// Which request an answer for `chat` belongs to. The phone names the
-    /// request it answers, so an answer is matched by that id first: a late
-    /// answer to a request that timed out is then never taken for a newer one
-    /// of the same chat. Until an answer has been seen to carry a known id,
-    /// an answer is matched by its chat, which is what the phone's ordering
-    /// allows and what this worker did before ids were kept.
-    fn owner_of_answer(&mut self, chat: &str, session: Option<&str>) -> AnswerOwner {
-        let pending = self.pending_older.get(chat);
-        if let Some(id) = session {
-            if pending.is_some_and(|request| request.request.as_deref() == Some(id)) {
-                self.older_ids_match = true;
-                return AnswerOwner::Pending;
-            }
-            if let Some(index) = self
-                .late_older
-                .iter()
-                .position(|late| late.chat == chat && late.request.as_deref() == Some(id))
-            {
-                self.older_ids_match = true;
-                return AnswerOwner::Late(index);
-            }
-            if self.older_ids_match {
-                // The id is none of ours. Only a request whose send has not
-                // returned yet has no id to compare, and may be this one.
-                return if pending.is_some_and(|request| request.request.is_none()) {
-                    AnswerOwner::Pending
+                self.log_history_job_status();
+            } else if owner.is_some() && self.background_history.poll_owned(&chat) {
+                if durable && (progress || more_on_phone == Some(false)) {
+                    self.automatic_phone_succeeded();
                 } else {
-                    AnswerOwner::Unclaimed
-                };
+                    self.automatic_phone_failed(if durable {
+                        crate::archive::HistoryImportFailure::NoProgress
+                    } else {
+                        crate::archive::HistoryImportFailure::Storage
+                    });
+                }
             }
-        }
-        if pending.is_some() {
-            return AnswerOwner::Pending;
-        }
-        match self.late_older.iter().position(|late| late.chat == chat) {
-            Some(index) => AnswerOwner::Late(index),
-            None => AnswerOwner::Unclaimed,
-        }
-    }
-
-    /// Remembers a request that timed out, in case its answer still comes.
-    fn remember_late(&mut self, chat: ChatId, request: OlderRequest) {
-        if self.late_older.len() >= LATE_OLDER_LIMIT {
-            self.late_older.pop_front();
-        }
-        self.late_older.push_back(LateOlder {
-            chat,
-            serial: request.serial,
-            background: request.background,
-            request: request.request,
-        });
-    }
-
-    /// Times out unanswered phone-history requests.
-    fn expire_older_requests(&mut self) {
-        let expired: Vec<ChatId> = self
-            .pending_older
-            .iter()
-            .filter(|(_, request)| request.asked.elapsed() > PHONE_PATIENCE)
-            .map(|(chat, _)| chat.clone())
-            .collect();
-        for chat in expired {
-            let Some(request) = self.pending_older.remove(&chat) else {
-                continue;
-            };
-            self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestTimeout)
-                .emit();
-            let (explicit, background) = (request.explicit, request.background);
-            self.remember_late(chat.clone(), request);
-            if background {
-                // The chat goes to the back of the queue and the background
-                // waits out its backoff; nothing is shown for it.
-                self.prefetch.fail_history(&chat, Instant::now());
+            let silent = self.background_history.answered(&chat, progress);
+            if silent
+                && self
+                    .pending_older
+                    .get(&chat)
+                    .is_none_or(|request| request.background)
+            {
+                self.pending_older.remove(&chat);
                 self.emit(Event::OlderFetched {
                     chat,
-                    more: true,
+                    more,
                     silent: true,
                 });
                 continue;
             }
+            let Some(OlderRequest {
+                before: (before_time, before_id),
+                ..
+            }) = self.pending_older.remove(&chat)
+            else {
+                // Unowned pages update the archive without completing a reader
+                // spinner. Tell the app that the archive may now have another
+                // page, as the pre-import background path did.
+                self.emit(Event::OlderFetched {
+                    chat,
+                    more,
+                    silent: true,
+                });
+                continue;
+            };
+            match self
+                .archive
+                .messages(&chat, Some((before_time, &before_id)), 500)
+            {
+                Ok(mut messages) => {
+                    log::info!("history reload: displaying rows={}", messages.len());
+                    for message in &mut messages {
+                        self.polish(message);
+                    }
+                    self.emit(Event::Messages {
+                        chat: chat.clone(),
+                        messages,
+                        older: true,
+                        complete: false,
+                    })
+                }
+                Err(error) => log::warn!("could not read older messages: {error}"),
+            }
+            self.emit(Event::OlderFetched {
+                chat,
+                more,
+                silent: false,
+            });
+        }
+    }
+
+    /// Times out unanswered phone-history requests.
+    fn expire_older_requests(&mut self) {
+        let stalled: Vec<ChatId> = self
+            .pending_older
+            .iter()
+            .filter(|(_, request)| {
+                matches!(request.phase, OlderRequestPhase::Dispatching)
+                    && request.asked.elapsed() > HISTORY_DISPATCH_PATIENCE
+            })
+            .map(|(chat, _)| chat.clone())
+            .collect();
+        for chat in stalled {
+            self.history_record(HistoryFlow::OnDemand, HistoryStage::DispatchTimeout)
+                .emit();
+            let Some(request) = self.pending_older.get_mut(&chat) else {
+                continue;
+            };
+            if let Some(abort) = request.dispatch_abort.take() {
+                abort.abort();
+            }
+            request.phase = OlderRequestPhase::DispatchUncertain;
+            let token = request.import_token;
+            let background = request.background;
+            if let Some(token) = token {
+                let _ = self.archive.pause_history_import_request(
+                    token,
+                    crate::archive::HistoryImportFailure::CorrelationUnavailable,
+                    crate::util::now(),
+                );
+                self.background_history.paused = true;
+                self.log_history_job_status();
+            } else {
+                self.pending_older.remove(&chat);
+                if background {
+                    self.background_history.stop(&chat);
+                } else {
+                    self.emit(Event::OlderFetched {
+                        chat,
+                        more: true,
+                        silent: false,
+                    });
+                }
+            }
+        }
+        let expired: Vec<ChatId> = self
+            .pending_older
+            .iter()
+            .filter(|(_, request)| {
+                matches!(
+                    request.phase,
+                    OlderRequestPhase::WaitingForPhone { since }
+                        if since.elapsed() > PHONE_PATIENCE
+                )
+            })
+            .map(|(chat, _)| chat.clone())
+            .collect();
+        for chat in expired {
+            self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestTimeout)
+                .emit();
+            let ownership = self
+                .pending_older
+                .get(&chat)
+                .map(|request| (request.import_token, request.background));
+            if let Some((Some(token), _)) = ownership {
+                self.pending_older.remove(&chat);
+                if let Err(error) = self.archive.fail_history_import_chat(
+                    token,
+                    crate::archive::HistoryImportFailure::Timeout,
+                    crate::util::now(),
+                ) {
+                    log::warn!("could not save per-chat history timeout: {error}");
+                    self.automatic_phone_failed(crate::archive::HistoryImportFailure::Storage);
+                }
+                self.log_history_job_status();
+                self.background_history.stop(&chat);
+                continue;
+            }
+            if matches!(ownership, Some((None, true))) {
+                self.pending_older.remove(&chat);
+                self.background_history.stop(&chat);
+                continue;
+            }
+            let request = self.pending_older.remove(&chat);
+            if request
+                .as_ref()
+                .is_some_and(|request| self.background_history.owns_attempt(&chat, request.asked))
+            {
+                self.background_history.stop(&chat);
+            }
+            let explicit = request.is_some_and(|request| request.explicit);
             self.emit(Event::OlderFetched {
                 chat: chat.clone(),
                 more: true,
@@ -5722,52 +6206,62 @@ impl Worker {
         }
     }
 
-    /// Asks the phone for messages before the archive's earliest one.
-    /// `background` marks a prefetch request: it never moves the view and its
-    /// failures stay quiet. Returns whether a request was sent.
-    fn fetch_older(&mut self, chat: ChatId, explicit: bool, background: bool) -> bool {
+    fn fetch_older(&mut self, chat: ChatId, explicit: bool) {
         if let Some(request) = self.pending_older.get_mut(&chat) {
             // The reader scrolled up while an automatic request was waiting.
             request.explicit |= explicit;
-            if !background && request.background {
-                // The reader takes the background request over: its answer
-                // is the page they are waiting for, and it no longer counts
-                // as the background's.
-                request.background = false;
-                self.prefetch.promote(&chat);
-            }
-            return false;
+            request.background = false;
+            return;
+        }
+        if self.background_history.owns(&chat) && !self.background_history.correlated(&chat) {
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: false,
+            });
+            return;
         }
         if self.archive.history_start(&chat).unwrap_or(false) {
             // The phone already said it has nothing older.
-            if !background {
-                self.emit(Event::OlderFetched {
-                    chat,
-                    more: false,
-                    silent: false,
-                });
-            }
-            return false;
+            self.emit(Event::OlderFetched {
+                chat,
+                more: false,
+                silent: false,
+            });
+            return;
         }
         // Chats without messages request history from the current time.
         let (id, from_me, timestamp) = match self.archive.oldest(&chat) {
             Ok(Some(oldest)) => (oldest.id, oldest.from_me, oldest.timestamp),
-            _ => (String::new(), false, crate::util::now()),
+            Ok(None) => (String::new(), false, crate::util::now()),
+            Err(_) => {
+                log::warn!("could not read the history boundary; request withheld");
+                self.emit(Event::OlderFetched {
+                    chat,
+                    more: true,
+                    silent: false,
+                });
+                return;
+            }
         };
-        self.request_history(chat, id, from_me, timestamp, explicit, background)
+        let source = if explicit {
+            HistorySource::Manual
+        } else {
+            HistorySource::Automatic
+        };
+        self.request_history(chat, id, from_me, timestamp, source, None);
     }
 
     fn reload_history(&mut self, chat: ChatId, message: String) {
-        if let Some(request) = self.pending_older.get(&chat) {
-            if !request.background {
-                return;
-            }
-            // A background request is in the way of one the reader made.
-            // It steps aside and its answer, if it comes, stays quiet.
-            if let Some(request) = self.pending_older.remove(&chat) {
-                self.prefetch.promote(&chat);
-                self.remember_late(chat.clone(), request);
-            }
+        if self.pending_older.contains_key(&chat)
+            || (self.background_history.owns(&chat) && !self.background_history.correlated(&chat))
+        {
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: false,
+            });
+            return;
         }
         let Ok(Some(anchor)) = self.archive.message(&chat, &message) else {
             self.emit(Event::OlderFetched {
@@ -5780,6 +6274,17 @@ impl Worker {
             ));
             return;
         };
+        if anchor.id.starts_with("local-call:") || anchor.id.starts_with("call-log:") {
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: false,
+            });
+            self.emit(Event::Error(
+                "Call entries cannot be used to request phone history".into(),
+            ));
+            return;
+        }
         // This repairs gaps inside existing history, even when the phone has
         // already told us there is nothing before the start of the chat.
         self.older_warned.remove(&chat);
@@ -5788,8 +6293,8 @@ impl Worker {
             anchor.id,
             anchor.from_me,
             anchor.timestamp,
-            true,
-            false,
+            HistorySource::Manual,
+            None,
         );
     }
 
@@ -5799,156 +6304,411 @@ impl Worker {
         id: String,
         from_me: bool,
         timestamp: i64,
-        explicit: bool,
-        background: bool,
-    ) -> bool {
-        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+        source: HistorySource,
+        import_token: Option<i64>,
+    ) -> HistoryRequestStart {
+        let Some(client) = self.client.clone() else {
             // Offline requests retry after reconnection; the banner shows state.
-            if !background {
+            self.history_record(
+                HistoryFlow::OnDemand,
+                HistoryStage::RequestRejectedNotConnected,
+            )
+            .emit();
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: false,
+            });
+            return HistoryRequestStart::RejectedNotConnected;
+        };
+        let Some(jid) = Self::jid_of(&chat) else {
+            self.history_record(
+                HistoryFlow::OnDemand,
+                HistoryStage::RequestRejectedInvalidChat,
+            )
+            .emit();
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: false,
+            });
+            return HistoryRequestStart::RejectedInvalidChat;
+        };
+        // Keep the supplied JID for the wire request, but bind every local
+        // owner and callback to the canonical chat. A known LID mapping can
+        // otherwise make HistoryRequested look under the PN key while the
+        // still-dispatching request remains orphaned under the LID key.
+        let owner_chat = self.canonical_str(&chat);
+        let automatic = source != HistorySource::Manual;
+        if self.admit_history(&owner_chat, (timestamp, id.clone()), source)
+            != automatic_history::Admission::Allowed
+        {
+            self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestDeferred)
+                .emit();
+            if source == HistorySource::Background {
+                self.background_history.release_unsent(&owner_chat);
+            } else {
                 self.emit(Event::OlderFetched {
-                    chat,
+                    chat: owner_chat,
                     more: true,
                     silent: false,
                 });
             }
-            return false;
-        };
-        self.older_serial += 1;
-        let serial = self.older_serial;
+            return HistoryRequestStart::Deferred;
+        }
+        let requested = Instant::now();
         self.pending_older.insert(
-            chat.clone(),
+            owner_chat.clone(),
             OlderRequest {
-                asked: Instant::now(),
+                asked: requested,
+                phase: OlderRequestPhase::Dispatching,
+                dispatch_abort: None,
                 before: (timestamp, id.clone()),
-                explicit,
-                background,
-                serial,
-                request: None,
+                explicit: source == HistorySource::Manual,
+                background: source == HistorySource::Background,
+                import_token,
             },
         );
+        if automatic {
+            self.background_history
+                .started(&owner_chat, requested, import_token);
+        }
+        self.history_record(HistoryFlow::OnDemand, HistoryStage::DispatchStarted)
+            .emit();
+        if source == HistorySource::Background {
+            let metadata = self
+                .archive
+                .history_import_anchor_metadata()
+                .unwrap_or_default();
+            let diagnostic_client = client.clone();
+            let account = self.dirs.id.as_str().parse::<u32>().unwrap_or(0);
+            tokio::spawn(async move {
+                let capability = diagnostic_client
+                    .ab_prop_enabled(abprops::web::HISTORY_SYNC_ON_DEMAND)
+                    .await;
+                let companion = diagnostic_client
+                    .ab_prop_enabled(abprops::web::HISTORY_SYNC_ON_DEMAND_COMPANION)
+                    .await;
+                let tri = |value| match value {
+                    Some(true) => "enabled",
+                    Some(false) => "disabled",
+                    None => "unknown",
+                };
+                let anchor = match metadata.reserved_kind {
+                    Some(crate::archive::HistoryAnchorKind::DirectPn) => "direct_pn",
+                    Some(crate::archive::HistoryAnchorKind::DirectLid) => "direct_lid",
+                    Some(crate::archive::HistoryAnchorKind::Group) => "group",
+                    Some(crate::archive::HistoryAnchorKind::Other) => "other",
+                    None => "none",
+                };
+                log::info!(
+                    "[HISTORY_REQUEST] version=1 account={account} capability={} companion={} anchor={anchor} empty={} archived={} active={} reserved={}",
+                    tri(capability),
+                    tri(companion),
+                    u8::from(metadata.reserved_empty),
+                    u8::from(metadata.reserved_archived),
+                    metadata.active,
+                    metadata.reserved,
+                );
+            });
+        }
         let commands = self.commands.clone();
-        tokio::spawn(async move {
+        let pending_chat = owner_chat.clone();
+        let task = tokio::spawn(async move {
             match client
                 // Despite its `Ms` name, the protocol field takes Unix seconds.
                 // https://github.com/tulir/whatsmeow/commit/54650307d891f89ab346a57953d316106caee371
                 .fetch_message_history(&jid, &id, from_me, timestamp, PHONE_BATCH)
                 .await
             {
-                Ok(request) => {
-                    let _ = commands.send(Command::OlderSent {
-                        chat,
-                        serial,
-                        request,
+                Ok(session) => {
+                    let _ = commands.send(Command::HistoryRequested {
+                        chat: owner_chat,
+                        requested,
+                        import_token,
+                        session,
                     });
                 }
                 Err(error) => {
                     log::warn!("could not request older messages");
                     let _ = commands.send(Command::OlderFailed {
-                        chat,
-                        serial,
+                        chat: owner_chat,
+                        requested,
+                        import_token,
                         error: format!("Could not request older messages from your phone: {error}"),
                     });
                 }
             }
         });
+        if let Some(request) = self.pending_older.get_mut(&pending_chat) {
+            request.dispatch_abort = Some(task.abort_handle());
+        }
+        HistoryRequestStart::Started
+    }
+
+    fn admit_history(
+        &mut self,
+        chat: &str,
+        anchor: super::PageKey,
+        source: HistorySource,
+    ) -> automatic_history::Admission {
+        use automatic_history::Admission;
+        if source == HistorySource::Manual {
+            return Admission::Allowed;
+        }
+        if !self.pending_older.is_empty() || self.poll_history.active() {
+            return Admission::Wait;
+        }
+        self.reserve_automatic_history(chat, None, anchor)
+    }
+
+    fn automatic_history_ready(&self) -> bool {
+        !self.history_checkpoint_failed
+            && !self.background_history.paused
+            && self.privacy_ready
+            && !self.syncing
+            && self.status.is_connected()
+            // Wall time preserves pacing over restarts; monotonic time also
+            // prevents rounding and clock adjustments from shortening a send gap.
+            && self.automatic_history_last_request.is_none_or(|last| last.elapsed() >= Duration::from_secs(20))
+            && self.automatic_history.ready(
+                self.background_history.full,
+                self.background_history.daily_budget,
+                crate::util::now(),
+            )
+    }
+
+    /// Reserve and durably charge every automatic request before transmission.
+    /// Manual scroll/repair requests deliberately bypass this automatic budget.
+    fn reserve_automatic_history(
+        &mut self,
+        chat: &str,
+        poll: Option<&str>,
+        anchor: super::PageKey,
+    ) -> automatic_history::Admission {
+        use automatic_history::Admission;
+        if !self.automatic_history_ready()
+            || !self.archive.chat(chat).is_ok_and(|row| {
+                row.is_none_or(|chat| {
+                    !chat.locked && !chat.left && chat.kind != ChatKind::Broadcast
+                })
+            })
+            || !self
+                .archive
+                .removal_point(chat)
+                .is_ok_and(|point| point.is_none())
+        {
+            return Admission::Wait;
+        }
+        let admission = self.automatic_history.reserve(
+            chat,
+            poll,
+            anchor,
+            self.background_history.full,
+            self.background_history.daily_budget,
+            crate::util::now(),
+        );
+        if admission != Admission::Allowed {
+            return admission;
+        }
+        if !self.save_automatic_phone_budget() {
+            self.history_checkpoint_failed = true;
+            self.background_history.paused = true;
+            log::warn!("could not save automatic history accounting; requests paused");
+            return Admission::Wait;
+        }
+        self.automatic_history_last_request = Some(Instant::now());
+        Admission::Allowed
+    }
+
+    fn save_automatic_phone_budget(&self) -> bool {
+        self.automatic_history
+            .checkpoint()
+            .ok()
+            .is_some_and(|value| {
+                self.archive
+                    .set_meta("automatic_history_checkpoint_v2", &value)
+                    .is_ok()
+            })
+    }
+
+    fn automatic_phone_failed(&mut self, reason: crate::archive::HistoryImportFailure) {
+        self.automatic_history.failed(crate::util::now());
+        if !self.save_automatic_phone_budget() {
+            self.history_checkpoint_failed = true;
+            self.background_history.paused = true;
+            return;
+        }
+        if self.automatic_history.needs_attention() {
+            let _ = self.archive.pause_history_import(
+                if reason == crate::archive::HistoryImportFailure::CorrelationUnavailable {
+                    reason
+                } else {
+                    crate::archive::HistoryImportFailure::RetryLimitReached
+                },
+                crate::util::now(),
+            );
+        }
+    }
+
+    fn automatic_phone_succeeded(&mut self) {
+        self.automatic_history.succeeded();
+        if !self.save_automatic_phone_budget() {
+            self.history_checkpoint_failed = true;
+            self.background_history.paused = true;
+        }
+    }
+
+    fn finish_background_history_start(&mut self, token: i64, start: HistoryRequestStart) {
+        match start {
+            HistoryRequestStart::Started => {}
+            HistoryRequestStart::Deferred => {
+                if let Err(error) = self
+                    .archive
+                    .release_deferred_history_import_request(token, crate::util::now())
+                {
+                    log::warn!("could not release deferred history request: {error}");
+                    self.automatic_phone_failed(crate::archive::HistoryImportFailure::Storage);
+                }
+            }
+            HistoryRequestStart::RejectedInvalidChat => {
+                if let Err(error) = self
+                    .archive
+                    .exclude_unsupported_history_import_request(token, crate::util::now())
+                {
+                    log::warn!("could not exclude unsupported history chat: {error}");
+                    self.automatic_phone_failed(crate::archive::HistoryImportFailure::Storage);
+                }
+            }
+            HistoryRequestStart::RejectedNotConnected => {
+                self.automatic_phone_failed(crate::archive::HistoryImportFailure::Send);
+                let _ = self.archive.fail_history_import(
+                    token,
+                    crate::archive::HistoryImportFailure::Send,
+                    self.automatic_history.retry_at(),
+                );
+            }
+        }
+        self.log_history_job_status();
+    }
+
+    pub(super) fn reserve_automatic_media_phone(&mut self, daily: u32) -> bool {
+        let now = crate::util::now();
+        if self.history_checkpoint_failed
+            || self.background_history.paused
+            || !self.privacy_ready
+            || self.syncing
+            || !self.status.is_connected()
+            || !self.pending_older.is_empty()
+            || self.poll_history.active()
+            || self
+                .automatic_history_last_request
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(20))
+            || !self.automatic_history.media_ready(daily, now)
+            || self.automatic_history.reserve_media(daily, now)
+                != automatic_history::Admission::Allowed
+        {
+            return false;
+        }
+        if !self.save_automatic_phone_budget() {
+            self.history_checkpoint_failed = true;
+            self.background_history.paused = true;
+            return false;
+        }
+        self.automatic_history_last_request = Some(Instant::now());
         true
     }
 
-    /// Records the id a history request went out under, so its answer can be
-    /// matched to it.
-    fn older_sent(&mut self, chat: ChatId, serial: u64, request: String) {
-        if let Some(pending) = self
-            .pending_older
-            .get_mut(&chat)
-            .filter(|pending| pending.serial == serial)
-        {
-            pending.request = Some(request);
-        } else if let Some(late) = self
-            .late_older
-            .iter_mut()
-            .find(|late| late.serial == serial)
-        {
-            late.request = Some(request);
-        } else {
-            return;
-        }
-        self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestSent)
-            .emit();
+    fn revoke_background_media_phone_permits(&mut self) {
+        self.background_media_phone_permits.clear();
+        self.background_media_phone_revocations
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
-    /// A history request that could not be sent. Only the request it belongs
-    /// to is finished: a newer request for the same chat keeps waiting.
-    fn older_failed(&mut self, chat: ChatId, serial: u64, error: String) {
-        if !self
-            .pending_older
-            .get(&chat)
-            .is_some_and(|pending| pending.serial == serial)
+    /// A silent account-owned page, paced behind reader and poll recovery.
+    fn pump_background_history(&mut self) {
+        if !self.status.is_connected()
+            || self.syncing
+            || !self.pending_older.is_empty()
+            || self.poll_history.active()
+            || !self.automatic_history_ready()
+            || self.client.is_none()
+            || !self.background_history.enabled
+            || self.background_history.paused
         {
-            // Its timeout has already been reported.
-            self.late_older.retain(|late| late.serial != serial);
             return;
         }
-        self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestFailed)
-            .emit();
-        let Some(request) = self.pending_older.remove(&chat) else {
+        if self.background_history.full {
+            let request = match self.archive.next_history_import(crate::util::now()) {
+                Ok(request) => request,
+                Err(error) => {
+                    log::warn!("could not reserve history import work: {error}");
+                    return;
+                }
+            };
+            let Some(request) = request else {
+                return;
+            };
+            let token = request.token;
+            let start = self.request_history(
+                request.chat,
+                request.id,
+                request.from_me,
+                request.timestamp,
+                HistorySource::Background,
+                Some(token),
+            );
+            self.finish_background_history_start(token, start);
+            return;
+        }
+        let Ok(mut chats) = self.archive.chats() else {
             return;
         };
-        if request.background {
-            self.prefetch.fail_history(&chat, Instant::now());
-            self.emit(Event::OlderFetched {
-                chat,
-                more: true,
-                silent: true,
-            });
-            return;
-        }
-        self.emit(Event::OlderFetched {
-            chat: chat.clone(),
-            more: true,
-            silent: false,
+        chats.retain(|chat| {
+            !chat.locked
+                && !chat.left
+                && !chat.archived
+                && chat.kind != ChatKind::Broadcast
+                && Self::jid_of(&chat.id).is_some()
+                && !self.archive.history_start(&chat.id).unwrap_or(true)
+                && self
+                    .archive
+                    .removal_point(&chat.id)
+                    .is_ok_and(|point| point.is_none())
         });
-        // Automatic requests retry quietly, as their timeouts do.
-        if request.explicit && self.older_warned.insert(chat) {
-            self.emit(Event::Error(error));
-        }
-    }
-
-    /// Fills the archive slowly: one phone-history request every twenty
-    /// seconds at most, and only while no other history request is out, so a
-    /// reader scrolling up does not run into the phone's rate limit. The
-    /// chats to ask come from the queue `prefetch::State` keeps in memory.
-    fn pump_prefetch(&mut self) {
-        if !self.status.is_connected() || !self.prefetch.on {
-            return;
-        }
-        if self.prefetch.needs_chats() {
-            self.refresh_prefetch_queue();
-        }
-        let busy = !self.pending_older.is_empty() || self.poll_history.in_flight();
-        let Some(chat) = self.prefetch.next_history(Instant::now(), busy) else {
-            return;
-        };
-        if self.archive.history_start(&chat).unwrap_or(false) {
-            // The phone has said this chat has nothing older.
-            self.prefetch.exhaust(&chat);
-            return;
-        }
-        if self.fetch_older(chat.clone(), false, true) {
-            self.prefetch.start_history(chat);
-        } else {
-            self.prefetch.defer(&chat);
-        }
-    }
-
-    /// Builds the prefetch queue from the archive's chat list, without
-    /// sending that list to the interface again.
-    fn refresh_prefetch_queue(&mut self) {
-        match self.archive.chats() {
-            Ok(mut chats) => {
-                chats.retain(|chat| chat.last.is_some() || self.canonical_str(&chat.id) == chat.id);
-                self.prefetch.set_chats(&chats);
+        // Pinned chats first; stable ordering retains activity order otherwise.
+        chats.sort_by_key(|chat| {
+            (
+                self.background_history.focused.as_deref() != Some(&chat.id),
+                !chat.pinned,
+            )
+        });
+        let candidates: Vec<_> = chats.into_iter().map(|chat| chat.id).collect();
+        // Stopped or delayed boundaries do not consume a send slot. Bound the
+        // scan so a large archive cannot monopolize the worker between ticks.
+        for _ in 0..candidates.len().min(32) {
+            let Some(chat) = self.background_history.next(&candidates, Instant::now()) else {
+                return;
+            };
+            let (id, from_me, timestamp) = match self.archive.oldest(&chat) {
+                Ok(Some(row)) => (row.id, row.from_me, row.timestamp),
+                Ok(None) => (String::new(), false, crate::util::now()),
+                Err(_) => {
+                    self.background_history.stop(&chat);
+                    return;
+                }
+            };
+            self.request_history(
+                chat.clone(),
+                id,
+                from_me,
+                timestamp,
+                HistorySource::Background,
+                None,
+            );
+            if self.pending_older.contains_key(&chat) || !self.automatic_history_ready() {
+                return;
             }
-            Err(error) => log::warn!("could not list chats: {error}"),
         }
     }
 
@@ -5987,6 +6747,26 @@ impl Worker {
 
     /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
+        let remote_target = match &command {
+            Command::EditText { chat, id, .. }
+            | Command::Revoke { chat, id }
+            | Command::React {
+                chat, message: id, ..
+            } => Some((chat, id)),
+            _ => None,
+        };
+        if let Some((chat, id)) = remote_target
+            && self
+                .archive
+                .message(chat, id)
+                .ok()
+                .flatten()
+                .is_some_and(|row| {
+                    row.from_me && matches!(row.status, Delivery::Pending | Delivery::Failed)
+                })
+        {
+            return;
+        }
         let destination = match &command {
             Command::SendText { chat, .. }
             | Command::ReplyInteractive { chat, .. }
@@ -6049,6 +6829,10 @@ impl Worker {
                 message,
                 requested,
             } => {
+                self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestFailed)
+                    .emit();
+                self.automatic_phone_failed(crate::archive::HistoryImportFailure::Send);
+                let chat = self.canonical_str(&chat);
                 self.poll_history
                     .fail(&chat, &message, requested, Instant::now());
                 self.emit_message(&chat, &message);
@@ -6182,13 +6966,177 @@ impl Worker {
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
             Command::LoadPins(chat) => self.emit_pins(&chat),
-            Command::FetchOlder { chat, explicit } => {
-                let _ = self.fetch_older(chat, explicit, false);
+            Command::HistoryRequested {
+                chat,
+                requested,
+                import_token,
+                session,
+            } => {
+                self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestSent)
+                    .emit();
+                let chat = self.canonical_str(&chat);
+                let Some(request) = self.pending_older.get_mut(&chat) else {
+                    return;
+                };
+                if request.asked != requested || request.import_token != import_token {
+                    return;
+                }
+                request.dispatch_abort = None;
+                request.phase = OlderRequestPhase::WaitingForPhone {
+                    since: Instant::now(),
+                };
+                let session_copy = session.clone();
+                if let Some(token) = import_token {
+                    match self.archive.bind_history_import_session(
+                        token,
+                        &session,
+                        crate::util::now(),
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            if self
+                                .pending_older
+                                .get(&chat)
+                                .is_some_and(|request| request.import_token == Some(token))
+                            {
+                                self.pending_older.remove(&chat);
+                                self.background_history.answered(&chat, true);
+                            }
+                            return;
+                        }
+                        Err(_) => {
+                            self.automatic_phone_failed(
+                                crate::archive::HistoryImportFailure::Storage,
+                            );
+                            return;
+                        }
+                    }
+                }
+                if let Some((filed, durable)) =
+                    self.background_history
+                        .sent(chat, requested, import_token, session)
+                {
+                    self.answer_older_session(filed, Some(&session_copy), durable);
+                }
             }
+            Command::ConfigureSync {
+                mode,
+                full_sync_days,
+            } => {
+                if mode == crate::settings::SyncMode::Full && !(1..=1095).contains(&full_sync_days)
+                {
+                    self.emit(Event::Error(
+                        "Choose a history date within the last three years".into(),
+                    ));
+                    return;
+                }
+                self.sync_mode = Some(mode);
+                self.full_sync_days = full_sync_days;
+                if self.client.is_none() {
+                    self.start_bot().await;
+                }
+            }
+            Command::ConfigureArchiveImport {
+                history,
+                media,
+                privacy_paused,
+                focused,
+            } => {
+                let paused = history.paused || privacy_paused || self.history_checkpoint_failed;
+                if self
+                    .archive
+                    .configure_history_import(history.target_since, paused, crate::util::now())
+                    .is_err()
+                {
+                    log::warn!("could not configure durable history import");
+                    return;
+                }
+                self.full_sync_days = history.full_sync_days;
+                self.history_policy_paused = history.paused;
+                self.history_privacy_paused = privacy_paused;
+                self.background_history.full = history.target_since.is_some();
+                self.background_history.daily_budget = history.requests_per_day.clamp(1, 4000);
+                self.background_history.enabled =
+                    history.target_since.is_some() || history.legacy_recent_enabled;
+                self.background_history.paused = paused;
+                self.background_history.focused = focused;
+                if paused || !media.enabled || !media.phone_recovery {
+                    self.revoke_background_media_phone_permits();
+                }
+                self.background_media_enabled = media.enabled;
+                self.background_media_budget_mib = media.budget_mib;
+                self.background_media_phone_recovery = media.phone_recovery;
+                self.background_media_phone_requests_per_day =
+                    media.phone_requests_per_day.clamp(1, 4000);
+                self.background_media_large_files = media.large_files;
+                self.background_media_target_since = history.target_since;
+                if media.large_files && self.archive.resume_policy_too_large_media_jobs().is_err() {
+                    log::warn!("could not resume files excluded by the automatic size policy");
+                }
+                if history.target_since.is_some()
+                    && !privacy_paused
+                    && self
+                        .archive
+                        .reconcile_history_import(crate::util::now())
+                        .is_err()
+                {
+                    log::warn!("could not reconcile history import scope");
+                }
+                self.log_history_job_status();
+            }
+            Command::ResumeArchiveImport => {
+                if self.history_policy_paused || self.history_privacy_paused {
+                    self.background_history.paused = true;
+                    return;
+                }
+                let uncertain: Vec<_> = self
+                    .pending_older
+                    .iter()
+                    .filter_map(|(chat, request)| {
+                        matches!(request.phase, OlderRequestPhase::DispatchUncertain)
+                            .then_some((chat.clone(), request.import_token))
+                    })
+                    .collect();
+                for (chat, token) in uncertain {
+                    if let Some(token) = token {
+                        let _ = self.archive.release_history_import_request(
+                            token,
+                            crate::archive::HistoryImportFailure::Send,
+                            crate::util::now(),
+                        );
+                    }
+                    self.pending_older.remove(&chat);
+                    self.background_history.release_unsent(&chat);
+                }
+                if self
+                    .archive
+                    .release_uncertain_history_import_requests(crate::util::now())
+                    .is_err()
+                {
+                    self.history_checkpoint_failed = true;
+                    self.background_history.paused = true;
+                    self.log_history_job_status();
+                    return;
+                }
+                self.automatic_history.resume();
+                if !self.save_automatic_phone_budget()
+                    || self
+                        .archive
+                        .resume_history_import(crate::util::now())
+                        .is_err()
+                {
+                    self.history_checkpoint_failed = true;
+                    self.background_history.paused = true;
+                } else {
+                    self.background_history.paused = false;
+                }
+                self.log_history_job_status();
+            }
+            Command::MediaScanFinished { generation, result } => {
+                self.apply_media_scan_finished(generation, result)
+            }
+            Command::FetchOlder { chat, explicit } => self.fetch_older(chat, explicit),
             Command::ReloadHistory { chat, message } => self.reload_history(chat, message),
-            Command::SetHistoryPrefetch { on, focused } => {
-                self.prefetch.configure(on, focused);
-            }
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
             Command::SearchChatMessages {
@@ -7533,6 +8481,12 @@ impl Worker {
             Command::StartPairing(history) => {
                 if self.status == LinkStatus::ChooseHistory && self.client.is_none() {
                     self.pairing_history = Some(history);
+                    self.sync_mode = Some(if history.days().is_some() {
+                        crate::settings::SyncMode::Full
+                    } else {
+                        crate::settings::SyncMode::Recent
+                    });
+                    self.full_sync_days = history.days().unwrap_or(1);
                     self.start_bot().await;
                 }
             }
@@ -7544,16 +8498,57 @@ impl Worker {
                 }
             }
             Command::Shutdown => {}
-            Command::OlderSent {
-                chat,
-                serial,
-                request,
-            } => self.older_sent(chat, serial, request),
             Command::OlderFailed {
                 chat,
-                serial,
+                requested,
+                import_token,
                 error,
-            } => self.older_failed(chat, serial, error),
+            } => {
+                self.history_record(HistoryFlow::OnDemand, HistoryStage::RequestFailed)
+                    .emit();
+                if !self
+                    .pending_older
+                    .get(&chat)
+                    .is_some_and(|request| request.asked == requested)
+                {
+                    return;
+                }
+                let ownership = self
+                    .pending_older
+                    .get(&chat)
+                    .map(|request| (request.import_token, request.background));
+                if let Some((Some(token), _)) = ownership {
+                    self.pending_older.remove(&chat);
+                    debug_assert_eq!(import_token, Some(token));
+                    self.automatic_phone_failed(crate::archive::HistoryImportFailure::Send);
+                    let _ = self.archive.fail_history_import(
+                        token,
+                        crate::archive::HistoryImportFailure::Send,
+                        self.automatic_history.retry_at(),
+                    );
+                    self.log_history_job_status();
+                    self.background_history.stop(&chat);
+                    return;
+                }
+                if matches!(ownership, Some((None, true))) {
+                    self.pending_older.remove(&chat);
+                    self.background_history.stop(&chat);
+                    return;
+                }
+                let explicit = self
+                    .pending_older
+                    .remove(&chat)
+                    .is_some_and(|request| request.explicit);
+                self.emit(Event::OlderFetched {
+                    chat: chat.clone(),
+                    more: true,
+                    silent: false,
+                });
+                // Automatic requests retry quietly, as their timeouts do.
+                if explicit && self.older_warned.insert(chat) {
+                    self.emit(Event::Error(error));
+                }
+            }
             Command::GroupInfoFailed {
                 chat,
                 permanent,
@@ -7607,12 +8602,23 @@ impl Worker {
                 result,
             } => self.downloaded(chat, id, card, result),
             Command::DownloadMotion { chat, message } => self.download_motion(chat, message),
-            Command::MotionDownloaded { chat, id, result } => {
-                if let Ok(path) = &result
-                    && let Err(error) = self.archive.put_motion_path(&chat, &id, Some(path))
-                {
-                    log::warn!("could not store a motion clip's path: {error}");
+            Command::MotionDownloaded {
+                chat,
+                id,
+                mut result,
+            } => {
+                self.motion_downloads.remove(&(chat.clone(), id.clone()));
+                if let Ok(path) = &result {
+                    match self.archive.put_motion_path(&chat, &id, Some(path)) {
+                        Ok(true) => {}
+                        Ok(false) | Err(_) => {
+                            result =
+                                Err("Could not preserve downloaded motion clip in the archive"
+                                    .into());
+                        }
+                    }
                 }
+                self.background_media_finished(&chat, &id, -2, &result);
                 self.emit(Event::Motion {
                     chat,
                     message: id,
@@ -8623,6 +9629,33 @@ impl Worker {
     /// Downloads an attachment. A `manual` one, asked for by the reader, has
     /// no size limit; every download's deadline grows with its size.
     fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>, manual: bool) {
+        let limit = if manual {
+            crate::model::MANUAL_DOWNLOAD_LIMIT
+        } else {
+            ATTACHMENT_DOWNLOAD_LIMIT
+        };
+        self.download_media_with_limit(chat, id, card, manual, limit, false);
+    }
+
+    pub(super) fn download_media_managed_with_limit(
+        &mut self,
+        chat: ChatId,
+        id: String,
+        card: Option<usize>,
+        limit: u64,
+    ) {
+        self.download_media_with_limit(chat, id, card, false, limit, true);
+    }
+
+    fn download_media_with_limit(
+        &mut self,
+        chat: ChatId,
+        id: String,
+        card: Option<usize>,
+        _manual: bool,
+        limit: u64,
+        managed: bool,
+    ) {
         if !self.downloads.insert((chat.clone(), id.clone(), card)) {
             // A click while only the picker is fetching it: the picker's
             // download skips the re-upload, so remember to ask if it fails.
@@ -8708,15 +9741,10 @@ impl Worker {
                 );
                 return;
             };
-        if !manual && attachment_is_too_large(downloadable.file_length()) {
+        if downloadable.file_length().is_some_and(|size| size > limit) {
             self.downloaded(chat, id, card, Err(ATTACHMENT_LIMIT_ERROR.to_owned()));
             return;
         }
-        let limit = if manual {
-            u64::MAX
-        } else {
-            ATTACHMENT_DOWNLOAD_LIMIT
-        };
         let deadline = attachment_deadline(downloadable.file_length());
         // Keep metadata needed for one media re-upload request and retry.
         let media_key = base
@@ -8749,6 +9777,17 @@ impl Worker {
         // the picker fetches in the background, and each request counts
         // toward the server's rate limit (#405). A click on its bubble asks.
         let reupload = !self.sticker_downloads.contains(&(chat.clone(), id.clone()));
+        let background_key = (
+            chat.clone(),
+            id.clone(),
+            card.map_or(-1, |card| card as i64),
+        );
+        let background = self.background_media.contains(&background_key);
+        let phone_permitted = self
+            .background_media_phone_permits
+            .contains(&background_key);
+        let mut phone_revocation =
+            phone_permitted.then(|| self.background_media_phone_revocations.subscribe());
         let jid = Self::jid_of(&chat);
         let row = self.archive.message(&chat, &id).ok().flatten();
         let is_from_me = row.as_ref().is_some_and(|row| row.from_me);
@@ -8789,7 +9828,11 @@ impl Worker {
             }
             None
         };
-        let dir = self.download_dir();
+        let dir = if managed {
+            self.dirs.media_cache_dir()
+        } else {
+            self.download_dir()
+        };
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
@@ -8811,6 +9854,17 @@ impl Worker {
                     Err(error) => {
                         let text = error.to_string();
                         let expired = ["403", "404", "410"].iter().any(|code| text.contains(code));
+                        if expired && background && !phone_permitted {
+                            return Err(ATTACHMENT_PHONE_REQUIRED.to_owned());
+                        }
+                        if expired
+                            && background
+                            && phone_revocation
+                                .as_ref()
+                                .is_none_or(|revocation| revocation.has_changed().unwrap_or(true))
+                        {
+                            return Err(ATTACHMENT_PHONE_REQUIRED.to_owned());
+                        }
                         match (&jid, expired && reupload && !media_key.is_empty()) {
                             (Some(jid), true) => {
                                 // Ask the phone to re-upload expired media, then retry once.
@@ -8828,7 +9882,17 @@ impl Worker {
                                     return Err(text);
                                 };
                                 let request = MediaReuploadRequest { target, media_key };
-                                match client.media_reupload().request(&request).await {
+                                let reupload = client.media_reupload();
+                                let response = if let Some(revocation) = phone_revocation.as_mut() {
+                                    tokio::select! {
+                                        biased;
+                                        _ = revocation.changed() => return Err(ATTACHMENT_PHONE_REQUIRED.to_owned()),
+                                        response = reupload.request(&request) => response,
+                                    }
+                                } else {
+                                    reupload.request(&request).await
+                                };
+                                match response {
                                     Ok(MediaRetryResult::Success { direct_path }) => {
                                         match refreshed(direct_path) {
                                             Some(again) => {
@@ -8870,47 +9934,140 @@ impl Worker {
     }
 
     /// Keeps a motion photo's clip for its photo, which may not be here yet.
-    fn file_motion_clip(&mut self, chat: &str, parent: &str, sender: &str, clip: &[u8]) {
-        match self.archive.put_motion_clip(chat, parent, sender, clip) {
+    fn file_motion_clip(
+        &mut self,
+        chat: &str,
+        parent: &str,
+        sender: &str,
+        clip: &[u8],
+        child_id: &str,
+    ) {
+        match self
+            .archive
+            .put_motion_clip_with_id(chat, parent, sender, clip, Some(child_id))
+        {
             Ok(true) => self.emit_message(chat, parent),
             Ok(false) => {}
-            Err(error) => log::warn!("could not store a motion clip: {error}"),
+            Err(error) => {
+                self.history_storage_ok.set(false);
+                log::warn!("could not store a motion clip: {error}");
+            }
         }
     }
 
     /// Downloads a motion photo's clip into the cache. It is fetched like any
     /// attachment: verified, under the size limit, and within the deadline.
     fn download_motion(&mut self, chat: ChatId, id: String) {
+        self.download_motion_with_limit(chat, id, ATTACHMENT_DOWNLOAD_LIMIT);
+    }
+
+    pub(super) fn download_motion_with_limit(&mut self, chat: ChatId, id: String, limit: u64) {
+        if !self.motion_downloads.insert((chat.clone(), id.clone())) {
+            return;
+        }
         let clip = self.archive.motion_clip(&chat, &id).ok().flatten();
         let video = clip
             .and_then(|raw| wa::Message::decode_from_slice(&raw).ok())
             .and_then(|message| message.video_message.into_option());
         let (client, video) = match (self.client.clone(), video) {
-            (Some(client), Some(video)) if !attachment_is_too_large(video.file_length) => {
+            (Some(client), Some(video)) if video.file_length.is_none_or(|size| size <= limit) => {
                 (client, video)
             }
             (client, video) => {
+                self.motion_downloads.remove(&(chat.clone(), id.clone()));
                 let error = match (client, video) {
                     (None, _) => "Not connected to WhatsApp",
                     (_, None) => "The clip has not arrived",
                     _ => ATTACHMENT_LIMIT_ERROR,
                 };
+                let result = Err(error.to_owned());
+                self.background_media_finished(&chat, &id, -2, &result);
                 self.emit(Event::Motion {
                     chat,
                     message: id,
-                    result: Err(error.to_owned()),
+                    result,
                 });
                 return;
             }
         };
+        let child_id = self.archive.motion_child_id(&chat, &id).ok().flatten();
+        let background = self
+            .background_media
+            .contains(&(chat.clone(), id.clone(), -2));
+        let phone_permitted =
+            self.background_media_phone_permits
+                .contains(&(chat.clone(), id.clone(), -2));
+        let mut phone_revocation =
+            phone_permitted.then(|| self.background_media_phone_revocations.subscribe());
+        let row = self.archive.message(&chat, &id).ok().flatten();
+        let jid = Self::jid_of(&chat);
+        let participant = match (&jid, &row) {
+            (Some(jid), Some(row)) if jid.is_group() => Self::jid_of(&row.sender),
+            _ => None,
+        };
+        let is_from_me = row.as_ref().is_some_and(|row| row.from_me);
         let dir = self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &format!("{id}-motion"), "video/mp4", None);
-            let result = with_attachment_deadline(
-                attachment_deadline(video.file_length),
-                download_attachment(&client, &video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
-            )
+            let result = with_attachment_deadline(attachment_deadline(video.file_length), async {
+                match download_attachment(&client, &video, &dir, &path, limit).await {
+                    Ok(path) => Ok(path),
+                    Err(error) => {
+                        let text = error.to_string();
+                        let expired = ["403", "404", "410"].iter().any(|code| text.contains(code));
+                        if !expired {
+                            return Err(text);
+                        }
+                        if background && !phone_permitted {
+                            return Err(ATTACHMENT_PHONE_REQUIRED.to_owned());
+                        }
+                        if background
+                            && phone_revocation
+                                .as_ref()
+                                .is_none_or(|revocation| revocation.has_changed().unwrap_or(true))
+                        {
+                            return Err(ATTACHMENT_PHONE_REQUIRED.to_owned());
+                        }
+                        let (Some(jid), Some(child_id), Some(media_key)) =
+                            (jid.as_ref(), child_id.as_deref(), video.media_key.as_deref())
+                        else {
+                            return Err("Expired clip cannot be recovered without its original download identity".into());
+                        };
+                        let target = whatsapp_rust::MessageId::new(child_id).and_then(|id| {
+                            whatsapp_rust::MessageRef::new(jid, id, participant.as_ref(), is_from_me)
+                        });
+                        let (Ok(target), Ok(media_key)) =
+                            (target, <&[u8; 32]>::try_from(media_key))
+                        else {
+                            return Err("Clip download keys are missing".into());
+                        };
+                        let request = MediaReuploadRequest { target, media_key };
+                        let reupload = client.media_reupload();
+                        let response = if let Some(revocation) = phone_revocation.as_mut() {
+                            tokio::select! {
+                                biased;
+                                _ = revocation.changed() => return Err(ATTACHMENT_PHONE_REQUIRED.to_owned()),
+                                response = reupload.request(&request) => response,
+                            }
+                        } else {
+                            reupload.request(&request).await
+                        };
+                        match response {
+                            Ok(MediaRetryResult::Success { direct_path }) => {
+                                let mut refreshed = video.clone();
+                                refreshed.direct_path = Some(direct_path);
+                                refreshed.url = None;
+                                download_attachment(&client, &refreshed, &dir, &path, limit)
+                                    .await
+                                    .map_err(|error| error.to_string())
+                            }
+                            Ok(_) => Err("No longer available on WhatsApp's servers".into()),
+                            Err(_) => Err("Could not ask the phone to recover the clip; try again later".into()),
+                        }
+                    }
+                }
+            })
             .await;
             let _ = commands.send(Command::MotionDownloaded { chat, id, result });
         });
@@ -8922,11 +10079,17 @@ impl Worker {
         chat: ChatId,
         id: String,
         card: Option<usize>,
-        result: Result<PathBuf, String>,
+        mut result: Result<PathBuf, String>,
     ) {
         if let Ok(path) = &result {
-            let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
+            match self.archive.put_media_path_at(&chat, &id, card, Some(path)) {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => {
+                    result = Err("Could not preserve downloaded attachment in the archive".into());
+                }
+            }
         }
+        self.background_media_finished(&chat, &id, card.map_or(-1, |card| card as i64), &result);
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
         let for_picker = self.sticker_downloads.remove(&key);
@@ -12143,9 +13306,14 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         }
         if let Some((parent, raw)) = motion_clip(base) {
             clips.push(HistoryClip {
+                id,
                 parent,
                 sender,
                 from_me,
+                timestamp: info
+                    .message_timestamp
+                    .and_then(|timestamp| i64::try_from(timestamp).ok())
+                    .filter(|timestamp| *timestamp > 0),
                 raw,
             });
             continue;
@@ -12443,7 +13611,16 @@ mod tests {
         for full_name in [None, Some("Fixture".to_owned())] {
             let (mut worker, events, _, _) = super::receipt_tests::worker();
             let generation = worker.contact_generation;
+            let privacy_generation = worker.privacy_generation;
+            worker
+                .message_removals_in_flight
+                .insert(("1@s.whatsapp.net".into(), "old-account".into()));
+            worker.forward_queue = Some(ForwardQueue::new());
             worker.on_logged_out().await;
+            assert_ne!(worker.contact_generation, generation);
+            assert_ne!(worker.privacy_generation, privacy_generation);
+            assert!(worker.message_removals_in_flight.is_empty());
+            assert!(worker.forward_queue.is_none());
             events.try_iter().for_each(drop);
             worker
                 .handle_command(Command::ContactChecked {
@@ -14110,6 +15287,23 @@ mod tests {
             motion_clip(&clip).map(|(parent, _)| parent).as_deref(),
             Some("photo")
         );
+        let mut key = wa::MessageKey::default();
+        key.id = Some("motion-child".into());
+        key.remote_jid = Some("1@s.whatsapp.net".into());
+        key.from_me = Some(false);
+        let mut info = wa::WebMessageInfo::default();
+        info.key = MessageField::some(key);
+        info.message = MessageField::some(clip);
+        info.message_timestamp = Some(123);
+        let mut sync = wa::HistorySyncMsg::default();
+        sync.message = MessageField::some(info);
+        let mut conversation = wa::Conversation::default();
+        conversation.id = "1@s.whatsapp.net".into();
+        conversation.messages = vec![sync];
+        let parsed = parse_conversation(conversation);
+        assert_eq!(parsed.clips.len(), 1);
+        assert_eq!(parsed.clips[0].id, "motion-child");
+        assert_eq!(parsed.clips[0].timestamp, Some(123));
         assert!(matches!(
             classify(&child(AssociationType::MEDIA_ALBUM)),
             Some(Content::Unsupported { .. })
@@ -16677,10 +17871,7 @@ mod receipt_tests {
     }
 
     /// A batch belongs to the session that was sending it. The proxy-change
-    /// reconnect stops the bot and starts another, and every send is its own
-    /// task, so one can report its tick after the stop, inside the window the
-    /// connection teardown waits for. Dropping the queue with the session is
-    /// what keeps that tick from resuming the batch through the one after it.
+    /// reconnect stops the bot and starts another, and every send is its own task.
     #[tokio::test]
     async fn stopping_the_bot_drops_a_running_forward_batch() {
         let (mut worker, _events, _inbox, _wa) = worker();
@@ -16833,15 +18024,37 @@ mod receipt_tests {
             first_names_recovered: true,
             first_names_recovering: false,
             downloads: HashSet::new(),
+            motion_downloads: HashSet::new(),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
             poll_history: Default::default(),
+            automatic_history: Default::default(),
+            automatic_history_last_request: None,
+            background_history: Default::default(),
+            history_policy_paused: false,
+            history_privacy_paused: false,
+            background_media_enabled: false,
+            background_media_budget_mib: 20 * 1024,
+            background_media_usage: None,
+            background_media_diagnostic: None,
+            media_scan_generation: 0,
+            media_scan_in_flight: None,
+            media_scan_completed_bytes: 0,
+            media_scan_started_bytes: 0,
+            background_media_phone_recovery: false,
+            background_media_phone_requests_per_day: 50,
+            background_media_large_files: false,
+            background_media_target_since: None,
+            background_media_cancelled: HashSet::new(),
+            background_media_phone_permits: HashSet::new(),
+            background_media_phone_revocations: tokio::sync::watch::channel(0).0,
+            history_checkpoint_failed: false,
+            background_media: HashSet::new(),
+            sync_mode: Some(crate::settings::SyncMode::Recent),
+            full_sync_days: 1,
+            history_storage_ok: std::cell::Cell::new(true),
             poll_sending: HashSet::new(),
-            prefetch: prefetch::State::default(),
-            older_serial: 0,
-            late_older: VecDeque::new(),
-            older_ids_match: false,
             interactive_sending: HashMap::new(),
             receipts_watch: None,
             receipts_pruned: Instant::now(),
@@ -20920,6 +22133,63 @@ mod chat_removal_tests {
         }
     }
 
+    fn motion_history(parent_at: i64, child_id: &str, child_at: Option<i64>) -> ParsedHistory {
+        let mut parsed = history(CHAT, &[parent_at]);
+        parsed.chats[0].messages[0].content = Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+            motion: None,
+        };
+        parsed.chats[0].clips.push(HistoryClip {
+            id: child_id.into(),
+            parent: format!("m{parent_at}"),
+            sender: Some(CHAT.into()),
+            from_me: false,
+            timestamp: child_at,
+            raw: vec![1],
+        });
+        parsed
+    }
+
+    #[test]
+    fn history_motion_keeps_exact_child_identity_and_respects_deletion_barriers() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(motion_history(100, "child", Some(101)), false);
+        assert_eq!(
+            worker.archive.motion_child_id(CHAT, "m100").unwrap(),
+            Some("child".into())
+        );
+
+        let (mut deleted_child, _, _, _) = receipt_tests::worker();
+        deleted_child.archive.ensure_chat(CHAT, "Somebody").unwrap();
+        deleted_child.archive.delete_message(CHAT, "child").unwrap();
+        deleted_child.apply_history(motion_history(100, "child", Some(101)), false);
+        assert_eq!(
+            deleted_child.archive.motion_clip(CHAT, "m100").unwrap(),
+            None
+        );
+
+        let (mut cleared_chat, _, _, _) = receipt_tests::worker();
+        cleared_chat.archive.ensure_chat(CHAT, "Somebody").unwrap();
+        cleared_chat
+            .archive
+            .remove_chat_through(CHAT, 100, false)
+            .unwrap();
+        cleared_chat.apply_history(motion_history(200, "old-child", Some(100)), false);
+        assert_eq!(
+            cleared_chat.archive.motion_clip(CHAT, "m200").unwrap(),
+            None
+        );
+    }
+
     fn stored(worker: &Worker, chat: &str) -> Vec<String> {
         worker
             .archive
@@ -21507,311 +22777,831 @@ mod older_history_tests {
 
     const CHAT: &str = "4915700000002@s.whatsapp.net";
 
-    /// Stale send completions cannot add outcomes to a newer request's diagnostics.
-    #[test]
-    fn request_diagnostics_only_count_correlated_completions() {
+    fn history_import_worker(target: i64) -> (Worker, std::sync::mpsc::Receiver<Event>) {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.apply_history(chat_removal_tests::history(CHAT, &[100, 1000]), false);
+        worker
+            .archive
+            .configure_history_import(Some(target), false, 2_000)
+            .unwrap();
+        worker.archive.reconcile_history_import(2_000).unwrap();
+        (worker, events)
+    }
+
+    #[tokio::test]
+    async fn known_lid_history_request_keeps_canonical_durable_ownership() {
+        const LID_CHAT: &str = "9@lid";
         let (mut worker, _, _, _) = receipt_tests::worker();
-        asked(&mut worker, true, false, 2, None);
-        let stages = history_diagnostics::capture(|| {
-            worker.older_sent(CHAT.into(), 1, "stale".into());
-            worker.older_failed(CHAT.into(), 1, "stale".into());
-        });
-        assert!(stages.is_empty());
-        assert_eq!(worker.pending_older[CHAT].request, None);
-        let stages = history_diagnostics::capture(|| {
-            worker.older_sent(CHAT.into(), 2, "current".into());
-            worker.older_failed(CHAT.into(), 2, "current".into());
-        });
+        worker.apply_history(chat_removal_tests::history(LID_CHAT, &[100, 1000]), false);
+        worker
+            .archive
+            .configure_history_import(Some(50), false, 2_000)
+            .unwrap();
+        worker.archive.reconcile_history_import(2_000).unwrap();
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        assert_eq!(request.chat, LID_CHAT);
+        worker
+            .lid_to_pn
+            .insert("9".into(), CHAT.split('@').next().unwrap().into());
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::open(
+            &directory.path().join("fixture.db").to_string_lossy(),
+        )
+        .await
+        .unwrap();
+        let bot = Bot::builder().with_backend(store).build().await.unwrap();
+        worker.client = Some(bot.client());
+
         assert_eq!(
-            stages,
-            [HistoryStage::RequestSent, HistoryStage::RequestFailed]
+            worker.request_history(
+                request.chat.clone(),
+                request.id.clone(),
+                request.from_me,
+                request.timestamp,
+                HistorySource::Manual,
+                Some(request.token),
+            ),
+            HistoryRequestStart::Started
+        );
+        assert!(!worker.pending_older.contains_key(LID_CHAT));
+        let pending = worker.pending_older.get_mut(CHAT).unwrap();
+        assert_eq!(pending.import_token, Some(request.token));
+        let requested = pending.asked;
+        pending.dispatch_abort.take().unwrap().abort();
+
+        worker
+            .handle_command(Command::HistoryRequested {
+                chat: CHAT.into(),
+                requested,
+                import_token: Some(request.token),
+                session: "known-lid-session".into(),
+            })
+            .await;
+        assert!(matches!(
+            worker.pending_older[CHAT].phase,
+            OlderRequestPhase::WaitingForPhone { .. }
+        ));
+
+        // Simulate a restart losing the in-memory owner. The durable session
+        // still names the original LID, and must match the canonical filed chat.
+        worker.background_history = Default::default();
+        worker.answer_older_session(
+            vec![(CHAT.into(), 1, Some(true), Some((60, "m60".into(), false)))],
+            Some("known-lid-session"),
+            true,
         );
         assert!(!worker.pending_older.contains_key(CHAT));
+        let progress = worker.archive.history_import_progress(2_001).unwrap();
+        assert_eq!(progress.chats[0].pages, 1);
+    }
 
-        asked(&mut worker, true, false, 3, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
+    #[test]
+    fn lid_pending_collision_keeps_the_newest_durable_token() {
+        const LID_CHAT: &str = "9@lid";
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let now = Instant::now();
+        let request = |asked, token| OlderRequest {
+            asked,
+            phase: OlderRequestPhase::Dispatching,
+            dispatch_abort: None,
+            before: (100, "anchor".into()),
+            explicit: false,
+            background: true,
+            import_token: Some(token),
+        };
+        worker
+            .pending_older
+            .insert(CHAT.into(), request(now - Duration::from_secs(1), 12));
+        worker
+            .pending_older
+            .insert(LID_CHAT.into(), request(now, 11));
+
+        worker.learn_lid("9", CHAT.split('@').next().unwrap());
+
+        assert!(!worker.pending_older.contains_key(LID_CHAT));
+        assert_eq!(worker.pending_older[CHAT].import_token, Some(12));
+    }
+
+    fn correlate_import(
+        worker: &mut Worker,
+        session: &str,
+    ) -> crate::archive::HistoryImportRequest {
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        let requested = Instant::now();
+        worker.pending_older.insert(
+            request.chat.clone(),
+            OlderRequest {
+                asked: requested,
+                phase: OlderRequestPhase::WaitingForPhone { since: requested },
+                dispatch_abort: None,
+                before: (request.timestamp, request.id.clone()),
+                explicit: false,
+                background: true,
+                import_token: Some(request.token),
+            },
+        );
+        worker.background_history.claim(request.chat.clone());
+        worker
+            .background_history
+            .started(&request.chat, requested, Some(request.token));
+        assert!(
+            worker
+                .archive
+                .bind_history_import_session(request.token, session, 2_000)
+                .unwrap()
+        );
+        worker.background_history.sent(
+            request.chat.clone(),
+            requested,
+            Some(request.token),
+            session.into(),
+        );
+        request
+    }
+
+    fn dispatch_import(worker: &mut Worker) -> crate::archive::HistoryImportRequest {
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        let requested = Instant::now();
+        worker.pending_older.insert(
+            request.chat.clone(),
+            OlderRequest {
+                asked: requested,
+                phase: OlderRequestPhase::Dispatching,
+                dispatch_abort: None,
+                before: (request.timestamp, request.id.clone()),
+                explicit: false,
+                background: true,
+                import_token: Some(request.token),
+            },
+        );
+        worker.background_history.claim(request.chat.clone());
+        worker
+            .background_history
+            .started(&request.chat, requested, Some(request.token));
+        request
+    }
+
+    #[test]
+    fn date_import_starts_at_the_newest_safe_anchor_across_an_internal_gap() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(chat_removal_tests::history(CHAT, &[100, 1000]), false);
+        worker
+            .archive
+            .configure_history_import(Some(500), false, 2_000)
+            .unwrap();
+        worker.archive.reconcile_history_import(2_000).unwrap();
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        assert_eq!((request.timestamp, request.id.as_str()), (1000, "m1000"));
+    }
+
+    #[test]
+    fn only_a_durable_correlated_page_advances_the_import_sender_boundary() {
+        let (mut failed, _) = history_import_worker(500);
+        correlate_import(&mut failed, "failed-page");
+        failed.answer_older_session(
+            vec![(CHAT.into(), 1, Some(true), Some((700, "m700".into(), true)))],
+            Some("failed-page"),
+            false,
+        );
+        let snapshot = failed.archive.history_import_progress(2_000).unwrap();
+        assert_eq!(snapshot.chats[0].frontier, Some(1000));
+        assert_eq!(
+            snapshot.chats[0].reason,
+            crate::model::ChatImportReason::RetryStorage
+        );
+
+        let (mut saved, _) = history_import_worker(500);
+        correlate_import(&mut saved, "saved-page");
+        saved.answer_older_session(
+            vec![(CHAT.into(), 1, Some(true), Some((700, "m700".into(), true)))],
+            Some("saved-page"),
+            true,
+        );
+        let snapshot = saved.archive.history_import_progress(2_000).unwrap();
+        assert_eq!(snapshot.chats[0].frontier, Some(700));
+        let next = saved.archive.next_history_import(2_020).unwrap().unwrap();
+        assert_eq!((next.id.as_str(), next.from_me), ("m700", true));
+    }
+
+    #[test]
+    fn durable_no_progress_is_a_per_chat_retry_not_an_account_outage() {
+        let (mut worker, _) = history_import_worker(500);
+        correlate_import(&mut worker, "unchanged-page");
+        let next_chat = "another@g.us";
+        worker.apply_history(chat_removal_tests::history(next_chat, &[100, 900]), false);
+        worker.archive.reconcile_history_import(2_000).unwrap();
+
+        worker.answer_older_session(
+            vec![(CHAT.into(), 0, Some(true), None)],
+            Some("unchanged-page"),
+            true,
+        );
+
+        let snapshot = worker.archive.history_import_progress(2_000).unwrap();
+        assert_eq!(snapshot.state, crate::model::ImportRunState::Running);
+        assert_eq!(snapshot.failure_streak, 0);
+        let cooling = snapshot
+            .chats
+            .iter()
+            .find(|chat| chat.chat == CHAT)
+            .unwrap();
+        assert_eq!(
+            cooling.reason,
+            crate::model::ChatImportReason::RetryNoProgress
+        );
+        assert_eq!(worker.automatic_history.retry_at(), 0);
+        assert!(!worker.automatic_history.needs_attention());
+        assert!(worker.automatic_history.ready(true, 100, 2_000));
+        assert_eq!(
+            worker
+                .archive
+                .next_history_import(2_000)
+                .unwrap()
+                .unwrap()
+                .chat,
+            next_chat
+        );
+    }
+
+    #[test]
+    fn deferred_full_import_admission_releases_its_lease_without_a_failure() {
+        let (mut worker, _) = history_import_worker(500);
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+
+        worker.finish_background_history_start(request.token, HistoryRequestStart::Deferred);
+
+        assert_eq!(worker.automatic_history.retry_at(), 0);
+        assert!(!worker.automatic_history.needs_attention());
+        let progress = worker
+            .archive
+            .history_import_progress(crate::util::now())
+            .unwrap();
+        assert_eq!(progress.state, crate::model::ImportRunState::Running);
+        assert_eq!(
+            progress.chats[0].reason,
+            crate::model::ChatImportReason::Queued
+        );
+        assert!(
+            worker
+                .archive
+                .next_history_import(crate::util::now())
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn invalid_full_import_chat_is_excluded_without_an_account_failure() {
+        let (mut worker, _) = history_import_worker(500);
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+
+        worker.finish_background_history_start(
+            request.token,
+            HistoryRequestStart::RejectedInvalidChat,
+        );
+
+        assert_eq!(worker.automatic_history.retry_at(), 0);
+        assert!(!worker.automatic_history.needs_attention());
+        let progress = worker
+            .archive
+            .history_import_progress(crate::util::now())
+            .unwrap();
+        assert_eq!(progress.excluded, 1);
+        assert_eq!(progress.state, crate::model::ImportRunState::Finished);
+    }
+
+    #[tokio::test]
+    async fn stale_session_binding_does_not_count_as_an_account_failure() {
+        let (mut worker, _) = history_import_worker(500);
+        let stale = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        let requested = Instant::now();
+        worker.pending_older.insert(
+            stale.chat.clone(),
+            OlderRequest {
+                asked: requested,
+                phase: OlderRequestPhase::Dispatching,
+                dispatch_abort: None,
+                before: (stale.timestamp, stale.id.clone()),
+                explicit: false,
+                background: true,
+                import_token: Some(stale.token),
+            },
+        );
+        worker.background_history.claim(stale.chat.clone());
+        worker
+            .background_history
+            .started(&stale.chat, requested, Some(stale.token));
+        worker
+            .archive
+            .configure_history_import(Some(400), false, 2_001)
+            .unwrap();
+        worker.archive.reconcile_history_import(2_001).unwrap();
+
+        worker
+            .handle_command(Command::HistoryRequested {
+                chat: stale.chat.clone(),
+                requested,
+                import_token: Some(stale.token),
+                session: "stale-session".into(),
+            })
+            .await;
+
+        assert!(!worker.pending_older.contains_key(&stale.chat));
+        assert_eq!(worker.automatic_history.retry_at(), 0);
+        assert!(!worker.automatic_history.needs_attention());
+        let current = worker.archive.next_history_import(2_001).unwrap().unwrap();
+        assert!(current.token > stale.token);
+    }
+
+    #[test]
+    fn restart_can_apply_the_current_persisted_session_without_completing_reader_ui() {
+        let (mut worker, events) = history_import_worker(500);
+        let request = worker.archive.next_history_import(2_000).unwrap().unwrap();
+        assert!(
+            worker
+                .archive
+                .bind_history_import_session(request.token, "persisted-session", 2_000)
+                .unwrap()
+        );
+        worker.background_history = Default::default();
+        worker.pending_older.clear();
+        let _ = drain(&events);
+
+        worker.answer_older_session(
+            vec![(
+                CHAT.into(),
+                1,
+                Some(true),
+                Some((700, "m700".into(), false)),
+            )],
+            Some("persisted-session"),
+            true,
+        );
+
+        let snapshot = worker.archive.history_import_progress(2_000).unwrap();
+        assert_eq!(snapshot.chats[0].frontier, Some(700));
+        let events = drain(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::OlderFetched {
+                chat,
+                silent: true,
+                ..
+            } if chat == CHAT
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Messages { older: true, .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_cannot_clear_a_user_or_privacy_pause() {
+        let (mut worker, _) = history_import_worker(500);
+        worker.history_privacy_paused = true;
+        worker.background_history.paused = true;
+        for attempt in 0..7 {
+            worker.automatic_history.failed(2_000 + attempt);
+        }
+        worker.handle_command(Command::ResumeArchiveImport).await;
+        assert!(worker.background_history.paused);
+        assert!(worker.automatic_history.needs_attention());
+    }
+
+    #[test]
+    fn all_automatic_sources_charge_the_same_durable_account_budget() {
+        use automatic_history::{Admission, Budget};
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.sync_mode = Some(crate::settings::SyncMode::Full);
+        worker.background_history.daily_budget = 100;
+        assert_eq!(
+            worker.reserve_automatic_history(CHAT, None, (100, "old".into())),
+            Admission::Allowed
+        );
+        let saved = worker
+            .archive
+            .meta("automatic_history_checkpoint_v2")
+            .unwrap()
+            .unwrap();
+        let checkpoint: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(checkpoint["requests"], 1);
+        assert_eq!(
+            worker.reserve_automatic_history("another@g.us", Some("poll"), (100, "p".into())),
+            Admission::Wait
+        );
+        worker.background_history.reconnect();
+        let mut advanced_clock: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        advanced_clock["next_request"] = 0.into();
+        worker.automatic_history = Budget::restore(&advanced_clock.to_string()).unwrap();
+        assert_eq!(
+            worker.reserve_automatic_history("another@g.us", Some("poll"), (100, "p".into())),
+            Admission::Wait
+        );
+        let (mut other, _, _, _) = receipt_tests::worker();
+        other.background_history.daily_budget = 100;
+        assert_eq!(
+            other.reserve_automatic_history(CHAT, Some("poll"), (100, "p".into())),
+            Admission::Allowed
+        );
+    }
+
+    #[test]
+    fn locks_initial_sync_and_checkpoint_failure_pause_every_automatic_source() {
+        use automatic_history::Admission;
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        for reason in 0..4 {
+            worker.background_history.paused = reason == 0;
+            worker.privacy_ready = reason != 1;
+            worker.syncing = reason == 2;
+            worker.history_checkpoint_failed = reason == 3;
+            for poll in [None, Some("poll")] {
+                assert_eq!(
+                    worker.reserve_automatic_history(CHAT, poll, (100, "old".into())),
+                    Admission::Wait
+                );
+            }
+            assert!(
+                worker
+                    .archive
+                    .meta("automatic_history_checkpoint_v2")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_accounting_write_withholds_requests_and_latches_the_pause() {
+        use automatic_history::Admission;
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.archive.reject_meta_fixture_writes(true);
+        assert_eq!(
+            worker.reserve_automatic_history(CHAT, None, (100, "old".into())),
+            Admission::Wait
+        );
+        assert!(worker.history_checkpoint_failed);
+        assert!(worker.background_history.paused);
+        assert!(
+            worker
+                .archive
+                .meta("automatic_history_checkpoint_v2")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            worker.reserve_automatic_history(CHAT, Some("poll"), (100, "p".into())),
+            Admission::Wait
+        );
+    }
+
+    #[test]
+    fn recent_duplicate_pages_stop_but_full_import_and_manual_requests_continue() {
+        use automatic_history::{Admission, Budget};
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.sync_mode = Some(crate::settings::SyncMode::Full);
+        worker.background_history.daily_budget = 100;
+        worker.apply_history(chat_removal_tests::history(CHAT, &[100]), false);
+        for source in [
+            HistorySource::Automatic,
+            HistorySource::Background,
+            HistorySource::Automatic,
+        ] {
+            let row = worker.archive.oldest(CHAT).unwrap().unwrap();
+            assert_eq!(
+                worker.admit_history(CHAT, (row.timestamp, row.id), source),
+                Admission::Allowed
+            );
+            // Advance the persisted gates without sleeping. Repeated phone
+            // history must not renew the boundary's attempt allowance.
+            worker.apply_history(chat_removal_tests::history(CHAT, &[100]), false);
+            let saved = worker
+                .archive
+                .meta("automatic_history_checkpoint_v2")
+                .unwrap()
+                .unwrap();
+            let mut state: serde_json::Value = serde_json::from_str(&saved).unwrap();
+            state["next_request"] = 0.into();
+            state["chats"][CHAT]["older"]["next"] = 0.into();
+            worker.automatic_history = Budget::restore(&state.to_string()).unwrap();
+            worker.automatic_history_last_request = Some(Instant::now() - Duration::from_secs(21));
+        }
+        for source in [HistorySource::Automatic, HistorySource::Background] {
+            assert_eq!(
+                worker.admit_history(CHAT, (100, "m100".into()), source),
+                Admission::Stopped
+            );
+        }
+        assert_eq!(
+            worker.admit_history(CHAT, (100, "m100".into()), HistorySource::Manual),
+            Admission::Allowed
+        );
+        worker.background_history.full = true;
+        assert_eq!(
+            worker.admit_history(CHAT, (100, "m100".into()), HistorySource::Background),
+            Admission::Allowed
+        );
+    }
+
+    #[test]
+    fn background_timeout_and_late_response_never_touch_reader_history() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        worker.pending_older.get_mut(CHAT).unwrap().background = true;
+        worker.background_history.claim(CHAT.into());
         worker.expire_older_requests();
-        let stages = history_diagnostics::capture(|| {
-            worker.older_sent(CHAT.into(), 3, "late".into());
-            worker.older_failed(CHAT.into(), 3, "late".into());
-        });
-        assert_eq!(stages, [HistoryStage::RequestSent]);
-        assert!(worker.late_older.is_empty());
+        assert!(drain(&events).is_empty());
+        assert!(worker.background_history.owns(CHAT));
+        worker.fetch_older(CHAT.into(), true);
+        assert_eq!(fetched(&drain(&events)), Some(true));
+        assert!(worker.pending_older.is_empty());
+        worker.answer_older(vec![(CHAT.into(), 2, Some(true), None)]);
+        assert!(drain(&events).iter().any(|event| matches!(
+            event,
+            Event::OlderFetched {
+                chat,
+                silent: true,
+                ..
+            } if chat == CHAT
+        )));
+        assert!(!worker.background_history.owns(CHAT));
+        worker.answer_older(vec![(CHAT.into(), 2, Some(true), None)]);
+        assert!(drain(&events).iter().any(|event| matches!(
+            event,
+            Event::OlderFetched {
+                chat,
+                silent: true,
+                ..
+            } if chat == CHAT
+        )));
+    }
+
+    #[test]
+    fn dispatch_preflight_is_not_counted_as_phone_silence() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let request = worker.pending_older.get_mut(CHAT).unwrap();
+        request.asked = Instant::now()
+            .checked_sub(PHONE_PATIENCE + Duration::from_secs(1))
+            .unwrap();
+        request.phase = OlderRequestPhase::Dispatching;
+
+        worker.expire_older_requests();
+
+        assert!(worker.pending_older.contains_key(CHAT));
+        assert!(drain(&events).is_empty());
+    }
+
+    #[tokio::test]
+    async fn successful_dispatch_starts_a_fresh_phone_response_window() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let request = worker.pending_older.get_mut(CHAT).unwrap();
+        request.asked = Instant::now()
+            .checked_sub(HISTORY_DISPATCH_PATIENCE - Duration::from_secs(1))
+            .unwrap();
+        request.phase = OlderRequestPhase::Dispatching;
+        let requested = request.asked;
+
+        worker
+            .handle_command(Command::HistoryRequested {
+                chat: CHAT.into(),
+                requested,
+                import_token: None,
+                session: "fixture-session".into(),
+            })
+            .await;
+        worker.expire_older_requests();
+
+        assert!(matches!(
+            worker.pending_older[CHAT].phase,
+            OlderRequestPhase::WaitingForPhone { .. }
+        ));
+        assert!(drain(&events).is_empty());
+    }
+
+    #[test]
+    fn stalled_manual_dispatch_is_cancelled_without_becoming_phone_silence() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let request = worker.pending_older.get_mut(CHAT).unwrap();
+        request.asked = Instant::now()
+            .checked_sub(HISTORY_DISPATCH_PATIENCE + Duration::from_secs(1))
+            .unwrap();
+        request.phase = OlderRequestPhase::Dispatching;
+
+        worker.expire_older_requests();
+
+        assert!(!worker.pending_older.contains_key(CHAT));
+        assert_eq!(fetched(&drain(&events)), Some(true));
+    }
+
+    #[test]
+    fn stalled_legacy_automatic_dispatch_does_not_pause_full_import() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let request = worker.pending_older.get_mut(CHAT).unwrap();
+        request.asked = Instant::now()
+            .checked_sub(HISTORY_DISPATCH_PATIENCE + Duration::from_secs(1))
+            .unwrap();
+        request.phase = OlderRequestPhase::Dispatching;
+        request.background = true;
+
+        worker.expire_older_requests();
+
+        assert!(!worker.pending_older.contains_key(CHAT));
+        assert!(!worker.background_history.paused);
+        assert!(drain(&events).is_empty());
+    }
+
+    #[test]
+    fn reader_takeover_cannot_release_an_uncertain_durable_dispatch() {
+        let (mut worker, _) = history_import_worker(500);
+        let request = dispatch_import(&mut worker);
+        let pending = worker.pending_older.get_mut(&request.chat).unwrap();
+        pending.asked = Instant::now()
+            .checked_sub(HISTORY_DISPATCH_PATIENCE + Duration::from_secs(1))
+            .unwrap();
+        pending.phase = OlderRequestPhase::Dispatching;
+        pending.background = false;
+
+        worker.expire_older_requests();
+
+        assert!(matches!(
+            worker.pending_older[&request.chat].phase,
+            OlderRequestPhase::DispatchUncertain
+        ));
+        assert!(worker.background_history.paused);
+        let progress = worker.archive.history_import_progress(2_000).unwrap();
+        assert_eq!(progress.state, crate::model::ImportRunState::NeedsAttention);
+        assert_eq!(
+            progress.reason,
+            Some(crate::model::ChatImportReason::CorrelationUnavailable)
+        );
+    }
+
+    #[test]
+    fn reader_takeover_cannot_bypass_a_durable_phone_timeout() {
+        let (mut worker, _) = history_import_worker(500);
+        let request = dispatch_import(&mut worker);
+        let pending = worker.pending_older.get_mut(&request.chat).unwrap();
+        pending.phase = OlderRequestPhase::WaitingForPhone {
+            since: Instant::now()
+                .checked_sub(PHONE_PATIENCE + Duration::from_secs(1))
+                .unwrap(),
+        };
+        pending.background = false;
+
+        worker.expire_older_requests();
+
+        assert!(!worker.pending_older.contains_key(&request.chat));
+        let progress = worker
+            .archive
+            .history_import_progress(crate::util::now())
+            .unwrap();
+        assert_eq!(progress.state, crate::model::ImportRunState::BackingOff);
+        assert_eq!(
+            progress.chats[0].reason,
+            crate::model::ChatImportReason::RetryTimeout
+        );
+        assert_eq!(progress.failure_streak, 0);
+        assert_eq!(worker.automatic_history.retry_at(), 0);
+        assert!(!worker.automatic_history.needs_attention());
+    }
+
+    #[tokio::test]
+    async fn retry_releases_a_persisted_uncertain_dispatch_after_restart() {
+        let (mut worker, _) = history_import_worker(500);
+        let request = dispatch_import(&mut worker);
+        let pending = worker.pending_older.get_mut(&request.chat).unwrap();
+        pending.asked = Instant::now()
+            .checked_sub(HISTORY_DISPATCH_PATIENCE + Duration::from_secs(1))
+            .unwrap();
+        pending.phase = OlderRequestPhase::Dispatching;
+        worker.expire_older_requests();
+        worker.pending_older.clear();
+        worker.background_history = Default::default();
+
+        worker.handle_command(Command::ResumeArchiveImport).await;
+
+        assert!(!worker.background_history.paused);
+        let replacement = worker.archive.next_history_import(2_001).unwrap().unwrap();
+        assert!(replacement.token > request.token);
+    }
+
+    #[test]
+    fn correlated_late_pages_cannot_consume_new_reader_requests_after_reconnect() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let old = worker.pending_older[CHAT].asked;
+        worker.pending_older.get_mut(CHAT).unwrap().background = true;
+        worker.background_history.claim(CHAT.into());
+        worker.background_history.started(CHAT, old, None);
+        worker
+            .background_history
+            .sent(CHAT.into(), old, None, "background-session".into());
+        worker.expire_older_requests();
+        assert!(drain(&events).is_empty());
+        assert!(worker.background_history.correlated(CHAT));
+        worker.background_history.reconnect();
+        waiting(&mut worker, true);
+        let new = Instant::now();
+        worker.pending_older.get_mut(CHAT).unwrap().asked = new;
+        worker
+            .background_history
+            .sent(CHAT.into(), new, None, "reader-session".into());
+        worker.answer_older_session(
+            vec![(CHAT.into(), 2, Some(true), None)],
+            Some("background-session"),
+            true,
+        );
+        assert!(worker.pending_older.contains_key(CHAT));
+        assert!(drain(&events).is_empty());
+        worker.answer_older_session(
+            vec![(CHAT.into(), 2, Some(true), None)],
+            Some("reader-session"),
+            true,
+        );
+        assert!(!worker.pending_older.contains_key(CHAT));
+        assert_eq!(fetched(&drain(&events)), Some(true));
+    }
+
+    #[test]
+    fn duplicate_idless_automatic_page_does_not_complete_a_new_reader_spinner() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, false);
+        let original = worker.pending_older[CHAT].asked;
+        worker.pending_older.get_mut(CHAT).unwrap().background = true;
+        worker.background_history.claim(CHAT.into());
+        worker.background_history.started(CHAT, original, None);
+        worker.answer_older(vec![(CHAT.into(), 2, Some(true), None)]);
+        assert!(drain(&events).iter().any(|event| matches!(
+            event,
+            Event::OlderFetched {
+                chat,
+                silent: true,
+                ..
+            } if chat == CHAT
+        )));
+        waiting(&mut worker, true);
+        worker.pending_older.get_mut(CHAT).unwrap().asked = Instant::now();
+        worker.answer_older(vec![(CHAT.into(), 2, Some(true), None)]);
+        assert!(worker.pending_older.contains_key(CHAT));
+        assert!(drain(&events).is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_failure_cannot_cancel_replacement_or_another_account() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let (mut other, other_events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        waiting(&mut other, true);
+        let current = worker.pending_older[CHAT].asked;
+        worker
+            .handle_command(Command::OlderFailed {
+                chat: CHAT.into(),
+                requested: current - Duration::from_secs(1),
+                import_token: None,
+                error: "old".into(),
+            })
+            .await;
+        assert!(worker.pending_older.contains_key(CHAT));
+        assert!(drain(&events).is_empty());
+        worker
+            .handle_command(Command::OlderFailed {
+                chat: CHAT.into(),
+                requested: current,
+                import_token: None,
+                error: "current".into(),
+            })
+            .await;
+        assert!(!worker.pending_older.contains_key(CHAT));
+        assert_eq!(warnings(&drain(&events)), 1);
+        assert!(other.pending_older.contains_key(CHAT));
+        assert!(drain(&other_events).is_empty());
     }
 
     /// A phone-history request that has waited past the patience.
     fn waiting(worker: &mut Worker, explicit: bool) {
-        asked(worker, explicit, false, 0, None);
-        worker
-            .pending_older
-            .get_mut(CHAT)
-            .expect("the request")
-            .asked = Instant::now()
-            .checked_sub(PHONE_PATIENCE * 2)
-            .expect("the clock runs past the patience");
-    }
-
-    /// A phone-history request still within the patience, with the serial
-    /// and the id it went out under.
-    fn asked(
-        worker: &mut Worker,
-        explicit: bool,
-        background: bool,
-        serial: u64,
-        request: Option<&str>,
-    ) {
         worker.pending_older.insert(
             CHAT.to_owned(),
             OlderRequest {
-                asked: Instant::now(),
+                asked: Instant::now()
+                    .checked_sub(PHONE_PATIENCE * 2)
+                    .expect("the clock runs past the patience"),
+                phase: OlderRequestPhase::WaitingForPhone {
+                    since: Instant::now()
+                        .checked_sub(PHONE_PATIENCE * 2)
+                        .expect("the clock runs past the patience"),
+                },
+                dispatch_abort: None,
                 before: (100, "m100".into()),
                 explicit,
-                background,
-                serial,
-                request: request.map(str::to_owned),
+                background: false,
+                import_token: None,
             },
         );
-    }
-
-    /// The silent flags of the `OlderFetched` events, in order.
-    fn silences(events: &[Event]) -> Vec<bool> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                Event::OlderFetched { chat, silent, .. } if chat == CHAT => Some(*silent),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn pages(events: &[Event]) -> usize {
-        events
-            .iter()
-            .filter(|event| matches!(event, Event::Messages { older: true, .. }))
-            .count()
-    }
-
-    /// The prefetch is waiting on this chat, as `pump_prefetch` leaves it.
-    fn prefetching(worker: &mut Worker) {
-        worker.prefetch.configure(true, None);
-        worker.prefetch.start_history(CHAT.to_owned());
-    }
-
-    /// A background page fills the archive and nothing else: no page for the
-    /// view, no answer counted against the phone, and the prefetch's turn
-    /// ends.
-    #[test]
-    fn a_background_page_stays_quiet() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        prefetching(&mut worker);
-        asked(&mut worker, false, true, 1, Some("bg"));
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, Some("bg"));
-        let events = drain(&events);
-        assert_eq!(silences(&events), [true]);
-        assert_eq!(pages(&events), 0, "the view does not move");
-        assert!(worker.pending_older.is_empty());
-        assert!(
-            worker
-                .prefetch
-                .next_history(Instant::now(), false)
-                .is_none(),
-            "the turn ended and the gap before the next one began"
-        );
-    }
-
-    /// A reader who scrolls up while a background request for the chat is
-    /// out takes it over: its answer is their page.
-    #[test]
-    fn the_reader_takes_over_a_background_request() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        prefetching(&mut worker);
-        asked(&mut worker, false, true, 1, Some("bg"));
-        assert!(!worker.fetch_older(CHAT.to_owned(), true, false));
-        let request = &worker.pending_older[CHAT];
-        assert!(!request.background && request.explicit);
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, Some("bg"));
-        let events = drain(&events);
-        assert_eq!(silences(&events), [false]);
-        assert_eq!(pages(&events), 1, "the reader's page shows");
-    }
-
-    /// The bug the ids fix: a background request times out, the reader asks
-    /// for the same chat, and the background's late answer arrives first. It
-    /// names the background request, so it stays quiet and the reader keeps
-    /// waiting for their own answer, which then shows.
-    #[test]
-    fn a_late_background_answer_does_not_take_the_readers_request() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        prefetching(&mut worker);
-        asked(&mut worker, false, true, 1, Some("bg"));
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
-        let timeout = drain(&events);
-        assert_eq!(silences(&timeout), [true], "a quiet timeout");
-        assert_eq!(warnings(&timeout), 0);
-
-        asked(&mut worker, true, false, 2, Some("reader"));
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, Some("bg"));
-        let early = drain(&events);
-        assert_eq!(silences(&early), [true]);
-        assert_eq!(pages(&early), 0);
-        assert_eq!(
-            worker.pending_older[CHAT].serial, 2,
-            "the reader's request still waits"
-        );
-
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[40]), false);
-        worker.answer_older(filed, Some("reader"));
-        let events = drain(&events);
-        assert_eq!(silences(&events), [false]);
-        assert_eq!(pages(&events), 1);
-        assert!(worker.pending_older.is_empty());
-    }
-
-    /// Without ids, answers are matched by chat. The late background answer
-    /// then pages the reader's view (it holds what they asked for), and the
-    /// reader's own answer afterwards is matched to the request that timed
-    /// out, so nothing is reported for it.
-    #[test]
-    fn without_ids_answers_are_matched_by_chat() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        prefetching(&mut worker);
-        asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
-        drain(&events);
-        asked(&mut worker, true, false, 2, None);
-
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, None);
-        let events_now = drain(&events);
-        assert_eq!(silences(&events_now), [false]);
-        assert_eq!(pages(&events_now), 1);
-
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[40]), false);
-        worker.answer_older(filed, None);
-        assert_eq!(silences(&drain(&events)), [true]);
-        assert!(worker.late_older.is_empty());
-    }
-
-    /// Once answers are known to carry the request's id, an answer with an
-    /// id that is none of ours (a poll's history request) is nobody's page:
-    /// the reader's request keeps waiting for its own.
-    #[test]
-    fn an_answer_to_someone_elses_request_leaves_the_reader_waiting() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        worker.older_ids_match = true;
-        asked(&mut worker, true, false, 1, Some("reader"));
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, Some("poll"));
-        let events = drain(&events);
-        assert_eq!(silences(&events), [true]);
-        assert_eq!(pages(&events), 0);
-        assert!(worker.pending_older.contains_key(CHAT));
-    }
-
-    /// A request whose send has not returned has no id yet. Its answer can
-    /// still overtake the send result, and is then still its answer.
-    #[test]
-    fn an_answer_that_overtakes_its_send_result_is_still_matched() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        worker.older_ids_match = true;
-        asked(&mut worker, true, false, 1, None);
-        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, Some("reader"));
-        assert_eq!(silences(&drain(&events)), [false]);
-        assert!(worker.pending_older.is_empty());
-    }
-
-    /// The send result names the request by its serial, so it lands on the
-    /// request it belongs to, waiting or timed out.
-    #[tokio::test]
-    async fn the_send_result_records_the_requests_id() {
-        let (mut worker, _events, _, _) = receipt_tests::worker();
-        asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
-        asked(&mut worker, true, false, 2, None);
-        for (serial, id) in [(1, "bg"), (2, "reader")] {
-            worker
-                .handle_command(Command::OlderSent {
-                    chat: CHAT.to_owned(),
-                    serial,
-                    request: id.to_owned(),
-                })
-                .await;
-        }
-        assert_eq!(worker.late_older[0].request.as_deref(), Some("bg"));
-        assert_eq!(
-            worker.pending_older[CHAT].request.as_deref(),
-            Some("reader")
-        );
-    }
-
-    /// A send failure belongs to the request it came from. One that comes
-    /// after a newer request for the chat leaves that request alone.
-    #[tokio::test]
-    async fn a_late_send_failure_leaves_the_newer_request() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
-        drain(&events);
-        asked(&mut worker, true, false, 2, None);
-        worker
-            .handle_command(Command::OlderFailed {
-                chat: CHAT.to_owned(),
-                serial: 1,
-                error: "fixture failure".into(),
-            })
-            .await;
-        let events = drain(&events);
-        assert!(silences(&events).is_empty(), "{events:?}");
-        assert_eq!(warnings(&events), 0);
-        assert_eq!(worker.pending_older[CHAT].serial, 2);
-        assert!(worker.late_older.is_empty());
-    }
-
-    /// A background request that fails is its own failure: nothing is shown
-    /// for a request nobody made.
-    #[tokio::test]
-    async fn a_background_failure_stays_quiet() {
-        let (mut worker, events, _, _) = receipt_tests::worker();
-        prefetching(&mut worker);
-        asked(&mut worker, false, true, 1, None);
-        worker
-            .handle_command(Command::OlderFailed {
-                chat: CHAT.to_owned(),
-                serial: 1,
-                error: "fixture failure".into(),
-            })
-            .await;
-        let events = drain(&events);
-        assert_eq!(silences(&events), [true]);
-        assert_eq!(warnings(&events), 0);
-        assert!(worker.pending_older.is_empty());
-    }
-
-    /// Timed-out requests are remembered for their late answers, but only so
-    /// many.
-    #[test]
-    fn late_requests_are_bounded() {
-        let (mut worker, _events, _, _) = receipt_tests::worker();
-        for serial in 0..(LATE_OLDER_LIMIT as u64 + 5) {
-            waiting(&mut worker, false);
-            worker.pending_older.get_mut(CHAT).unwrap().serial = serial;
-            worker.expire_older_requests();
-        }
-        assert_eq!(worker.late_older.len(), LATE_OLDER_LIMIT);
-        assert_eq!(worker.late_older[0].serial, 5, "the oldest go first");
     }
 
     fn drain(events: &std::sync::mpsc::Receiver<Event>) -> Vec<Event> {
@@ -21838,6 +23628,9 @@ mod older_history_tests {
     fn an_unanswered_automatic_request_stays_silent() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         waiting(&mut worker, false);
+        worker
+            .background_history
+            .started(CHAT, worker.pending_older[CHAT].asked, None);
         worker.expire_older_requests();
         let events = drain(&events);
         assert_eq!(warnings(&events), 0);
@@ -21862,7 +23655,7 @@ mod older_history_tests {
 
         // The phone sends this chat's history: a later silence is news again.
         let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
-        worker.answer_older(filed, None);
+        worker.answer_older(filed);
         drain(&events);
         waiting(&mut worker, true);
         worker.expire_older_requests();
@@ -21873,7 +23666,7 @@ mod older_history_tests {
     fn scrolling_up_during_an_automatic_request_makes_it_the_readers() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         waiting(&mut worker, false);
-        worker.fetch_older(CHAT.to_owned(), true, false);
+        worker.fetch_older(CHAT.to_owned(), true);
         assert!(worker.pending_older[CHAT].explicit);
         worker.expire_older_requests();
         assert_eq!(warnings(&drain(&events)), 1);
@@ -21887,7 +23680,8 @@ mod older_history_tests {
             worker
                 .handle_command(Command::OlderFailed {
                     chat: CHAT.to_owned(),
-                    serial: 0,
+                    requested: worker.pending_older[CHAT].asked,
+                    import_token: None,
                     error: "fixture failure".into(),
                 })
                 .await;
@@ -21908,7 +23702,7 @@ mod older_history_tests {
         assert!(worker.archive.history_start(CHAT).unwrap());
         drain(&events);
 
-        worker.fetch_older(CHAT.to_owned(), true, false);
+        worker.fetch_older(CHAT.to_owned(), true);
         assert_eq!(
             fetched(&drain(&events)),
             Some(false),
@@ -21926,7 +23720,7 @@ mod older_history_tests {
         // The reader chose m100, not the archive's oldest message m50.
         waiting(&mut worker, true);
         let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50, 75]), false);
-        worker.answer_older(filed, None);
+        worker.answer_older(filed);
         let messages = drain(&events)
             .into_iter()
             .find_map(|event| match event {
@@ -21970,8 +23764,7 @@ mod pairing_history_tests {
     use crate::model::PairingHistory;
 
     #[test]
-    fn only_a_new_device_waits_for_a_history_choice() {
-        assert_eq!(pairing_history_for_device(false, None), None);
+    fn recent_and_full_pairing_profiles_request_the_selected_history() {
         assert_eq!(
             pairing_history_for_device(false, Some(PairingHistory::FullThreeYears)),
             Some(PairingHistory::FullThreeYears)
@@ -21986,7 +23779,7 @@ mod pairing_history_tests {
 
     #[test]
     fn recent_profile_preserves_the_existing_defaults() {
-        let props = pairing_device_props(PairingHistory::Recent);
+        let props = sync_device_props(crate::settings::SyncMode::Recent, 1).unwrap();
         assert_eq!(
             props.platform_type,
             Some(wa::device_props::PlatformType::DESKTOP)
@@ -21996,46 +23789,49 @@ mod pairing_history_tests {
     }
 
     #[test]
-    fn full_profiles_reach_the_library_registration_payload() {
-        for (history, days) in [
-            (PairingHistory::FullOneYear, 365),
-            (PairingHistory::FullTwoYears, 730),
-            (PairingHistory::FullThreeYears, 1095),
-        ] {
-            let mut device = whatsapp_rust::wacore::store::Device::new();
-            device.set_device_props(pairing_device_props(history));
-            let payload = device.get_client_payload();
-            let bytes = payload
-                .device_pairing_data
-                .into_option()
-                .unwrap()
-                .device_props
-                .unwrap();
-            let props = wa::DeviceProps::decode_from_slice(&bytes).unwrap();
-            assert_eq!(
-                props.platform_type,
-                Some(wa::device_props::PlatformType::UWP)
-            );
-            assert_eq!(props.require_full_sync, Some(true));
-            let config = props.history_sync_config.into_option().unwrap();
-            assert_eq!(config.full_sync_days_limit, Some(days));
-            assert_eq!(config.on_demand_ready, Some(true));
-            assert_eq!(config.complete_on_demand_ready, Some(true));
-            assert_eq!(config.support_message_association, Some(true));
-            // Linked-device login has no registration properties and cannot
-            // request a second initial sync or replace a linked identity.
-            device.pn = Some("15550001111@s.whatsapp.net".parse().unwrap());
-            assert!(device.get_client_payload().device_pairing_data.is_unset());
-        }
+    fn full_profile_requests_the_selected_number_of_days() {
+        let full = sync_device_props(crate::settings::SyncMode::Full, 730).unwrap();
+        assert_eq!(
+            full.platform_type,
+            Some(wa::device_props::PlatformType::UWP)
+        );
+        assert_eq!(full.require_full_sync, Some(true));
+        let config = full.history_sync_config.unwrap();
+        assert_eq!(config.full_sync_days_limit, Some(730));
+        assert_eq!(config.on_demand_ready, Some(true));
+        assert_eq!(config.complete_on_demand_ready, Some(true));
     }
 
-    #[tokio::test]
-    async fn a_late_pairing_command_does_not_reconfigure_a_connected_worker() {
-        let (mut worker, _events, _, _) = receipt_tests::worker();
-        worker
-            .handle_command(Command::StartPairing(PairingHistory::FullThreeYears))
-            .await;
-        assert_eq!(worker.status, LinkStatus::Connected);
-        assert_eq!(worker.pairing_history, None);
+    #[test]
+    fn three_year_request_reaches_the_encoded_pairing_payload() {
+        use whatsapp_rust::wacore::store::device::Device;
+
+        let mut device = Device::new();
+        device.set_device_props(sync_device_props(crate::settings::SyncMode::Full, 1095).unwrap());
+        let payload = device.get_client_payload();
+        let bytes = payload
+            .device_pairing_data
+            .as_option()
+            .expect("fresh device pairing data")
+            .device_props
+            .as_ref()
+            .expect("encoded device properties");
+        let props = wa::DeviceProps::decode_from_slice(bytes).expect("valid device properties");
+        assert_eq!(props.require_full_sync, Some(true));
+        let config = props
+            .history_sync_config
+            .as_option()
+            .expect("history configuration");
+        assert_eq!(config.full_sync_days_limit, Some(1095));
+        assert_eq!(config.on_demand_ready, Some(true));
+        assert_eq!(config.complete_on_demand_ready, Some(true));
+    }
+
+    #[test]
+    fn full_pairing_days_are_validated_instead_of_silently_clamped() {
+        assert!(sync_device_props(crate::settings::SyncMode::Full, 0).is_none());
+        assert!(sync_device_props(crate::settings::SyncMode::Full, 1096).is_none());
+        assert!(sync_device_props(crate::settings::SyncMode::Full, 1).is_some());
+        assert!(sync_device_props(crate::settings::SyncMode::Recent, 0).is_some());
     }
 }

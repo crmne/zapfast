@@ -816,10 +816,50 @@ impl Settings {
     }
 }
 
+/// History requested when pairing a companion, independently of later recovery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    Recent,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HistoryImportPolicy {
+    pub target_since: Option<i64>,
+    /// Keeps the earlier bounded recent-history behavior until a fixed date is chosen.
+    pub legacy_recent_enabled: bool,
+    pub full_sync_days: u32,
+    pub paused: bool,
+    pub requests_per_day: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MediaImportPolicy {
+    pub enabled: bool,
+    pub budget_mib: u32,
+    pub phone_recovery: bool,
+    pub phone_requests_per_day: u32,
+    pub large_files: bool,
+}
+
 /// Preferences that belong to one WhatsApp account.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AccountSettings {
+    /// None means a new, unpaired account still needs its setup choice.
+    pub sync_mode: Option<SyncMode>,
+    /// Fixed inclusive UTC boundary for the durable history import.
+    pub history_import_since: Option<i64>,
+    pub history_import_paused: bool,
+    /// Coarse pairing hint matching the fixed boundary, clamped to protocol support.
+    pub full_sync_days: u32,
+    /// Fetch attachments into the managed account cache without opening chats.
+    pub archive_media: bool,
+    /// Background downloads pause at this size. Zero means unlimited.
+    pub background_media_budget_mib: u32,
+    /// Maximum automatic history requests per UTC day.
+    pub history_requests_per_day: u32,
     pub send_read_receipts: bool,
     pub send_typing: bool,
     #[serde(alias = "auto_download_images")]
@@ -835,6 +875,11 @@ pub struct AccountSettings {
     /// background. Off by default: it asks the phone for history nobody
     /// scrolled to, so an account that has never turned it on does not.
     pub history_prefetch: bool,
+    /// Whether background recovery may ask the phone to restore expired files.
+    pub media_phone_recovery: bool,
+    pub media_phone_requests_per_day: u32,
+    /// Allow unattended downloads above 64 MiB, up to the explicit 2 GiB limit.
+    pub media_import_large_files: bool,
     /// The chip or label the chat list last showed, as
     /// [`crate::model::ListFilter::key`] writes it; `None` shows every chat.
     pub list_filter: Option<String>,
@@ -846,6 +891,13 @@ pub struct AccountSettings {
 impl Default for AccountSettings {
     fn default() -> Self {
         Self {
+            sync_mode: None,
+            history_import_since: None,
+            history_import_paused: false,
+            full_sync_days: 1095,
+            archive_media: false,
+            background_media_budget_mib: 20 * 1024,
+            history_requests_per_day: 1000,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
@@ -855,6 +907,9 @@ impl Default for AccountSettings {
             save_contacts_to_phone: true,
             wallpaper_image: None,
             history_prefetch: false,
+            media_phone_recovery: false,
+            media_phone_requests_per_day: 50,
+            media_import_large_files: false,
             list_filter: None,
             call_filter: None,
         }
@@ -862,8 +917,35 @@ impl Default for AccountSettings {
 }
 
 impl AccountSettings {
+    pub fn history_import_policy(&self) -> HistoryImportPolicy {
+        HistoryImportPolicy {
+            target_since: self.history_import_since,
+            legacy_recent_enabled: self.history_prefetch && self.history_import_since.is_none(),
+            full_sync_days: self.full_sync_days.clamp(1, 1095),
+            paused: self.history_import_paused,
+            requests_per_day: self.history_requests_per_day.clamp(1, 4000),
+        }
+    }
+
+    pub fn media_import_policy(&self) -> MediaImportPolicy {
+        MediaImportPolicy {
+            enabled: self.archive_media,
+            budget_mib: self.background_media_budget_mib,
+            phone_recovery: self.media_phone_recovery,
+            phone_requests_per_day: self.media_phone_requests_per_day.clamp(1, 4000),
+            large_files: self.media_import_large_files,
+        }
+    }
+
     pub fn from_legacy(settings: &Settings) -> Self {
         Self {
+            sync_mode: None,
+            history_import_since: None,
+            history_import_paused: false,
+            full_sync_days: 1095,
+            archive_media: false,
+            background_media_budget_mib: 20 * 1024,
+            history_requests_per_day: 1000,
             send_read_receipts: settings.send_read_receipts,
             send_typing: settings.send_typing,
             auto_download: settings.auto_download,
@@ -873,6 +955,9 @@ impl AccountSettings {
             save_contacts_to_phone: settings.save_contacts_to_phone,
             wallpaper_image: settings.wallpaper_image.clone(),
             history_prefetch: false,
+            media_phone_recovery: false,
+            media_phone_requests_per_day: 50,
+            media_import_large_files: false,
             list_filter: None,
             call_filter: None,
         }
@@ -1314,6 +1399,41 @@ mod tests {
         assert_eq!(Settings::load(&settings_path), settings);
         assert_eq!(AccountSettings::load(&account_path), account);
         assert_eq!(AccountRoster::load(&roster_path).unwrap(), roster);
+    }
+
+    #[test]
+    fn legacy_prefetch_stays_recent_and_never_becomes_a_three_year_job() {
+        let settings: AccountSettings =
+            serde_json::from_str(r#"{"history_prefetch":true}"#).unwrap();
+        let policy = settings.history_import_policy();
+        assert_eq!(policy.target_since, None);
+        assert!(policy.legacy_recent_enabled);
+        assert_eq!(settings.sync_mode, None);
+    }
+
+    #[test]
+    fn dated_history_and_media_policy_round_trip_per_account() {
+        let settings = AccountSettings {
+            sync_mode: Some(SyncMode::Full),
+            history_import_since: Some(1_700_000_000),
+            history_import_paused: true,
+            full_sync_days: 730,
+            archive_media: true,
+            background_media_budget_mib: 4096,
+            history_requests_per_day: 321,
+            media_phone_recovery: true,
+            media_phone_requests_per_day: 17,
+            media_import_large_files: true,
+            ..AccountSettings::default()
+        };
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let decoded: AccountSettings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, settings);
+        assert_eq!(
+            decoded.history_import_policy().target_since,
+            Some(1_700_000_000)
+        );
+        assert!(decoded.media_import_policy().large_files);
     }
 
     #[test]

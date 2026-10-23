@@ -202,6 +202,7 @@ fn history_choice(app: &mut App, ui: &mut egui::Ui) {
         palette.text,
     );
     let mut selected = app.pairing_history;
+    let mut valid = true;
     let mut full = selected.days().is_some();
     ui.horizontal(|ui| {
         ui.radio_value(
@@ -218,6 +219,7 @@ fn history_choice(app: &mut App, ui: &mut egui::Ui) {
         let label = match selected {
             PairingHistory::FullTwoYears => crate::i18n::gettext(app.locale, "2 years"),
             PairingHistory::FullThreeYears => crate::i18n::gettext(app.locale, "3 years"),
+            PairingHistory::FullCustom { .. } => crate::i18n::gettext(app.locale, "Custom date"),
             _ => crate::i18n::gettext(app.locale, "1 year"),
         };
         egui::ComboBox::from_id_salt("pairing-history-years")
@@ -238,7 +240,44 @@ fn history_choice(app: &mut App, ui: &mut egui::Ui) {
                     PairingHistory::FullThreeYears,
                     crate::i18n::gettext(app.locale, "3 years"),
                 );
+                ui.selectable_value(
+                    &mut selected,
+                    PairingHistory::FullCustom {
+                        days: 365,
+                        target_since: target_for_days(crate::util::now(), 365).unwrap_or(0),
+                    },
+                    crate::i18n::gettext(app.locale, "Custom date"),
+                );
             });
+        if let PairingHistory::FullCustom { days, target_since } = selected {
+            let date_id = pairing_history_date_id(ui.id(), app.account().id.as_str(), target_since);
+            let mut date: String = ui.data_mut(|data| {
+                data.get_temp(date_id)
+                    .unwrap_or_else(|| format_utc_date(target_since).unwrap_or_default())
+            });
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut date)
+                    .hint_text("YYYY-MM-DD")
+                    .desired_width(150.0),
+            );
+            if response.changed() {
+                ui.data_mut(|data| data.insert_temp(date_id, date.clone()));
+            }
+            if let Some(target_since) = parse_utc_date(&date)
+                && let Some(days) = days_for_target(crate::util::now(), target_since)
+            {
+                selected = PairingHistory::FullCustom { days, target_since };
+            } else {
+                valid = false;
+                selected = PairingHistory::FullCustom { days, target_since };
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(app.locale, "Choose a UTC date from 1 to 1,095 days ago."),
+                    theme::regular(12.0),
+                    palette.secondary,
+                );
+            }
+        }
         theme::paragraph(
             ui,
             crate::i18n::gettext(
@@ -271,16 +310,45 @@ fn history_choice(app: &mut App, ui: &mut egui::Ui) {
         ui,
         &palette,
         &crate::i18n::gettext(app.locale, "Continue to linking"),
-        true,
+        valid,
     );
     #[cfg(test)]
     ui.ctx().data_mut(|data| {
         data.insert_temp(egui::Id::new("pairing-history-continue"), response.id);
     });
-    if response.clicked() {
+    if response.clicked() && valid {
         app.actions
             .push(Action::StartPairing(app.account().id.clone()));
     }
+}
+
+pub(crate) fn target_for_days(now: i64, days: u32) -> Option<i64> {
+    PairingHistory::target_for_days(now, days)
+}
+
+pub(crate) fn days_for_target(now: i64, target_since: i64) -> Option<u32> {
+    PairingHistory::days_for_target(now, target_since)
+}
+
+pub(crate) fn parse_utc_date(value: &str) -> Option<i64> {
+    format!("{}T00:00:00Z", value.trim())
+        .parse::<jiff::Timestamp>()
+        .ok()
+        .map(|timestamp| timestamp.as_second())
+}
+
+pub(crate) fn format_utc_date(target_since: i64) -> Option<String> {
+    Some(
+        jiff::Timestamp::from_second(target_since)
+            .ok()?
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .strftime("%Y-%m-%d")
+            .to_string(),
+    )
+}
+
+fn pairing_history_date_id(parent: egui::Id, account: &str, target_since: i64) -> egui::Id {
+    parent.with(("pairing-history-date", account, target_since))
 }
 
 pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
@@ -411,6 +479,24 @@ fn archive_key_lost(message: &str) -> bool {
 
 #[cfg(test)]
 mod start_over_tests {
+    #[test]
+    fn custom_dates_round_trip_at_utc_midnight() {
+        let target = super::parse_utc_date("2025-02-28").unwrap();
+        assert_eq!(
+            super::format_utc_date(target).as_deref(),
+            Some("2025-02-28")
+        );
+        assert!(super::parse_utc_date("2025-02-30").is_none());
+    }
+
+    #[test]
+    fn custom_date_drafts_are_scoped_to_account_and_committed_target() {
+        let parent = egui::Id::new("history-choice");
+        let first = super::pairing_history_date_id(parent, "1", 100);
+        assert_ne!(first, super::pairing_history_date_id(parent, "2", 100));
+        assert_ne!(first, super::pairing_history_date_id(parent, "1", 200));
+    }
+
     fn chooser_frame(
         app: &mut crate::app::App,
         ctx: &egui::Context,
@@ -535,12 +621,21 @@ mod start_over_tests {
                     egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(response.rect),
                     "Continue stays inside the window"
                 );
-                // The full app frame reports window presence before any input.
-                // Account for that command without permitting pairing to start
-                // merely because the chooser was displayed or focused.
-                assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+                // Attaching reports window presence before any input. The test
+                // helper draws only the interface half of a frame, so account
+                // policy synchronization belongs to the separately tested
+                // background pass. Focusing the chooser must not start pairing.
+                let before_continue: Vec<_> =
+                    std::iter::from_fn(|| commands.try_recv().ok()).collect();
                 assert!(
-                    commands.try_recv().is_err(),
+                    before_continue
+                        .iter()
+                        .any(|command| matches!(command, Command::SetOnline(true)))
+                );
+                assert!(
+                    !before_continue
+                        .iter()
+                        .any(|command| matches!(command, Command::StartPairing(_))),
                     "displaying or focusing Continue must not start pairing: {size:?}, {history:?}"
                 );
                 assert_eq!(app.link, LinkStatus::ChooseHistory);

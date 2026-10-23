@@ -21,6 +21,11 @@ pub enum PairingHistory {
     FullOneYear,
     FullTwoYears,
     FullThreeYears,
+    /// Exact archive boundary with the coarse day count sent at pairing.
+    FullCustom {
+        days: u32,
+        target_since: i64,
+    },
 }
 
 impl PairingHistory {
@@ -31,7 +36,38 @@ impl PairingHistory {
             Self::FullOneYear => Some(365),
             Self::FullTwoYears => Some(730),
             Self::FullThreeYears => Some(1095),
+            Self::FullCustom { days, .. } => Some(days),
         }
+    }
+
+    /// Exact UTC archive boundary frozen before pairing begins.
+    pub fn target_since(self, now: i64) -> Option<i64> {
+        match self {
+            Self::Recent => None,
+            Self::FullCustom { target_since, .. } => Some(target_since),
+            full => Self::target_for_days(now, full.days()?),
+        }
+    }
+
+    /// Inclusive UTC start date for a `days`-day range ending today.
+    pub fn target_for_days(now: i64, days: u32) -> Option<i64> {
+        (1..=1095).contains(&days).then(|| {
+            now.div_euclid(86_400)
+                .saturating_mul(86_400)
+                .saturating_sub(i64::from(days - 1) * 86_400)
+        })
+    }
+
+    /// Day profile for an exact UTC-midnight target.
+    pub fn days_for_target(now: i64, target_since: i64) -> Option<u32> {
+        let today = now.div_euclid(86_400).saturating_mul(86_400);
+        let age = today.checked_sub(target_since)?;
+        if target_since.rem_euclid(86_400) != 0 || age < 0 || age % 86_400 != 0 {
+            return None;
+        }
+        u32::try_from(age / 86_400 + 1)
+            .ok()
+            .filter(|days| (1..=1095).contains(days))
     }
 }
 
@@ -1623,6 +1659,7 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
 
 /// Maximum size of an attachment downloaded without the reader asking.
 pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+pub(crate) const MANUAL_DOWNLOAD_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
@@ -1724,6 +1761,81 @@ impl StorageStats {
             track * (bytes as f32 / total as f32)
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImportRunState {
+    #[default]
+    Idle,
+    WaitingForInitialSync,
+    Running,
+    BackingOff,
+    Paused,
+    NeedsAttention,
+    Finished,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChatImportReason {
+    #[default]
+    Queued,
+    WaitingForPhone,
+    Advancing,
+    RetrySend,
+    RetryTimeout,
+    RetryNoProgress,
+    RetryParse,
+    RetryStorage,
+    WaitingForAnchor,
+    ReachedCutoff,
+    PhoneExhausted,
+    ExcludedLocked,
+    ExcludedLeft,
+    ExcludedUnsupported,
+    CorrelationUnavailable,
+    RetryLimitReached,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChatImportProgress {
+    pub chat: ChatId,
+    pub reason: ChatImportReason,
+    pub frontier: Option<i64>,
+    pub pages: u32,
+    pub messages: u64,
+    pub retry_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HistoryImportProgress {
+    pub target_since: Option<i64>,
+    pub state: ImportRunState,
+    pub failure_streak: u8,
+    pub reason: Option<ChatImportReason>,
+    pub completed: u32,
+    pub total: u32,
+    pub excluded: u32,
+    pub retry_at: Option<i64>,
+    pub chats: Vec<ChatImportProgress>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MediaImportProgress {
+    pub cdn_pending: u64,
+    pub needs_phone: u64,
+    pub downloaded: u64,
+    pub unavailable: u64,
+    pub policy_too_large: u64,
+    pub cancelled: u64,
+    pub bytes: Option<u64>,
+    pub budget_reached: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ArchiveRecoveryProgress {
+    pub history: HistoryImportProgress,
+    pub media: MediaImportProgress,
+    pub connected: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -3025,6 +3137,23 @@ pub enum Action {
     SubmitAppLockForm,
     /// How long ZapFast may go unused before it locks.
     SetAutoLock(crate::settings::AutoLock),
+    SetSyncMode {
+        mode: crate::settings::SyncMode,
+        target_since: Option<i64>,
+        full_sync_days: u32,
+    },
+    SetHistoryImportPaused(bool),
+    ResumeHistoryImport,
+    SetMediaImportPolicy {
+        enabled: bool,
+        phone_recovery: bool,
+        large_files: bool,
+    },
+    SetImportLimits {
+        history_requests_per_day: u32,
+        media_phone_requests_per_day: u32,
+        background_media_budget_mib: u32,
+    },
     Reconnect,
     /// Updates the account's choice before requesting a pairing code.
     ChoosePairingHistory {
@@ -3496,6 +3625,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn pairing_history_freezes_exact_utc_dates_within_supported_range() {
+        let midday = 2_000 * 86_400 + 43_200;
+        for days in [1, 365, 730, 1095] {
+            let target = PairingHistory::target_for_days(midday, days).unwrap();
+            assert_eq!(target.rem_euclid(86_400), 0);
+            assert_eq!(PairingHistory::days_for_target(midday, target), Some(days));
+        }
+        assert_eq!(PairingHistory::target_for_days(midday, 0), None);
+        assert_eq!(PairingHistory::target_for_days(midday, 1096), None);
+        assert_eq!(
+            PairingHistory::days_for_target(midday, midday.div_euclid(86_400) * 86_400),
+            Some(1)
+        );
+    }
 
     #[test]
     fn list_filters_survive_their_stored_form() {
