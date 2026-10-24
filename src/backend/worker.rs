@@ -5780,10 +5780,11 @@ impl Worker {
                     // The answer to a request that already timed out is
                     // archived; tell the app to page again. A reader's
                     // request shows it, a background one stays quiet.
-                    let silent = self
-                        .late_older
-                        .remove(index)
-                        .is_none_or(|late| late.background);
+                    let late = self.late_older.remove(index);
+                    let silent = late.as_ref().is_none_or(|late| late.background);
+                    if late.is_some_and(|late| late.background) {
+                        self.prefetch.answered_late(&chat);
+                    }
                     self.emit(Event::OlderFetched { chat, more, silent });
                 }
                 AnswerOwner::Unclaimed => {
@@ -22583,6 +22584,63 @@ mod older_history_tests {
         assert_eq!(silences(&events), [false]);
         assert_eq!(pages(&events), 1);
         assert!(worker.pending_older.is_empty());
+    }
+
+    /// A matched late page breaks the timeout streak without completing or
+    /// changing the newer background request for the same chat.
+    #[test]
+    fn a_late_background_page_resets_the_timeout_streak() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        prefetching(&mut worker);
+        worker
+            .prefetch
+            .set_chats(&[Chat::new(CHAT.into(), "First".into())]);
+        asked(&mut worker, false, true, 1, Some("old"));
+        worker.pending_older.get_mut(CHAT).unwrap().asked =
+            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
+        worker.expire_older_requests();
+        drain(&events);
+
+        worker.prefetch.start_history(CHAT.into());
+        asked(&mut worker, false, true, 2, Some("new"));
+        let asked_at = worker.pending_older[CHAT].asked;
+        let before = worker.pending_older[CHAT].before.clone();
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed, Some("old"));
+        let late = drain(&events);
+        assert_eq!(silences(&late), [true]);
+        assert_eq!(pages(&late), 0);
+        let pending = &worker.pending_older[CHAT];
+        assert_eq!(pending.serial, 2);
+        assert_eq!(pending.request.as_deref(), Some("new"));
+        assert_eq!(pending.asked, asked_at);
+        assert_eq!(pending.before, before);
+        assert!(pending.background);
+        assert!(
+            worker
+                .prefetch
+                .next_history(Instant::now() + Duration::from_secs(900), false)
+                .is_none()
+        );
+
+        for serial in 2..=3 {
+            if serial == 3 {
+                worker.prefetch.start_history(CHAT.into());
+                asked(&mut worker, false, true, serial, Some("third"));
+            }
+            worker.pending_older.get_mut(CHAT).unwrap().asked =
+                Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
+            worker.expire_older_requests();
+            drain(&events);
+        }
+        assert_eq!(
+            worker
+                .prefetch
+                .next_history(Instant::now() + Duration::from_secs(900), false)
+                .as_deref(),
+            Some(CHAT),
+            "only the two timeouts since the late page count"
+        );
     }
 
     /// Without ids, answers are matched by chat. The late background answer

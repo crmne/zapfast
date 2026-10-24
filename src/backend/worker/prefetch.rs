@@ -212,6 +212,15 @@ impl State {
         true
     }
 
+    /// A matched late background answer breaks its chat's timeout streak,
+    /// without completing a newer turn or changing account-wide backoff.
+    pub fn answered_late(&mut self, chat: &str) {
+        if self.history_retries.remove(chat).is_some() {
+            // A chat paused by the timeout limit may have left the queue.
+            self.touch();
+        }
+    }
+
     /// Backs off only the chat whose background request went unanswered.
     pub fn timeout_history(&mut self, chat: &str, now: Instant) -> bool {
         if self.history_chat.as_deref() != Some(chat) {
@@ -518,6 +527,45 @@ mod tests {
         state.on_connected();
         state.set_chats(&chats);
         assert_eq!(state.next_history(now, false).as_deref(), Some("a"));
+    }
+
+    /// A late answer can reopen a timeout pause, but cannot release another
+    /// chat's turn or clear the account's send-failure backoff.
+    #[test]
+    fn a_late_answer_reopens_only_its_chats_timeout_pause() {
+        let mut state = State::default();
+        state.configure(true, None);
+        let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
+        state.set_chats(&chats);
+        let mut now = Instant::now();
+        for _ in 0..HISTORY_MAX_TIMEOUTS {
+            state.start_history("a".into());
+            assert!(state.timeout_history("a", now));
+            now += Duration::from_secs(900);
+        }
+        assert!(!state.holds("a"));
+        state.start_history("b".into());
+        assert!(state.fail_history("b", now));
+        let due = state.history_due;
+        now += Duration::from_secs(30);
+        assert_eq!(state.next_history(now, false).as_deref(), Some("b"));
+        state.start_history("b".into());
+        state.answered_late("a");
+        assert!(state.needs_chats());
+        assert_eq!(state.history_failures, 1);
+        assert_eq!(state.history_due, due);
+        state.set_chats(&chats);
+        assert!(state.holds("a"));
+        assert!(state.next_history(now, false).is_none());
+        assert!(state.finish_history("b", true, now));
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP, false).as_deref(),
+            Some("a")
+        );
+        assert!(
+            !state.pages.contains_key("a"),
+            "a late page does not spend the page budget"
+        );
     }
 
     /// Clearing a chat discards its retry state, and callbacks for requests
