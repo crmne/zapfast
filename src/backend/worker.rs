@@ -5869,9 +5869,9 @@ impl Worker {
             let (explicit, background) = (request.explicit, request.background);
             self.remember_late(chat.clone(), request);
             if background {
-                // The chat goes to the back of the queue and the background
-                // waits out its backoff; nothing is shown for it.
-                self.prefetch.fail_history(&chat, Instant::now());
+                // Only this chat backs off; the others keep the normal
+                // background pace. Nothing is shown for the failed request.
+                self.prefetch.timeout_history(&chat, Instant::now());
                 self.emit(Event::OlderFetched {
                     chat,
                     more: true,
@@ -22506,6 +22506,30 @@ mod older_history_tests {
                 .next_history(Instant::now(), false)
                 .is_none(),
             "the turn ended and the gap before the next one began"
+        );
+    }
+
+    /// The worker distinguishes a silent response from a send error: the next
+    /// chat is ready at the ordinary gap, not an account-wide retry delay.
+    #[test]
+    fn a_background_timeout_does_not_back_off_other_chats() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        prefetching(&mut worker);
+        worker.prefetch.set_chats(&[
+            Chat::new(CHAT.into(), "First".into()),
+            Chat::new("other@s.whatsapp.net".into(), "Other".into()),
+        ]);
+        asked(&mut worker, false, true, 1, Some("bg"));
+        worker.pending_older.get_mut(CHAT).unwrap().asked =
+            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
+        worker.expire_older_requests();
+        assert_eq!(silences(&drain(&events)), [true]);
+        assert_eq!(
+            worker
+                .prefetch
+                .next_history(Instant::now() + prefetch::HISTORY_GAP, false)
+                .as_deref(),
+            Some("other@s.whatsapp.net")
         );
     }
 

@@ -144,8 +144,14 @@ name or description, in the interface language or in English.
   active ones (never channels). It sends at most one request every twenty
   seconds, and only while no other history request is waiting. Each chat is
   asked for at most five pages each time ZapFast runs, and a chat the phone
-  does not answer goes to the back of the queue. Pages fetched this way go into
-  the archive without moving the view. A chat the phone says has nothing older
+  does not answer goes to the back of the queue. Unanswered requests back off
+  for that chat only; other chats keep the normal twenty-second gap. After
+  three unanswered requests in a row, that chat's background recovery pauses
+  until ZapFast reconnects or restarts. This does not mark its history as
+  complete or prevent you from requesting older messages manually. A successful
+  background page resets that chat's timeout count. Requests that cannot be
+  sent still back off the whole account. Pages fetched this way go into the
+  archive without moving the view. A chat the phone says has nothing older
   is not asked again.
 - **Keep chats archived**: on by default. When off, a new message, received or
   sent, brings an archived chat back to the list. Applies to all accounts here
