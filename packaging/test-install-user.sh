@@ -39,6 +39,8 @@ check_prefix() {
   local entry="$prefix/share/applications/zapfast.desktop"
   test -s "$entry"
   test -s "$prefix/share/icons/hicolor/scalable/apps/zapfast.svg"
+  test -s "$prefix/bin/zapfast-portable.txt"
+  test "$(< "$prefix/bin/zapfast-portable.txt")" = "zapfast-portable-v1"
 
   # `%U` stays after the quoted path: it is what passes a `whatsapp://` link
   # to the binary, which the MimeType line claims this entry handles.
@@ -85,5 +87,7 @@ grep -qxF "Exec=\"$work/relative/bin/zapfast\" %U" "$work/relative/share/applica
   echo "a relative prefix left a relative Exec" >&2
   exit 1
 }
+test -s "$work/relative/bin/zapfast-portable.txt"
+test "$(< "$work/relative/bin/zapfast-portable.txt")" = "zapfast-portable-v1"
 
 echo "install-user.sh wrote a valid, escaped launcher entry for every prefix."
