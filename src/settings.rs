@@ -29,9 +29,9 @@ pub(crate) fn unhex(value: &str) -> Option<Vec<u8>> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeChoice {
-    #[default]
     Dark,
     Light,
+    #[default]
     System,
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
@@ -552,7 +552,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            theme: ThemeChoice::Dark,
+            theme: ThemeChoice::System,
             messages_theme: false,
             font: FontChoice::System,
             custom_titlebar: false,
@@ -970,6 +970,40 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_defaults_to_follow_system_for_new_and_missing_settings() {
+        assert_eq!(ThemeChoice::default(), ThemeChoice::System);
+        assert_eq!(Settings::default().theme, ThemeChoice::System);
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing_path = dir.path().join("missing-settings.json");
+        assert_eq!(Settings::load(&missing_path).theme, ThemeChoice::System);
+
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        assert_eq!(Settings::load(&path).theme, ThemeChoice::System);
+    }
+
+    #[test]
+    fn explicitly_saved_themes_survive_load_and_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        for theme in [
+            ThemeChoice::Dark,
+            ThemeChoice::Light,
+            ThemeChoice::System,
+            ThemeChoice::Messages,
+        ] {
+            let settings = Settings {
+                theme,
+                ..Settings::default()
+            };
+            settings.save(&path).unwrap();
+            assert_eq!(Settings::load(&path).theme, theme);
+        }
+    }
 
     #[test]
     fn earlier_bundled_sound_names_still_load() {

@@ -1738,6 +1738,8 @@ mod tests {
     #[test]
     fn the_theme_dropdown_selects_spotifast_palettes_and_returns_to_follow_system() {
         let mut app = super::super::tests::app();
+        // Keep Follow system unique to the open menu while scrolling its choices.
+        app.settings.theme = ThemeChoice::Dark;
         app.page = Page::Settings;
         app.custom_themes =
             crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
