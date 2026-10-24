@@ -9,7 +9,15 @@ pub const HISTORY_GAP: Duration = Duration::from_secs(20);
 /// history would be drained in one run, and the phone asked for page after
 /// page until it said it had nothing more.
 pub const HISTORY_MAX_PAGES: u32 = 5;
+/// Unanswered background requests before a chat waits for reconnect.
+const HISTORY_MAX_TIMEOUTS: u32 = 3;
 const RECENT_LIMIT: usize = 10;
+
+/// One chat's unanswered requests and the earliest time it may retry.
+struct HistoryRetry {
+    failures: u32,
+    due: Instant,
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -28,7 +36,10 @@ pub(super) struct State {
     /// again, and only then.
     rebuild: bool,
     history_due: Option<Instant>,
+    /// Send failures still back off the account, since another chat may fail too.
     history_failures: u32,
+    /// A silent phone response backs off its chat without delaying the others.
+    history_retries: HashMap<ChatId, HistoryRetry>,
     history_chat: Option<ChatId>,
 }
 
@@ -59,6 +70,7 @@ impl State {
     pub fn on_connected(&mut self) {
         self.exhausted.clear();
         self.history_failures = 0;
+        self.history_retries.clear();
         self.history_due = None;
         self.rebuild = true;
     }
@@ -90,8 +102,13 @@ impl State {
         let wanted = targets(chats, self.on, self.focused.as_deref());
         let exhausted = &self.exhausted;
         let pages = &self.pages;
+        let retries = &self.history_retries;
         let askable = |chat: &ChatId| {
-            !exhausted.contains(chat) && pages.get(chat).copied().unwrap_or(0) < HISTORY_MAX_PAGES
+            !exhausted.contains(chat)
+                && pages.get(chat).copied().unwrap_or(0) < HISTORY_MAX_PAGES
+                && retries
+                    .get(chat)
+                    .is_none_or(|retry| retry.failures < HISTORY_MAX_TIMEOUTS)
         };
         self.queue
             .retain(|chat| wanted.contains(chat) && askable(chat));
@@ -112,6 +129,10 @@ impl State {
     fn may_ask(&self, chat: &ChatId) -> bool {
         !self.exhausted.contains(chat)
             && self.pages.get(chat).copied().unwrap_or(0) < HISTORY_MAX_PAGES
+            && self
+                .history_retries
+                .get(chat)
+                .is_none_or(|retry| retry.failures < HISTORY_MAX_TIMEOUTS)
     }
 
     /// The open chat is asked first, wherever it is in the queue.
@@ -125,6 +146,7 @@ impl State {
         }
     }
 
+    /// Selects a ready chat without letting a neighbour's retry delay block it.
     pub fn next_history(&self, now: Instant, phone_busy: bool) -> Option<ChatId> {
         if !self.on || phone_busy || self.history_chat.is_some() {
             return None;
@@ -132,7 +154,16 @@ impl State {
         if self.history_due.is_some_and(|due| now < due) {
             return None;
         }
-        self.queue.front().cloned()
+        self.queue
+            .iter()
+            .find(|chat| {
+                self.may_ask(chat)
+                    && self
+                        .history_retries
+                        .get(*chat)
+                        .is_none_or(|retry| now >= retry.due)
+            })
+            .cloned()
     }
 
     pub fn start_history(&mut self, chat: ChatId) {
@@ -168,6 +199,7 @@ impl State {
         }
         self.history_chat = None;
         self.history_failures = 0;
+        self.history_retries.remove(chat);
         self.history_due = Some(now + HISTORY_GAP);
         self.count_page(chat);
         if more {
@@ -180,6 +212,41 @@ impl State {
         true
     }
 
+    /// A matched late background answer breaks its chat's timeout streak,
+    /// without completing a newer turn or changing account-wide backoff.
+    pub fn answered_late(&mut self, chat: &str) {
+        if self.history_retries.remove(chat).is_some() {
+            // A chat paused by the timeout limit may have left the queue.
+            self.touch();
+        }
+    }
+
+    /// Backs off only the chat whose background request went unanswered.
+    pub fn timeout_history(&mut self, chat: &str, now: Instant) -> bool {
+        if self.history_chat.as_deref() != Some(chat) {
+            return false;
+        }
+        self.history_chat = None;
+        let retry = self
+            .history_retries
+            .entry(chat.to_owned())
+            .or_insert(HistoryRetry {
+                failures: 0,
+                due: now,
+            });
+        retry.failures = retry.failures.saturating_add(1);
+        let shift = (retry.failures - 1).min(5);
+        let delay = (30 * (1_u64 << shift)).min(900);
+        retry.due = now + Duration::from_secs(delay);
+        self.history_due = Some(now + HISTORY_GAP);
+        // A turn spent, not a page read: the cap counts what the phone
+        // actually answered. Retry exhaustion only pauses this chat until
+        // reconnect; it does not mean the phone has no older history.
+        self.rotate(chat);
+        true
+    }
+
+    /// A request that could not be sent backs off the whole account.
     pub fn fail_history(&mut self, chat: &str, now: Instant) -> bool {
         if self.history_chat.as_deref() != Some(chat) {
             return false;
@@ -189,11 +256,8 @@ impl State {
         let shift = (self.history_failures - 1).min(5);
         let delay = (30 * (1_u64 << shift)).min(900);
         self.history_due = Some(now + Duration::from_secs(delay));
-        // A turn spent, not a page read: the cap counts what the phone
-        // actually answered, so a run of timeouts cannot put a chat out for
-        // the session without one page ever arriving. The chat still goes to
-        // the back, so it stops holding up the ones behind it, and the
-        // backoff above is what keeps it from being asked again at once.
+        // A send failure may affect every chat. Keep the account backoff,
+        // without counting it as a page or a silent response from this chat.
         self.rotate(chat);
         true
     }
@@ -208,6 +272,7 @@ impl State {
         self.queue.retain(|queued| queued != chat);
         self.pages.remove(chat);
         self.exhausted.remove(chat);
+        self.history_retries.remove(chat);
     }
 
     fn count_page(&mut self, chat: &str) {
@@ -361,6 +426,176 @@ mod tests {
                 .as_deref(),
             Some("a"),
             "a chat comes back after its backoff, behind the others"
+        );
+    }
+
+    /// Silent chats must not accumulate an account-wide retry delay before a
+    /// healthy chat at the back gets its first request.
+    #[test]
+    fn silent_chats_do_not_extend_the_gap_for_other_chats() {
+        let mut state = State::default();
+        state.configure(true, None);
+        let chats: Vec<_> = (0..8)
+            .map(|index| chat(&format!("chat-{index}"), 8 - index, false, 0, false))
+            .collect();
+        state.set_chats(&chats);
+        let mut now = Instant::now();
+        for index in 0..7 {
+            let id = format!("chat-{index}");
+            assert_eq!(state.next_history(now, false).as_deref(), Some(id.as_str()));
+            state.start_history(id.clone());
+            assert!(state.timeout_history(&id, now));
+            assert!(
+                state
+                    .next_history(now + HISTORY_GAP - Duration::from_millis(1), false)
+                    .is_none()
+            );
+            now += HISTORY_GAP;
+        }
+        assert_eq!(state.next_history(now, false).as_deref(), Some("chat-7"));
+    }
+
+    /// A send error may affect the connection, so changing chats must not
+    /// bypass the existing account-wide exponential backoff.
+    #[test]
+    fn send_failures_keep_the_account_backoff() {
+        let mut state = State::default();
+        state.configure(true, None);
+        state.set_chats(&[chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)]);
+        let mut now = Instant::now();
+        for delay in [30, 60, 120] {
+            let id = state.next_history(now, false).unwrap();
+            state.start_history(id.clone());
+            assert!(state.fail_history(&id, now));
+            assert!(state.next_history(now + HISTORY_GAP, false).is_none());
+            now += Duration::from_secs(delay);
+        }
+        assert!(state.next_history(now, false).is_some());
+        assert!(state.history_retries.is_empty());
+    }
+
+    /// A healthy chat cannot reset its neighbour's consecutive failures or
+    /// shorten that neighbour's own retry delay.
+    #[test]
+    fn successful_pages_reset_only_their_own_chat() {
+        let mut state = State::default();
+        state.configure(true, None);
+        state.set_chats(&[chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)]);
+        let now = Instant::now();
+        state.start_history("a".into());
+        assert!(state.timeout_history("a", now));
+        state.start_history("b".into());
+        assert!(state.timeout_history("b", now + HISTORY_GAP));
+        state.start_history("a".into());
+        assert!(state.timeout_history("a", now + HISTORY_GAP * 2));
+        state.start_history("b".into());
+        assert!(state.finish_history("b", true, now + HISTORY_GAP * 3));
+        assert!(!state.history_retries.contains_key("b"));
+        assert_eq!(state.history_retries["a"].failures, 2);
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP * 4, false).as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP * 5, false).as_deref(),
+            Some("a")
+        );
+    }
+
+    /// A retry pause survives queue rebuilds and switch changes, but is not
+    /// mistaken for the phone saying there is no older history.
+    #[test]
+    fn repeated_timeouts_pause_only_their_chat_until_reconnect() {
+        let mut state = State::default();
+        state.configure(true, None);
+        let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
+        state.set_chats(&chats);
+        let mut now = Instant::now();
+        for _ in 0..HISTORY_MAX_TIMEOUTS {
+            state.start_history("a".into());
+            assert!(state.timeout_history("a", now));
+            now += Duration::from_secs(900);
+        }
+        state.configure(false, None);
+        assert!(state.next_history(now, false).is_none());
+        state.configure(true, Some("a".into()));
+        state.set_chats(&chats);
+        assert!(!state.holds("a"));
+        assert!(!state.exhausted.contains("a"));
+        assert_eq!(state.next_history(now, false).as_deref(), Some("b"));
+        assert!(state.next_history(now, true).is_none());
+        state.on_connected();
+        state.set_chats(&chats);
+        assert_eq!(state.next_history(now, false).as_deref(), Some("a"));
+    }
+
+    /// A late answer can reopen a timeout pause, but cannot release another
+    /// chat's turn or clear the account's send-failure backoff.
+    #[test]
+    fn a_late_answer_reopens_only_its_chats_timeout_pause() {
+        let mut state = State::default();
+        state.configure(true, None);
+        let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
+        state.set_chats(&chats);
+        let mut now = Instant::now();
+        for _ in 0..HISTORY_MAX_TIMEOUTS {
+            state.start_history("a".into());
+            assert!(state.timeout_history("a", now));
+            now += Duration::from_secs(900);
+        }
+        assert!(!state.holds("a"));
+        state.start_history("b".into());
+        assert!(state.fail_history("b", now));
+        let due = state.history_due;
+        now += Duration::from_secs(30);
+        assert_eq!(state.next_history(now, false).as_deref(), Some("b"));
+        state.start_history("b".into());
+        state.answered_late("a");
+        assert!(state.needs_chats());
+        assert_eq!(state.history_failures, 1);
+        assert_eq!(state.history_due, due);
+        state.set_chats(&chats);
+        assert!(state.holds("a"));
+        assert!(state.next_history(now, false).is_none());
+        assert!(state.finish_history("b", true, now));
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP, false).as_deref(),
+            Some("a")
+        );
+        assert!(
+            !state.pages.contains_key("a"),
+            "a late page does not spend the page budget"
+        );
+    }
+
+    /// Clearing a chat discards its retry state, and callbacks for requests
+    /// that no longer own the turn must not recreate it.
+    #[test]
+    fn forgetting_a_chat_removes_its_retry_and_rejects_stale_failures() {
+        let mut state = State::default();
+        state.configure(true, None);
+        let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
+        state.set_chats(&chats);
+        let now = Instant::now();
+        state.start_history("a".into());
+        assert!(!state.timeout_history("b", now));
+        assert!(state.history_retries.is_empty());
+        assert!(state.timeout_history("a", now));
+        state.forget_chat("a");
+        assert!(!state.history_retries.contains_key("a"));
+        state.start_history("b".into());
+        assert!(!state.timeout_history("a", now));
+        assert!(!state.history_retries.contains_key("a"));
+        assert!(state.finish_history("b", true, now));
+        state.set_chats(&chats);
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP, false).as_deref(),
+            Some("b")
+        );
+        state.defer("b");
+        assert_eq!(
+            state.next_history(now + HISTORY_GAP, false).as_deref(),
+            Some("a")
         );
     }
 
@@ -660,9 +895,7 @@ mod tests {
         );
     }
 
-    /// A request the phone never answers does not spend the page budget: the
-    /// cap counts answered pages, so a run of timeouts cannot put a chat out
-    /// for the session before one page has arrived.
+    /// A send failure never spends the answered-page budget or the timeout limit.
     #[test]
     fn a_failed_request_does_not_spend_the_page_budget() {
         let mut state = State::default();
