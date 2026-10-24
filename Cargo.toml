@@ -168,8 +168,8 @@ fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 # The platform's interface font (Inter where there is none), and installed
 # fonts for other scripts.
 fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
-# Colour emoji in the platform's own style, with the bundled Noto behind
-# them, drawn off the interface thread.
+# Platform emoji with Noto fallback, or a custom font embedded at build time,
+# drawn off the interface thread.
 fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Follows the desktop's hinting and glyph coverage, live through the portal.
 fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1", features = ["watch"] }

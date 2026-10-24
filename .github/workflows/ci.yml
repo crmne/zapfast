@@ -104,6 +104,11 @@ jobs:
         run: mbx test --locked --all-targets
       - name: Tests (all features)
         run: mbx test --locked --all-targets --all-features
+      - name: Custom emoji renderer
+        env:
+          # Use the existing OFL font; custom builds need no proprietary asset.
+          ZAPFAST_EMOJI_FONT: ${{ github.workspace }}/assets/fonts/NotoColorEmoji.ttf
+        run: mbx test --locked --lib --all-features emoji::tests
       - name: Build macOS demo
         if: runner.os == 'macOS'
         run: mbx build --locked --features demo

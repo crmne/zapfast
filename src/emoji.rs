@@ -1,8 +1,6 @@
-//! Colour emoji in the platform's own style, from fastframe-emoji: Apple
-//! Color Emoji on macOS, Segoe UI Emoji on Windows, the desktop's emoji font
-//! on Linux, and the bundled Noto Color Emoji for whatever they lack (the
-//! country flags Segoe UI Emoji has none of, or a desktop without an emoji
-//! font).
+//! Colour emoji in the platform's own style, with bundled Noto fallback.
+//! Builds with ZAPFAST_EMOJI_FONT embed that font instead and disable system
+//! emoji so messages, reactions, the picker, and text fields use its artwork.
 //!
 //! Layout replaces each emoji sequence with a transparent placeholder, and
 //! its picture is painted over it. New pictures are drawn on a worker
@@ -15,16 +13,26 @@ use egui::{Pos2, Rect, TextFormat};
 
 pub use fastframe_emoji::{PLACEHOLDER, only_emoji};
 
-/// Noto Color Emoji, behind the platform's font.
-const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+include!(concat!(env!("OUT_DIR"), "/emoji-font.rs"));
+
+/// The default fallback, used when no custom font was supplied at build time.
+const NOTO: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+const BUNDLED: &[u8] = match CUSTOM_EMOJI_FONT {
+    Some(font) => font,
+    None => NOTO,
+};
+
+fn configuration() -> fastframe_emoji::EmojiSetup {
+    fastframe_emoji::EmojiSetup::default()
+        .system(CUSTOM_EMOJI_FONT.is_none())
+        .bundled(BUNDLED)
+        .synchronous(cfg!(any(test, feature = "demo")))
+}
 
 fn setup() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        fastframe_emoji::EmojiSetup::default()
-            .bundled(BUNDLED)
-            .synchronous(cfg!(any(test, feature = "demo")))
-            .install();
+        configuration().install();
     });
 }
 
@@ -34,7 +42,7 @@ pub fn available() -> bool {
     fastframe_emoji::available()
 }
 
-/// Finds and maps the emoji fonts before the first frame needs them.
+/// Loads the bundled emoji font before the first frame needs it.
 pub fn warm_up() {
     setup();
     fastframe_emoji::warm_up();
@@ -94,7 +102,7 @@ pub fn paint(ui: &egui::Ui, galley: &egui::Galley, origin: Pos2, placements: &[S
 mod tests {
     use super::*;
 
-    /// The bundled font alone, as a Mac or Windows machine falls back to it.
+    /// The bundled font alone, for comparison with the installed renderer.
     fn bundled() -> fastframe_emoji::Emoji {
         fastframe_emoji::EmojiSetup::default()
             .system(false)
@@ -109,10 +117,42 @@ mod tests {
         assert!(picture.has_colour());
     }
 
+    #[cfg(custom_emoji_font)]
+    #[test]
+    fn the_installed_renderer_uses_the_bundled_artwork() {
+        setup();
+        assert!(fastframe_emoji::available());
+        let expected = bundled();
+        for sequence in ["😀", "👍🏽", "🇩🇪", "❤️", "👨‍👩‍👧"] {
+            if let Some(picture) = expected.render(sequence, 72) {
+                assert_eq!(
+                    fastframe_emoji::get().render(sequence, 72),
+                    Some(picture),
+                    "{sequence} must use the bundled artwork instead of the system font"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(custom_emoji_font))]
+    #[test]
+    fn emoji_render_in_colour_at_chat_and_picker_sizes() {
+        let emoji = bundled();
+        for sequence in ["😀", "👍🏽", "🇩🇪", "❤️"] {
+            for height in [16, 24, 48, 72] {
+                let picture = emoji.render(sequence, height).expect("colour emoji");
+                assert_eq!(picture.size[1], height as usize);
+                assert!(picture.has_colour(), "{sequence} at {height}px");
+                assert!(picture.coverage() > 0.0, "{sequence} at {height}px");
+            }
+        }
+    }
+
+    #[cfg(not(custom_emoji_font))]
     #[test]
     fn the_bundled_font_joins_sequences() {
         let emoji = bundled();
-        for sequence in ["🇩🇪", "👍🏽", "👨‍👩‍👧", "#️⃣", "🏳️‍🌈"]
+        for sequence in ["🇩🇪", "👍🏽", "👨‍👩‍👧", "#️⃣", "🏳️‍🌈", "🫱🏼‍🫲🏿", "🏃‍➡️"]
         {
             let joined = emoji.render(sequence, 72).expect("a picture");
             let first: String = sequence.chars().take(1).collect();
@@ -120,6 +160,19 @@ mod tests {
                 Some(joined),
                 emoji.render(&first, 72),
                 "{sequence} fell back to its first part"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(custom_emoji_font))]
+    fn the_default_build_keeps_platform_emoji_and_noto_fallback() {
+        setup();
+        let expected = fastframe_emoji::EmojiSetup::default().bundled(NOTO).load();
+        for sequence in ["😀", "👍🏽", "🇩🇪"] {
+            assert_eq!(
+                fastframe_emoji::get().render(sequence, 24),
+                expected.render(sequence, 24)
             );
         }
     }

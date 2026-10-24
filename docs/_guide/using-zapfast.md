@@ -29,6 +29,10 @@ the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
 including the stickers used on the phone.
 
+Source builds can use a [custom emoji font]({% link _guide/custom-emoji.md %})
+in messages, reactions, the picker, and text fields. Sent messages remain
+standard Unicode; recipients see the artwork their own app uses.
+
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it. When

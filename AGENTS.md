@@ -354,8 +354,11 @@ protocol. These notes are for coding agents and new contributors.
   swaps every emoji for a placeholder glyph at layout time and paints the
   platform's picture over it afterwards (Apple Color Emoji, Segoe UI Emoji
   through DirectWrite, or the desktop's bitmap emoji font, with the bundled
-  Noto behind them). New pictures are drawn on its worker thread; tests and
-  demo builds draw them inside the frame. The interface font is the
+  Noto behind them). A build with `ZAPFAST_EMOJI_FONT` embeds the supplied
+  bitmap font instead and disables system emoji; the build script stages
+  it in `OUT_DIR`, never in the repository. See `docs/_guide/custom-emoji.md`.
+  New pictures are drawn on its worker thread; tests and demo builds draw
+  them inside the frame. The interface font is the
   platform's own (`fastframe_fonts::Primary::System`), and Inter in tests.
   fastframe-emoji's `EmojiPlugin` (added in `App::attach`) colours the
   emoji in every other egui text: labels, menus, tooltips, text fields. It
