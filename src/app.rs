@@ -20685,7 +20685,11 @@ mod tests {
         let mut app = app();
         let mut recent = Chat::new("recent".into(), "Recent".into());
         recent.last_activity = 20;
-        app.chats = vec![recent, Chat::new("draft".into(), "Draft".into())];
+        // An older chat, not a stranger never written to: those leave the
+        // list once their draft is gone.
+        let mut draft = Chat::new("draft".into(), "Draft".into());
+        draft.last_activity = 10;
+        app.chats = vec![recent, draft];
         let ids = |app: &App| -> Vec<String> {
             app.visible_chats()
                 .iter()
@@ -20865,10 +20869,11 @@ mod tests {
         app.search.clear();
         app.open_chat("2@s.whatsapp.net".into());
         assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
-        // A draft left unsent keeps the chat listed once it is closed.
+        // A draft left unsent keeps the chat listed once it is closed, and
+        // parked drafts come before other chats.
         app.open_chat = None;
         app.drafts.insert("2@s.whatsapp.net".into(), "hello".into());
-        assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
+        assert_eq!(names(&app), ["Stranger", "Ada", "Group"]);
     }
 
     #[test]
