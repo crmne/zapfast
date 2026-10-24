@@ -403,6 +403,53 @@ pub fn agent() -> ureq::Agent {
     agent
 }
 
+/// The agent for WhatsApp's own HTTP when no proxy is set: the web-version
+/// fetch and media downloads. Its resolver puts the IPv4 addresses a host
+/// resolves to before the IPv6 ones, keeping both: ureq tries the addresses
+/// one after another under one timeout, so a network whose IPv6 does not
+/// answer, which the system still prefers, spends the whole budget on the
+/// first AAAA record and never reaches IPv4 (#212, which fixed the same
+/// thing for the socket; the library's version fetch would otherwise time
+/// out on every link).
+pub fn direct_agent() -> ureq::Agent {
+    ureq::Agent::with_parts(
+        ureq::config::Config::builder().build(),
+        ureq::unversioned::transport::DefaultConnector::default(),
+        PreferIpv4,
+    )
+}
+
+/// Resolves as ureq does by default and orders the IPv4 addresses first. A
+/// host with only IPv6 keeps resolving, in its own order.
+#[derive(Debug, Default)]
+struct PreferIpv4;
+
+impl ureq::unversioned::resolver::Resolver for PreferIpv4 {
+    fn resolve(
+        &self,
+        uri: &http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let resolved = ureq::unversioned::resolver::DefaultResolver::default()
+            .resolve(uri, config, timeout)?;
+        let mut addrs = self.empty();
+        for addr in ipv4_first(resolved.iter().copied()) {
+            addrs.push(addr);
+        }
+        Ok(addrs)
+    }
+}
+
+/// Orders `addrs` with its IPv4 entries first, each family keeping its own
+/// order, so ureq's one-timeout, try-in-order connect reaches a working
+/// address even where the system's preferred IPv6 does not answer.
+fn ipv4_first(addrs: impl IntoIterator<Item = std::net::SocketAddr>) -> Vec<std::net::SocketAddr> {
+    let mut addrs: Vec<_> = addrs.into_iter().collect();
+    addrs.sort_by_key(|addr| addr.is_ipv6());
+    addrs
+}
+
 /// The Settings proxy as a reqwest proxy. reqwest reads the environment
 /// itself when this is `None`.
 pub fn reqwest_proxy() -> Option<reqwest::Proxy> {
@@ -441,7 +488,20 @@ impl TransportFactory for ProxyTransportFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn ipv4_addresses_go_first_and_each_family_keeps_its_order() {
+        let v6a = SocketAddr::from((Ipv6Addr::LOCALHOST, 1));
+        let v4a = SocketAddr::from((Ipv4Addr::LOCALHOST, 2));
+        let v6b = SocketAddr::from((Ipv6Addr::from([0x2606, 0x4700, 0, 0, 0, 0, 0, 1]), 3));
+        let v4b = SocketAddr::from((Ipv4Addr::new(157, 240, 7, 10), 4));
+        // The system's own preference, IPv6 first, is reordered but kept.
+        assert_eq!(ipv4_first([v6a, v4a, v6b, v4b]), vec![v4a, v4b, v6a, v6b]);
+        // A host with only IPv6 addresses keeps them, in their own order.
+        assert_eq!(ipv4_first([v6b, v6a]), vec![v6b, v6a]);
+    }
 
     #[test]
     fn parses_supported_schemes() {
