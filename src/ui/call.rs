@@ -47,9 +47,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let people = app.call_people();
     let me = app.call_self();
     let caller = app.call_caller_name();
-    // The whole window, minus the strip macOS keeps for the traffic lights.
+    // Keep the native macOS strip or ZapFast's separate title bar above the
+    // call surface, as the OS title bar stays above a native window's content.
     let screen = ctx.content_rect();
-    let screen = screen.with_min_y(screen.top() + theme::titlebar_inset(ctx));
+    let top_inset = theme::titlebar_inset(ctx) + theme::custom_titlebar_height(ctx);
+    let screen = screen.with_min_y(screen.top() + top_inset);
     egui::Area::new(egui::Id::new(SURFACE))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
@@ -68,12 +70,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 screen,
                 egui::Id::new(SURFACE).with("backdrop"),
                 egui::Sense::click_and_drag(),
-            );
-            // Where ZapFast draws the title bar, the screen's top drags the
-            // window, beneath the corner's buttons.
-            super::caption_drag(
-                ui,
-                Rect::from_min_size(screen.min, vec2(screen.width(), theme::TOP_BAR_HEIGHT)),
             );
             let inner = screen.shrink(PADDING);
             ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
@@ -299,12 +295,6 @@ fn corner_buttons(
         (palette.secondary, palette.text)
     };
     let corner = Rect::from_min_size(area.min, vec2(area.width(), 40.0));
-    // Clear of the caption buttons ZapFast draws over the window's corners.
-    let room = super::caption_room(ui.ctx(), corner, 120.0);
-    let corner = Rect::from_min_max(
-        egui::pos2(corner.left() + room.left, corner.top() + room.top),
-        egui::pos2(corner.right() - room.right, corner.bottom() + room.top),
-    );
     ui.scope_builder(egui::UiBuilder::new().max_rect(corner), |ui| {
         ui.horizontal(|ui| {
             if call.phase.is_live() {

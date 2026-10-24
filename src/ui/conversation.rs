@@ -364,8 +364,8 @@ const NAME_GLASS_LINES: f32 = 32.0;
 const BUTTON_GLASS: f32 = 36.0;
 /// The space between two of a vibrant header's buttons, beyond their glass.
 const BUTTON_GAP: f32 = 10.0;
-/// What the chat header needs beside the caption buttons ZapFast draws: its
-/// most buttons (Back, two calls, Search and More), the avatar, and a name.
+/// The chat header's minimum width if it reaches the window's caption row:
+/// its most buttons, avatar, and name.
 const HEADER_MIN_CONTENT: f32 = 320.0;
 
 /// The round glass under one of a vibrant header's buttons.
@@ -413,8 +413,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
             if theme::chrome_in_headers(ui.ctx()) {
                 super::titlebar_drag(ui, ui.max_rect());
             }
-            // The caption buttons ZapFast draws over a corner the header
-            // reaches: beside its own buttons, or above them when narrow.
+            // Keep a header that reaches the window edge clear of caption
+            // buttons; with the separate title bar, app headers sit below it.
             let room = super::caption_room(ui.ctx(), ui.max_rect(), HEADER_MIN_CONTENT);
             ui.add_space(room.top);
             let narrow = super::narrow(ui.ctx());

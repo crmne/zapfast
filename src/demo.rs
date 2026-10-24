@@ -6324,11 +6324,14 @@ mod tests {
 
     /// Where fastframe-titlebar draws the caption buttons for a footprint
     /// in a window `width` wide: GNOME's round ones from 14 to 42 points
-    /// down, or Windows' square ones centred in the header's height.
+    /// down, or Windows' square 40-point buttons flush to the top edge.
     fn caption_rects(footprint: fastframe_titlebar::Footprint, width: f32) -> Vec<egui::Rect> {
-        let linux = footprint.height < crate::theme::TOP_BAR_HEIGHT;
+        let windows = footprint.height == crate::theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT;
+        let linux = !windows && footprint.height < crate::theme::TOP_BAR_HEIGHT;
         let (top, bottom) = if linux {
             (0.0, 42.0)
+        } else if windows {
+            (0.0, crate::theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT)
         } else {
             (0.0, (footprint.height - 36.0) / 2.0 + 2.0 + 36.0)
         };
@@ -6393,11 +6396,9 @@ mod tests {
         }
     }
 
-    /// With the title bar ZapFast draws on Windows and Linux, no header
-    /// control lies under the caption buttons, at either end of the top edge
-    /// and in each layout: GNOME's buttons at the right or the left, and
-    /// Windows' taller row. Headers that reach a corner leave the buttons
-    /// room beside their own controls, or move them down when narrow.
+    /// With the separate title bar ZapFast draws on Windows and Linux, no app
+    /// control lies under the caption buttons at either end of the top row,
+    /// across pages, window sizes, and GNOME's left- or right-hand layouts.
     ///
     /// Not on macOS, which never draws them: its headers keep the traffic
     /// lights' layout under any preview, and drag the window from their top
@@ -6408,7 +6409,7 @@ mod tests {
         target_os = "macos",
         ignore = "macOS has the traffic lights, never the drawn caption buttons"
     )]
-    fn header_controls_keep_clear_of_the_drawn_caption_buttons() {
+    fn app_controls_start_below_the_drawn_titlebar() {
         use fastframe_titlebar::Footprint;
         let footprints = [
             // GNOME elsewhere than GNOME: minimize, maximize and close.
@@ -6423,11 +6424,11 @@ mod tests {
                 right: 0.0,
                 height: 41.0,
             },
-            // Windows: three square buttons centred in the header's height.
+            // Windows: three square buttons flush with the window edges.
             Footprint {
                 left: 0.0,
-                right: 3.0 * 36.0 + 5.0,
-                height: crate::theme::TOP_BAR_HEIGHT,
+                right: 3.0 * crate::theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT,
+                height: crate::theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT,
             },
         ];
         let wide = egui::vec2(1180.0, 780.0);
@@ -6481,6 +6482,14 @@ mod tests {
                 let ctx = egui::Context::default();
                 app.attach(&ctx);
                 crate::theme::preview_titlebar(&ctx, footprint);
+                let expected_height = if cfg!(target_os = "windows")
+                    && footprint.height == crate::theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT
+                {
+                    footprint.height
+                } else {
+                    footprint.height.max(42.0)
+                };
+                assert_eq!(crate::theme::custom_titlebar_height(&ctx), expected_height);
                 render_sized(&mut app, &ctx, size);
                 let under = widgets_under(&ctx, &caption_rects(footprint, size.x));
                 assert!(
@@ -6498,11 +6507,10 @@ mod tests {
         assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x)).is_empty());
     }
 
-    /// A header shares the caption row only at a corner it reaches: beside
-    /// the buttons when its content fits, under them otherwise, and not at
-    /// all below the row or away from the edge.
+    /// Caption room is reserved only for a rectangle that overlaps a
+    /// caption-button corner at the window edge.
     #[test]
-    fn a_header_makes_room_only_at_the_corner_it_reaches() {
+    fn caption_room_only_reserves_overlapping_top_edges() {
         use crate::ui::{CaptionRoom, caption_room};
         let ctx = egui::Context::default();
         crate::theme::preview_titlebar(
@@ -6567,7 +6575,7 @@ mod tests {
         output.textures_delta.clear();
     }
 
-    /// The drawn title bar's room goes in full screen, where the buttons go.
+    /// The separate drawn title bar disappears in full screen, as its buttons do.
     #[test]
     fn the_drawn_caption_buttons_take_no_room_in_full_screen() {
         let ctx = egui::Context::default();
@@ -6580,7 +6588,10 @@ mod tests {
             },
         );
         assert!(crate::theme::drawn_titlebar(&ctx));
-        assert!(crate::theme::chrome_in_headers(&ctx));
+        assert_eq!(
+            crate::theme::chrome_in_headers(&ctx),
+            crate::theme::macos_chrome(&ctx)
+        );
         let mut input = egui::RawInput::default();
         input
             .viewports
@@ -6592,6 +6603,7 @@ mod tests {
                 crate::theme::caption_footprint(ui.ctx()),
                 fastframe_titlebar::Footprint::default()
             );
+            assert_eq!(crate::theme::custom_titlebar_height(ui.ctx()), 0.0);
             let room = crate::ui::caption_room(ui.ctx(), ui.max_rect(), 0.0);
             assert_eq!(room, crate::ui::CaptionRoom::default());
         });

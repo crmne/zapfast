@@ -217,9 +217,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     let palette = app.palette;
     let locale = app.locale;
-    // The caption buttons ZapFast draws, beside the column's title row when
-    // it reaches the top-right corner, or above it when the window is narrow.
-    // Measured where the row stands unscrolled, so scrolling moves it away.
+    // Reserve room for caption buttons if the settings title reaches the
+    // window edge. The separate custom title bar keeps the app below it.
     let page = ui.max_rect();
     let column_width = (page.width() - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
     let room = super::caption_room(
@@ -305,8 +304,8 @@ const COLUMN_WIDTH: f32 = 640.0;
 const SIDE_MARGIN: f32 = 32.0;
 /// Space above and below the settings column.
 const TOP_MARGIN: f32 = 24.0;
-/// What the title row needs beside the caption buttons ZapFast draws: Back
-/// and the title.
+/// The title row's minimum content width if it reaches the window's caption
+/// row: Back and the title.
 const TITLE_MIN_CONTENT: f32 = 220.0;
 
 /// Where the settings column was laid out, for layout tests.

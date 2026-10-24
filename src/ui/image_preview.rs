@@ -60,6 +60,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // cannot reach the chat behind it. The field and every control over it come
     // from the palette, so the light theme reads as well as the dark one.
     let screen = ctx.content_rect();
+    let screen = screen.with_min_y(screen.top() + theme::custom_titlebar_height(ctx));
     let area = egui::Area::new(egui::Id::new("image-preview"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min);
@@ -81,9 +82,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
             // Inset from the window's edges, so the title does not touch the
             // left one and the close button keeps clear of the right.
-            // The header drags the window, and its actions stay clear of the
-            // caption buttons ZapFast draws over the window's corners.
-            super::caption_drag(ui, header_rect);
             let room = super::caption_room(ui.ctx(), header_rect, 0.0);
             let inset = header_rect.shrink2(vec2(14.0, 0.0));
             let inset = Rect::from_min_max(

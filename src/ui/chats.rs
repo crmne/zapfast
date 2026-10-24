@@ -139,21 +139,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             bottom: 8,
         })
         .show(ui, |ui| {
-            // Where ZapFast draws the title bar, the header's top drags the
-            // window and keeps clear of the caption buttons over a corner it
-            // reaches: the left one, or both while it fills a narrow window.
             let top = ui.max_rect();
             let room = super::caption_room(ui.ctx(), top, LIST_HEADER_MIN_CONTENT);
-            super::caption_drag(
-                ui,
-                Rect::from_min_size(
-                    top.min - vec2(14.0, 8.0),
-                    vec2(
-                        top.width() + 28.0,
-                        8.0 + room.top + super::conversation::HEADER_ROW,
-                    ),
-                ),
-            );
             ui.add_space(room.top);
             let row = ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), super::conversation::HEADER_ROW),

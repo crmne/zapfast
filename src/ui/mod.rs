@@ -86,7 +86,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         window_chrome(app, ui);
         return;
     }
-    // Where the headers share the top edge with the window's buttons, the
+    // macOS headers share the top edge with native traffic lights, so the
     // banner goes under the open chat's header instead.
     if !theme::chrome_in_headers(ctx) {
         banner(app, ui);
@@ -169,13 +169,6 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| {
-            // The top of every page drags the window, beneath its own
-            // widgets: the empty pane, Settings, and the Calls tab's start.
-            let top = ui.max_rect();
-            caption_drag(
-                ui,
-                egui::Rect::from_min_size(top.min, vec2(top.width(), theme::TOP_BAR_HEIGHT)),
-            );
             match app.page {
                 Page::Settings => settings::show(app, ui),
                 Page::Chats => conversation::show(app, ui),
@@ -498,8 +491,8 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Connection and history-sync banner.
-/// What the banner needs beside the caption buttons ZapFast draws: its line
-/// and a button.
+/// What the banner needs beside caption buttons when it reaches the window
+/// top edge: its line and a button.
 const BANNER_MIN_CONTENT: f32 = 320.0;
 
 fn banner(app: &mut App, ui: &mut egui::Ui) {
@@ -569,11 +562,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(Margin::symmetric(14, 6)),
         )
         .show(ui, |ui| {
-            // Over a page with no header (Settings, or no chat open) the
-            // banner takes the top-right corner from the caption buttons
-            // ZapFast draws, beside them or under them.
             let room = caption_room(ui.ctx(), ui.max_rect(), BANNER_MIN_CONTENT);
-            caption_drag(ui, ui.max_rect().with_max_y(ui.max_rect().top() + room.top));
             ui.add_space(room.top);
             ui.horizontal(|ui| {
                 ui.add_space(room.left);
@@ -746,34 +735,39 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
-/// Draggable space across the top of the linking and lock screens, which
-/// have no header: for the macOS traffic lights, or for the caption buttons
-/// ZapFast draws.
+/// A separate draggable title-bar row when ZapFast draws the window chrome,
+/// or the native macOS strip on screens without a header.
 fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
     let linked = app.is_linked() && !app.app_lock.is_locked();
-    if linked {
+    let custom_height = theme::custom_titlebar_height(ui.ctx());
+    if linked && custom_height == 0.0 {
         return;
     }
-    let inset = if theme::macos_chrome(ui.ctx()) {
-        theme::titlebar_inset(ui.ctx())
+    let inset = if custom_height > 0.0 {
+        custom_height
     } else {
-        theme::caption_footprint(ui.ctx()).height
+        theme::titlebar_inset(ui.ctx())
     };
     if inset == 0.0 {
         return;
     }
-    let fill = if linked {
-        app.palette.panel
-    } else {
-        app.palette.window
-    };
     egui::Panel::top("titlebar")
         .exact_size(inset)
         .show_separator_line(false)
-        .frame(Frame::new().fill(fill))
+        .frame(Frame::new().fill(app.palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
             titlebar_drag(ui, rect);
+            if custom_height > 0.0 {
+                let title_x = rect.left() + 12.0 + theme::caption_footprint(ui.ctx()).left;
+                ui.painter().text(
+                    egui::pos2(title_x, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    "ZapFast",
+                    egui::FontId::proportional(14.0),
+                    app.palette.secondary,
+                );
+            }
         });
 }
 
@@ -783,17 +777,7 @@ pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
     fastframe_titlebar::drag(ui, rect);
 }
 
-/// Makes `rect` drag the window while ZapFast draws the title bar, for the
-/// places macOS leaves to its own title bar strip: the pages, the panels at
-/// the right, and the screens over the window. Call it before the widgets
-/// inside `rect`, so they keep their clicks.
-pub(crate) fn caption_drag(ui: &mut egui::Ui, rect: egui::Rect) {
-    if theme::drawn_titlebar(ui.ctx()) && !theme::macos_chrome(ui.ctx()) {
-        titlebar_drag(ui, rect);
-    }
-}
-
-/// Where a header's own widgets go beside the caption buttons ZapFast draws
+/// Where a header's own widgets go beside caption buttons at the window edge
 /// (see [`caption_room`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct CaptionRoom {
@@ -849,7 +833,7 @@ pub(crate) fn caption_room(ctx: &egui::Context, rect: egui::Rect, min_content: f
 /// above everything else in it, and the resizable edges, while the custom
 /// title bar is on (Windows and Linux).
 fn window_chrome(app: &App, ui: &mut egui::Ui) {
-    if !fastframe_titlebar::enabled() {
+    if !fastframe_titlebar::visible(ui.ctx()) {
         return;
     }
     let palette = app.palette;
@@ -862,7 +846,11 @@ fn window_chrome(app: &App, ui: &mut egui::Ui) {
             palette.secondary
         },
         button: palette.surface_hover,
-        header_height: theme::TOP_BAR_HEIGHT,
+        header_height: if cfg!(target_os = "windows") {
+            theme::WINDOWS_CUSTOM_TITLEBAR_HEIGHT
+        } else {
+            theme::TOP_BAR_HEIGHT
+        },
     };
     // Literal calls, so xgettext extracts each label.
     let minimize = crate::i18n::gettext(app.locale, "Minimize");
@@ -875,24 +863,131 @@ fn window_chrome(app: &App, ui: &mut egui::Ui) {
         restore: &restore,
         close: &close,
     };
-    fastframe_titlebar::controls(ui, &style, &labels);
-    // The buttons draw in egui's foreground layer, as the call screen, the
-    // media viewer and dialogs do; a newer area there would cover them, and a
-    // modal one would take their clicks. These are the crate's area names.
     let layout = fastframe_titlebar::layout();
-    for (area, buttons) in [
-        ("fastframe-titlebar-left", &layout.left),
-        ("fastframe-titlebar-right", &layout.right),
+    if cfg!(target_os = "windows") {
+        windows_caption_buttons(ui, palette.secondary, &labels, layout);
+    } else {
+        fastframe_titlebar::controls(ui, &style, &labels);
+    }
+    // Keep the caption controls above screens and dialogs drawn earlier.
+    let (left_area, right_area) = if cfg!(target_os = "windows") {
+        (
+            "zapfast-windows-titlebar-left",
+            "zapfast-windows-titlebar-right",
+        )
+    } else {
+        ("fastframe-titlebar-left", "fastframe-titlebar-right")
+    };
+    for (area, buttons) in [(left_area, &layout.left), (right_area, &layout.right)] {
+        if !buttons.is_empty() {
+            ui.ctx().move_to_top(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new(area),
+            ));
+        }
+    }
+    // Its resize helper treats every press within five points of the edge as
+    // a resize; leave the flush Windows button group clickable instead.
+    if !cfg!(target_os = "windows") || !pointer_over_windows_caption_buttons(ui.ctx()) {
+        fastframe_titlebar::resize(ui);
+    }
+}
+
+const WINDOWS_CAPTION_BUTTON_SIZE: f32 = 40.0;
+
+fn windows_caption_buttons(
+    ui: &mut egui::Ui,
+    icon_color: egui::Color32,
+    labels: &fastframe_titlebar::Labels<'_>,
+    layout: &fastframe_titlebar::Layout,
+) {
+    let maximized = ui
+        .ctx()
+        .input(|input| input.viewport().maximized.unwrap_or(false));
+    for (id, anchor, buttons) in [
+        (
+            "zapfast-windows-titlebar-left",
+            Align2::LEFT_TOP,
+            &layout.left,
+        ),
+        (
+            "zapfast-windows-titlebar-right",
+            Align2::RIGHT_TOP,
+            &layout.right,
+        ),
     ] {
         if buttons.is_empty() {
             continue;
         }
-        ui.ctx().move_to_top(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new(area),
-        ));
+        egui::Area::new(egui::Id::new(id))
+            .anchor(anchor, vec2(0.0, 0.0))
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                ui.spacing_mut().button_padding = vec2(0.0, 0.0);
+                ui.horizontal(|ui| {
+                    for &button in buttons {
+                        let (icon, label, command) = match button {
+                            fastframe_titlebar::Button::Minimize => (
+                                Icon::Minus,
+                                labels.minimize,
+                                egui::ViewportCommand::Minimized(true),
+                            ),
+                            fastframe_titlebar::Button::Maximize if maximized => (
+                                Icon::Minimize,
+                                labels.restore,
+                                egui::ViewportCommand::Maximized(false),
+                            ),
+                            fastframe_titlebar::Button::Maximize => (
+                                Icon::Maximize,
+                                labels.maximize,
+                                egui::ViewportCommand::Maximized(true),
+                            ),
+                            fastframe_titlebar::Button::Close => {
+                                (Icon::X, labels.close, egui::ViewportCommand::Close)
+                            }
+                        };
+                        let image = icon.image(icon_color, 14.0).alt_text(label);
+                        let response = ui.add_sized(
+                            vec2(WINDOWS_CAPTION_BUTTON_SIZE, WINDOWS_CAPTION_BUTTON_SIZE),
+                            egui::Button::image(image)
+                                .corner_radius(CornerRadius::ZERO)
+                                .frame_when_inactive(false),
+                        );
+                        if response.on_hover_text(label).clicked() {
+                            ui.ctx().send_viewport_cmd(command);
+                        }
+                    }
+                });
+            });
     }
-    fastframe_titlebar::resize(ui);
+}
+
+fn pointer_over_windows_caption_buttons(ctx: &egui::Context) -> bool {
+    let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) else {
+        return false;
+    };
+    let layout = fastframe_titlebar::layout();
+    let window = ctx.content_rect();
+    [
+        (window.left(), layout.left.len()),
+        (
+            window.right() - layout.right.len() as f32 * WINDOWS_CAPTION_BUTTON_SIZE,
+            layout.right.len(),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .any(|(left, count)| {
+        egui::Rect::from_min_size(
+            egui::pos2(left, window.top()),
+            vec2(
+                count as f32 * WINDOWS_CAPTION_BUTTON_SIZE,
+                WINDOWS_CAPTION_BUTTON_SIZE,
+            ),
+        )
+        .contains(pointer)
+    })
 }
 
 #[cfg(test)]

@@ -626,6 +626,7 @@ pub const RADIUS_SMALL: u8 = 4;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
+pub const WINDOWS_CUSTOM_TITLEBAR_HEIGHT: f32 = 40.0;
 
 pub fn regular(size: f32) -> egui::FontId {
     fastframe_fonts::Weight::Regular.font_id(size)
@@ -1453,9 +1454,9 @@ pub fn preview_macos(ctx: &egui::Context) {
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("macos-preview"), true));
 }
 
-/// Horizontal clearance for the window's buttons at the left of its top
-/// edge: the traffic lights on macOS, which do not scale with UI zoom, or the
-/// caption buttons ZapFast draws where the desktop puts them on the left.
+/// Horizontal clearance for native traffic lights at the left of the top
+/// edge. A drawn title bar has its own row, so its buttons do not take room
+/// from the app below it.
 pub fn traffic_light_inset(ctx: &egui::Context) -> f32 {
     if cfg!(target_os = "macos") {
         fastframe_titlebar::footprint(ctx, TOP_BAR_HEIGHT).left
@@ -1464,7 +1465,7 @@ pub fn traffic_light_inset(ctx: &egui::Context) -> f32 {
         // The demo's preview of the macOS layout on other platforms.
         fastframe_titlebar::TRAFFIC_LIGHTS_WIDTH / ctx.zoom_factor()
     } else {
-        caption_footprint(ctx).left
+        0.0
     }
 }
 
@@ -1483,17 +1484,15 @@ pub fn drawn_titlebar(ctx: &egui::Context) -> bool {
     fastframe_titlebar::enabled()
 }
 
-/// Whether the headers run to the window's top edge and share it with the
-/// window's buttons: macOS's hidden title bar, or the one ZapFast draws.
-/// Status banners then go under the open chat's header, not across the top.
+/// Whether the app headers run to the window's top edge and share it with
+/// native macOS traffic lights. ZapFast's drawn title bar has a separate row.
 pub fn chrome_in_headers(ctx: &egui::Context) -> bool {
-    macos_chrome(ctx) || drawn_titlebar(ctx)
+    macos_chrome(ctx)
 }
 
-/// The room the caption buttons ZapFast draws take at each end of the top
-/// edge, beside a header [`TOP_BAR_HEIGHT`] tall. Zero on macOS (the traffic
-/// lights are [`traffic_light_inset`]), under the desktop's own title bar,
-/// and in full screen.
+/// The footprint of the caption buttons ZapFast draws in its separate title
+/// bar row. Zero on macOS, under the desktop's own title bar, and in full
+/// screen.
 pub fn caption_footprint(ctx: &egui::Context) -> fastframe_titlebar::Footprint {
     #[cfg(any(test, feature = "demo"))]
     if let Some(preview) =
@@ -1508,6 +1507,17 @@ pub fn caption_footprint(ctx: &egui::Context) -> fastframe_titlebar::Footprint {
     }
     if cfg!(target_os = "macos") {
         return fastframe_titlebar::Footprint::default();
+    }
+    if cfg!(target_os = "windows") {
+        if !fastframe_titlebar::visible(ctx) {
+            return fastframe_titlebar::Footprint::default();
+        }
+        let layout = fastframe_titlebar::layout();
+        return fastframe_titlebar::Footprint {
+            left: layout.left.len() as f32 * WINDOWS_CUSTOM_TITLEBAR_HEIGHT,
+            right: layout.right.len() as f32 * WINDOWS_CUSTOM_TITLEBAR_HEIGHT,
+            height: WINDOWS_CUSTOM_TITLEBAR_HEIGHT,
+        };
     }
     fastframe_titlebar::footprint(ctx, TOP_BAR_HEIGHT)
 }
@@ -1527,7 +1537,25 @@ pub fn preview_titlebar(ctx: &egui::Context, footprint: fastframe_titlebar::Foot
     ctx.data_mut(|data| data.insert_temp(titlebar_preview_id(), footprint));
 }
 
-/// Traffic-light strip used only while linking, before the chat header exists.
+/// Height of the separate title bar ZapFast draws above the app, or zero
+/// when the desktop or macOS owns the title bar. GNOME's buttons reach 42
+/// points even though its reported footprint is 41.
+pub fn custom_titlebar_height(ctx: &egui::Context) -> f32 {
+    if drawn_titlebar(ctx) && !macos_chrome(ctx) {
+        let height = caption_footprint(ctx).height;
+        if cfg!(target_os = "windows") && height == WINDOWS_CUSTOM_TITLEBAR_HEIGHT {
+            height
+        } else if height > 0.0 {
+            height.max(42.0)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    }
+}
+
+/// Native macOS strip used while linking, before the chat header exists.
 pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
     if macos_chrome(ctx) && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
         28.0 / ctx.zoom_factor()

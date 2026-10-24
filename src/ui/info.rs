@@ -166,7 +166,7 @@ fn header(
     Frame::new()
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
-            let room = pane::caption_header(ui, vec2(14.0, 10.0));
+            let room = pane::caption_header(ui);
             ui.horizontal(|ui| {
                 ui.set_min_height(32.0);
                 ui.add_space(room.left);

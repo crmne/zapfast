@@ -591,25 +591,24 @@ protocol. These notes are for coding agents and new contributors.
   id, so the reader lands on the announced message. macOS has no title bar:
   the content runs to the top. `src/macos.rs` keeps native application menus alive across window
   recreation; `fastframe_titlebar::align_traffic_lights` centres the traffic
-  lights on the chat header. Linking retains
-  `ui::titlebar_strip`; other headers reserve horizontal space for the buttons.
-  On Windows and Linux, Settings > Appearance > Custom title bar
-  (`settings.custom_titlebar`, off by default for Intel drivers that
-  mis-draw a frameless window, Spotifast #348/#554) draws fastframe-titlebar's
-  caption buttons instead: `main` calls `init` and `set_enabled` before the
+  lights on the chat header. On Windows and Linux, Settings > Appearance >
+  Custom title bar (`settings.custom_titlebar`, off by default for Intel drivers
+  that mis-draw a frameless window, Spotifast #348/#554) draws a separate
+  title-bar row above the app; Linux uses fastframe-titlebar's controls, while
+  Windows draws square 40-point controls flush to the edges, with no gaps, and
+  uses fastframe-titlebar for resizing. The row has a draggable area and app
+  headers start below it. `main` calls `init` and `set_enabled` before the
   first window, `native_options` sets `with_decorations(!enabled())`, and
   `SetCustomTitlebar` replaces the window through `Closed::Reopen`.
   `ui::window_chrome` draws the buttons last each frame and keeps their areas
-  on top, then `resize`. `theme::chrome_in_headers` is true for macOS and the
-  drawn bar alike (banners go under the chat header); `theme::caption_footprint`
-  is the drawn buttons' room (`traffic_light_inset` includes its left end,
-  so the rail starts under left-hand GNOME buttons; `rail::lights_overhang`
-  stays macOS-only, and headers beside the rail measure their own room),
-  and `ui::caption_room(ctx, rect, min_content)` gives any header reaching
-  a top corner its room beside the buttons or under them
-  (`Footprint::reserve`). Every pane's top drags the window
-  (`ui::caption_drag` where macOS has no drag). Mica is unaffected: the crate
-  leaves the frame alone. Layout tests preview the room per context with
+  on top, then `resize`. `theme::chrome_in_headers` is macOS-only: its traffic
+  lights share the app header. `theme::caption_footprint` describes the drawn
+  buttons' placement, while `custom_titlebar_height` reserves their full row;
+  `traffic_light_inset` and `rail::lights_overhang` are for native macOS lights.
+  `ui::caption_room(ctx, rect, min_content)` remains the layout helper for a
+  header reaching a window corner. The custom row itself handles dragging;
+  macOS headers retain their native drag behavior. Mica is unaffected: the
+  crate leaves the frame alone. Layout tests preview the room per context with
   `theme::preview_titlebar`, never `set_enabled`, which is process-wide;
   `--demo-titlebar` makes the choice for real in the demo.
 - Group delivery uses `archive::receipts`: save the recipients when filing an
