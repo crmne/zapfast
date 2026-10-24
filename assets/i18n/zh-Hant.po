@@ -756,6 +756,14 @@ msgstr "取消靜音"
 msgid "Mute"
 msgstr "靜音"
 
+#: src/ui/conversation.rs:11593
+msgid "View once"
+msgstr "檢視一次"
+
+#: src/ui/conversation.rs:11622
+msgid "The recipient can open this photo only once, on their phone."
+msgstr "接收者只能在手機上開啟這張照片一次。"
+
 #: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
 msgid "New group"
 msgstr "新增群組"
@@ -2061,6 +2069,10 @@ msgid ""
 "Cancel the reply to send without a quote."
 msgstr ""
 "未送出：您要回覆的訊息在這部電腦上無法使用。取消回覆即可不附帶引用內容送出。"
+
+#: src/app.rs:4918 src/app.rs:5751
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr "未傳送：單次檢視模式一次只能用於一張照片。"
 
 #: src/app.rs:6861
 msgid "A selected chat is no longer writable"

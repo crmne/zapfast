@@ -28,8 +28,8 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   restart, and older messages are fetched from your phone as you scroll.
 - **Sends common message types.** Send formatted text, replies, edits,
   reactions, forwards, pictures, files, stickers, GIFs, and recorded voice
-  messages.
-  You can add captions to attachments before sending them.
+  messages. You can add captions to attachments and send one photo as a
+  WhatsApp view-once message.
 - **Makes calls.** Place and answer one-to-one voice and video calls, with
   mute, camera and a choice of microphone, speaker and camera, and see every
   call, group calls included, in its chat and on the Calls page.

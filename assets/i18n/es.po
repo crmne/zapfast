@@ -772,6 +772,15 @@ msgstr "Activar sonido"
 msgid "Mute"
 msgstr "Silenciar"
 
+#: src/ui/conversation.rs:11593
+msgid "View once"
+msgstr "Ver una vez"
+
+#: src/ui/conversation.rs:11622
+msgid "The recipient can open this photo only once, on their phone."
+msgstr ""
+"La persona destinataria solo podrá abrir esta foto una vez en su teléfono."
+
 #: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
 msgid "New group"
 msgstr "Nuevo grupo"
@@ -2138,6 +2147,11 @@ msgid ""
 msgstr ""
 "No enviado: el mensaje al que respondes no está disponible en este equipo. "
 "Cancela la respuesta para enviarlo sin cita."
+
+#: src/app.rs:4918 src/app.rs:5751
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr ""
+"No se envió: la opción de ver una vez está disponible para una foto a la vez."
 
 #
 #: src/app.rs:6861

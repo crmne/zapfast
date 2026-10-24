@@ -6,6 +6,7 @@ use egui::{Context, FocusDirection, Id, Response};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stop {
     Composer,
+    ViewOnce,
     Send,
     Attach,
     Emoji,

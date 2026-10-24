@@ -756,6 +756,14 @@ msgstr "取消静音"
 msgid "Mute"
 msgstr "静音"
 
+#: src/ui/conversation.rs:11593
+msgid "View once"
+msgstr "查看一次"
+
+#: src/ui/conversation.rs:11622
+msgid "The recipient can open this photo only once, on their phone."
+msgstr "接收者只能在手机上打开这张照片一次。"
+
 #: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
 msgid "New group"
 msgstr "新建群组"
@@ -2059,6 +2067,10 @@ msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
+
+#: src/app.rs:4918 src/app.rs:5751
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr "未发送：一次性查看模式一次只能用于一张照片。"
 
 #
 #: src/app.rs:6861

@@ -781,6 +781,14 @@ msgstr "Включить звук"
 msgid "Mute"
 msgstr "Выключить звук"
 
+#: src/ui/conversation.rs:11593
+msgid "View once"
+msgstr "Просмотр один раз"
+
+#: src/ui/conversation.rs:11622
+msgid "The recipient can open this photo only once, on their phone."
+msgstr "Получатель сможет открыть это фото только один раз на телефоне."
+
 #: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
 msgid "New group"
 msgstr "Новая группа"
@@ -2151,6 +2159,12 @@ msgid ""
 msgstr ""
 "Не отправлено: сообщение, на которое вы отвечаете, недоступно на этом "
 "компьютере. Отмените ответ, чтобы отправить без цитаты."
+
+#: src/app.rs:4918 src/app.rs:5751
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr ""
+"Не отправлено: режим однократного просмотра доступен только для одной "
+"фотографии за раз."
 
 #
 #: src/app.rs:6861

@@ -779,6 +779,14 @@ msgstr "Ton an"
 msgid "Mute"
 msgstr "Stumm"
 
+#: src/ui/conversation.rs:11593
+msgid "View once"
+msgstr "Einmal ansehen"
+
+#: src/ui/conversation.rs:11622
+msgid "The recipient can open this photo only once, on their phone."
+msgstr "Der Empfänger kann dieses Foto nur einmal auf seinem Telefon öffnen."
+
 #: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
 msgid "New group"
 msgstr "Neue Gruppe"
@@ -2152,6 +2160,11 @@ msgid ""
 msgstr ""
 "Nicht gesendet: Die Nachricht, auf die du antwortest, ist auf diesem "
 "Computer nicht verfügbar. Brich die Antwort ab, um ohne Zitat zu senden."
+
+#: src/app.rs:4918 src/app.rs:5751
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr ""
+"Nicht gesendet: Die Einmalansicht ist jeweils nur für ein Foto verfügbar."
 
 #
 #: src/app.rs:6861

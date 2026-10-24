@@ -548,6 +548,8 @@ pub struct App {
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
     pub pending: Vec<Staged>,
+    /// Whether the single staged photo will be sent as view-once media.
+    pub(crate) pending_view_once: bool,
     /// The next identity to give a staged attachment.
     next_pending_id: AttachmentId,
     /// Whether the composer plus menu is open or closing.
@@ -879,6 +881,7 @@ pub(crate) struct AttachmentDraft {
     /// a switch and cropping it again still starts from its original rather
     /// than from the crop that came out of it.
     pub(crate) pending: Vec<Staged>,
+    pub(crate) view_once: bool,
     quoting: Option<crate::model::ReplyTarget>,
 }
 
@@ -937,6 +940,26 @@ impl App {
         id
     }
 
+    /// Whether exactly one staged photo can be sent with WhatsApp's view-once
+    /// restriction. Documents and batches cannot carry this option.
+    pub(crate) fn pending_supports_view_once(&self) -> bool {
+        matches!(
+            self.pending.as_slice(),
+            [Staged {
+                item: Pending::Picture { .. },
+                ..
+            }]
+        ) || matches!(
+            self.pending.as_slice(),
+            [Staged { item: Pending::File(path), .. }]
+                if Pending::is_view_once_photo_file(path)
+        )
+    }
+
+    fn set_pending_view_once(&mut self, view_once: bool) {
+        self.pending_view_once = view_once && self.pending_supports_view_once();
+    }
+
     /// The identity for the next attachment, whether it lands in the composer
     /// or in a chat's draft.
     fn next_attachment_id(&mut self) -> AttachmentId {
@@ -985,6 +1008,18 @@ impl Pending {
         mime_guess2::from_path(path)
             .first()
             .is_some_and(|mime| mime.type_() == "image")
+    }
+
+    /// Whether this file is sent by `prepare_media` as a WhatsApp photo.
+    pub fn is_view_once_photo_file(path: &std::path::Path) -> bool {
+        mime_guess2::from_path(path)
+            .first_raw()
+            .is_some_and(|mime| {
+                matches!(
+                    mime,
+                    "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
+                )
+            })
     }
 }
 
@@ -1385,6 +1420,7 @@ impl App {
             open_selection_delete_menu: false,
             emoji_jump: None,
             pending: Vec::new(),
+            pending_view_once: false,
             next_pending_id: 0,
             composer_tools_open: false,
             player: Player::new(waker.clone()),
@@ -1602,6 +1638,7 @@ impl App {
         }
         self.picker = None;
         self.pending.clear();
+        self.pending_view_once = false;
         self.forget_unstaged_pictures();
         self.reply_to = None;
         self.editing = None;
@@ -1619,10 +1656,12 @@ impl App {
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
+            self.pending_view_once = attachments.view_once;
             self.reply_to = attachments.quoting;
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
+            self.pending_view_once = false;
         }
         self.focus_composer = self.open_chat.is_some();
     }
@@ -1690,6 +1729,7 @@ impl App {
         self.reaction_anchor = None;
         self.picker = None;
         self.pending.clear();
+        self.pending_view_once = false;
         self.forget_unstaged_pictures();
         self.invite = None;
         self.message_receipts = None;
@@ -2333,6 +2373,7 @@ impl App {
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
+            self.pending_view_once = false;
             self.forget_unstaged_pictures();
             self.reply_to = None;
             self.editing = None;
@@ -4298,6 +4339,7 @@ impl App {
                 self.attachment_drafts.clear();
                 if live {
                     self.pending.clear();
+                    self.pending_view_once = false;
                     self.reply_to = None;
                     self.composer.clear();
                     self.composer_mentions.clear();
@@ -4829,6 +4871,7 @@ impl App {
             Unsent::Files {
                 paths,
                 documents,
+                view_once,
                 caption,
             } => {
                 let pending = if documents {
@@ -4836,13 +4879,14 @@ impl App {
                 } else {
                     Pending::File
                 };
-                self.restore_attachments(&chat, paths.into_iter().map(pending), quoting);
+                self.restore_attachments(&chat, paths.into_iter().map(pending), quoting, view_once);
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Image {
                 width,
                 height,
                 rgba,
+                view_once,
                 caption,
             } => {
                 self.restore_attachments(
@@ -4854,6 +4898,7 @@ impl App {
                         texture: None,
                     }],
                     quoting,
+                    view_once,
                 );
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
@@ -4868,6 +4913,10 @@ impl App {
                 self.locale,
                 "Not sent: the message you’re replying to isn’t available on this computer. Cancel the reply to send without a quote.",
             ),
+            Refusal::UnsupportedViewOnce => crate::i18n::gettext(
+                self.locale,
+                "Not sent: view-once mode is available for one photo at a time.",
+            ),
         };
         self.toast_error(message.into_owned());
     }
@@ -4878,11 +4927,17 @@ impl App {
         chat: &str,
         pending: impl IntoIterator<Item = Pending>,
         quoting: Option<crate::model::ReplyTarget>,
+        view_once: bool,
     ) {
         if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
+            let preserve_view_once = self.pending_view_once || view_once;
             for item in pending {
                 self.stage(item);
             }
+            // Recovery can merge with a newer draft. Keep the privacy choice;
+            // send_pending refuses an unsupported combination until the user
+            // removes the extra attachments or explicitly turns the option off.
+            self.pending_view_once = preserve_view_once;
         } else if self.chat(chat).is_some() {
             // Named here as well, so the draft carries an identity back with
             // the attachment rather than handing out a new one later.
@@ -4895,6 +4950,7 @@ impl App {
                 .collect();
             let draft = self.attachment_drafts.entry(chat.to_owned()).or_default();
             draft.pending.extend(staged);
+            draft.view_once |= view_once;
             if draft.quoting.is_none() {
                 draft.quoting = quoting;
             }
@@ -5352,6 +5408,7 @@ impl App {
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
+            self.pending_view_once = attachments.view_once;
             // A search belongs to the chat it was typed in.
             self.close_chat_search();
             self.close_info();
@@ -5617,10 +5674,12 @@ impl App {
         } else {
             let draft = AttachmentDraft {
                 pending: std::mem::take(&mut self.pending),
+                view_once: self.pending_view_once,
                 quoting: self.reply_to.take(),
             };
             self.attachment_drafts.insert(chat.to_owned(), draft);
         }
+        self.pending_view_once = false;
     }
 
     /// Adds files to the open chat's composer.
@@ -5680,6 +5739,23 @@ impl App {
         if self.pending.is_empty() {
             return;
         }
+        if self.pending_view_once && !self.pending_supports_view_once() {
+            let restore_mentions = self.composer.trim().is_empty() && self.editing.is_none();
+            self.restore_text(&chat, caption);
+            if restore_mentions {
+                self.composer_mentions = selected;
+            }
+            self.toast_error(
+                crate::i18n::gettext(
+                    self.locale,
+                    "Not sent: view-once mode is available for one photo at a time.",
+                )
+                .into_owned(),
+            );
+            return;
+        }
+        let view_once = self.pending_view_once;
+        self.pending_view_once = false;
         self.drafts.remove(&chat);
         self.draft_mentions.remove(&chat);
         self.store_draft(&chat, "");
@@ -5708,6 +5784,7 @@ impl App {
                         width: width as u32,
                         height: height as u32,
                         rgba: std::sync::Arc::try_unwrap(rgba).unwrap_or_else(|arc| (*arc).clone()),
+                        view_once,
                         caption: caption.take(),
                         mentions: std::mem::take(&mut mentions),
                         quoting: quoting.take(),
@@ -5727,6 +5804,7 @@ impl App {
                 chat: chat.clone(),
                 paths,
                 documents,
+                view_once,
                 caption: caption.take(),
                 mentions: std::mem::take(&mut mentions),
                 quoting: quoting.take(),
@@ -5755,6 +5833,7 @@ impl App {
             chat,
             paths,
             documents: false,
+            view_once: false,
             caption: None,
             mentions: Vec::new(),
             quoting: None,
@@ -7142,8 +7221,12 @@ impl App {
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
+                    self.pending_view_once &= !self.pending.is_empty();
                     self.forget_unstaged_pictures();
                 }
+            }
+            Action::SetPendingViewOnce(view_once) => {
+                self.set_pending_view_once(view_once);
             }
             Action::EditPicture(target) => {
                 // Whatever was being waited for is not what is wanted now.
@@ -7227,6 +7310,7 @@ impl App {
             }
             Action::ClearPending => {
                 self.pending.clear();
+                self.pending_view_once = false;
                 self.forget_unstaged_pictures();
             }
             Action::PlayVoice { message, path } => self.play_voice(message, path),
@@ -11002,12 +11086,14 @@ mod tests {
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
+                    view_once: true,
                     caption: Some(caption.into()),
                 }
             } else {
                 Unsent::Files {
                     paths: vec!["Hidden account.pdf".into()],
                     documents: false,
+                    view_once: false,
                     caption: Some(caption.into()),
                 }
             };
@@ -11026,11 +11112,16 @@ mod tests {
             );
             assert!(app.composer.is_empty());
             assert!(app.reply_to.is_none());
+            assert!(
+                !app.pending_view_once,
+                "the hidden privacy choice stays in its account"
+            );
             app.open_chat("other@s.whatsapp.net".into());
             assert!(!app.accounts[0].attachment_drafts.contains_key(chat));
             let second = app.accounts[1].id.clone();
             app.switch_account(&second);
             assert_eq!(app.composer, caption);
+            assert_eq!(app.pending_view_once, image);
             assert_eq!(app.reply_to.as_deref(), Some("hidden-quote"));
             assert_eq!(app.pending.len(), 1);
             if image {
@@ -17853,11 +17944,13 @@ mod tests {
                 width: 1,
                 height: 1,
                 rgba: vec![1, 2, 3, 4],
+                view_once: false,
                 caption: Some("Caption fixture".into()),
             },
             Unsent::Files {
                 paths: vec!["/fixture/a.pdf".into()],
                 documents: false,
+                view_once: false,
                 caption: None,
             },
             Unsent::Gif,
@@ -17883,6 +17976,196 @@ mod tests {
         assert_eq!(app.reply_to.as_deref(), Some("original"));
         // Repeats of one error share a toast.
         assert_eq!(error_toasts(&app).len(), 1);
+    }
+
+    #[test]
+    fn a_pasted_photo_can_be_sent_view_once_and_keeps_the_choice_in_its_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let chat = "fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat(chat.into());
+        app.stage(Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![1, 2, 3, 4]),
+            texture: None,
+        });
+        assert!(app.pending_supports_view_once());
+        let ctx = egui::Context::default();
+        app.apply(Action::SetPendingViewOnce(true), &ctx);
+        assert!(app.pending_view_once);
+
+        app.park_composer();
+        assert!(app.attachment_drafts[chat].view_once);
+        app.restore_composer();
+        assert!(app.pending_view_once);
+
+        // Extra attachments cannot silently switch the photo back to normal
+        // media. The choice stays until the draft is valid again or disabled.
+        app.stage(Pending::File("notes.pdf".into()));
+        assert!(app.pending_view_once);
+        app.apply(Action::RemovePending(1), &ctx);
+        assert!(app.pending_view_once);
+
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let account = app.account().id.clone();
+        app.send_pending(account, chat.into(), "Caption".into(), Vec::new());
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(sent.iter().any(|command| matches!(command,
+            Command::SendImage { chat: sent_chat, view_once: true, caption: Some(caption), .. }
+                if sent_chat == chat && caption == "Caption")));
+        assert!(app.pending.is_empty());
+        assert!(!app.pending_view_once);
+    }
+
+    #[test]
+    fn one_supported_photo_file_can_be_sent_view_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let chat = "fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat(chat.into());
+        app.stage(Pending::File("photo.png".into()));
+        assert!(app.pending_supports_view_once());
+        let ctx = egui::Context::default();
+        app.apply(Action::SetPendingViewOnce(true), &ctx);
+
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let account = app.account().id.clone();
+        app.send_pending(account, chat.into(), String::new(), Vec::new());
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+            Command::SendFiles { paths, documents: false, view_once: true, .. }
+                if paths == [PathBuf::from("photo.png")]))
+        );
+    }
+
+    #[test]
+    fn a_refused_view_once_photo_returns_to_its_chat_with_caption_and_quote() {
+        for away in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+            let chat = "fixture@s.whatsapp.net";
+            let other = "other@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+            app.chats.push(Chat::new(other.into(), "Other".into()));
+            app.open_chat(if away { other } else { chat }.into());
+            app.send_refused(
+                chat.into(),
+                Some("original".into()),
+                Unsent::Files {
+                    paths: vec!["photo.png".into()],
+                    documents: false,
+                    view_once: true,
+                    caption: Some("Caption fixture".into()),
+                },
+                Refusal::Offline,
+            );
+            if away {
+                assert!(app.pending.is_empty());
+                assert!(!app.pending_view_once);
+                assert!(app.attachment_drafts[chat].view_once);
+                app.open_chat(chat.into());
+            }
+            assert!(app.pending_view_once);
+            assert_eq!(app.pending.len(), 1);
+            assert_eq!(app.composer, "Caption fixture");
+            assert_eq!(app.reply_to.as_deref(), Some("original"));
+        }
+    }
+
+    #[test]
+    fn a_refused_view_once_photo_cannot_be_downgraded_when_new_attachments_exist() {
+        for away in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+            let chat = "fixture@s.whatsapp.net";
+            let other = "other@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+            app.chats.push(Chat::new(other.into(), "Other".into()));
+            app.open_chat(chat.into());
+            app.stage(Pending::Document("notes.pdf".into()));
+            app.stage(Pending::Document("second.pdf".into()));
+            if away {
+                app.open_chat(other.into());
+            }
+            app.send_refused(
+                chat.into(),
+                None,
+                Unsent::Files {
+                    paths: vec!["photo.png".into()],
+                    documents: false,
+                    view_once: true,
+                    caption: Some("Caption fixture".into()),
+                },
+                Refusal::Offline,
+            );
+            if away {
+                app.open_chat(chat.into());
+            }
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            // The view takes the caption before submitting SendPending.
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles { .. } | Command::SendImage { .. }
+                ))
+            );
+            assert_eq!(app.pending.len(), 3);
+            assert!(app.pending_view_once);
+            assert_eq!(app.composer, "Caption fixture");
+            assert!(!error_toasts(&app).is_empty());
+
+            // Removing only one extra does not silently clear the choice.
+            app.apply(Action::RemovePending(0), &egui::Context::default());
+            assert!(app.pending_view_once);
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles { .. } | Command::SendImage { .. }
+                ))
+            );
+            assert_eq!(app.composer, "Caption fixture");
+            // Once only the original photo remains, it keeps the option.
+            app.apply(Action::RemovePending(0), &egui::Context::default());
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles {
+                        view_once: true,
+                        ..
+                    }
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn view_once_file_types_match_the_photo_formats_converted_by_the_worker() {
+        for extension in ["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"] {
+            let path = PathBuf::from(format!("photo.{extension}"));
+            assert!(
+                Pending::is_view_once_photo_file(&path),
+                "{extension} should be eligible"
+            );
+        }
+        for extension in ["gif", "avif", "pdf"] {
+            let path = PathBuf::from(format!("attachment.{extension}"));
+            assert!(
+                !Pending::is_view_once_photo_file(&path),
+                "{extension} should not be eligible"
+            );
+        }
     }
 
     /// Checks that an unsent recording remains scoped to its destination and retains its quote.
@@ -17965,6 +18248,7 @@ mod tests {
                 Unsent::Files {
                     paths: vec!["/fixture/b.png".into()],
                     documents: true,
+                    view_once: false,
                     caption: None,
                 },
                 Refusal::Offline,
@@ -18433,6 +18717,7 @@ mod tests {
                 other.into(),
                 AttachmentDraft {
                     pending: Vec::new(),
+                    view_once: false,
                     quoting: Some(quote.clone()),
                 },
             );
