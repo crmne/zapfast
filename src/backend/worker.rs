@@ -10304,7 +10304,7 @@ impl Worker {
             return;
         };
         let expiration = self.apply_ephemeral(&chat, &mut message);
-        let raw = message.encode_to_vec();
+        let raw = attachment_archive_raw(&message);
         let id = row.id.clone();
         self.store_message(row, Some(raw), None);
         tokio::spawn(send_outgoing(
@@ -12010,6 +12010,20 @@ fn mark_view_once_photo(prepared: &mut Prepared) -> Result<(), String> {
     };
     image.view_once = Some(true);
     Ok(())
+}
+
+/// Keeps the outgoing photo's thumbnail on the wire, but out of its local archive.
+/// Prepared attachments carry their photo directly in `image_message`.
+fn attachment_archive_raw(message: &wa::Message) -> Vec<u8> {
+    if message.is_view_once() {
+        let mut archived = message.clone();
+        if let Some(image) = archived.image_message.as_option_mut() {
+            image.jpeg_thumbnail = None;
+        }
+        archived.encode_to_vec()
+    } else {
+        message.encode_to_vec()
+    }
 }
 
 pub(super) async fn file_outbound(
@@ -15070,6 +15084,8 @@ mod tests {
         .unwrap();
         let bot = Bot::builder().with_backend(store).build().await.unwrap();
         let client = bot.client();
+        let (mut worker, _events, _commands, _wa) = super::receipt_tests::worker();
+        worker.client = Some(client.clone());
         let quote = Quoted {
             chat: None,
             id: "original".into(),
@@ -15090,7 +15106,11 @@ mod tests {
             let mut prepared = Prepared {
                 message: {
                     let mut message = wa::Message::default();
-                    message.image_message = MessageField::some(Default::default());
+                    message.image_message = MessageField::some({
+                        let mut image = wa::message::ImageMessage::default();
+                        image.jpeg_thumbnail = Some(vec![1, 2, 3]);
+                        image
+                    });
                     message
                 },
                 content: Content::Image {
@@ -15152,6 +15172,30 @@ mod tests {
             assert_eq!(
                 context.quoted_message.as_option().unwrap().text_content(),
                 Some("Original")
+            );
+            let id = row.id.clone();
+            worker.outbound(row.chat.clone(), row, raw.encode_to_vec());
+            let archived = wa::Message::decode_from_slice(
+                &worker
+                    .archive
+                    .raw("15551234567@s.whatsapp.net", &id)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut expected = raw.clone();
+            if view_once {
+                expected
+                    .image_message
+                    .as_option_mut()
+                    .unwrap()
+                    .jpeg_thumbnail = None;
+            }
+            assert_eq!(archived, expected);
+            assert_eq!(
+                raw.image_message.as_option().unwrap().jpeg_thumbnail,
+                Some(vec![1, 2, 3]),
+                "the message sent to WhatsApp must keep its thumbnail"
             );
         }
     }
@@ -20572,6 +20616,16 @@ mod receipt_tests {
             ),
             (
                 vec![PathBuf::from("clip.mp4")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("photo.bmp")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("photo.tiff")],
                 false,
                 Refusal::UnsupportedViewOnce,
             ),

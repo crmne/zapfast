@@ -1010,16 +1010,11 @@ impl Pending {
             .is_some_and(|mime| mime.type_() == "image")
     }
 
-    /// Whether this file is sent by `prepare_media` as a WhatsApp photo.
+    /// Whether this file can be decoded and sent as a WhatsApp view-once photo.
     pub fn is_view_once_photo_file(path: &std::path::Path) -> bool {
         mime_guess2::from_path(path)
             .first_raw()
-            .is_some_and(|mime| {
-                matches!(
-                    mime,
-                    "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
-                )
-            })
+            .is_some_and(|mime| matches!(mime, "image/jpeg" | "image/png" | "image/webp"))
     }
 }
 
@@ -18151,15 +18146,15 @@ mod tests {
     }
 
     #[test]
-    fn view_once_file_types_match_the_photo_formats_converted_by_the_worker() {
-        for extension in ["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"] {
+    fn view_once_file_types_match_the_enabled_photo_decoders() {
+        for extension in ["jpg", "jpeg", "png", "webp"] {
             let path = PathBuf::from(format!("photo.{extension}"));
             assert!(
                 Pending::is_view_once_photo_file(&path),
                 "{extension} should be eligible"
             );
         }
-        for extension in ["gif", "avif", "pdf"] {
+        for extension in ["bmp", "tif", "tiff", "gif", "avif", "pdf"] {
             let path = PathBuf::from(format!("attachment.{extension}"));
             assert!(
                 !Pending::is_view_once_photo_file(&path),
