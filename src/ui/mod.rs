@@ -8,6 +8,7 @@ pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
 mod glass;
+mod history_import;
 pub mod image_editor;
 pub mod image_preview;
 pub mod info;

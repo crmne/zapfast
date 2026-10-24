@@ -9,15 +9,9 @@ pub const HISTORY_GAP: Duration = Duration::from_secs(20);
 /// history would be drained in one run, and the phone asked for page after
 /// page until it said it had nothing more.
 pub const HISTORY_MAX_PAGES: u32 = 5;
-/// Unanswered background requests before a chat waits for reconnect.
-const HISTORY_MAX_TIMEOUTS: u32 = 3;
 const RECENT_LIMIT: usize = 10;
 
-/// One chat's unanswered requests and the earliest time it may retry.
-struct HistoryRetry {
-    failures: u32,
-    due: Instant,
-}
+use crate::history_retry::HistoryRetry;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -39,7 +33,7 @@ pub(super) struct State {
     /// Send failures still back off the account, since another chat may fail too.
     history_failures: u32,
     /// A silent phone response backs off its chat without delaying the others.
-    history_retries: HashMap<ChatId, HistoryRetry>,
+    history_retries: HashMap<ChatId, HistoryRetry<Instant>>,
     history_chat: Option<ChatId>,
 }
 
@@ -106,9 +100,7 @@ impl State {
         let askable = |chat: &ChatId| {
             !exhausted.contains(chat)
                 && pages.get(chat).copied().unwrap_or(0) < HISTORY_MAX_PAGES
-                && retries
-                    .get(chat)
-                    .is_none_or(|retry| retry.failures < HISTORY_MAX_TIMEOUTS)
+                && retries.get(chat).is_none_or(|retry| !retry.stopped())
         };
         self.queue
             .retain(|chat| wanted.contains(chat) && askable(chat));
@@ -132,7 +124,7 @@ impl State {
             && self
                 .history_retries
                 .get(chat)
-                .is_none_or(|retry| retry.failures < HISTORY_MAX_TIMEOUTS)
+                .is_none_or(|retry| !retry.stopped())
     }
 
     /// The open chat is asked first, wherever it is in the queue.
@@ -230,14 +222,9 @@ impl State {
         let retry = self
             .history_retries
             .entry(chat.to_owned())
-            .or_insert(HistoryRetry {
-                failures: 0,
-                due: now,
-            });
-        retry.failures = retry.failures.saturating_add(1);
-        let shift = (retry.failures - 1).min(5);
-        let delay = (30 * (1_u64 << shift)).min(900);
-        retry.due = now + Duration::from_secs(delay);
+            .or_insert_with(|| HistoryRetry::new(now));
+        let delay = retry.fail();
+        retry.due = now + delay;
         self.history_due = Some(now + HISTORY_GAP);
         // A turn spent, not a page read: the cap counts what the phone
         // actually answered. Retry exhaustion only pauses this chat until
@@ -511,7 +498,7 @@ mod tests {
         let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
         state.set_chats(&chats);
         let mut now = Instant::now();
-        for _ in 0..HISTORY_MAX_TIMEOUTS {
+        for _ in 0..crate::history_retry::HISTORY_MAX_TIMEOUTS {
             state.start_history("a".into());
             assert!(state.timeout_history("a", now));
             now += Duration::from_secs(900);
@@ -538,7 +525,7 @@ mod tests {
         let chats = [chat("a", 2, false, 0, false), chat("b", 1, false, 0, false)];
         state.set_chats(&chats);
         let mut now = Instant::now();
-        for _ in 0..HISTORY_MAX_TIMEOUTS {
+        for _ in 0..crate::history_retry::HISTORY_MAX_TIMEOUTS {
             state.start_history("a".into());
             assert!(state.timeout_history("a", now));
             now += Duration::from_secs(900);

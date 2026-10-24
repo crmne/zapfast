@@ -48,6 +48,7 @@ mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
 mod group_admin;
+mod history_import;
 mod interactive;
 mod link_watch;
 mod new_group;
@@ -926,6 +927,7 @@ pub async fn run(
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
         prefetch: prefetch::State::default(),
+        import: history_import::State::default(),
         older_serial: 0,
         late_older: VecDeque::new(),
         older_ids_match: false,
@@ -1020,7 +1022,7 @@ pub async fn run(
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
                 worker.refresh_legacy_preferences();
-                worker.expire_older_requests();
+                worker.expire_older_requests(Instant::now());
                 worker.retry_avatars();
                 worker.pump_group_info();
                 worker.pump_favorite_stickers();
@@ -1029,6 +1031,7 @@ pub async fn run(
                 worker.pump_favorite_chats();
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
+                worker.pump_import();
                 worker.pump_prefetch();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
@@ -1251,6 +1254,7 @@ struct Worker {
     link_watch: link_watch::LinkWatch,
     /// Serial background phone-history prefetch.
     prefetch: prefetch::State,
+    import: history_import::State,
     /// Numbers phone-history requests, so a send result or a late answer is
     /// matched to the request it belongs to rather than to whichever request
     /// the chat has now.
@@ -1481,6 +1485,7 @@ struct ParsedHistory {
 
 /// A phone-history request waiting for its chunk.
 struct OlderRequest {
+    import: Option<crate::archive::history_import::Token>,
     asked: Instant,
     /// The oldest archived message when it was asked.
     before: super::PageKey,
@@ -1500,8 +1505,11 @@ struct OlderRequest {
 
 /// A request that timed out, kept in case its answer still arrives.
 struct LateOlder {
+    import: Option<crate::archive::history_import::Token>,
     chat: ChatId,
     serial: u64,
+    explicit: bool,
+    before: super::PageKey,
     background: bool,
     request: Option<String>,
 }
@@ -1541,6 +1549,7 @@ struct ParsedChat {
     lid_jid: Option<String>,
     /// Whether the phone reports more available history.
     more_on_phone: Option<bool>,
+    import_exhausted: bool,
     messages: Vec<ParsedMessage>,
     revoked: Vec<String>,
     poll_updates: Vec<HistoryPollUpdate>,
@@ -1914,6 +1923,7 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
+                self.import.dirty = true;
                 self.late_older.retain(|late| late.chat != chat);
                 self.prefetch.forget_chat(chat);
                 if delete_media {
@@ -1951,6 +1961,7 @@ impl Worker {
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
+                self.import.dirty = true;
                 self.late_older.retain(|late| late.chat != chat);
                 self.prefetch.forget_chat(chat);
                 if delete_media {
@@ -1994,6 +2005,7 @@ impl Worker {
     }
 
     fn emit_chats(&mut self) {
+        self.import.dirty = true;
         match self.archive.chats() {
             Ok(mut chats) => {
                 // Early preference sync can create an empty privacy-id row.
@@ -4039,6 +4051,7 @@ impl Worker {
         self.emit(self.me_event());
     }
 
+    /// Clears account-session work while retaining the app's import permission.
     async fn on_logged_out(&mut self) {
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
@@ -4073,6 +4086,9 @@ impl Worker {
         self.older_ids_match = false;
         self.forward_queue = None;
         self.pending_older.clear();
+        let import_allowed = self.import.allowed;
+        self.import = history_import::State::default();
+        self.import.allowed = import_allowed;
         self.pending_avatars.clear();
         // A star request belongs to the account that just left. A task that
         // finishes after logout must not write the next account, whose
@@ -5574,6 +5590,8 @@ impl Worker {
                 self.learn_pair(&lid, &pn);
             }
         }
+        self.rekey_import_requests();
+        self.import.pages.clear();
         let mut filed = Vec::new();
         for (id, name) in &parsed.push_names {
             let id = self.canonical_str(id);
@@ -5670,6 +5688,16 @@ impl Worker {
             if ChatKind::from_id(&id) == ChatKind::Group {
                 self.request_group_info(&id, false);
             }
+            let mut import_page = crate::archive::history_import::Page {
+                exhausted: chat.import_exhausted,
+                malformed: chat.diagnostics.missing_envelope
+                    + chat.diagnostics.missing_key
+                    + chat.diagnostics.missing_body
+                    + chat.diagnostics.invalid_edits
+                    + chat.diagnostics.ciphertext_stubs
+                    > 0,
+                ..Default::default()
+            };
             let count = chat.messages.len();
             let mut added = 0;
             let mut repeated = 0;
@@ -5859,8 +5887,10 @@ impl Worker {
                     .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
                 {
                     failed += 1;
+                    import_page.failed = true;
                     log::warn!("could not store a history message: {error}");
                 } else {
+                    import_page.observe(&row);
                     if live_location_changed || status_advanced {
                         self.emit_message(&id, &row.id);
                     }
@@ -5992,6 +6022,7 @@ impl Worker {
                 // sessions skip asking instead of waiting out a silent phone.
                 let _ = self.archive.set_history_start(&id);
             }
+            self.import.pages.insert(id.clone(), import_page);
             filed.push((id, count, chat.more_on_phone));
         }
         self.pump_poll_votes();
@@ -6009,6 +6040,7 @@ impl Worker {
     /// is the id of the request the phone says it is answering.
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
         for (chat, count, more_on_phone) in filed {
+            let import_page = self.import.pages.remove(&chat).unwrap_or_default();
             let more = count > 0 && more_on_phone != Some(false);
             if count > 0 {
                 // The phone answers for this chat again; a later silence is news.
@@ -6019,6 +6051,18 @@ impl Worker {
                     let Some(request) = self.pending_older.remove(&chat) else {
                         continue;
                     };
+                    if let Some(token) = request.import {
+                        if request.explicit {
+                            self.show_older_page(&chat, (request.before.0, &request.before.1));
+                        }
+                        self.import_complete(token, &chat, import_page);
+                        self.emit(Event::OlderFetched {
+                            chat,
+                            more,
+                            silent: !request.explicit,
+                        });
+                        continue;
+                    }
                     if request.background {
                         // A background page fills the archive without moving
                         // the view. The app only learns that the archive holds
@@ -6032,24 +6076,7 @@ impl Worker {
                         continue;
                     }
                     let (before_time, before_id) = request.before;
-                    match self
-                        .archive
-                        .messages(&chat, Some((before_time, &before_id)), 500)
-                    {
-                        Ok(mut messages) => {
-                            log::info!("history reload: displaying rows={}", messages.len());
-                            for message in &mut messages {
-                                self.polish(message);
-                            }
-                            self.emit(Event::Messages {
-                                chat: chat.clone(),
-                                messages,
-                                older: true,
-                                complete: false,
-                            })
-                        }
-                        Err(error) => log::warn!("could not read older messages: {error}"),
-                    }
+                    self.show_older_page(&chat, (before_time, &before_id));
                     self.emit(Event::OlderFetched {
                         chat,
                         more,
@@ -6060,14 +6087,21 @@ impl Worker {
                     // The answer to a request that already timed out is
                     // archived; tell the app to page again. A reader's
                     // request shows it, a background one stays quiet.
-                    let late = self.late_older.remove(index);
-                    let silent = late.as_ref().is_none_or(|late| late.background);
-                    if late.is_some_and(|late| late.background) {
+                    let Some(late) = self.late_older.remove(index) else {
+                        continue;
+                    };
+                    if late.background {
                         self.prefetch.answered_late(&chat);
                     }
+                    if late.explicit {
+                        self.show_older_page(&chat, (late.before.0, &late.before.1));
+                    }
+                    let silent = (late.background && !late.explicit)
+                        || self.pending_older.contains_key(&chat);
                     self.emit(Event::OlderFetched { chat, more, silent });
                 }
                 AnswerOwner::Unclaimed => {
+                    self.import_buffer(&chat, session, import_page);
                     // Nobody here asked for this page (a poll's history
                     // request, or one from before a restart). It is archived
                     // all the same, so the app pages the archive again, but
@@ -6103,6 +6137,9 @@ impl Worker {
                 self.older_ids_match = true;
                 return AnswerOwner::Late(index);
             }
+            if pending.is_some_and(|request| request.import.is_some()) {
+                return AnswerOwner::Unclaimed;
+            }
             if self.older_ids_match {
                 // The id is none of ours. Only a request whose send has not
                 // returned yet has no id to compare, and may be this one.
@@ -6113,10 +6150,17 @@ impl Worker {
                 };
             }
         }
+        if pending.is_some_and(|request| request.import.is_some()) {
+            return AnswerOwner::Unclaimed;
+        }
         if pending.is_some() {
             return AnswerOwner::Pending;
         }
-        match self.late_older.iter().position(|late| late.chat == chat) {
+        match self
+            .late_older
+            .iter()
+            .position(|late| late.chat == chat && late.import.is_none())
+        {
             Some(index) => AnswerOwner::Late(index),
             None => AnswerOwner::Unclaimed,
         }
@@ -6128,19 +6172,29 @@ impl Worker {
             self.late_older.pop_front();
         }
         self.late_older.push_back(LateOlder {
+            import: request.import,
             chat,
             serial: request.serial,
+            explicit: request.explicit,
+            before: request.before,
             background: request.background,
             request: request.request,
         });
     }
 
     /// Times out unanswered phone-history requests.
-    fn expire_older_requests(&mut self) {
+    fn expire_older_requests(&mut self, now: Instant) {
         let expired: Vec<ChatId> = self
             .pending_older
             .iter()
-            .filter(|(_, request)| request.asked.elapsed() > PHONE_PATIENCE)
+            .filter(|(_, request)| {
+                now.saturating_duration_since(request.asked)
+                    > if request.import.is_some() && request.request.is_none() {
+                        Duration::from_secs(180)
+                    } else {
+                        PHONE_PATIENCE
+                    }
+            })
             .map(|(chat, _)| chat.clone())
             .collect();
         for chat in expired {
@@ -6148,11 +6202,22 @@ impl Worker {
                 continue;
             };
             let (explicit, background) = (request.explicit, request.background);
+            let import = request.import;
+            let preparing = request.request.is_none();
             self.remember_late(chat.clone(), request);
+            if let Some(token) = import {
+                self.import_failure(token, &chat, preparing);
+                self.emit(Event::OlderFetched {
+                    chat,
+                    more: true,
+                    silent: !explicit,
+                });
+                continue;
+            }
             if background {
                 // Only this chat backs off; the others keep the normal
                 // background pace. Nothing is shown for the failed request.
-                self.prefetch.timeout_history(&chat, Instant::now());
+                self.prefetch.timeout_history(&chat, now);
                 self.emit(Event::OlderFetched {
                     chat,
                     more: true,
@@ -6177,6 +6242,25 @@ impl Worker {
         }
     }
 
+    /// Delivers a reader's requested archive page before ending the phone request.
+    fn show_older_page(&mut self, chat: &str, before: (i64, &str)) {
+        match self.archive.messages(chat, Some(before), 500) {
+            Ok(mut messages) => {
+                log::info!("history reload: displaying rows={}", messages.len());
+                for message in &mut messages {
+                    self.polish(message);
+                }
+                self.emit(Event::Messages {
+                    chat: chat.to_owned(),
+                    messages,
+                    older: true,
+                    complete: false,
+                });
+            }
+            Err(error) => log::warn!("could not read older messages: {error}"),
+        }
+    }
+
     /// Asks the phone for messages before the archive's earliest one.
     /// `background` marks a prefetch request: it never moves the view and its
     /// failures stay quiet. Returns whether a request was sent.
@@ -6184,7 +6268,7 @@ impl Worker {
         if let Some(request) = self.pending_older.get_mut(&chat) {
             // The reader scrolled up while an automatic request was waiting.
             request.explicit |= explicit;
-            if !background && request.background {
+            if !background && request.background && request.import.is_none() {
                 // The reader takes the background request over: its answer
                 // is the page they are waiting for, and it no longer counts
                 // as the background's.
@@ -6221,6 +6305,9 @@ impl Worker {
             // It steps aside and its answer, if it comes, stays quiet.
             if let Some(request) = self.pending_older.remove(&chat) {
                 self.prefetch.promote(&chat);
+                if let Some(token) = request.import {
+                    self.import_failure(token, &chat, false);
+                }
                 self.remember_late(chat.clone(), request);
             }
         }
@@ -6279,6 +6366,7 @@ impl Worker {
                 background,
                 serial,
                 request: None,
+                import: None,
             },
         );
         let commands = self.commands.clone();
@@ -6311,13 +6399,19 @@ impl Worker {
 
     /// Records the id a history request went out under, so its answer can be
     /// matched to it.
-    fn older_sent(&mut self, chat: ChatId, serial: u64, request: String) {
+    fn older_sent(&mut self, chat: ChatId, serial: u64, request: String, now: Instant) {
+        self.rekey_import_requests();
+        let chat = self.import_callback_chat(chat, serial);
+        let session = request.clone();
         if let Some(pending) = self
             .pending_older
             .get_mut(&chat)
             .filter(|pending| pending.serial == serial)
         {
             pending.request = Some(request);
+            if pending.import.is_some() {
+                pending.asked = now;
+            }
         } else if let Some(late) = self
             .late_older
             .iter_mut()
@@ -6325,11 +6419,14 @@ impl Worker {
         {
             late.request = Some(request);
         }
+        self.import_sent(serial, &session);
     }
 
     /// A history request that could not be sent. Only the request it belongs
     /// to is finished: a newer request for the same chat keeps waiting.
     fn older_failed(&mut self, chat: ChatId, serial: u64, error: String) {
+        self.rekey_import_requests();
+        let chat = self.import_callback_chat(chat, serial);
         if !self
             .pending_older
             .get(&chat)
@@ -6342,6 +6439,15 @@ impl Worker {
         let Some(request) = self.pending_older.remove(&chat) else {
             return;
         };
+        if let Some(token) = request.import {
+            self.import_failure(token, &chat, true);
+            self.emit(Event::OlderFetched {
+                chat,
+                more: true,
+                silent: !request.explicit,
+            });
+            return;
+        }
         if request.background {
             self.prefetch.fail_history(&chat, Instant::now());
             self.emit(Event::OlderFetched {
@@ -6367,7 +6473,7 @@ impl Worker {
     /// reader scrolling up does not run into the phone's rate limit. The
     /// chats to ask come from the queue `prefetch::State` keeps in memory.
     fn pump_prefetch(&mut self) {
-        if !self.status.is_connected() || !self.prefetch.on {
+        if !self.status.is_connected() || !self.prefetch.on || self.import_active() {
             return;
         }
         if self.prefetch.needs_chats() {
@@ -6639,6 +6745,10 @@ impl Worker {
                 let _ = self.fetch_older(chat, explicit, false);
             }
             Command::ReloadHistory { chat, message } => self.reload_history(chat, message),
+            change @ (Command::StartHistoryImport(_)
+            | Command::PauseHistoryImport(_)
+            | Command::RetryHistoryImport) => self.change_import(change),
+            Command::SetHistoryImportAllowed(allowed) => self.import.allowed = allowed,
             Command::SetHistoryPrefetch { on, focused } => {
                 self.prefetch.configure(on, focused);
             }
@@ -8020,7 +8130,7 @@ impl Worker {
                 chat,
                 serial,
                 request,
-            } => self.older_sent(chat, serial, request),
+            } => self.older_sent(chat, serial, request, Instant::now()),
             Command::OlderFailed {
                 chat,
                 serial,
@@ -13033,6 +13143,8 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         pn_jid: conversation.pn_jid.clone(),
         lid_jid: conversation.lid_jid.clone(),
         more_on_phone,
+        import_exhausted: conversation.end_of_history_transfer_type
+            == Some(End::COMPLETE_AND_NO_MORE_MESSAGE_REMAIN_ON_PRIMARY),
         messages,
         revoked,
         clips,
@@ -18114,6 +18226,7 @@ mod receipt_tests {
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
             prefetch: prefetch::State::default(),
+            import: history_import::State::default(),
             older_serial: 0,
             late_older: VecDeque::new(),
             older_ids_match: false,
@@ -22809,6 +22922,7 @@ mod chat_removal_tests {
                 pn_jid: None,
                 lid_jid: None,
                 more_on_phone: None,
+                import_exhausted: false,
                 messages: timestamps
                     .iter()
                     .map(|&at| ParsedMessage {
@@ -23658,16 +23772,15 @@ mod older_history_tests {
 
     const CHAT: &str = "4915700000002@s.whatsapp.net";
 
-    /// A phone-history request that has waited past the patience.
+    /// A pending request whose reference clock can be advanced past the patience.
     fn waiting(worker: &mut Worker, explicit: bool) {
         asked(worker, explicit, false, 0, None);
-        worker
-            .pending_older
-            .get_mut(CHAT)
-            .expect("the request")
-            .asked = Instant::now()
-            .checked_sub(PHONE_PATIENCE * 2)
-            .expect("the clock runs past the patience");
+    }
+
+    /// Advances the expiration reference without subtracting from the host clock.
+    fn expire(worker: &mut Worker) {
+        let now = worker.pending_older[CHAT].asked + PHONE_PATIENCE * 2;
+        worker.expire_older_requests(now);
     }
 
     /// A phone-history request still within the patience, with the serial
@@ -23688,6 +23801,7 @@ mod older_history_tests {
                 background,
                 serial,
                 request: request.map(str::to_owned),
+                import: None,
             },
         );
     }
@@ -23750,14 +23864,15 @@ mod older_history_tests {
             Chat::new("other@s.whatsapp.net".into(), "Other".into()),
         ]);
         asked(&mut worker, false, true, 1, Some("bg"));
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        let now = Instant::now();
+        worker.pending_older.get_mut(CHAT).unwrap().asked = now;
+        let expired = now + PHONE_PATIENCE * 2;
+        worker.expire_older_requests(expired);
         assert_eq!(silences(&drain(&events)), [true]);
         assert_eq!(
             worker
                 .prefetch
-                .next_history(Instant::now() + prefetch::HISTORY_GAP, false)
+                .next_history(expired + prefetch::HISTORY_GAP, false)
                 .as_deref(),
             Some("other@s.whatsapp.net")
         );
@@ -23789,9 +23904,7 @@ mod older_history_tests {
         let (mut worker, events, _, _) = receipt_tests::worker();
         prefetching(&mut worker);
         asked(&mut worker, false, true, 1, Some("bg"));
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        expire(&mut worker);
         let timeout = drain(&events);
         assert_eq!(silences(&timeout), [true], "a quiet timeout");
         assert_eq!(warnings(&timeout), 0);
@@ -23825,9 +23938,8 @@ mod older_history_tests {
             .prefetch
             .set_chats(&[Chat::new(CHAT.into(), "First".into())]);
         asked(&mut worker, false, true, 1, Some("old"));
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        worker.pending_older.get_mut(CHAT).unwrap().asked = Instant::now();
+        worker.expire_older_requests(Instant::now() + PHONE_PATIENCE * 2);
         drain(&events);
 
         worker.prefetch.start_history(CHAT.into());
@@ -23857,9 +23969,8 @@ mod older_history_tests {
                 worker.prefetch.start_history(CHAT.into());
                 asked(&mut worker, false, true, serial, Some("third"));
             }
-            worker.pending_older.get_mut(CHAT).unwrap().asked =
-                Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-            worker.expire_older_requests();
+            worker.pending_older.get_mut(CHAT).unwrap().asked = Instant::now();
+            worker.expire_older_requests(Instant::now() + PHONE_PATIENCE * 2);
             drain(&events);
         }
         assert_eq!(
@@ -23872,6 +23983,27 @@ mod older_history_tests {
         );
     }
 
+    /// A late reader page is displayed without completing a newer request for the same chat.
+    #[test]
+    fn a_late_reader_answer_preserves_its_page_and_a_newer_request() {
+        for newer in [false, true] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            asked(&mut worker, true, false, 1, Some("old-reader"));
+            expire(&mut worker);
+            drain(&events);
+            if newer {
+                asked(&mut worker, true, false, 2, Some("new-reader"));
+            }
+            let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+            worker.answer_older(filed, Some("old-reader"));
+            let events = drain(&events);
+            assert_eq!(pages(&events), 1);
+            assert_eq!(silences(&events), [newer]);
+            assert_eq!(worker.pending_older.contains_key(CHAT), newer);
+            assert!(worker.late_older.is_empty());
+        }
+    }
+
     /// Without ids, answers are matched by chat. The late background answer
     /// then pages the reader's view (it holds what they asked for), and the
     /// reader's own answer afterwards is matched to the request that timed
@@ -23881,9 +24013,7 @@ mod older_history_tests {
         let (mut worker, events, _, _) = receipt_tests::worker();
         prefetching(&mut worker);
         asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        expire(&mut worker);
         drain(&events);
         asked(&mut worker, true, false, 2, None);
 
@@ -23934,9 +24064,7 @@ mod older_history_tests {
     async fn the_send_result_records_the_requests_id() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        expire(&mut worker);
         asked(&mut worker, true, false, 2, None);
         for (serial, id) in [(1, "bg"), (2, "reader")] {
             worker
@@ -23960,9 +24088,7 @@ mod older_history_tests {
     async fn a_late_send_failure_leaves_the_newer_request() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         asked(&mut worker, false, true, 1, None);
-        worker.pending_older.get_mut(CHAT).unwrap().asked =
-            Instant::now().checked_sub(PHONE_PATIENCE * 2).unwrap();
-        worker.expire_older_requests();
+        expire(&mut worker);
         drain(&events);
         asked(&mut worker, true, false, 2, None);
         worker
@@ -24007,7 +24133,7 @@ mod older_history_tests {
         for serial in 0..(LATE_OLDER_LIMIT as u64 + 5) {
             waiting(&mut worker, false);
             worker.pending_older.get_mut(CHAT).unwrap().serial = serial;
-            worker.expire_older_requests();
+            expire(&mut worker);
         }
         assert_eq!(worker.late_older.len(), LATE_OLDER_LIMIT);
         assert_eq!(worker.late_older[0].serial, 5, "the oldest go first");
@@ -24037,7 +24163,7 @@ mod older_history_tests {
     fn an_unanswered_automatic_request_stays_silent() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         waiting(&mut worker, false);
-        worker.expire_older_requests();
+        expire(&mut worker);
         let events = drain(&events);
         assert_eq!(warnings(&events), 0);
         assert_eq!(
@@ -24052,11 +24178,11 @@ mod older_history_tests {
     fn a_reader_request_warns_once_until_the_phone_answers() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         waiting(&mut worker, true);
-        worker.expire_older_requests();
+        expire(&mut worker);
         assert_eq!(warnings(&drain(&events)), 1);
 
         waiting(&mut worker, true);
-        worker.expire_older_requests();
+        expire(&mut worker);
         assert_eq!(warnings(&drain(&events)), 0, "once per chat");
 
         // The phone sends this chat's history: a later silence is news again.
@@ -24064,7 +24190,7 @@ mod older_history_tests {
         worker.answer_older(filed, None);
         drain(&events);
         waiting(&mut worker, true);
-        worker.expire_older_requests();
+        expire(&mut worker);
         assert_eq!(warnings(&drain(&events)), 1);
     }
 
@@ -24074,7 +24200,7 @@ mod older_history_tests {
         waiting(&mut worker, false);
         worker.fetch_older(CHAT.to_owned(), true, false);
         assert!(worker.pending_older[CHAT].explicit);
-        worker.expire_older_requests();
+        expire(&mut worker);
         assert_eq!(warnings(&drain(&events)), 1);
     }
 

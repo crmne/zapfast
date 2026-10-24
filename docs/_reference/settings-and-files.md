@@ -170,6 +170,26 @@ name or description, in the interface language or in English.
   Requests that cannot be sent still back off the whole account. Pages fetched
   this way go into the archive without moving the view. A chat the phone says
   has nothing older is not asked again.
+- **Import history since a date**: manually start a request pass from an exact
+  `YYYY-MM-DD` date (UTC), within the last 1,095 days. This works with an already
+  linked account, using the ordinary per-chat history API. It does not change
+  the device's identity or require relinking. Starting a pass preserves
+  **Fetch older history**. The import takes priority while running; when it pauses
+  or finishes, background fetching resumes if enabled and may fetch beyond the date.
+  The pass covers known chats, excluding locked chats, groups you left, channels,
+  and chats with local deletion or clearing barriers. Requests rotate between
+  chats, at most one every twenty seconds, waiting for other outstanding history
+  requests first.
+  Scrolling up in a chat with a pending import request shows its returned
+  messages as soon as that request completes, without starting another request.
+  Pause, resume, and retry keep saved messages and completed work. Progress and
+  request boundaries stay in that account's encrypted archive across restarts.
+  A silent or non-progressing chat needs retry after three attempts; other chats
+  continue. A request pass finishes after each eligible chat crosses the date or
+  the phone explicitly reports no older messages. This is not a completeness
+  guarantee: WhatsApp may return less history, or leave requests unanswered.
+  The import pauses while the app is locked. It does not download attachments
+  or add media recovery; normal download settings still apply when viewing them.
 - **Keep chats archived**: on by default. When off, a new message, received or
   sent, brings an archived chat back to the list. Applies to all accounts here
   whose phone has not sent its own **Keep chats archived**; once a phone has,

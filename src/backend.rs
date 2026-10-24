@@ -254,6 +254,10 @@ pub enum Command {
         on: bool,
         focused: Option<ChatId>,
     },
+    StartHistoryImport(i64),
+    PauseHistoryImport(bool),
+    RetryHistoryImport,
+    SetHistoryImportAllowed(bool),
     /// A page of the chat's photos and playable videos, answered by
     /// `Event::ChatMedia`. `None` asks for the newest page; `around` centres it
     /// on one message, so a viewer opened on a photo older than the newest
@@ -1047,6 +1051,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    HistoryImport(crate::model::HistoryImportProgress),
     InteractiveReplyState {
         chat: ChatId,
         message: String,

@@ -3969,6 +3969,7 @@ impl App {
                 }
             }
             Event::SyncProgress(percent) => self.sync_percent = Some(percent),
+            Event::HistoryImport(progress) => self.history_import = progress,
             Event::OlderFetched { chat, more, silent } => {
                 let conversation = self.conversations.entry(chat).or_default();
                 if silent {
@@ -6191,7 +6192,14 @@ impl App {
     /// follow every way a chat opens, closes or disappears.
     fn sync_prefetch(&mut self) {
         let active = self.active;
+        let allowed = !self.app_lock.is_locked();
         for (index, account) in self.accounts.iter_mut().enumerate() {
+            if account.history_import_allowed_sent != Some(allowed) {
+                account
+                    .backend
+                    .send(Command::SetHistoryImportAllowed(allowed));
+                account.history_import_allowed_sent = Some(allowed);
+            }
             let wanted = (
                 account.settings.history_prefetch,
                 (index == active)
@@ -6534,6 +6542,16 @@ impl App {
                     self.refocus_composer(ctx);
                 }
             }
+            Action::StartHistoryImport(since) => {
+                if crate::model::valid_history_import_date(since, crate::util::now()) {
+                    let account = &mut self.accounts[self.active];
+                    account.backend.send(Command::StartHistoryImport(since));
+                }
+            }
+            Action::PauseHistoryImport(paused) => {
+                self.backend.send(Command::PauseHistoryImport(paused))
+            }
+            Action::RetryHistoryImport => self.backend.send(Command::RetryHistoryImport),
             Action::ToggleSettings => {
                 // The button that opened settings closes them again, and
                 // closing lands on what was showing, exactly as Escape does.
@@ -12929,6 +12947,79 @@ mod tests {
                 .is_some_and(|pending| pending.answered)
         );
         assert!(ctx.has_requested_repaint(), "the next frame says it");
+    }
+
+    /// Both positions of the saved background-history switch survive a manual import.
+    #[test]
+    fn date_import_keeps_both_background_history_choices() {
+        for enabled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, mut commands) = two_accounts(directory.path());
+            app.active = 1;
+            app.accounts[1].settings.history_prefetch = enabled;
+            app.accounts[1].save_settings(&app.files);
+            let since = crate::util::now().div_euclid(86_400) * 86_400;
+            app.apply(Action::StartHistoryImport(since), &egui::Context::default());
+            assert!(matches!(
+                commands.try_recv().unwrap(),
+                Command::StartHistoryImport(_)
+            ));
+            assert_eq!(app.accounts[1].settings.history_prefetch, enabled);
+            assert!(app.files.flush(Duration::from_secs(10)));
+            assert_eq!(
+                crate::settings::AccountSettings::load(&app.accounts[1].dirs.settings_file())
+                    .history_prefetch,
+                enabled
+            );
+        }
+    }
+
+    /// Starting an import preserves settings and keeps progress and lock admission account-local.
+    #[test]
+    fn date_import_preserves_settings_and_uses_account_lock_gate() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        app.active = 1;
+        app.accounts[0].history_import_date = "keep this draft".into();
+        app.accounts[1].settings.history_prefetch = true;
+        app.accounts[1].save_settings(&app.files);
+        let since = crate::util::now().div_euclid(86_400) * 86_400;
+        app.apply(Action::StartHistoryImport(since), &egui::Context::default());
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::StartHistoryImport(value) if value == since)
+        );
+        assert!(app.files.flush(Duration::from_secs(10)));
+        assert!(
+            crate::settings::AccountSettings::load(&app.accounts[1].dirs.settings_file())
+                .history_prefetch
+        );
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::HistoryImport(crate::model::HistoryImportProgress {
+                since: Some(since),
+                total: 3,
+                completed: 1,
+                ..Default::default()
+            }),
+            false,
+        );
+        app.events_hidden = false;
+        app.active = 0;
+        assert_eq!(app.history_import_date, "keep this draft");
+        assert_eq!(app.history_import.total, 0);
+        assert_eq!(app.accounts[1].history_import.total, 3);
+        app.sync_prefetch();
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter()
+                .any(|command| matches!(command, Command::SetHistoryImportAllowed(true)))
+        );
+        app.app_lock.lock();
+        app.sync_prefetch();
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::SetHistoryImportAllowed(false)))
+        );
     }
 
     #[test]

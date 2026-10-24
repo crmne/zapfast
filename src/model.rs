@@ -1715,6 +1715,50 @@ pub struct Motion {
     pub state: MediaState,
 }
 
+/// Progress of a request pass, not a guarantee of complete phone history.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HistoryImportProgress {
+    pub since: Option<i64>,
+    pub total: usize,
+    pub completed: usize,
+    pub excluded: usize,
+    pub stopped: usize,
+    pub paused: bool,
+    pub finished: bool,
+    pub failed: bool,
+}
+
+impl HistoryImportProgress {
+    /// Whether the pass still has runnable work and should take priority over prefetch.
+    pub fn active(&self) -> bool {
+        self.since.is_some()
+            && !self.paused
+            && !self.finished
+            && !self.failed
+            && (self.total == 0 || self.completed + self.excluded + self.stopped < self.total)
+    }
+}
+
+/// Dates are inclusive UTC midnights in the last 1,095 days.
+pub fn valid_history_import_date(since: i64, now: i64) -> bool {
+    let today = now.div_euclid(86_400) * 86_400;
+    since.rem_euclid(86_400) == 0 && (today - 1_095 * 86_400..=today).contains(&since)
+}
+
+/// Parses an exact ISO date and rejects dates outside the allowed UTC window.
+pub fn parse_history_import_date(text: &str, now: i64) -> Option<i64> {
+    let date: jiff::civil::Date = text.parse().ok()?;
+    if date.to_string() != text {
+        return None;
+    }
+    let since = date
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .ok()?
+        .timestamp()
+        .as_second();
+    valid_history_import_date(since, now).then_some(since)
+}
+
 /// Counts and sizes of the files in an account's media cache, for the
 /// storage rows in Settings. The kind comes from each file's extension.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -2479,6 +2523,9 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    StartHistoryImport(i64),
+    PauseHistoryImport(bool),
+    RetryHistoryImport,
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,

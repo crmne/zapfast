@@ -25,6 +25,7 @@ pub mod diagnostics;
 pub mod emoji;
 pub mod geo;
 pub mod group_admin;
+mod history_retry;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;
