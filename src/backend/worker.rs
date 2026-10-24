@@ -6168,12 +6168,16 @@ impl Worker {
             // A batch goes to every recipient or to none of them.
             Command::Forward { to_chats, .. } => to_chats
                 .iter()
-                .find(|chat| !self.destination_writable(chat))
+                .find(|chat| !self.forward_writable(chat))
                 .or_else(|| to_chats.first()),
             _ => None,
         };
+        let writable = |chat: &str| match &command {
+            Command::Forward { .. } => self.forward_writable(chat),
+            _ => self.destination_writable(chat),
+        };
         if let Some(chat) = destination
-            && !self.destination_writable(chat)
+            && !writable(chat)
         {
             let error = "This conversation is read-only in ZapFast".to_owned();
             if matches!(&command, Command::CreatePoll { .. }) {
@@ -8501,6 +8505,13 @@ impl Worker {
             }
     }
 
+    /// A locked chat accepts messages written in it, but never a forward:
+    /// the picker does not list it, so one aimed there was locked meanwhile.
+    fn forward_writable(&self, chat: &str) -> bool {
+        self.destination_writable(chat)
+            && !matches!(self.archive.chat(chat), Ok(Some(chat)) if chat.locked)
+    }
+
     /// Skips destinations that became unwritable while waiting, marking their
     /// pending rows failed and continuing with the next authorized destination.
     fn next_writable_forward(&mut self, completed: &str) -> Option<(String, ForwardJob)> {
@@ -8516,7 +8527,7 @@ impl Worker {
                     return None;
                 }
             };
-            if self.destination_writable(&job.0) {
+            if self.forward_writable(&job.0) {
                 return Some((id, job));
             }
             // Never sent, so never acked.
@@ -17081,6 +17092,20 @@ mod receipt_tests {
         assert!(matches!(queue.ack("d"), ForwardStep::Finished));
         assert!(queue.current.is_none());
         assert!(queue.remaining.is_empty());
+    }
+
+    /// A locked chat takes what is written in it, but never a forward.
+    #[test]
+    fn locked_chats_accept_sends_but_not_forwards() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.privacy_ready = true;
+        worker
+            .archive
+            .upsert_chat(&Chat::new(PEER.to_owned(), "Fixture".to_owned()))
+            .unwrap();
+        worker.archive.set_locked(PEER, true).unwrap();
+        assert!(worker.destination_writable(PEER));
+        assert!(!worker.forward_writable(PEER));
     }
 
     /// A later lock, departure, or privacy reset prevents a queued send and

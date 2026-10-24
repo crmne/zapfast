@@ -2917,7 +2917,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         let writable: Vec<_> = app
                             .chats
                             .iter()
-                            .filter(|chat| chat.can_send())
+                            .filter(|chat| crate::ui::dialogs::forwardable(chat))
                             .map(|chat| chat.id.clone())
                             .collect();
                         app.forward_recipients = writable
