@@ -426,7 +426,7 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
         ui,
         crate::i18n::gettext(
             app.locale,
-            "This moves the chat to the Locked tab, hiding it from the normal chat list, search, unread badges, and notifications. The lock status also syncs to your phone. Open Locked with a separate local ZapFast code to read it. Sending from locked chats is not supported yet.",
+            "This moves the chat to the Locked tab, hiding it from the normal chat list, search, unread badges, and notifications. The lock status also syncs to your phone. Open Locked with a separate local ZapFast code to read it.",
         ),
         theme::regular(13.0),
         palette.secondary,
@@ -855,9 +855,11 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Uses the model's send permissions to reject unavailable forwarding destinations.
-fn forwardable(chat: &crate::model::Chat) -> bool {
-    chat.can_send()
+/// Uses the model's send permissions to reject unavailable forwarding
+/// destinations. Locked chats stay out of the picker, which would otherwise
+/// list them outside the locked folder.
+pub(crate) fn forwardable(chat: &crate::model::Chat) -> bool {
+    chat.can_send() && !chat.locked
 }
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
