@@ -5791,7 +5791,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_folder_explains_its_read_only_state() {
+    fn locked_folder_chats_accept_messages() {
         let mut app = app();
         apply_flags(&mut app, Some("locked-open"));
         let ctx = egui::Context::default();
@@ -5802,7 +5802,7 @@ mod tests {
             "unlocking must not expose the code in search"
         );
         ctx.enable_accesskit();
-        assert!(!app.current_chat().unwrap().can_send());
+        assert!(app.current_chat().unwrap().can_send());
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -5821,7 +5821,7 @@ mod tests {
             .filter_map(|(_, node)| node.label().or_else(|| node.value()))
             .collect();
         assert!(
-            labels.contains(&"Locked chats are read-only in ZapFast"),
+            !labels.contains(&"Locked chats are read-only in ZapFast"),
             "{labels:?}"
         );
         assert!(!labels.contains(&"admins"));

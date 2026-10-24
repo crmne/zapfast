@@ -411,7 +411,7 @@ impl Chat {
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
-        !self.locked && !self.read_only && !self.left && self.kind != ChatKind::Broadcast
+        !self.read_only && !self.left && self.kind != ChatKind::Broadcast
     }
 
     /// A followed WhatsApp channel (newsletter).
