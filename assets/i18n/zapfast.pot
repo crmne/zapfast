@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-24 10:21+0200\n"
+"POT-Creation-Date: 2026-10-24 19:06+0530\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -369,150 +369,155 @@ msgstr ""
 msgid "{hours} h {minutes} min"
 msgstr ""
 
-#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3285
+#: src/ui/chats.rs:184 src/ui/chats.rs:516 src/app.rs:3285
 msgid "Starred"
 msgstr ""
 
-#: src/ui/chats.rs:262 src/ui/conversation.rs:849
+#: src/ui/chats.rs:261 src/ui/conversation.rs:849
 msgid "Back to the calls"
 msgstr ""
 
-#: src/ui/chats.rs:271 src/ui/chats.rs:404
+#: src/ui/chats.rs:270 src/ui/chats.rs:403
 msgid "New call"
 msgstr ""
 
-#: src/ui/chats.rs:285
+#: src/ui/chats.rs:284
 msgid "Search name or number"
 msgstr ""
 
-#: src/ui/chats.rs:318 src/ui/pane.rs:260
+#: src/ui/chats.rs:317 src/ui/pane.rs:260
 msgid "Search"
 msgstr ""
 
-#: src/ui/chats.rs:686
+#: src/ui/chats.rs:685
 msgid "No starred messages"
 msgstr ""
 
-#: src/ui/chats.rs:689
+#: src/ui/chats.rs:688
 msgid "Right-click a message and choose Star to keep it here."
 msgstr ""
 
-#: src/ui/chats.rs:936
+#: src/ui/chats.rs:935
 msgid "No favorites yet"
 msgstr ""
 
-#: src/ui/chats.rs:1359 src/app.rs:2619
+#: src/ui/chats.rs:1358 src/app.rs:2619
 msgid "Message yourself"
 msgstr ""
 
-#: src/ui/chats.rs:1586
+#: src/ui/chats.rs:1585
 msgid "Draft:"
 msgstr ""
 
-#: src/ui/chats.rs:1676 src/ui/chats.rs:2071 src/ui/picker.rs:1631
+#: src/ui/chats.rs:1675 src/ui/chats.rs:2072 src/ui/picker.rs:1631
 msgid "Remove from favorites"
 msgstr ""
 
-#: src/ui/chats.rs:1678 src/ui/chats.rs:2073 src/ui/conversation.rs:5686
+#: src/ui/chats.rs:1677 src/ui/chats.rs:2074 src/ui/conversation.rs:5686
 #: src/ui/conversation.rs:6173 src/ui/dialogs.rs:1396 src/ui/picker.rs:1632
 msgid "Add to favorites"
 msgstr ""
 
-#: src/ui/chats.rs:1688 src/ui/chats.rs:2093 src/ui/conversation.rs:604
+#: src/ui/chats.rs:1687 src/ui/chats.rs:2094 src/ui/conversation.rs:604
 #: src/ui/dialogs.rs:1727 src/ui/info.rs:583
 msgid "Leave group"
 msgstr ""
 
-#: src/ui/chats.rs:1689 src/ui/chats.rs:2091 src/ui/conversation.rs:602
+#: src/ui/chats.rs:1688 src/ui/chats.rs:2092 src/ui/conversation.rs:602
 #: src/ui/dialogs.rs:1725 src/ui/info.rs:581
 msgid "Leave channel"
 msgstr ""
 
-#: src/ui/chats.rs:1705 src/ui/labels.rs:178 src/ui/labels.rs:223
-msgid "Labels"
+#: src/ui/chats.rs:1694 src/ui/chats.rs:2182 src/ui/chats.rs:2429
+#: src/ui/conversation.rs:638 src/ui/dialogs.rs:1106
+msgid "Clear chat"
 msgstr ""
 
-#: src/ui/chats.rs:2038
-msgid "Mark as read"
-msgstr ""
-
-#: src/ui/chats.rs:2048
-msgid "Mark as unread"
-msgstr ""
-
-#: src/ui/chats.rs:2054 src/ui/conversation.rs:629
-msgid "Unpin"
-msgstr ""
-
-#: src/ui/chats.rs:2056 src/ui/conversation.rs:631
-msgid "Pin to top"
-msgstr ""
-
-#: src/ui/chats.rs:2081 src/ui/conversation.rs:634
-msgid "Unarchive"
-msgstr ""
-
-#: src/ui/chats.rs:2083 src/ui/conversation.rs:636
-msgid "Archive"
-msgstr ""
-
-#: src/ui/chats.rs:2109 src/ui/conversation.rs:9015 src/ui/call.rs:522
-msgid "Unmute"
-msgstr ""
-
-#: src/ui/chats.rs:2116
-msgid "Mute for 8 hours"
-msgstr ""
-
-#: src/ui/chats.rs:2120
-msgid "Mute for a week"
-msgstr ""
-
-#: src/ui/chats.rs:2123
-msgid "Mute indefinitely"
-msgstr ""
-
-#: src/ui/chats.rs:2134
-msgid "Unlock chat"
-msgstr ""
-
-#: src/ui/chats.rs:2136 src/ui/dialogs.rs:438
-msgid "Lock chat"
-msgstr ""
-
-#: src/ui/chats.rs:2160 src/ui/conversation.rs:639 src/ui/conversation.rs:8014
-msgid "Copy number"
-msgstr ""
-
-#: src/ui/chats.rs:2169 src/ui/conversation.rs:627
-msgid "Info"
-msgstr ""
-
-#: src/ui/chats.rs:2181
+#: src/ui/chats.rs:1695 src/ui/chats.rs:2194
 msgid "Delete chat"
 msgstr ""
 
-#: src/ui/chats.rs:2208
+#: src/ui/chats.rs:1706 src/ui/labels.rs:178 src/ui/labels.rs:223
+msgid "Labels"
+msgstr ""
+
+#: src/ui/chats.rs:2039
+msgid "Mark as read"
+msgstr ""
+
+#: src/ui/chats.rs:2049
+msgid "Mark as unread"
+msgstr ""
+
+#: src/ui/chats.rs:2055 src/ui/conversation.rs:629
+msgid "Unpin"
+msgstr ""
+
+#: src/ui/chats.rs:2057 src/ui/conversation.rs:631
+msgid "Pin to top"
+msgstr ""
+
+#: src/ui/chats.rs:2082 src/ui/conversation.rs:634
+msgid "Unarchive"
+msgstr ""
+
+#: src/ui/chats.rs:2084 src/ui/conversation.rs:636
+msgid "Archive"
+msgstr ""
+
+#: src/ui/chats.rs:2110 src/ui/conversation.rs:9015 src/ui/call.rs:522
+msgid "Unmute"
+msgstr ""
+
+#: src/ui/chats.rs:2117
+msgid "Mute for 8 hours"
+msgstr ""
+
+#: src/ui/chats.rs:2121
+msgid "Mute for a week"
+msgstr ""
+
+#: src/ui/chats.rs:2124
+msgid "Mute indefinitely"
+msgstr ""
+
+#: src/ui/chats.rs:2135
+msgid "Unlock chat"
+msgstr ""
+
+#: src/ui/chats.rs:2137 src/ui/dialogs.rs:438
+msgid "Lock chat"
+msgstr ""
+
+#: src/ui/chats.rs:2161 src/ui/conversation.rs:639 src/ui/conversation.rs:8014
+msgid "Copy number"
+msgstr ""
+
+#: src/ui/chats.rs:2170 src/ui/conversation.rs:627
+msgid "Info"
+msgstr ""
+
+#: src/ui/chats.rs:2221
 msgid "Default"
 msgstr ""
 
-#: src/ui/chats.rs:2209
+#: src/ui/chats.rs:2222
 msgid "System sound"
 msgstr ""
 
-#: src/ui/chats.rs:2210
+#: src/ui/chats.rs:2223
 msgid "No sound"
 msgstr ""
 
-#: src/ui/chats.rs:2220
+#: src/ui/chats.rs:2233
 msgid "Custom"
 msgstr ""
 
-#: src/ui/chats.rs:2225 src/ui/settings.rs:1992
+#: src/ui/chats.rs:2238 src/ui/settings.rs:1992
 msgid "Choose a file…"
 msgstr ""
 
-#: src/ui/chats.rs:2232
+#: src/ui/chats.rs:2245
 msgid "Notification sound"
 msgstr ""
 
@@ -539,10 +544,6 @@ msgstr ""
 
 #: src/ui/conversation.rs:621
 msgid "More"
-msgstr ""
-
-#: src/ui/conversation.rs:638 src/ui/dialogs.rs:1106
-msgid "Clear chat"
 msgstr ""
 
 #: src/ui/conversation.rs:640

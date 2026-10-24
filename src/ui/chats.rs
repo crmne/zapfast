@@ -3,7 +3,6 @@
 use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
-use crate::backend::LinkStatus;
 use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
@@ -1692,6 +1691,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             "Mute indefinitely",
             "Unlock chat",
             "Copy number",
+            &crate::i18n::gettext(app.locale, "Clear chat"),
+            &crate::i18n::gettext(app.locale, "Delete chat"),
         ],
         true,
     )
@@ -2172,8 +2173,20 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions.push(Action::OpenChat(chat.id.clone()));
         app.actions.push(Action::OpenInfo(chat.id.clone()));
     }
-    // Deleting reaches the phone, so it waits for a connection.
-    let connected = matches!(app.link, LinkStatus::Connected);
+    // Clearing and deleting reach the phone, so both wait for a connection.
+    let connected = app.is_connected();
+    if widgets::menu_item_enabled(
+        ui,
+        palette,
+        Some(Icon::Eraser),
+        &crate::i18n::gettext(locale, "Clear chat"),
+        connected,
+    ) {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmClearChat(
+                chat.id.clone(),
+            )));
+    }
     if widgets::menu_item_enabled(
         ui,
         palette,
@@ -2410,6 +2423,110 @@ mod tests {
                 rect.width()
             );
         }
+    }
+
+    fn click_clear_chat_in_the_list_menu(app: &mut App, chat: &Chat) {
+        let label = crate::i18n::gettext(app.locale, "Clear chat");
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut frame = |events| {
+            let mut response = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 700.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| response = Some(row(app, ui, chat)),
+            );
+            output.textures_delta.clear();
+            (response.unwrap(), output.shapes)
+        };
+        let (response, _) = frame(vec![]);
+        let position = response.rect.left_center() + vec2(20.0, 0.0);
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        // A popup's first frame measures its contents before its final placement.
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(vec![]).1;
+        }
+        let popup = response.id.with("popup");
+        assert!(egui::Popup::is_id_open(&ctx, popup));
+        let menu = ctx.read_response(popup).expect("chat context menu").rect;
+        // Click the label the reader sees, rather than guessing its row offset.
+        let position = shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label.as_ref() => {
+                    let position = text.visual_bounding_rect().center();
+                    (clipped.clip_rect.contains(position) && menu.contains(position))
+                        .then_some(position)
+                }
+                _ => None,
+            })
+            .expect("the translated Clear chat item is visible in the chat menu");
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+    }
+
+    #[test]
+    fn clear_chat_in_the_list_menu_confirms_for_the_clicked_chat_when_connected() {
+        for locale in [crate::i18n::Locale::English, crate::i18n::Locale::German] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = App::headless(AppDirs::under(directory.path()), Settings::default());
+            let clicked = Chat::new("clicked@g.us".into(), "Clicked group".into());
+            let open = Chat::new("open@s.whatsapp.net".into(), "Open chat".into());
+            app.open_chat = Some(open.id.clone());
+            app.link = crate::backend::LinkStatus::Connected;
+            app.locale = locale;
+
+            click_clear_chat_in_the_list_menu(&mut app, &clicked);
+
+            // Only request confirmation for the clicked row: no clearing or navigation.
+            assert_eq!(
+                app.actions,
+                [Action::ShowDialog(Dialog::ConfirmClearChat(
+                    clicked.id.clone()
+                ))],
+                "{locale:?}"
+            );
+            assert_eq!(app.open_chat.as_deref(), Some(open.id.as_str()));
+        }
+    }
+
+    #[test]
+    fn clear_chat_in_the_list_menu_is_disabled_while_disconnected() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(directory.path()), Settings::default());
+        let clicked = Chat::new("clicked@g.us".into(), "Clicked group".into());
+        let open = Chat::new("open@s.whatsapp.net".into(), "Open chat".into());
+        app.open_chat = Some(open.id.clone());
+        app.link = crate::backend::LinkStatus::Disconnected {
+            reason: "fixture".into(),
+        };
+        click_clear_chat_in_the_list_menu(&mut app, &clicked);
+
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        assert_eq!(app.open_chat.as_deref(), Some(open.id.as_str()));
     }
 
     #[test]
