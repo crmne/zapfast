@@ -819,6 +819,7 @@ pub async fn run(
     };
     worker.load_state();
     worker.backfill();
+    worker.backfill_lottie_stickers();
     worker.backfill_media_albums();
     worker.backfill_video_notes();
     worker.backfill_view_once();
@@ -2205,6 +2206,56 @@ impl Worker {
                 "attachments: {moved} re-pointed to {}, {forgotten} to fetch again",
                 dir.display()
             );
+        }
+    }
+
+    /// Reclassify previously unsupported Lottie stickers without replaying
+    /// the entire message archive. Raw protobufs retain the media keys.
+    fn backfill_lottie_stickers(&mut self) {
+        const KEY: &str = "lottie_stickers";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let rows = match self.archive.unsupported_with_raw() {
+            Ok(rows) => rows,
+            Err(error) => {
+                log::warn!("could not read archived Lottie stickers: {error}");
+                return;
+            }
+        };
+        let mut updated = 0;
+        let mut failed = false;
+        for (chat, id, raw) in rows {
+            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                continue;
+            };
+            if !message.get_base_message().lottie_sticker_message.is_set() {
+                continue;
+            }
+            let Some(content @ Content::Sticker { .. }) = classify(&message) else {
+                continue;
+            };
+            let Some(old) = self.archive.message(&chat, &id).ok().flatten() else {
+                continue;
+            };
+            if old.edited {
+                continue;
+            }
+            match self.archive.set_content(&chat, &id, &content, false) {
+                Ok(true) => updated += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    log::warn!("could not reclassify archived Lottie sticker: {error}");
+                    failed = true;
+                }
+            }
+        }
+        if !failed && let Err(error) = self.archive.set_meta(KEY, "1") {
+            log::warn!("could not mark Lottie archive migration complete: {error}");
+        }
+        if updated > 0 {
+            log::info!("reclassified {updated} archived Lottie stickers");
+            self.emit_chats();
         }
     }
 
@@ -8894,10 +8945,14 @@ impl Worker {
                     document.mimetype.clone().unwrap_or_default(),
                     document.file_name.clone(),
                 )
-            } else if let Some(sticker) = base.sticker_message.as_option() {
+            } else if let Some(sticker) = sticker_of(&base) {
                 (
                     Box::new(sticker.clone()),
-                    sticker.mimetype.clone().unwrap_or_default(),
+                    if base.lottie_sticker_message.is_set() || sticker.is_lottie == Some(true) {
+                        "application/was".to_owned()
+                    } else {
+                        sticker.mimetype.clone().unwrap_or_default()
+                    },
                     None,
                 )
             } else {
@@ -8940,11 +8995,7 @@ impl Worker {
                     .as_option()
                     .and_then(|media| media.media_key.clone())
             })
-            .or_else(|| {
-                base.sticker_message
-                    .as_option()
-                    .and_then(|media| media.media_key.clone())
-            })
+            .or_else(|| sticker_of(&base).and_then(|media| media.media_key.clone()))
             .unwrap_or_default();
         // A sticker only the picker wanted is not worth a re-upload request:
         // the picker fetches in the background, and each request counts
@@ -8984,6 +9035,16 @@ impl Worker {
                 return Some(Box::new(media.clone()));
             }
             if let Some(media) = fresh_base.sticker_message.as_option_mut() {
+                media.direct_path = Some(direct);
+                media.url = None;
+                return Some(Box::new(media.clone()));
+            }
+            if let Some(media) = fresh_base
+                .lottie_sticker_message
+                .as_option_mut()
+                .and_then(|wrapper| wrapper.message.as_option_mut())
+                .and_then(|inner| inner.sticker_message.as_option_mut())
+            {
                 media.direct_path = Some(direct);
                 media.url = None;
                 return Some(Box::new(media.clone()));
@@ -10965,7 +11026,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     if let Some(document) = base.document_message.as_option() {
         return document.context_info.as_option();
     }
-    if let Some(sticker) = base.sticker_message.as_option() {
+    if let Some(sticker) = sticker_of(base) {
         return sticker.context_info.as_option();
     }
     if let Some(location) = base.location_message.as_option() {
@@ -11174,6 +11235,19 @@ fn live_location_newer(share: &Message, incoming: &Content) -> bool {
     }
 }
 
+/// A Lottie sticker's media lives in FutureProofMessage -> Message -> StickerMessage.
+/// Use the same extraction for both classification and downloads.
+fn sticker_of(base: &wa::Message) -> Option<&wa::message::StickerMessage> {
+    base.sticker_message.as_option().or_else(|| {
+        base.lottie_sticker_message
+            .as_option()?
+            .message
+            .as_option()?
+            .sticker_message
+            .as_option()
+    })
+}
+
 /// Converts a protocol message to visible content, or `None` for internal
 /// traffic. Takes the whole message, wrappers included: view-once media
 /// arrives wrapped, and WhatsApp keeps it for the phone, so a linked device
@@ -11284,15 +11358,22 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             pages: document.page_count,
         });
     }
-    if let Some(sticker) = base.sticker_message.as_option() {
+    if let Some(sticker) = sticker_of(base) {
+        let lottie = base.lottie_sticker_message.is_set()
+            || sticker.is_lottie.unwrap_or(false)
+            || sticker.mimetype.as_deref() == Some("application/was");
+        let mut attachment = media(
+            sticker.mimetype.as_ref(),
+            sticker.file_length,
+            sticker.width,
+            sticker.height,
+        );
+        if lottie {
+            attachment.mime = "application/was".to_owned();
+        }
         return Some(Content::Sticker {
-            media: media(
-                sticker.mimetype.as_ref(),
-                sticker.file_length,
-                sticker.width,
-                sticker.height,
-            ),
-            animated: sticker.is_animated.unwrap_or(false),
+            media: attachment,
+            animated: lottie || sticker.is_animated.unwrap_or(false),
         });
     }
     if let Some(location) = base.location_message.as_option() {
@@ -11398,9 +11479,6 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
     }
     if base.scheduled_call_creation_message.is_set() {
         return unsupported("call");
-    }
-    if base.lottie_sticker_message.is_set() {
-        return unsupported("animated sticker");
     }
     if base.poll_update_message.is_set()
         || base.enc_reaction_message.is_set()
@@ -22849,5 +22927,42 @@ mod older_history_tests {
         worker.apply_history(history, true);
         worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
         assert!(!worker.archive.history_start(CHAT).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod lottie_sticker_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_nested_lottie_sticker_and_keeps_its_media_type() {
+        let mut sticker = wa::message::StickerMessage::default();
+        sticker.mimetype = Some("application/was".to_owned());
+        sticker.is_lottie = Some(true);
+        sticker.is_animated = Some(true);
+        let mut nested = wa::Message::default();
+        nested.sticker_message = MessageField::some(sticker);
+        let mut wrapper = wa::message::FutureProofMessage::default();
+        wrapper.message = MessageField::some(nested);
+        let mut message = wa::Message::default();
+        message.lottie_sticker_message = MessageField::some(wrapper);
+        let content = classify(&message).expect("recognized Lottie");
+        assert!(matches!(
+            content,
+            Content::Sticker { media, animated: true } if media.mime == "application/was"
+        ));
+        assert!(sticker_of(message.get_base_message()).is_some());
+    }
+
+    #[test]
+    fn still_recognizes_regular_webp_stickers() {
+        let mut sticker = wa::message::StickerMessage::default();
+        sticker.mimetype = Some("image/webp".to_owned());
+        let mut message = wa::Message::default();
+        message.sticker_message = MessageField::some(sticker);
+        assert!(matches!(
+            classify(&message),
+            Some(Content::Sticker { media, animated: false }) if media.mime == "image/webp"
+        ));
     }
 }

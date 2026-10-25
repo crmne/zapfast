@@ -1655,6 +1655,11 @@ fn sticker_grid(
                     .width(menu_width)
                     .frame(widgets::menu_frame(palette))
                     .show(|ui| {
+                        // Lottie is receive-only; picker send/favorite/pack
+                        // actions currently assume raw WebP bytes.
+                        if path.extension().is_some_and(|extension| extension == "was") {
+                            return;
+                        }
                         if shelf == Shelf::Favorites {
                             if widgets::menu_item(ui, palette, Some(Icon::StarOff), &remove_label) {
                                 choices.forget = Some(path.clone());
@@ -1685,6 +1690,7 @@ fn sticker_grid(
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
+                    && path.extension().is_none_or(|extension| extension != "was")
                 {
                     choices.send = Some(path.clone());
                 }
@@ -1871,6 +1877,9 @@ pub(crate) fn moves(ctx: &egui::Context, path: &Path) -> bool {
 /// Returns `None` when the header cannot be read, so the caller can tell a read
 /// failure from a still image and retry instead of memoizing the failure.
 fn probe_motion(path: &Path) -> Option<bool> {
+    if path.extension().is_some_and(|extension| extension == "was") {
+        return Some(true);
+    }
     let mut head = [0u8; 64];
     let mut file = std::fs::File::open(path).ok()?;
     let read = std::io::Read::read(&mut file, &mut head).ok()?;

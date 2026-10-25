@@ -6166,6 +6166,7 @@ fn context_menu(
     }
     if let Content::Sticker { media, .. } = &message.content
         && let Some(path) = &media.path
+        && path.extension().is_none_or(|extension| extension != "was")
         && widgets::menu_item(
             ui,
             &palette,
