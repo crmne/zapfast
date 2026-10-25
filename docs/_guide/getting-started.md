@@ -80,7 +80,8 @@ number. Each number keeps its own keys, archive, media, and
 notification, receipt, download, and wallpaper settings. To silence a number
 without unlinking it, click the bell beside it in the switcher: it stays
 connected and its chats stay readable, but it sends no desktop notifications
-until you click the bell again. A muted number shows a crossed-out bell there.
+until you click the bell again. A muted number shows a crossed-out bell there,
+and its unread chats count toward neither the dot nor the app icon's badge.
 
 ## Message history
 

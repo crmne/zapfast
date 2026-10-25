@@ -1600,21 +1600,23 @@ impl App {
         self.accounts.len() >= 2
     }
 
-    /// Unread chats across every account, for the taskbar and the tray.
+    /// Unread chats across every account, for the taskbar and the tray. A
+    /// muted account is left out, as a muted chat is.
     pub fn unread_chat_count_everywhere(&self) -> u32 {
         self.accounts
             .iter()
+            .filter(|account| account.settings.notifications)
             .map(Account::unread_chat_count)
             .fold(0, u32::saturating_add)
     }
 
-    /// Unread chats in the accounts that are not on screen, for the mark on
-    /// the account switcher.
+    /// Unread chats in the accounts that are not on screen and not muted, for
+    /// the mark on the account switcher.
     pub fn unread_chat_count_elsewhere(&self) -> u32 {
         self.accounts
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index != self.active)
+            .filter(|(index, account)| *index != self.active && account.settings.notifications)
             .map(|(_, account)| account.unread_chat_count())
             .fold(0, u32::saturating_add)
     }
@@ -12683,6 +12685,13 @@ mod tests {
         assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chat_count_everywhere(), 3);
         assert_eq!(app.unread_chat_count_elsewhere(), 2);
+
+        // A muted account counts toward neither, as a muted chat does not.
+        app.accounts[1].settings.notifications = false;
+        assert_eq!(app.unread_chat_count_everywhere(), 1);
+        assert_eq!(app.unread_chat_count_elsewhere(), 0);
+        app.accounts[0].settings.notifications = false;
+        assert_eq!(app.unread_chat_count_everywhere(), 0);
     }
 
     /// The switcher's bell mutes one account without showing it: that
