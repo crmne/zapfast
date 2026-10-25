@@ -121,6 +121,9 @@ pub struct Player {
     bars: HashMap<String, Vec<u8>>,
     /// Message whose clip just played to its end, waiting to be taken.
     finished: Option<String>,
+    /// Whether clips reach the sound device. Tests play them silently,
+    /// without opening a device a test machine may lack.
+    audible: bool,
 }
 
 struct Loaded {
@@ -172,7 +175,22 @@ impl Player {
             stretching: None,
             bars: HashMap::new(),
             finished: None,
+            audible: true,
         }
+    }
+
+    /// Plays clips without opening the sound device: their position and
+    /// state move as they would, and nothing is heard.
+    #[cfg(test)]
+    pub(crate) fn silence(&mut self) {
+        self.stop();
+        self.audible = false;
+    }
+
+    /// Whether the sound device is open.
+    #[cfg(test)]
+    pub(crate) fn uses_device(&self) -> bool {
+        self.output.is_some()
     }
 
     /// Current playback speed multiplier.
@@ -308,9 +326,11 @@ impl Player {
                 if loaded.done {
                     return self.restart(0.0);
                 }
-                if self.output.is_none() {
+                if self.output.is_none() && (loaded.paused || self.audible) {
                     // Paused clips release their player so the shared device
-                    // can sleep. Reopen it at the remembered position.
+                    // can sleep. Reopen it at the remembered position. A
+                    // silent player has no device to open, and only pauses a
+                    // clip that plays.
                     let fraction = fraction_of(loaded.base, loaded.samples.len());
                     return self.restart(fraction);
                 }
@@ -318,8 +338,8 @@ impl Player {
                     sink.pause();
                     loaded.base = (loaded.base + sink.get_pos().mul_f32(loaded.factor))
                         .min(clip_length(loaded.samples.len()));
-                    loaded.paused = true;
                 }
+                loaded.paused = true;
                 // A paused rodio player still produces silence forever and
                 // keeps the mixer busy, preventing the device from idling.
                 self.output = None;
@@ -568,20 +588,23 @@ impl Player {
         let (buffer, factor) = Self::buffer_for(loaded, &self.stretches, self.speed);
         let total = clip_length(loaded.samples.len());
         let offset = ((fraction.clamp(0.0, 1.0) * buffer.len() as f32) as usize).min(buffer.len());
-        if self.output.is_none() {
-            let waker = self.waker.clone();
-            let device = open_output(Some(Arc::new(move || waker.wake())))?;
-            let sink = rodio::Player::connect_new(device.mixer());
-            self.output = Some((device, sink));
+        // A silent player moves the clip without the device.
+        if self.audible {
+            if self.output.is_none() {
+                let waker = self.waker.clone();
+                let device = open_output(Some(Arc::new(move || waker.wake())))?;
+                let sink = rodio::Player::connect_new(device.mixer());
+                self.output = Some((device, sink));
+            }
+            let (_, sink) = self.output.as_ref().expect("just opened");
+            sink.clear();
+            sink.append(SamplesBuffer::new(
+                mono(),
+                rate(),
+                buffer[offset..].to_vec(),
+            ));
+            sink.play();
         }
-        let (_, sink) = self.output.as_ref().expect("just opened");
-        sink.clear();
-        sink.append(SamplesBuffer::new(
-            mono(),
-            rate(),
-            buffer[offset..].to_vec(),
-        ));
-        sink.play();
         loaded.buffer = buffer;
         loaded.factor = factor;
         loaded.base =

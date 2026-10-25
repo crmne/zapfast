@@ -471,14 +471,15 @@ pub fn focused_message(app: &App, ctx: &egui::Context) -> Option<(ChatId, String
 /// Takes this frame's key for the focused message `id`, if any, and returns
 /// what it does: each key is the message menu's item of the same name, with
 /// the same conditions, so the keys never offer what the menu does not.
-/// Shift+F10 opens the menu itself: egui never reports the Applications
-/// key. Enter opens no message's menu: only a call, whose menu is all it
-/// offers, opens it on Space or Enter too. A key whose item the menu does
-/// not offer does nothing, except Shift+Delete, which says why.
+/// Enter does what Space does, and Shift+F10 opens the menu itself: egui
+/// never reports the Applications key. Shift+Delete, where the menu offers
+/// no "Delete for everyone", says why.
 fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec<Action> {
+    use crate::model::Content;
     use crate::ui::conversation as view;
-    // Every key below is a press: a frame without one has nothing to take.
-    // On Windows, Shift+Delete arrives as Cut alone.
+    // Every key below is a press: a frame without one has nothing to take,
+    // and makes no copy of the message. On Windows, Shift+Delete arrives as
+    // Cut alone.
     if !ctx.input(|input| {
         input.events.iter().any(|event| {
             matches!(
@@ -496,27 +497,141 @@ fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec
     if app.selecting_in(chat) {
         return Vec::new();
     }
-    let Some(message) = app
+    // The account's field directly, as `voting` below: the keys change the
+    // window's own state while they read the row. An album is one row with
+    // several messages, its items.
+    let selecting = app.selecting_in(chat);
+    let Some(members) = app.accounts[app.active]
         .conversations
         .get(chat)
-        .and_then(|conversation| conversation.message(id))
+        .and_then(|conversation| {
+            let index = conversation
+                .messages
+                .iter()
+                .position(|message| message.id == id)?;
+            Some(view::row_members(&conversation.messages, selecting, index))
+        })
     else {
         return Vec::new();
     };
+    let row = id;
+    // The links, cards and files inside the row, and the one the item
+    // cursor is on: the first, unless the keys moved it on this row.
+    let (targets, owners) = view::row_targets(members, &app.contacts);
+    // The item is found again by itself and the album item it belongs to,
+    // so an edit or a saved contact that moves the items under the cursor
+    // never makes Space or Enter act on another one, nor on the same link
+    // in another item's caption.
+    // An item that is gone leaves the cursor lost until it moves again.
+    let owner_of = |index: usize| members[owners[index]].id.as_str();
+    let (current, lost) = match app
+        .message_item
+        .as_ref()
+        .filter(|(item_chat, item_message, ..)| item_chat == chat && item_message == row)
+    {
+        None => (0, false),
+        Some((.., index, owner, item))
+            if targets.get(*index) == Some(item) && owner_of(*index) == owner =>
+        {
+            (*index, false)
+        }
+        Some((.., owner, item)) => match targets
+            .iter()
+            .enumerate()
+            .position(|(index, target)| target == item && owner_of(index) == owner)
+        {
+            Some(index) => (index, false),
+            None => (0, true),
+        },
+    };
+    // The message the keys act on: the row's own, or the album item the
+    // cursor is on.
+    let message = &members[owners.get(current).copied().unwrap_or(0)];
+    let id = message.id.as_str();
     // A call in the chat is a record: its menu only calls back, so Space and
     // Enter open that menu and the other keys that act on a message leave it
     // alone.
-    let record = matches!(message.content, crate::model::Content::Call { .. });
+    let record = matches!(message.content, Content::Call { .. });
+    // Left and Right move the item cursor. One target leaves them alone.
+    let walks = targets.len() > 1;
+    let step = |delta: isize| {
+        current
+            .saturating_add_signed(delta)
+            .min(targets.len().saturating_sub(1))
+    };
+    let voting = view::Voting {
+        connected: app.link.is_connected(),
+        // The account's field directly: the keys below change the window's
+        // own state while the votes on their way are borrowed.
+        pending: &app.accounts[app.active].poll_voting,
+    };
+    let primary = view::target_actions(ctx, chat, message, targets.get(current), &voting);
+    // A poll option that takes no vote now: Space or Enter says why instead.
+    let option = match targets.get(current) {
+        Some(crate::a11y::KeyTarget::PollOption(option)) => Some(*option),
+        _ => None,
+    };
+    let blocked = option.and_then(|option| view::option_blocked(message, option, &voting));
+    // A carousel card with no picture has only its buttons: Space or Enter
+    // opens the message menu on them, as Shift+F10 opens it on its first
+    // item. A card with neither takes neither key.
+    let card_menu = match (targets.get(current), &message.content) {
+        (
+            Some(crate::a11y::KeyTarget::Card(index)),
+            Content::Interactive {
+                card: Some(card), ..
+            },
+        ) => card
+            .carousel
+            .get(*index)
+            .filter(|card| card.image.is_none() && !card.buttons.is_empty())
+            .map(|_| *index),
+        _ => None,
+    };
+    let mut opened_card = None;
     let mut actions = Vec::new();
+    let mut moved = None;
+    let mut refused = None;
     let mut revoke_refused = None;
+    // In an album, the message a key acts on is the item heard: with that
+    // item gone, the first one would be acted on unheard.
+    let album_lost = lost && members.len() > 1;
     ctx.input_mut(|input| {
-        if take_exact(input, Modifiers::SHIFT, Key::F10) {
+        if album_lost
+            && (take_exact(input, Modifiers::SHIFT, Key::F10)
+                || [Key::R, Key::G, Key::E, Key::C, Key::F]
+                    .into_iter()
+                    .any(|key| take_plain(input, key))
+                || take_delete(input, Modifiers::SHIFT)
+                || take_delete(input, Modifiers::NONE))
+        {
+            moved = Some(0);
+        } else if take_exact(input, Modifiers::SHIFT, Key::F10) {
             actions.push(Action::OpenMessageMenu(id.to_owned()));
         } else if record {
             // Nothing else acts on a call.
             if take_space_or_enter(input) {
                 actions.push(Action::OpenMessageMenu(id.to_owned()));
             }
+        } else if lost && !targets.is_empty() && take_space_or_enter(input) {
+            // The item heard last is gone: say where the cursor is now
+            // rather than act on something else.
+            moved = Some(0);
+        } else if let Some(index) = card_menu
+            && take_space_or_enter(input)
+        {
+            actions.push(Action::OpenMessageMenu(id.to_owned()));
+            opened_card = Some(index);
+        } else if !primary.is_empty() && take_space_or_enter(input) {
+            // What clicking the current target does. Play and pause are not
+            // announced: the player's own state is the feedback.
+            actions.extend(primary.iter().cloned());
+        } else if blocked.is_some() && take_space_or_enter(input) {
+            refused = blocked;
+        } else if walks && take_plain(input, Key::ArrowLeft) {
+            moved = Some(step(-1));
+        } else if walks && take_plain(input, Key::ArrowRight) {
+            moved = Some(step(1));
         } else if take_plain(input, Key::R) {
             if view::can_reply(&message.content) {
                 actions.push(Action::Reply(id.to_owned()));
@@ -549,6 +664,48 @@ fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec
             actions.push(view::delete_for_me_action(chat, id));
         }
     });
+    if let Some(index) = opened_card {
+        ctx.data_mut(|data| data.insert_temp(view::menu_card_id(chat, id), index));
+    }
+    // A download that Space or Enter asked for is spoken if it fails.
+    if let Some((message, card)) = actions.iter().find_map(|action| match action {
+        Action::Download { message, card, .. } => Some((message.clone(), *card)),
+        _ => None,
+    }) {
+        app.download_heard.insert((chat.to_owned(), message, card));
+    }
+    // Each move says where the cursor is; at either end it says the end item
+    // again, as the list does.
+    if let Some(index) = moved
+        && let Some(target) = targets.get(index)
+    {
+        let owner = &members[owners[index]];
+        let text = view::target_label(app.locale, owner, &targets, index, &voting);
+        // The list stays on this row while its items are walked: a message
+        // arriving meanwhile does not become the current one.
+        app.message_cursor.insert(chat.to_owned(), row.to_owned());
+        app.message_item = Some((
+            chat.to_owned(),
+            row.to_owned(),
+            index,
+            owner.id.clone(),
+            target.clone(),
+        ));
+        app.announcer.say(crate::announcer::Category::Item, text);
+    }
+    // A vote says the choice it sends, as the ballot will show it once the
+    // vote lands.
+    if let (Some(option), Some(Action::VotePoll { choices, .. })) = (option, actions.first()) {
+        let text = view::vote_said(app.locale, message, option, choices);
+        app.announcer.say(crate::announcer::Category::Item, text);
+    }
+    if let Some(reason) = refused {
+        let text = crate::a11y::fill(
+            &crate::i18n::gettext(app.locale, "unavailable: {reason}"),
+            &[("reason", &view::blocker_said(app.locale, reason))],
+        );
+        app.announcer.say(crate::announcer::Category::Status, text);
+    }
     if let Some(blocker) = revoke_refused {
         let text = view::revoke_refusal_said(app.locale, blocker);
         app.announcer.say(crate::announcer::Category::Status, text);
@@ -1124,6 +1281,14 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         DELETE_FOR_EVERYONE_KEYS,
         "Delete the message for everyone (in the message list)",
     ),
+    (
+        "Space / Enter",
+        "Play or pause, open or vote for the selected item, downloading it first when needed (in the message list)",
+    ),
+    (
+        "← / →",
+        "Move between the items of a message: its file, links, cards or poll options (in the message list)",
+    ),
     ("G", "Go to the replied message (in the message list)"),
     ("PgUp / PgDn", "Scroll the open chat by a page"),
     (
@@ -1155,6 +1320,24 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_f_searches_the_open_chat_the_list_or_the_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        assert!(matches!(find_action(&app), Action::FocusSearch));
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        app.page = Page::Chats;
+        assert!(matches!(find_action(&app), Action::OpenChatSearch));
+        app.page = Page::Settings;
+        assert!(matches!(find_action(&app), Action::FocusSettingsSearch));
+        app.page = Page::Wallpaper;
+        assert!(matches!(find_action(&app), Action::FocusSearch));
+    }
 
     /// An app whose open chat holds `messages`, by id and content, in order,
     /// with the folder it keeps its files in, which goes when dropped.
@@ -1192,10 +1375,759 @@ mod tests {
         (root, app, chat)
     }
 
+    fn media(mime: &str, path: Option<&str>) -> crate::model::Media {
+        crate::model::Media {
+            mime: mime.into(),
+            size: 10_000,
+            width: None,
+            height: None,
+            path: path.map(Into::into),
+            state: Default::default(),
+            album: None,
+        }
+    }
+
+    /// Runs `message_keys` on one press of `key`, and what it announced.
+    fn message_key(app: &mut App, chat: &str, id: &str, key: Key) -> (Vec<Action>, String) {
+        message_key_with(app, chat, id, key, Modifiers::NONE)
+    }
+
+    /// Command on macOS, Ctrl elsewhere.
+    const CTRL: Modifiers = Modifiers::COMMAND;
+
+    /// [`message_key`] with `modifiers` held.
+    fn message_key_with(
+        app: &mut App,
+        chat: &str,
+        id: &str,
+        key: Key,
+        modifiers: Modifiers,
+    ) -> (Vec<Action>, String) {
+        app.announcer = Default::default();
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                actions = message_keys(app, ui.ctx(), chat, id);
+                app.announcer.show(ui.ctx(), true);
+            },
+        );
+        output.textures_delta.clear();
+        let spoken = app.announcer.spoken().concat();
+        (actions, spoken)
+    }
+
+    fn three_links() -> crate::model::Content {
+        crate::model::Content::text("see https://a.org, b.org/path and https://c.org")
+    }
+
+    fn opens(actions: &[Action]) -> Vec<&str> {
+        actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::OpenUrl(url) => Some(url.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Left and Right walk a text's links one by one and say where they are,
+    /// with no wrap: at either end they say the end link again. Space opens
+    /// the link the cursor is on.
+    #[test]
+    fn arrows_walk_the_links_of_a_text_and_space_opens_the_current_one() {
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
+        let mut key = |key: Key| message_key(&mut app, &chat, "text", key);
+        let (actions, spoken) = key(Key::Space);
+        assert_eq!(opens(&actions), ["https://a.org"], "the first link");
+        assert_eq!(spoken, "");
+        for said in [
+            "Link 2 of 3, b.org/path",
+            "Link 3 of 3, https://c.org",
+            "Link 3 of 3, https://c.org",
+        ] {
+            assert_eq!(key(Key::ArrowRight).1, said);
+        }
+        assert_eq!(opens(&key(Key::Space).0), ["https://c.org"]);
+        for said in [
+            "Link 2 of 3, b.org/path",
+            "Link 1 of 3, https://a.org",
+            "Link 1 of 3, https://a.org",
+        ] {
+            assert_eq!(key(Key::ArrowLeft).1, said);
+        }
+        // One link leaves the arrows alone.
+        let (_root, mut app, chat) =
+            app_with(vec![("one", crate::model::Content::text("https://a.org"))]);
+        let (actions, spoken) = message_key(&mut app, &chat, "one", Key::ArrowRight);
+        assert!(actions.is_empty() && spoken.is_empty(), "{spoken}");
+    }
+
+    /// An album's photo, downloaded to `path` or not.
+    fn album_photo(path: Option<&str>, caption: Option<&str>) -> crate::model::Content {
+        let mut media = media("image/png", path);
+        media.album = Some("album-fixture".into());
+        crate::model::Content::Image {
+            motion: None,
+            caption: caption.map(Into::into),
+            media,
+        }
+    }
+
+    /// An album is one message of the list whose items are its photos and
+    /// videos, each followed by the links of its caption: the arrows walk
+    /// them, Space does what clicking the tile does, and the other keys act
+    /// on the item the cursor is on, as the pointer's menu does on the tile
+    /// it was opened over.
+    #[test]
+    fn the_arrows_walk_an_albums_items_and_the_keys_act_on_the_current_one() {
+        let (_root, mut app, chat) = app_with(vec![
+            ("one", album_photo(Some("one.png"), None)),
+            ("two", album_photo(None, Some("see https://a.org"))),
+            ("three", album_photo(Some("three.png"), None)),
+        ]);
+        let (actions, _) = message_key(&mut app, &chat, "one", Key::Space);
+        assert_eq!(
+            actions,
+            [Action::PreviewImage {
+                path: "one.png".into(),
+                chat: chat.clone(),
+                message: "one".into(),
+                card: None,
+            }],
+            "the first photo opens in the viewer"
+        );
+        let (_, spoken) = message_key(&mut app, &chat, "one", Key::ArrowRight);
+        assert_eq!(spoken, "Photo 2 of 4, not downloaded");
+        let (actions, _) = message_key(&mut app, &chat, "one", Key::Space);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Download { message, manual: true, .. }] if message == "two"
+            ),
+            "the second photo is fetched: {actions:?}"
+        );
+        let (_, spoken) = message_key(&mut app, &chat, "one", Key::ArrowRight);
+        assert_eq!(spoken, "Link 3 of 4, https://a.org");
+        let (actions, _) = message_key(&mut app, &chat, "one", Key::R);
+        assert_eq!(
+            actions,
+            [Action::Reply("two".into()), Action::FocusComposer],
+            "the caption's item replies"
+        );
+        let (_, spoken) = message_key(&mut app, &chat, "one", Key::ArrowRight);
+        assert_eq!(spoken, "Photo 4 of 4");
+        let (actions, _) = message_key_with(&mut app, &chat, "one", Key::F10, Modifiers::SHIFT);
+        assert_eq!(actions, [Action::OpenMessageMenu("three".into())]);
+        assert_eq!(
+            app.message_cursor.get(&chat).map(String::as_str),
+            Some("one"),
+            "the list stays on the album"
+        );
+    }
+
+    /// Two album items can caption the same link. The cursor keeps the one
+    /// it is on, not the same link of another item, when the items before
+    /// it change.
+    #[test]
+    fn an_albums_cursor_keeps_its_item_when_the_items_before_it_change() {
+        let (_root, mut app, chat) = app_with(vec![
+            (
+                "one",
+                album_photo(Some("one.png"), Some("see https://b.org or https://c.org")),
+            ),
+            (
+                "two",
+                album_photo(Some("two.png"), Some("see https://a.org")),
+            ),
+            (
+                "three",
+                album_photo(Some("three.png"), Some("see https://a.org")),
+            ),
+        ]);
+        for _ in 0..4 {
+            message_key(&mut app, &chat, "one", Key::ArrowRight);
+        }
+        let (actions, _) = message_key(&mut app, &chat, "one", Key::R);
+        assert_eq!(
+            actions,
+            [Action::Reply("two".into()), Action::FocusComposer]
+        );
+        // The first photo's caption loses its links: two items fewer before
+        // the cursor's, which now has the third photo's link at its place.
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .message_mut("one")
+            .unwrap()
+            .content = album_photo(Some("one.png"), None);
+        let (actions, _) = message_key(&mut app, &chat, "one", Key::R);
+        assert_eq!(
+            actions,
+            [Action::Reply("two".into()), Action::FocusComposer],
+            "still the second photo's link"
+        );
+    }
+
+    /// The album item under the cursor is gone: the keys that act on an item
+    /// say where the cursor is now, as Space does, rather than act on the
+    /// album's first item unheard.
+    #[test]
+    fn the_keys_on_an_album_item_that_is_gone_say_the_first_instead() {
+        let keys = [
+            (Key::R, Modifiers::NONE),
+            (Key::E, Modifiers::NONE),
+            (Key::F, Modifiers::NONE),
+            (Key::Delete, Modifiers::NONE),
+            (Key::F10, Modifiers::SHIFT),
+        ];
+        for (key, modifiers) in keys {
+            let (_root, mut app, chat) = app_with(vec![
+                ("one", album_photo(Some("one.png"), None)),
+                ("two", album_photo(Some("two.png"), None)),
+                ("three", album_photo(Some("three.png"), None)),
+            ]);
+            message_key(&mut app, &chat, "one", Key::ArrowRight);
+            app.conversations
+                .get_mut(&chat)
+                .unwrap()
+                .messages
+                .retain(|message| message.id != "two");
+            let (actions, spoken) = message_key_with(&mut app, &chat, "one", key, modifiers);
+            assert!(actions.is_empty(), "{key:?}: {actions:?}");
+            assert_eq!(spoken, "Photo 1 of 2", "{key:?}");
+            let (actions, _) = message_key_with(&mut app, &chat, "one", key, modifiers);
+            assert!(!actions.is_empty(), "{key:?} acts once heard");
+        }
+    }
+
+    /// Moving to another message and back starts its items over.
+    #[test]
+    fn the_item_cursor_starts_over_on_another_message() {
+        let (_root, mut app, chat) =
+            app_with(vec![("first", three_links()), ("second", three_links())]);
+        app.message_cursor.insert(chat.clone(), "first".into());
+        assert_eq!(
+            message_key(&mut app, &chat, "first", Key::ArrowRight).1,
+            "Link 2 of 3, b.org/path"
+        );
+        let ctx = egui::Context::default();
+        for step in [
+            crate::ui::list_nav::Step::Next,
+            crate::ui::list_nav::Step::Previous,
+        ] {
+            app.actions.push(Action::MessageCursor(step));
+            app.background_frame(&ctx);
+        }
+        assert_eq!(app.message_cursor[&chat], "first");
+        assert_eq!(
+            message_key(&mut app, &chat, "first", Key::ArrowRight).1,
+            "Link 2 of 3, b.org/path",
+            "the cursor started over"
+        );
+    }
+
+    const SAMPLE_VIDEO: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/video/sample.mp4"
+    );
+
+    /// A poll of three options taking `selectable` answers, with `selected`
+    /// chosen and one voter per chosen option.
+    fn poll(selectable: usize, selected: Vec<usize>) -> crate::model::Content {
+        let mut counts = vec![0; 3];
+        for &option in &selected {
+            counts[option] += 1;
+        }
+        crate::model::Content::Poll {
+            question: "When?".into(),
+            options: vec!["Morning".into(), "Afternoon".into(), "Evening".into()],
+            state: crate::model::PollState {
+                selectable,
+                can_vote: true,
+                history_complete: true,
+                voters: selected.len(),
+                counts,
+                selected,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn votes(actions: &[Action]) -> Vec<Vec<usize>> {
+        actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::VotePoll { choices, .. } => Some(choices.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The arrows walk a poll's options, each with its count and whether it
+    /// is chosen, then "Show votes" once someone voted; Space on an option
+    /// votes as its click does and says the choice it sends.
+    #[test]
+    fn the_arrows_walk_a_polls_options_and_space_votes_as_a_click() {
+        let (_root, mut app, chat) = app_with(vec![("poll", poll(1, vec![0]))]);
+        app.link = crate::backend::LinkStatus::Connected;
+        let mut key = |key: Key| message_key(&mut app, &chat, "poll", key);
+        // Untouched, Space votes for the first option: here it takes the
+        // chosen answer back, as clicking it does.
+        let (actions, spoken) = key(Key::Space);
+        assert_eq!(votes(&actions), [Vec::<usize>::new()]);
+        assert_eq!(spoken, "Morning, not selected");
+        for said in [
+            "Afternoon, 0 votes, not selected, 2 of 4",
+            "Evening, 0 votes, not selected, 3 of 4",
+            "Show votes 4 of 4",
+            "Show votes 4 of 4",
+        ] {
+            assert_eq!(key(Key::ArrowRight).1, said);
+        }
+        let (actions, _) = key(Key::Space);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::ShowDialog(crate::model::Dialog::PollResults { .. })]
+            ),
+            "{actions:?}"
+        );
+        assert_eq!(
+            key(Key::ArrowLeft).1,
+            "Evening, 0 votes, not selected, 3 of 4"
+        );
+        assert_eq!(
+            key(Key::ArrowLeft).1,
+            "Afternoon, 0 votes, not selected, 2 of 4"
+        );
+        assert_eq!(key(Key::ArrowLeft).1, "Morning, 1 vote, selected, 1 of 4");
+        // One answer: choosing another replaces it, as a click does.
+        key(Key::ArrowRight);
+        let (actions, spoken) = key(Key::Space);
+        assert_eq!(votes(&actions), [vec![1]]);
+        assert_eq!(spoken, "Afternoon, selected");
+    }
+
+    /// A poll taking several answers adds to them, and stops at its limit,
+    /// where the option says why and Space sends nothing.
+    #[test]
+    fn a_multi_answer_poll_votes_as_a_click_and_says_why_it_stops() {
+        let (_root, mut app, chat) = app_with(vec![("poll", poll(2, vec![0, 2]))]);
+        app.link = crate::backend::LinkStatus::Connected;
+        let (_, spoken) = message_key(&mut app, &chat, "poll", Key::ArrowRight);
+        assert_eq!(
+            spoken,
+            "Afternoon, 0 votes, not selected, 2 of 4, unavailable: Remove an answer first to choose another"
+        );
+        let (actions, spoken) = message_key(&mut app, &chat, "poll", Key::Space);
+        assert!(votes(&actions).is_empty(), "{actions:?}");
+        assert_eq!(
+            spoken,
+            "unavailable: Remove an answer first to choose another"
+        );
+        let (_, _) = message_key(&mut app, &chat, "poll", Key::ArrowRight);
+        let (actions, spoken) = message_key(&mut app, &chat, "poll", Key::Space);
+        assert_eq!(votes(&actions), [vec![0]], "taking Evening back");
+        assert_eq!(spoken, "Evening, not selected");
+        let (_root2, app2, chat2) = app_with(vec![("poll", poll(2, vec![0]))]);
+        let mut app2 = app2;
+        app2.link = crate::backend::LinkStatus::Connected;
+        message_key(&mut app2, &chat2, "poll", Key::ArrowRight);
+        let (actions, _) = message_key(&mut app2, &chat2, "poll", Key::Space);
+        assert_eq!(votes(&actions), [vec![0, 1]], "adding Afternoon");
+    }
+
+    /// Offline, the options leave out whether they are chosen and say why
+    /// they take no vote; Space sends nothing.
+    #[test]
+    fn a_poll_that_takes_no_vote_says_why() {
+        let (_root, mut app, chat) = app_with(vec![("poll", poll(1, vec![0]))]);
+        let (_, spoken) = message_key(&mut app, &chat, "poll", Key::ArrowRight);
+        assert_eq!(
+            spoken,
+            "Afternoon, 0 votes, 2 of 4, unavailable: Reconnect to vote"
+        );
+        let (actions, spoken) = message_key(&mut app, &chat, "poll", Key::Space);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert_eq!(spoken, "unavailable: Reconnect to vote");
+    }
+
+    /// A shared contact's Chat and Add are two items; a saved contact has
+    /// no Add, as its bubble shows none.
+    #[test]
+    fn a_contacts_chat_and_add_are_items() {
+        let contact = crate::model::Content::Contact {
+            display_name: "Sara".into(),
+            vcard: "BEGIN:VCARD\nFN:Sara Ali\nTEL;waid=15550101234:+1 555 010 1234\nEND:VCARD"
+                .into(),
+        };
+        let (_root, mut app, chat) = app_with(vec![("contact", contact)]);
+        let (_, spoken) = message_key(&mut app, &chat, "contact", Key::ArrowRight);
+        assert_eq!(spoken, "Add contact 2 of 2");
+        let (actions, _) = message_key(&mut app, &chat, "contact", Key::Space);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                // Filled as the bubble's Add fills it: a card without a
+                // first name of its own keeps the whole name there.
+                [Action::NewContact { phone, first, .. }]
+                    if phone == "15550101234" && first == "Sara Ali"
+            ),
+            "{actions:?}"
+        );
+        let (_, spoken) = message_key(&mut app, &chat, "contact", Key::ArrowLeft);
+        assert_eq!(spoken, "Chat 1 of 2");
+        let (actions, _) = message_key(&mut app, &chat, "contact", Key::Space);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::StartChat { id, .. }] if id == "15550101234@s.whatsapp.net"
+            ),
+            "{actions:?}"
+        );
+        app.contacts.insert(
+            "15550101234@s.whatsapp.net".into(),
+            crate::model::Contact {
+                id: "15550101234@s.whatsapp.net".into(),
+                full_name: Some("Sara Ali".into()),
+                first_name: None,
+                push_name: None,
+            },
+        );
+        let (actions, spoken) = message_key(&mut app, &chat, "contact", Key::ArrowRight);
+        assert!(actions.is_empty() && spoken.is_empty(), "{spoken}");
+    }
+
+    /// What a key did on a message: what it queued, what it said, and the
+    /// download it listens for.
+    type KeyOutcome = (
+        Vec<Action>,
+        String,
+        std::collections::HashSet<(ChatId, String, Option<usize>)>,
+    );
+
+    /// A kind of message for Space and Enter: its name, the chat's messages,
+    /// the keys that move the item cursor first, and whether WhatsApp is
+    /// connected.
+    type KeyCase<'a> = (
+        &'a str,
+        Vec<(&'a str, crate::model::Content)>,
+        Vec<Key>,
+        bool,
+    );
+
+    /// What one press of Space and one of Enter each do on a message, after
+    /// `walk` moved the item cursor.
+    fn space_and_enter(
+        messages: &[(&str, crate::model::Content)],
+        id: &str,
+        walk: &[Key],
+        connected: bool,
+    ) -> [KeyOutcome; 2] {
+        [Key::Space, Key::Enter].map(|key| {
+            let (_root, mut app, chat) = app_with(messages.to_vec());
+            if connected {
+                app.link = crate::backend::LinkStatus::Connected;
+            }
+            for &step in walk {
+                message_key(&mut app, &chat, id, step);
+            }
+            let (actions, spoken) = message_key(&mut app, &chat, id, key);
+            (actions, spoken, app.download_heard.clone())
+        })
+    }
+
+    /// Enter does what Space does on every kind of message and on each of
+    /// its items, and nothing where Space does nothing.
+    #[test]
+    fn enter_does_what_space_does_on_every_kind_of_message() {
+        use crate::model::Content;
+        let document = |path| Content::Document {
+            media: media("application/pdf", path),
+            file_name: "a.pdf".into(),
+            caption: None,
+            pages: None,
+        };
+        let photo = |path| Content::Image {
+            motion: None,
+            caption: None,
+            media: media("image/png", path),
+        };
+        let contact = Content::Contact {
+            display_name: "Sara".into(),
+            vcard: "BEGIN:VCARD\nFN:Sara Ali\nTEL;waid=15550101234:+1 555 010 1234\nEND:VCARD"
+                .into(),
+        };
+        let album = [
+            ("m", album_photo(Some("one.png"), None)),
+            ("two", album_photo(None, Some("see https://a.org"))),
+        ];
+        let cases: Vec<KeyCase> = vec![
+            ("a link", vec![("m", three_links())], vec![], false),
+            (
+                "another link",
+                vec![("m", three_links())],
+                vec![Key::ArrowRight],
+                false,
+            ),
+            (
+                "a downloaded document",
+                vec![("m", document(Some("a.pdf")))],
+                vec![],
+                false,
+            ),
+            (
+                "a document to fetch",
+                vec![("m", document(None))],
+                vec![],
+                false,
+            ),
+            ("a photo", vec![("m", photo(Some("a.png")))], vec![], false),
+            ("a photo to fetch", vec![("m", photo(None))], vec![], false),
+            (
+                "a sticker",
+                vec![(
+                    "m",
+                    Content::Sticker {
+                        media: media("image/webp", Some("a.webp")),
+                        animated: false,
+                    },
+                )],
+                vec![],
+                false,
+            ),
+            (
+                "a video",
+                vec![(
+                    "m",
+                    Content::Video {
+                        caption: None,
+                        media: media("video/mp4", Some("a.mp4")),
+                        seconds: Some(3),
+                        gif: false,
+                        note: false,
+                    },
+                )],
+                vec![],
+                false,
+            ),
+            (
+                "a voice message",
+                vec![(
+                    "m",
+                    Content::Audio {
+                        media: media("audio/ogg", Some("voice.ogg")),
+                        seconds: Some(6),
+                        voice_note: true,
+                        waveform: Vec::new(),
+                    },
+                )],
+                vec![],
+                false,
+            ),
+            (
+                "a location",
+                vec![(
+                    "m",
+                    Content::Location {
+                        latitude: 24.7,
+                        longitude: 46.7,
+                        name: Some("Office".into()),
+                        address: None,
+                    },
+                )],
+                vec![],
+                false,
+            ),
+            (
+                "a contact's chat",
+                vec![("m", contact.clone())],
+                vec![],
+                false,
+            ),
+            (
+                "a contact's Add",
+                vec![("m", contact)],
+                vec![Key::ArrowRight],
+                false,
+            ),
+            (
+                "a poll option",
+                vec![("m", poll(1, vec![]))],
+                vec![Key::ArrowRight],
+                true,
+            ),
+            (
+                "a poll option that takes no vote",
+                vec![("m", poll(1, vec![]))],
+                vec![],
+                false,
+            ),
+            ("an album's first item", album.to_vec(), vec![], false),
+            (
+                "an album item to fetch",
+                album.to_vec(),
+                vec![Key::ArrowRight],
+                false,
+            ),
+        ];
+        for (kind, messages, walk, connected) in cases {
+            let [space, enter] = space_and_enter(&messages, "m", &walk, connected);
+            assert!(
+                !space.0.is_empty() || !space.1.is_empty(),
+                "{kind}: Space does something"
+            );
+            assert_eq!(enter, space, "{kind}");
+        }
+        // A plain text message: Space does nothing, and Enter neither.
+        let [space, enter] =
+            space_and_enter(&[("m", Content::text("no links here"))], "m", &[], false);
+        assert_eq!(space, (Vec::new(), String::new(), Default::default()));
+        assert_eq!(enter, space, "a plain text message");
+    }
+
+    /// A saved contact loses its Add: the cursor that stood on Add does not
+    /// start a chat instead, but says where it stands now.
+    #[test]
+    fn space_on_an_item_that_is_gone_says_the_first_instead() {
+        let vcard = "BEGIN:VCARD\nFN:Sara Ali\nTEL;waid=15550101234:+1 555 010 1234\nEND:VCARD";
+        let contact = crate::model::Content::Contact {
+            display_name: "Sara".into(),
+            vcard: vcard.into(),
+        };
+        let (_root, mut app, chat) = app_with(vec![("contact", contact)]);
+        assert_eq!(
+            message_key(&mut app, &chat, "contact", Key::ArrowRight).1,
+            "Add contact 2 of 2"
+        );
+        app.contacts.insert(
+            "15550101234@s.whatsapp.net".into(),
+            crate::model::Contact {
+                id: "15550101234@s.whatsapp.net".into(),
+                full_name: Some("Sara Ali".into()),
+                first_name: None,
+                push_name: None,
+            },
+        );
+        let (actions, spoken) = message_key(&mut app, &chat, "contact", Key::Space);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert_eq!(spoken, "Chat 1 of 1");
+        let (actions, _) = message_key(&mut app, &chat, "contact", Key::Space);
+        assert!(
+            matches!(actions.as_slice(), [Action::StartChat { .. }]),
+            "{actions:?}"
+        );
+    }
+
+    /// An item moved under the cursor is found again: Space acts on the item
+    /// that was heard.
+    #[test]
+    fn the_item_cursor_follows_its_item_when_the_message_changes() {
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
+        assert_eq!(
+            message_key(&mut app, &chat, "text", Key::ArrowRight).1,
+            "Link 2 of 3, b.org/path"
+        );
+        // An edit puts a new link first.
+        app.conversations.get_mut(&chat).unwrap().messages[0].content = crate::model::Content::text(
+            "new https://z.org then https://a.org, b.org/path and https://c.org",
+        );
+        let (actions, _) = message_key(&mut app, &chat, "text", Key::Space);
+        assert_eq!(opens(&actions), ["https://b.org/path"]);
+    }
+
+    /// Walking a message's items keeps the list on it: Down at the bottom,
+    /// where the list stood on the newest message without a cursor of its
+    /// own, does not start the items over.
+    #[test]
+    fn the_item_cursor_survives_a_list_move_that_stays_on_its_message() {
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
+        assert!(!app.message_cursor.contains_key(&chat));
+        message_key(&mut app, &chat, "text", Key::ArrowRight);
+        assert_eq!(
+            app.message_cursor.get(&chat).map(String::as_str),
+            Some("text")
+        );
+        let ctx = egui::Context::default();
+        app.message_cursor.remove(&chat);
+        for step in [
+            crate::ui::list_nav::Step::Next,
+            crate::ui::list_nav::Step::Last,
+        ] {
+            app.actions.push(Action::MessageCursor(step));
+            app.background_frame(&ctx);
+        }
+        let (actions, _) = message_key(&mut app, &chat, "text", Key::Space);
+        assert_eq!(opens(&actions), ["https://b.org/path"]);
+    }
+
+    /// A GIF plays in place: plain Left and Right walk its caption's links.
+    #[test]
+    fn plain_arrows_walk_a_gifs_items() {
+        let (_root, mut app, chat) = app_with(vec![(
+            "gif",
+            crate::model::Content::Video {
+                caption: Some("from https://a.org".into()),
+                media: media("video/mp4", Some(SAMPLE_VIDEO)),
+                seconds: Some(3),
+                gif: true,
+                note: false,
+            },
+        )]);
+        assert_eq!(
+            message_key(&mut app, &chat, "gif", Key::ArrowRight).1,
+            "Link 2 of 2, https://a.org"
+        );
+        assert_eq!(
+            message_key(&mut app, &chat, "gif", Key::ArrowLeft).1,
+            "GIF 1 of 2"
+        );
+    }
+
+    /// A carousel's items go as the bubble draws them: the links in its
+    /// text, above the cards, then each card followed by its own links.
+    #[test]
+    fn a_carousel_walks_its_text_then_each_card_and_its_links() {
+        let card = |body: &str| crate::model::InteractiveCard {
+            body: body.into(),
+            ..Default::default()
+        };
+        let carousel = crate::model::Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                body: "All at https://all.org".into(),
+                carousel: vec![card("One https://one.org"), card("Two")],
+                ..Default::default()
+            })),
+        };
+        let (_root, mut app, chat) = app_with(vec![("cards", carousel)]);
+        for said in [
+            "Card 2 of 4, One https://one.org",
+            "Link 3 of 4, https://one.org",
+            "Card 4 of 4, Two",
+        ] {
+            assert_eq!(
+                message_key(&mut app, &chat, "cards", Key::ArrowRight).1,
+                said
+            );
+        }
+    }
+
     /// G takes no key from a message that replies to nothing.
     #[test]
     fn g_is_left_alone_without_a_quote() {
-        let (_root, mut app, chat) = app_with(vec![("text", crate::model::Content::text("Hello"))]);
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
         let ctx = egui::Context::default();
         let mut left = 0;
         let mut output = ctx.run_ui(
@@ -1218,22 +2150,44 @@ mod tests {
         assert_eq!(left, 1, "G is still there for others");
     }
 
+    /// A poll option blocked by the voting key says why, translated and
+    /// without the ballot's middle dot.
     #[test]
-    fn ctrl_f_searches_the_open_chat_the_list_or_the_settings() {
-        let root = tempfile::tempdir().unwrap();
-        let mut app = App::headless(
-            crate::paths::AppDirs::under(root.path()),
-            crate::settings::Settings::default(),
-        )
-        .0;
-        assert!(matches!(find_action(&app), Action::FocusSearch));
-        app.open_chat = Some("1@s.whatsapp.net".into());
-        app.page = Page::Chats;
-        assert!(matches!(find_action(&app), Action::OpenChatSearch));
-        app.page = Page::Settings;
-        assert!(matches!(find_action(&app), Action::FocusSettingsSearch));
-        app.page = Page::Wallpaper;
-        assert!(matches!(find_action(&app), Action::FocusSearch));
+    fn a_blocked_option_says_why_in_words() {
+        let mut content = poll(1, vec![0]);
+        if let crate::model::Content::Poll { state, .. } = &mut content {
+            state.can_vote = false;
+        }
+        let (_root, mut app, chat) = app_with(vec![("poll", content)]);
+        app.link = crate::backend::LinkStatus::Connected;
+        let (_, spoken) = message_key(&mut app, &chat, "poll", Key::Space);
+        assert_eq!(
+            spoken,
+            "unavailable: Voting key unavailable, use your phone"
+        );
+    }
+
+    /// What the item cursor says (a link, a number, a poll option) is what
+    /// the message holds: it goes from the tree behind the lock, as the
+    /// messages themselves do, and once another account is on screen.
+    #[test]
+    fn what_the_items_say_is_private() {
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
+        let (_, spoken) = message_key(&mut app, &chat, "text", Key::ArrowRight);
+        assert_eq!(spoken, "Link 2 of 3, b.org/path");
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            // Locked: private text is not shown and leaves the tree.
+            app.announcer.show(ui.ctx(), false);
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.announcer.spoken().concat(), "", "gone behind the lock");
+        let (_root, mut app, chat) = app_with(vec![("poll", poll(1, vec![0]))]);
+        app.link = crate::backend::LinkStatus::Connected;
+        let (_, spoken) = message_key(&mut app, &chat, "poll", Key::Space);
+        assert_eq!(spoken, "Morning, not selected");
+        app.announcer.forget_private();
+        assert_eq!(app.announcer.spoken().concat(), "", "a vote's choice too");
     }
 
     /// An app with three texts in its open chat, the message list focused.
@@ -1261,25 +2215,38 @@ mod tests {
         std::mem::take(&mut app.actions)
     }
 
-    /// The keys that act on one message (R, E, C, F, Delete) wait while the
-    /// chat selects messages: the bubbles draw no menu then, and the keys
-    /// would act behind the selection's back. Up and Down still move the
-    /// list.
+    /// The keys that act on one message (Enter, Space, R, E, C, F, Delete,
+    /// the item arrows) wait while the chat selects messages: the bubbles
+    /// draw no menu then, and the keys would act behind the selection's back.
+    /// Up and Down still move the list.
     #[test]
     fn a_selection_holds_the_keys_that_act_on_a_message() {
         let (_root, mut app, chat, ctx) = focused_list();
-        let keys = [Key::R, Key::E, Key::C, Key::F, Key::Delete];
+        let keys = [
+            Key::Enter,
+            Key::Space,
+            Key::R,
+            Key::E,
+            Key::C,
+            Key::F,
+            Key::Delete,
+        ];
         for key in keys {
             assert!(
                 !press_in_list(&mut app, &ctx, &chat, key).is_empty(),
                 "{key:?} acts without a selection"
             );
         }
+        press_in_list(&mut app, &ctx, &chat, Key::ArrowRight);
+        assert!(app.message_item.is_some(), "Right walks the items");
+        app.message_item = None;
         app.selection = Some((chat.clone(), Vec::new()));
         for key in keys {
             let actions = press_in_list(&mut app, &ctx, &chat, key);
             assert!(actions.is_empty(), "{key:?} while selecting: {actions:?}");
         }
+        press_in_list(&mut app, &ctx, &chat, Key::ArrowRight);
+        assert!(app.message_item.is_none(), "nor do the items move");
         assert_eq!(
             press_in_list(&mut app, &ctx, &chat, Key::ArrowUp),
             [Action::MessageCursor(crate::ui::list_nav::Step::Previous)]
@@ -1524,27 +2491,8 @@ mod tests {
     /// for me, as Delete does; elsewhere Backspace is left alone.
     #[test]
     fn backspace_deletes_for_me_on_macos_only() {
-        let (_root, mut app, chat) = app_with(vec![("text", crate::model::Content::text("Hello"))]);
-        let mut key = |key: Key, modifiers: Modifiers| {
-            let ctx = egui::Context::default();
-            let mut actions = Vec::new();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    events: vec![egui::Event::Key {
-                        key,
-                        physical_key: None,
-                        pressed: true,
-                        repeat: false,
-                        modifiers,
-                    }],
-                    ..Default::default()
-                },
-                |ui| actions = message_keys(&mut app, ui.ctx(), &chat, "text"),
-            );
-            output.textures_delta.clear();
-            actions
-        };
-        let actions = key(Key::Backspace, Modifiers::NONE);
+        let (_root, mut app, chat) = app_with(vec![("text", three_links())]);
+        let (actions, _) = message_key(&mut app, &chat, "text", Key::Backspace);
         if cfg!(target_os = "macos") {
             assert_eq!(
                 actions,
@@ -1553,7 +2501,7 @@ mod tests {
         } else {
             assert!(actions.is_empty(), "{actions:?}");
         }
-        let actions = key(Key::Backspace, Modifiers::COMMAND);
+        let (actions, _) = message_key_with(&mut app, &chat, "text", Key::Backspace, CTRL);
         assert!(actions.is_empty(), "only plain: {actions:?}");
     }
 

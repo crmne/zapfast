@@ -652,6 +652,18 @@ pub struct App {
     video_chat: Option<ChatId>,
     /// Video to play once its download finishes.
     video_wanted: Option<(ChatId, String)>,
+    /// The attachments whose downloads Space asked for, each with the
+    /// carousel card it belongs to, if any: if one fails, the failure is
+    /// spoken.
+    /// Downloads that start by themselves, or from a click, fail in the
+    /// bubble only, so a scroll through media on a poor connection does not
+    /// speak a run of errors.
+    pub(crate) download_heard: HashSet<(ChatId, String, Option<usize>)>,
+    /// The focused message's item cursor: which of its links, cards or file
+    /// the keys act on, with the message of an album that owns it. It
+    /// belongs to that row only; any other message starts on its first
+    /// item. Never drawn.
+    pub(crate) message_item: Option<(ChatId, String, usize, String, crate::a11y::KeyTarget)>,
     /// The replied message the keys asked to go to while it was not loaded:
     /// the list moves to it once history brings it, and stays put until then.
     pending_follow: Option<PendingFollow>,
@@ -1479,6 +1491,14 @@ impl App {
             ..AccountRoster::default()
         };
         let app = Self::with_accounts(dirs, settings, roster, vec![account], 0, Waker::default());
+        // Tests never make a sound, nor open the sound device a test machine
+        // may lack: voice messages play silently there.
+        #[cfg(test)]
+        let app = {
+            let mut app = app;
+            app.player.silence();
+            app
+        };
         (app, events)
     }
 
@@ -1646,6 +1666,8 @@ impl App {
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
             video_wanted: None,
+            download_heard: HashSet::new(),
+            message_item: None,
             pending_follow: None,
             voice_chat: None,
             voice_clip_chat: None,
@@ -2046,7 +2068,10 @@ impl App {
         // A reaction picker the message list opened belongs to the chat
         // left behind.
         self.reaction_from_list = false;
-        // So does a replied message still loading, as on a chat change.
+        // So do the keys' item cursor, the download Space asked for and a
+        // replied message still loading, as on a chat change.
+        self.message_item = None;
+        self.download_heard.clear();
         self.pending_follow = None;
     }
 
@@ -5967,12 +5992,19 @@ impl App {
         };
         match applied {
             Ok(path) => {
+                // The download Space asked for is the account on screen's.
+                if !self.events_hidden {
+                    self.take_download_heard(chat, id, card);
+                }
                 if want_video {
+                    // Played in its own chat only, as a voice message is.
                     self.video_wanted = None;
-                    self.actions.push(Action::PlayVideo {
-                        message: id.to_owned(),
-                        path,
-                    });
+                    if open {
+                        self.actions.push(Action::PlayVideo {
+                            message: id.to_owned(),
+                            path,
+                        });
+                    }
                 } else if want_voice {
                     self.voice_wanted = None;
                     if open {
@@ -5987,8 +6019,151 @@ impl App {
                 if want_voice {
                     self.voice_wanted = None;
                 }
+                if !self.events_hidden {
+                    self.say_download_failed(chat, id, card);
+                }
             }
         }
+    }
+
+    /// Speaks why the download Space asked for failed, in the words the
+    /// message's label ends with, and forgets it. Other downloads fail
+    /// silently: their bubble and label carry the reason.
+    fn say_download_failed(&mut self, chat: &str, id: &str, card: Option<usize>) {
+        if !self.take_download_heard(chat, id, card) {
+            return;
+        }
+        let Some(message) = self
+            .conversations
+            .get(chat)
+            .and_then(|conversation| conversation.message(id))
+        else {
+            return;
+        };
+        let media = match (card, &message.content) {
+            (None, content) => content.media(),
+            (
+                Some(index),
+                Content::Interactive {
+                    card: Some(parent), ..
+                },
+            ) => parent
+                .carousel
+                .get(index)
+                .and_then(|card| card.image.as_ref()),
+            _ => None,
+        };
+        let Some(error) =
+            media.and_then(|media| crate::a11y::media_state(self.locale, media, false))
+        else {
+            return;
+        };
+        // Said away from its message, the error names what failed: the
+        // list's cursor stays on a message while focus is elsewhere. It is
+        // said bare only while the item cursor is on what failed, in the row
+        // that draws it: a card's on that card, a file's on the file (an
+        // album item's on that item), or on no item of the row, which then
+        // stands on its first item, the file of its first message.
+        let row = self.row_message(chat, id).unwrap_or_else(|| id.to_owned());
+        let current = self.messages_focused
+            && self.open_chat.as_deref() == Some(chat)
+            && self
+                .current_message(chat)
+                .and_then(|current| self.row_message(chat, &current))
+                .as_deref()
+                == Some(row.as_str())
+            && match self
+                .message_item
+                .as_ref()
+                .filter(|(item_chat, item_row, ..)| item_chat == chat && *item_row == row)
+            {
+                None => card.is_none() && row == id,
+                Some((.., owner, item)) => {
+                    owner == id
+                        && match card {
+                            Some(index) => *item == crate::a11y::KeyTarget::Card(index),
+                            None => match item {
+                                crate::a11y::KeyTarget::Attachment => true,
+                                crate::a11y::KeyTarget::AlbumItem(member) => member == id,
+                                _ => false,
+                            },
+                        }
+                }
+            };
+        let text = if current {
+            error
+        } else {
+            let what = match (card, &message.content) {
+                (Some(index), _) => crate::a11y::fill(
+                    &crate::i18n::gettext(self.locale, "Card {number}"),
+                    &[("number", &(index + 1).to_string())],
+                ),
+                (None, Content::Document { file_name, .. }) => file_name.clone(),
+                (None, content) => {
+                    let kind = crate::a11y::file_kind(self.locale, content);
+                    // An album's photo or video says which of its items it
+                    // is, as a card says its number: two can fail alike.
+                    match self.album_position(chat, id) {
+                        Some((position, total)) => crate::a11y::fill(
+                            &crate::i18n::gettext(self.locale, "{kind} {position} of {total}"),
+                            &[
+                                ("kind", &kind),
+                                ("position", &position.to_string()),
+                                ("total", &total.to_string()),
+                            ],
+                        ),
+                        None => kind,
+                    }
+                }
+            };
+            crate::a11y::fill(
+                &crate::i18n::gettext(self.locale, "{what}: {error}"),
+                &[("what", &what), ("error", &error)],
+            )
+        };
+        self.announcer.say(crate::announcer::Category::Error, text);
+    }
+
+    /// Where `id` stands in the album the list draws it in, outside a
+    /// selection, counting from 1, and how many items that album has; none
+    /// for a message drawn on its own.
+    fn album_position(&self, chat: &str, id: &str) -> Option<(usize, usize)> {
+        use crate::ui::conversation::{row_members, row_of, row_starts};
+        let messages = &self.conversations.get(chat)?.messages;
+        let index = messages.iter().position(|message| message.id == id)?;
+        let starts = row_starts(messages, false);
+        let first = *starts.get(row_of(&starts, index))?;
+        let members = row_members(messages, false, first).len();
+        (members > 1).then_some((index - first + 1, members))
+    }
+
+    /// The message that names the row the list draws `id` in: an album's
+    /// first item, or `id` itself.
+    fn row_message(&self, chat: &str, id: &str) -> Option<String> {
+        use crate::ui::conversation::{row_of, row_starts};
+        let messages = &self.conversations.get(chat)?.messages;
+        let index = messages.iter().position(|message| message.id == id)?;
+        let starts = row_starts(messages, self.selecting_in(chat));
+        let first = *starts.get(row_of(&starts, index))?;
+        Some(messages.get(first)?.id.clone())
+    }
+
+    /// The message list's current message in `chat`: the cursor's, or the
+    /// newest, as the list resolves it.
+    fn current_message(&self, chat: &str) -> Option<String> {
+        let messages = &self.conversations.get(chat)?.messages;
+        self.message_cursor
+            .get(chat)
+            .filter(|id| messages.iter().any(|message| &message.id == *id))
+            .cloned()
+            .or_else(|| messages.last().map(|message| message.id.clone()))
+    }
+
+    /// Whether the download of `id` in `chat` (and `card`) is one Space
+    /// asked for, which it then no longer is.
+    fn take_download_heard(&mut self, chat: &str, id: &str, card: Option<usize>) -> bool {
+        self.download_heard
+            .remove(&(chat.to_owned(), id.to_owned(), card))
     }
 
     fn ensure_loaded(&mut self, chat: &str) {
@@ -6265,7 +6440,12 @@ impl App {
             // A run of voice messages belongs to the chat it started in.
             self.voice_chat = None;
             self.voice_wanted = None;
-            // So does a replied message still loading.
+            // So do a video waiting to play once it arrives, the download
+            // Space asked for, the item cursor and a replied message still
+            // loading.
+            self.video_wanted = None;
+            self.download_heard.clear();
+            self.message_item = None;
             self.pending_follow = None;
             // A page request belongs to the chat it was pressed in.
             self.scroll_page = None;
@@ -9393,6 +9573,11 @@ impl App {
                 // The reader moved: a replied message still loading does not
                 // take the list back later.
                 self.pending_follow = None;
+                // Another message starts on its first item; the same one,
+                // where the list stood without a cursor of its own, does not.
+                if current.map(|current| &messages[starts[current]].id) != Some(&id) {
+                    self.message_item = None;
+                }
                 self.message_cursor.insert(chat.clone(), id);
                 self.reveal_cursor = true;
                 // Home on the oldest loaded message asks for older ones, as
@@ -10555,7 +10740,9 @@ impl App {
         self.voice_chat = None;
         self.voice_wanted = None;
         self.video_wanted = None;
-        // A replied message is never found over the lock screen.
+        // A failure is never spoken over the lock screen, nor a replied
+        // message found.
+        self.download_heard.clear();
         self.pending_follow = None;
         self.dropping = false;
         self.notifications.clear_all();
@@ -11216,6 +11403,10 @@ impl App {
         // The reader went somewhere: a replied message still loading does
         // not take the list back later.
         self.pending_follow = None;
+        // Another message starts on its first item.
+        if self.message_cursor.get(chat).map(String::as_str) != Some(message) {
+            self.message_item = None;
+        }
         self.message_cursor
             .insert(chat.to_owned(), message.to_owned());
         if self.messages_focused && self.open_chat.as_deref() == Some(chat) {
@@ -14760,15 +14951,25 @@ mod tests {
         assert!(app.open_message_menu.is_none());
     }
 
-    /// A replied message still loading ends with its account, as with its
-    /// chat.
+    /// The keys' item cursor, a download waiting to be spoken and a replied
+    /// message still loading end with their account, as with their chat.
     #[test]
-    fn switching_accounts_ends_the_wait_for_a_replied_message() {
+    fn switching_accounts_ends_the_keys_waits_and_item() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _commands) = two_accounts(directory.path());
         let ctx = egui::Context::default();
+        let chat: ChatId = "15550007777@s.whatsapp.net".into();
+        app.message_item = Some((
+            chat.clone(),
+            "item".into(),
+            1,
+            "item".into(),
+            crate::a11y::KeyTarget::Attachment,
+        ));
+        app.download_heard
+            .insert((chat.clone(), "file".into(), None));
         app.pending_follow = Some(PendingFollow {
-            chat: "15550007777@s.whatsapp.net".into(),
+            chat,
             message: "quoted".into(),
             focus: None,
             frame: 0,
@@ -14776,6 +14977,8 @@ mod tests {
             answered: false,
         });
         app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        assert!(app.message_item.is_none());
+        assert!(app.download_heard.is_empty());
         assert!(app.pending_follow.is_none());
     }
 

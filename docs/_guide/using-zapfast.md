@@ -1049,6 +1049,26 @@ says why.
 These keys wait while the chat selects messages. A call in the chat has only a
 menu to call back, which Space and Enter open too.
 
+Space or Enter does what clicking the message does: it plays or pauses a voice
+message or video, opens a photo in the viewer, a sticker on its own card or a
+document, or opens a link, a link preview, a location's map, a shared contact's
+chat or a carousel card's picture, or votes for a poll option. On a file that
+is not downloaded yet it starts the download, or retries one that failed, and
+says why if that download fails while its chat is open. As with a click, a
+video with a picture then plays once it arrives, if its chat is still open;
+anything else, including a video shown as a file card, plays or opens with the
+next press.
+Where clicking does nothing, as on a plain text message, Space and Enter do
+nothing either. A message with several of these (a file, links, cards, poll
+options) says how many at the end of its label; Left and Right move between the
+message's items, its file, links, cards or poll options, and say each one
+("Link 2 of 3, example.com"), and Space or Enter plays or pauses, opens or
+votes for the selected one. On a carousel card without a picture, Space or
+Enter opens the message menu on that card's buttons. An album is one message
+whose items are its photos and videos, each followed by the links in its
+caption: Space or Enter opens the selected one in the viewer, and Shift+F10 and
+the other keys act on it.
+
 In the chat view, Tab moves through the message input and its buttons, phone
 numbers in messages, chat search, the chat info panel, the message list, the
 rail, the chat list's header, search and the chat filters, then returns to the
