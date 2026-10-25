@@ -229,6 +229,35 @@ pub fn name_mentions(text: &str, mentions: &[Mention]) -> String {
     plain(text, mentions)
 }
 
+/// The distinct links of a text, in order: each as the text writes it and
+/// the address a click opens, which can differ (`example.com` opens
+/// `https://example.com`). `mentions` are the text's own, as the bubble
+/// draws it: a mention's digits are no phone number.
+pub fn written_links(text: &str, mentions: &[Mention]) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    let mut current: Option<(String, String)> = None;
+    let mut flush = |current: &mut Option<(String, String)>| {
+        if let Some((written, url)) = current.take()
+            && !found.iter().any(|(_, seen)| *seen == url)
+        {
+            found.push((written, url));
+        }
+    };
+    for span in parse(text, mentions) {
+        match (span.link, current.as_mut()) {
+            // One link drawn in several styled pieces stays one link.
+            (Some(url), Some((written, open))) if *open == url => written.push_str(&span.text),
+            (Some(url), _) => {
+                flush(&mut current);
+                current = Some((span.text, url));
+            }
+            (None, _) => flush(&mut current),
+        }
+    }
+    flush(&mut current);
+    found
+}
+
 fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut in_block = false;
@@ -777,6 +806,24 @@ const KNOWN_TLDS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn written_links_keep_the_text_and_the_address_once_each() {
+        assert_eq!(
+            written_links(
+                "see example.com/a, then https://b.org and example.com/a",
+                &[]
+            ),
+            [
+                (
+                    "example.com/a".to_owned(),
+                    "https://example.com/a".to_owned()
+                ),
+                ("https://b.org".to_owned(), "https://b.org".to_owned()),
+            ]
+        );
+        assert!(written_links("no links", &[]).is_empty());
+    }
 
     fn kinds(text: &str) -> Vec<(String, bool, bool, bool, bool)> {
         parse(text, &[])

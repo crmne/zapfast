@@ -308,13 +308,9 @@ pub fn ballot(
                     && response
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
-                    && let Some(choices) = selection_after_click(state, index)
+                    && let Some(action) = vote_action(message, index, enabled, pending)
                 {
-                    actions.push(Action::VotePoll {
-                        chat: message.chat.clone(),
-                        message: message.id.clone(),
-                        choices,
-                    });
+                    actions.push(action);
                 }
             }
             let detail = if pending {
@@ -440,12 +436,24 @@ pub fn results_button(
         && response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
+        && let Some(action) = results_action(message)
     {
-        actions.push(Action::ShowDialog(Dialog::PollResults {
+        actions.push(action);
+    }
+}
+
+/// What "Show votes" does: the poll's results. `None` while nobody has
+/// voted, when the button is unavailable.
+pub fn results_action(message: &Message) -> Option<Action> {
+    let Content::Poll { state, .. } = &message.content else {
+        return None;
+    };
+    (state.voters > 0).then(|| {
+        Action::ShowDialog(Dialog::PollResults {
             chat: message.chat.clone(),
             message: message.id.clone(),
-        }));
-    }
+        })
+    })
 }
 
 pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
@@ -591,6 +599,42 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             area.inner_rect,
         )
     });
+}
+
+/// What clicking option `index` does: the vote it casts or withdraws, for a
+/// click and for the message menu alike. `None` when voting is unavailable
+/// (see [`vote_blocker`]) or the option would exceed the allowed answers.
+pub fn vote_action(
+    message: &Message,
+    index: usize,
+    enabled: bool,
+    pending: bool,
+) -> Option<Action> {
+    let Content::Poll { state, .. } = &message.content else {
+        return None;
+    };
+    if !(enabled && state.can_vote && !pending) {
+        return None;
+    }
+    let choices = selection_after_click(state, index)?;
+    Some(Action::VotePoll {
+        chat: message.chat.clone(),
+        message: message.id.clone(),
+        choices,
+    })
+}
+
+/// Why the poll takes no vote now, as the ballot's own note says it.
+pub fn vote_blocker(state: &PollState, enabled: bool, pending: bool) -> Option<&'static str> {
+    if pending {
+        Some("Sending vote…")
+    } else if !state.can_vote {
+        Some("Voting key unavailable · use your phone")
+    } else if !enabled {
+        Some("Reconnect to vote")
+    } else {
+        None
+    }
 }
 
 fn selection_after_click(state: &PollState, index: usize) -> Option<Vec<usize>> {
