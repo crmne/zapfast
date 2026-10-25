@@ -5087,6 +5087,7 @@ impl App {
         // The info panel's listing keeps its own copy of the message, so a
         // picture without a preview stops being blank once its file is there.
         if let Ok(path) = &result
+            && !self.events_hidden
             && let Some(listing) = self
                 .info_media
                 .as_mut()

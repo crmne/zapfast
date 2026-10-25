@@ -237,6 +237,22 @@ mod tests {
         )
         .unwrap();
         std::mem::swap(&mut other.conversations, &mut app.accounts[0].conversations);
+        // Both accounts can hold the same chat and message ids. The info
+        // panel belongs to the window, while the queued files belong to an account.
+        let visible = other.conversations["synthetic"].messages.clone();
+        app.conversations.insert(
+            "synthetic".into(),
+            Conversation {
+                messages: visible.clone(),
+                ..Default::default()
+            },
+        );
+        app.info_media = Some(ChatMedia::collect(
+            "synthetic".into(),
+            visible,
+            crate::model::MEDIA_LIST_LIMIT,
+        ));
+        let listing_before = app.info_media.clone();
         other.backend = backend;
         other.link = LinkStatus::Connected;
         app.accounts.push(other);
@@ -246,22 +262,62 @@ mod tests {
         app.pump_selected_downloads();
         assert!(other_commands.try_recv().is_ok());
         assert!(other_commands.try_recv().is_ok());
+        let hidden_path = PathBuf::from("synthetic-hidden.pdf");
         events
             .send(Event::Media {
                 chat: "synthetic".into(),
                 message: "0".into(),
                 card: None,
-                result: Err("Synthetic failure".into()),
+                result: Ok(hidden_path.clone()),
             })
             .unwrap();
         app.handle_events();
         app.pump_selected_downloads();
         assert_eq!(app.active, 0);
-        assert!(app.conversations.is_empty());
+        assert!(
+            app.conversations["synthetic"]
+                .message("0")
+                .unwrap()
+                .content
+                .media()
+                .unwrap()
+                .path
+                .is_none()
+        );
+        assert_eq!(
+            app.info_media, listing_before,
+            "a hidden completion leaves the visible account's panel alone"
+        );
+        assert_eq!(
+            app.accounts[1].conversations["synthetic"]
+                .message("0")
+                .unwrap()
+                .content
+                .media()
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&hidden_path)
+        );
         assert!(app.viewer_media_state.is_empty());
         assert!(commands.try_recv().is_err());
         assert!(
             matches!(other_commands.try_recv().unwrap(), Command::Download { message, .. } if message == "2")
+        );
+        let visible_path = PathBuf::from("synthetic-visible.pdf");
+        app.handle_media("synthetic", "0", None, Ok(visible_path.clone()));
+        let listed = app
+            .info_media
+            .as_ref()
+            .unwrap()
+            .docs
+            .iter()
+            .find(|row| row.id == "0")
+            .unwrap();
+        assert_eq!(
+            listed.content.media().unwrap().path.as_ref(),
+            Some(&visible_path),
+            "a visible completion still updates its own panel"
         );
     }
 }
