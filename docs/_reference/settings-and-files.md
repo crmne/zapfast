@@ -38,10 +38,12 @@ its messages, its other caches, and the other accounts' files stay, and so do
 files in a download folder you chose.
 **Settings > Files > Change…** sends new downloads to another folder, leaving
 earlier ones in place. New downloads use one fixed layout inside that folder:
-`Account <slot>-<account key>/<chat name>-<chat key>/file`. The short identity
-keys keep different accounts and identically named chats apart. Chat names
-stay readable, with filesystem-unsafe characters replaced and long names
-shortened. New downloads use the current name; existing files are not moved.
+`<account>/<chat name>/file`, where the account folder is the account's phone
+number, such as `+15550001111` (`Account 1` until the number is known). Chat
+names stay readable, with filesystem-unsafe characters replaced and long names
+shortened. When two chats of one account would share a folder, the first keeps
+it and the others become `Name (2)`, `Name (3)`, and so on; each chat keeps its
+folder. New downloads use the current name; existing files are not moved.
 The downloaded file itself goes there, without a second copy in the cache.
 If the destination is unavailable, downloads fall back to the account's normal
 cache as before. This also applies when the folder cannot accept new files or

@@ -2771,7 +2771,9 @@ impl Worker {
                         .map(|chat| chat.name)
                 })
                 .unwrap_or_else(|| self.chat_name(&chat, None));
-            let folder = download_folders::folder(root, &self.dirs.id, &self.me(), &chat, &name);
+            let account =
+                download_folders::account_folder(root, &self.dirs.id, self.me_pn.as_deref());
+            let folder = download_folders::chat_folder(&self.archive, &account, &chat, &name);
             if download_folders::create_folder(root, &folder).is_ok() {
                 return folder;
             }
@@ -6846,7 +6848,7 @@ impl Worker {
                     && self.cleaned_download_folders.insert(folder.clone())
                 {
                     discard_attachment_staging(folder);
-                    download_folders::discard_staging(folder, &self.dirs.id, &self.me());
+                    download_folders::discard_staging(folder, &self.dirs.id, self.me_pn.as_deref());
                 }
                 self.download_folder = folder;
             }
@@ -15495,7 +15497,8 @@ mod tests {
         let chat = "200@s.whatsapp.net";
         worker.archive.ensure_chat(chat, "Alice").unwrap();
         let expected =
-            download_folders::folder(&chosen, &worker.dirs.id, &worker.me(), chat, "Alice");
+            download_folders::account_folder(&chosen, &worker.dirs.id, worker.me_pn.as_deref())
+                .join("Alice");
         assert_eq!(worker.download_dir(chat), expected);
         assert!(
             expected.is_dir(),
@@ -15522,30 +15525,44 @@ mod tests {
         worker.learn_lid("9", "200");
         let path = worker.download_dir(chat);
         assert_eq!(path, worker.download_dir("9@lid"));
-        assert!(
-            path.file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("Alice-")
-        );
+        assert_eq!(path.file_name().unwrap(), "Alice");
 
         let group = "100-200@g.us";
         worker.archive.ensure_chat(group, "Family").unwrap();
-        assert!(
-            worker
-                .download_dir(group)
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("Family-")
+        assert_eq!(worker.download_dir(group).file_name().unwrap(), "Family");
+
+        // Another chat with the same name gets its own folder beside it.
+        let namesake = "300@s.whatsapp.net";
+        worker.archive.ensure_chat(namesake, "Alice").unwrap();
+        assert_eq!(
+            worker.download_dir(namesake).file_name().unwrap(),
+            "Alice (2)"
         );
+        assert_eq!(worker.download_dir(chat), path);
 
         // An inaccessible nested chat folder also uses the ordinary cache.
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, b"blocked").unwrap();
         assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
+    }
+
+    /// The account's folder is its phone number, whichever form of our own
+    /// identity WhatsApp reports, and the privacy id alone never moves it.
+    #[test]
+    fn the_account_download_folder_stays_put_across_identity_forms() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        worker.download_folder = Some(root.path().to_owned());
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Alice").unwrap();
+        worker.me_pn = Some("15550001111@s.whatsapp.net".into());
+        worker.me_lid = None;
+        let first = worker.download_dir(chat);
+        assert_eq!(first, root.path().join("+15550001111").join("Alice"));
+        worker.me_lid = Some("1001@lid".into());
+        assert_eq!(worker.download_dir(chat), first);
+        worker.me_pn = Some("15550001111:3@s.whatsapp.net".into());
+        assert_eq!(worker.download_dir(chat), first);
     }
 
     /// Publication stays beside the destination, preserving names without a cache export.
@@ -15589,7 +15606,8 @@ mod tests {
         let chat = "200@s.whatsapp.net";
         worker.archive.ensure_chat(chat, "Alice").unwrap();
         let folder =
-            download_folders::folder(root.path(), &worker.dirs.id, &worker.me(), chat, "Alice");
+            download_folders::account_folder(root.path(), &worker.dirs.id, worker.me_pn.as_deref())
+                .join("Alice");
         let account = folder.parent().unwrap();
         std::os::unix::fs::symlink(outside.path(), account).unwrap();
         assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
@@ -15606,9 +15624,9 @@ mod tests {
     async fn chosen_folder_cleanup_runs_once_per_account_and_root() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         let root = tempfile::tempdir().unwrap();
-        let chat = "200@s.whatsapp.net";
         let dir =
-            download_folders::folder(root.path(), &worker.dirs.id, &worker.me(), chat, "Alice");
+            download_folders::account_folder(root.path(), &worker.dirs.id, worker.me_pn.as_deref())
+                .join("Alice");
         std::fs::create_dir_all(&dir).unwrap();
         let partial = dir.join(".photo.0123456789abcdef.part");
         std::fs::write(&partial, b"old").unwrap();
