@@ -94,11 +94,30 @@ const SHELF_REFRESH_EVERY: usize = 4;
 const STARRED_LIMIT: usize = 200;
 const ATTACHMENT_LIMIT_ERROR: &str =
     "This attachment is larger than the 64 MiB automatic download limit";
+
 /// The deadline of a download of unknown or small size.
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// The slowest transfer the deadline allows for beyond that: 128 KiB/s, so a
 /// 2 GiB video still has over four hours.
 const ATTACHMENT_SLOWEST_RATE: u64 = 128 * 1024;
+
+/// Publishing bytes is not success until their archive reference has been accepted.
+fn confirmed_download(
+    path: PathBuf,
+    saved: crate::archive::Result<bool>,
+) -> Result<PathBuf, String> {
+    match saved {
+        Ok(true) => Ok(path),
+        Ok(false) => Err("This attachment is no longer in the archive".to_owned()),
+        Err(_) => {
+            log::warn!("could not store a downloaded attachment's path");
+            Err(
+                "Could not record the downloaded file in the archive. The file has been kept"
+                    .to_owned(),
+            )
+        }
+    }
+}
 
 /// How long a download of `size` bytes may take, re-upload request included.
 fn attachment_deadline(size: Option<u64>) -> Duration {
@@ -7794,11 +7813,10 @@ impl Worker {
             } => self.downloaded(chat, id, card, result),
             Command::DownloadMotion { chat, message } => self.download_motion(chat, message),
             Command::MotionDownloaded { chat, id, result } => {
-                if let Ok(path) = &result
-                    && let Err(error) = self.archive.put_motion_path(&chat, &id, Some(path))
-                {
-                    log::warn!("could not store a motion clip's path: {error}");
-                }
+                let result = result.and_then(|path| {
+                    let saved = self.archive.put_motion_path(&chat, &id, Some(&path));
+                    confirmed_download(path, saved)
+                });
                 self.emit(Event::Motion {
                     chat,
                     message: id,
@@ -9125,9 +9143,6 @@ impl Worker {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
-        if let Ok(path) = &result {
-            let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
-        }
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
         let for_picker = self.sticker_downloads.remove(&key);
@@ -9148,6 +9163,20 @@ impl Worker {
             } else {
                 self.sticker_download_failed.insert(key);
             }
+        }
+        let transferred = result.is_ok();
+        let result = result.and_then(|path| {
+            let saved = self
+                .archive
+                .put_media_path_at(&chat, &id, card, Some(&path))
+                .map(|message| message.is_some());
+            confirmed_download(path, saved)
+        });
+        if for_picker && transferred && result.is_err() {
+            // A local write failure must not schedule a phone retry or another
+            // automatic transfer of a file which has already arrived.
+            self.sticker_download_failed
+                .insert((chat.clone(), id.clone()));
         }
         let result_ok = result.is_ok();
         self.emit(Event::Media {
@@ -22419,6 +22448,232 @@ mod chat_removal_tests {
             })
             .await;
         assert!(worker.archive.pinned_ids(CHAT, 200).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod saved_download_tests {
+    use super::*;
+    use crate::model::{InteractiveCard, MediaState, Motion};
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Target {
+        Document,
+        Carousel,
+        Motion,
+    }
+
+    /// Synthetic completion targets exercise the shared callback and the separate clip callback.
+    fn fixture(target: Target) -> Message {
+        let mut message = receipt_tests::own_message("saved-file", 100);
+        message.edited = true;
+        let media = Media {
+            mime: "application/octet-stream".into(),
+            size: 7,
+            width: None,
+            height: None,
+            album: None,
+            path: None,
+            state: MediaState::Idle,
+        };
+        message.content = match target {
+            Target::Document => Content::Document {
+                media,
+                file_name: "fixture.bin".into(),
+                caption: None,
+                pages: None,
+            },
+            Target::Carousel => Content::Interactive {
+                text: "Fixture".into(),
+                card: Some(Box::new(InteractiveCard {
+                    carousel: vec![InteractiveCard {
+                        image: Some(media),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })),
+            },
+            Target::Motion => Content::Image {
+                caption: None,
+                media,
+                motion: Some(Motion::default()),
+            },
+        };
+        message
+    }
+
+    /// Completes through production routing, without any connection to WhatsApp.
+    async fn finish(worker: &mut Worker, target: Target, result: Result<PathBuf, String>) {
+        let message = fixture(target);
+        if target == Target::Motion {
+            worker
+                .handle_command(Command::MotionDownloaded {
+                    chat: message.chat,
+                    id: message.id,
+                    result,
+                })
+                .await;
+        } else {
+            worker.downloaded(
+                message.chat,
+                message.id,
+                (target == Target::Carousel).then_some(0),
+                result,
+            );
+        }
+    }
+
+    /// Returns the durable path of the exact attachment slot under test.
+    fn stored_path(message: &Message, target: Target) -> Option<&Path> {
+        match (&message.content, target) {
+            (
+                Content::Image {
+                    motion: Some(motion),
+                    ..
+                },
+                Target::Motion,
+            ) => motion.path.as_deref(),
+            (
+                Content::Interactive {
+                    card: Some(card), ..
+                },
+                Target::Carousel,
+            ) => card.carousel.first()?.image.as_ref()?.path.as_deref(),
+            (_, Target::Document) => message.content.media()?.path.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Extracts the existing interface completion event, not a test-only success signal.
+    fn outcome(events: &std::sync::mpsc::Receiver<Event>) -> Result<PathBuf, String> {
+        events
+            .try_iter()
+            .find_map(|event| match event {
+                Event::Media { result, .. } | Event::Motion { result, .. } => Some(result),
+                _ => None,
+            })
+            .expect("a completion event")
+    }
+
+    /// A write refusal is a failure; the verified bytes, edit and original keys survive.
+    #[tokio::test]
+    async fn completion_waits_for_the_archive_and_preserves_the_downloaded_file() {
+        for target in [Target::Document, Target::Carousel, Target::Motion] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            let file = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(file.path(), b"fixture").unwrap();
+            let message = fixture(target);
+            worker
+                .archive
+                .insert_message(&message, Some(b"synthetic download keys"))
+                .unwrap();
+            crate::archive::tests::set_derived_update_failure(&worker.archive, true);
+            finish(&mut worker, target, Err("fixture transfer failure".into())).await;
+            assert_eq!(outcome(&events).unwrap_err(), "fixture transfer failure");
+            if target != Target::Motion {
+                worker.downloads.insert((
+                    message.chat.clone(),
+                    message.id.clone(),
+                    (target == Target::Carousel).then_some(0),
+                ));
+            }
+            finish(&mut worker, target, Ok(file.path().to_owned())).await;
+            assert!(outcome(&events).unwrap_err().contains("file has been kept"));
+            assert!(
+                worker.downloads.is_empty(),
+                "failed persistence releases the active transfer"
+            );
+            assert!(
+                stored_path(
+                    &worker
+                        .archive
+                        .message(&message.chat, &message.id)
+                        .unwrap()
+                        .unwrap(),
+                    target
+                )
+                .is_none()
+            );
+            assert_eq!(std::fs::read(file.path()).unwrap(), b"fixture");
+            crate::archive::tests::set_derived_update_failure(&worker.archive, false);
+            finish(&mut worker, target, Ok(file.path().to_owned())).await;
+            assert_eq!(outcome(&events).unwrap(), file.path());
+            let stored = worker
+                .archive
+                .message(&message.chat, &message.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored_path(&stored, target), Some(file.path()));
+            assert!(stored.edited);
+            assert_eq!(
+                worker
+                    .archive
+                    .raw(&message.chat, &message.id)
+                    .unwrap()
+                    .as_deref(),
+                Some(b"synthetic download keys".as_slice())
+            );
+        }
+    }
+
+    /// A late completion cannot claim success for a deleted or replaced attachment.
+    #[tokio::test]
+    async fn missing_and_replaced_rows_cannot_report_a_saved_download() {
+        for target in [Target::Document, Target::Carousel, Target::Motion] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            let file = tempfile::NamedTempFile::new().unwrap();
+            finish(&mut worker, target, Ok(file.path().to_owned())).await;
+            assert!(outcome(&events).is_err());
+            let mut message = fixture(target);
+            assert!(
+                worker
+                    .archive
+                    .message(&message.chat, &message.id)
+                    .unwrap()
+                    .is_none()
+            );
+            message.content = Content::text("Replacement fixture");
+            worker.archive.insert_message(&message, None).unwrap();
+            finish(&mut worker, target, Ok(file.path().to_owned())).await;
+            assert!(outcome(&events).is_err());
+            assert_eq!(
+                worker
+                    .archive
+                    .message(&message.chat, &message.id)
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                message.content
+            );
+            assert!(file.path().is_file());
+        }
+    }
+
+    /// A storage error does not enter the picker's retry/re-upload path or refill the same file.
+    #[tokio::test]
+    async fn picker_storage_failure_does_not_retry_the_network_download() {
+        let (mut worker, events, mut commands, _) = receipt_tests::worker();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut message = fixture(Target::Document);
+        message.content = Content::Sticker {
+            media: message.content.media().unwrap().clone(),
+            animated: false,
+        };
+        worker.archive.insert_message(&message, None).unwrap();
+        let key = (message.chat.clone(), message.id.clone());
+        worker.sticker_downloads.insert(key.clone());
+        worker.sticker_clicked.insert(key.clone());
+        worker
+            .downloads
+            .insert((message.chat.clone(), message.id.clone(), None));
+        crate::archive::tests::set_derived_update_failure(&worker.archive, true);
+        finish(&mut worker, Target::Document, Ok(file.path().to_owned())).await;
+        assert!(outcome(&events).is_err());
+        assert!(worker.sticker_download_failed.contains(&key));
+        assert!(!worker.sticker_retried.contains(&key));
+        assert!(worker.downloads.is_empty() && worker.sticker_downloads.is_empty());
+        assert!(commands.try_recv().is_err());
+        assert!(file.path().is_file());
     }
 }
 

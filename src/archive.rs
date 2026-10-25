@@ -984,8 +984,11 @@ impl Archive {
             return Ok(None);
         };
         media.path = path.map(Path::to_path_buf);
-        self.set_content(chat, id, &message.content, message.edited)?;
-        Ok(Some(message))
+        if self.set_content(chat, id, &message.content, message.edited)? {
+            Ok(Some(message))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Keeps the download keys of a motion photo's clip and marks its photo.
@@ -1023,15 +1026,16 @@ impl Archive {
             .optional()
     }
 
-    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<()> {
+    /// Returns whether the photo's updated path was actually written.
+    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<bool> {
         let Some(mut message) = self.message(chat, id)? else {
-            return Ok(());
+            return Ok(false);
         };
         if let Content::Image { motion, .. } = &mut message.content {
             motion.get_or_insert_default().path = path.map(Path::to_path_buf);
-            self.set_content(chat, id, &message.content, message.edited)?;
+            return self.set_content(chat, id, &message.content, message.edited);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Returns all recorded motion clip paths.
@@ -5155,6 +5159,61 @@ pub(crate) mod tests {
             assert!(archive.read_through(chat).unwrap().is_none());
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A statement that succeeds without changing a row cannot confirm either media path.
+    #[test]
+    fn media_path_updates_must_actually_write_the_row() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let mut picture = message(chat, "picture", 100, false);
+        picture.content = Content::Image {
+            caption: None,
+            motion: Some(crate::model::Motion::default()),
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 7,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: Default::default(),
+            },
+        };
+        archive.insert_message(&picture, None).unwrap();
+        archive.connection.execute_batch("CREATE TRIGGER ignore_media_paths BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+        let path = Path::new("synthetic/download.jpg");
+        assert!(
+            archive
+                .put_media_path_at(chat, "picture", None, Some(path))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !archive
+                .put_motion_path(chat, "picture", Some(path))
+                .unwrap()
+        );
+        assert_eq!(
+            archive.message(chat, "picture").unwrap().unwrap().content,
+            picture.content
+        );
+        archive
+            .connection
+            .execute_batch("DROP TRIGGER ignore_media_paths")
+            .unwrap();
+        assert!(
+            archive
+                .put_media_path_at(chat, "picture", None, Some(path))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            archive
+                .put_motion_path(chat, "picture", Some(path))
+                .unwrap()
+        );
     }
 
     /// Checks that persisting a downloaded path updates the attachment content stored in the archive.
