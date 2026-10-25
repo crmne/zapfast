@@ -57,6 +57,50 @@ mod tests {
     }
 
     #[test]
+    fn newly_selected_downloads_wake_an_idle_window_but_repeated_selections_do_not() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (mut app, mut commands) = batch(2);
+        let ctx = egui::Context::default();
+        let wakes = std::sync::Arc::new(AtomicUsize::new(0));
+        let observed = wakes.clone();
+        ctx.set_request_repaint_callback(move |request| {
+            if request.delay.is_zero() {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let idle = || {
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(Default::default(), |_| {});
+                output.textures_delta.clear();
+            }
+        };
+        idle();
+        app.waker.attach(&ctx);
+        let before = wakes.load(Ordering::SeqCst);
+        enqueue(&mut app, &["0", "1"]);
+        assert!(
+            wakes.load(Ordering::SeqCst) > before,
+            "a click after the queue pump schedules its next turn"
+        );
+        assert!(commands.try_recv().is_err());
+        app.pump_selected_downloads();
+        assert!(commands.try_recv().is_ok());
+        assert!(commands.try_recv().is_ok());
+
+        idle();
+        let before = wakes.load(Ordering::SeqCst);
+        enqueue(&mut app, &["0", "1"]);
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            before,
+            "an empty addition does not keep waking the app"
+        );
+        app.pump_selected_downloads();
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
     fn failures_and_deleted_messages_release_slots_without_retrying() {
         let (mut app, mut commands) = batch(4);
         enqueue(&mut app, &["0", "1", "2", "3"]);

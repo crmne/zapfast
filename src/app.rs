@@ -6673,6 +6673,10 @@ impl App {
                         .collect();
                 match self.selected_downloads.enqueue(targets) {
                     Ok(added) => {
+                        if !added.is_empty() {
+                            // UI actions run after the background queue pump.
+                            self.waker.wake();
+                        }
                         for target in added {
                             if let Some(media) = self
                                 .conversations
