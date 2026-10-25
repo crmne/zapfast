@@ -44,7 +44,10 @@ stay readable, with filesystem-unsafe characters replaced and long names
 shortened. New downloads use the current name; existing files are not moved.
 The downloaded file itself goes there, without a second copy in the cache.
 If the destination is unavailable, downloads fall back to the account's normal
-cache as before. Documents keep the name they were sent with; a
+cache as before. This also applies when the folder cannot accept new files or
+publishing the downloaded file fails. Restarting removes unfinished downloads
+from that account's chat folders, without following linked folders.
+Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
 become `_`.

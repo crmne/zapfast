@@ -195,7 +195,7 @@ async fn download_attachment(
     path: &Path,
     limit: u64,
 ) -> Result<PathBuf, String> {
-    fetch_attachment(client, downloadable, dir, path, limit, false).await
+    fetch_attachment(client, downloadable, dir, path, limit, false, None).await
 }
 
 /// [`download_attachment`], and with `keep_others` a file already at `path`
@@ -208,14 +208,13 @@ async fn fetch_attachment(
     path: &Path,
     limit: u64,
     keep_others: bool,
+    cache: Option<&Path>,
 ) -> Result<PathBuf, String> {
     if downloadable.file_length().is_some_and(|size| size > limit) {
         return Err(ATTACHMENT_LIMIT_ERROR.to_owned());
     }
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|error| error.to_string())?;
-    let (temporary, file) = temporary_attachment_file(path)?;
+    debug_assert_eq!(path.parent(), Some(dir));
+    let (target, temporary, file) = stage_attachment(path, cache).await?;
     let _staged = Staged(temporary.clone());
     let result = client
         .download_to_writer(
@@ -230,15 +229,7 @@ async fn fetch_attachment(
             drop(writer);
             // The staging file is removed on the way out if it was not
             // published.
-            if keep_others {
-                publish_beside(&temporary, path)
-                    .await
-                    .map_err(|error| error.to_string())
-            } else {
-                publish_attachment(&temporary, path)
-                    .await
-                    .map(|()| path.to_path_buf())
-            }
+            publish_download(&temporary, &target, keep_others && target == path, cache).await
         }
         Err(error) => {
             let error = error.to_string();
@@ -247,6 +238,63 @@ async fn fetch_attachment(
             } else {
                 Err(error)
             }
+        }
+    }
+}
+
+/// Opens the actual staging file before downloading, trying the cache on local failure.
+async fn stage_attachment(
+    path: &Path,
+    cache: Option<&Path>,
+) -> Result<(PathBuf, PathBuf, std::fs::File), String> {
+    let mut failure = String::new();
+    for target in std::iter::once(path).chain(cache.filter(|cache| *cache != path)) {
+        let staged = async {
+            let dir = target.parent().ok_or("attachment has no parent folder")?;
+            tokio::fs::create_dir_all(dir)
+                .await
+                .map_err(|error| error.to_string())?;
+            temporary_attachment_file(target)
+        }
+        .await;
+        match staged {
+            Ok((temporary, file)) => return Ok((target.to_owned(), temporary, file)),
+            Err(error) => failure = error,
+        }
+    }
+    Err(failure)
+}
+
+/// A publication failure saves the verified bytes in the cache without another transfer.
+async fn publish_download(
+    temporary: &Path,
+    path: &Path,
+    keep_others: bool,
+    cache: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let published = if keep_others {
+        publish_beside(temporary, path)
+            .await
+            .map_err(|error| error.to_string())
+    } else {
+        publish_attachment(temporary, path)
+            .await
+            .map(|()| path.to_owned())
+    };
+    match published {
+        Ok(path) => Ok(path),
+        Err(error) => {
+            let Some(cache) = cache.filter(|cache| *cache != path) else {
+                return Err(error);
+            };
+            let (_, staging, file) = stage_attachment(cache, None).await?;
+            let _staged = Staged(staging.clone());
+            drop(file);
+            tokio::fs::copy(temporary, &staging)
+                .await
+                .map_err(|error| error.to_string())?;
+            publish_attachment(&staging, cache).await?;
+            Ok(cache.to_owned())
         }
     }
 }
@@ -836,6 +884,7 @@ pub async fn run(
         group_info_retry: Vec::new(),
         presence_subscribed: HashSet::new(),
         download_folder: None,
+        cleaned_download_folders: HashSet::new(),
         keep_chats_archived: true,
         phone_unarchive_chats,
         phone_unarchive_unread,
@@ -1269,6 +1318,8 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
+    /// Clean each chosen root once, before this worker can start downloads there.
+    cleaned_download_folders: HashSet<PathBuf>,
     /// Settings' "Keep chats archived", for an account whose phone has not
     /// sent its own. Off, a new message unarchives its chat here, as the
     /// phone does; WhatsApp sends no mutation for it.
@@ -6791,8 +6842,11 @@ impl Worker {
             }
             Command::SetDownloadFolder(folder) => {
                 // Interrupted downloads leave hidden staging files behind.
-                if let Some(folder) = &folder {
+                if let Some(folder) = &folder
+                    && self.cleaned_download_folders.insert(folder.clone())
+                {
                     discard_attachment_staging(folder);
+                    download_folders::discard_staging(folder, &self.dirs.id, &self.me());
                 }
                 self.download_folder = folder;
             }
@@ -9207,12 +9261,14 @@ impl Worker {
             None
         };
         let dir = self.download_dir(&chat);
+        let cache = self.dirs.media_cache_dir();
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
+            let cache_path = media_path(&cache, &chat, &cache_id, &mime, file_name.as_deref());
             let named = file_name
                 .as_deref()
                 .filter(|_| own_folder)
@@ -9221,8 +9277,16 @@ impl Worker {
             let path = named
                 .unwrap_or_else(|| media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref()));
             let result = with_attachment_deadline(deadline, async {
-                match fetch_attachment(&client, &*downloadable, &dir, &path, limit, keep_others)
-                    .await
+                match fetch_attachment(
+                    &client,
+                    &*downloadable,
+                    &dir,
+                    &path,
+                    limit,
+                    keep_others,
+                    Some(&cache_path),
+                )
+                .await
                 {
                     Ok(path) => Ok(path),
                     Err(error) => {
@@ -9256,6 +9320,7 @@ impl Worker {
                                                     &path,
                                                     limit,
                                                     keep_others,
+                                                    Some(&cache_path),
                                                 )
                                                 .await
                                             }
@@ -15513,6 +15578,88 @@ mod tests {
         );
     }
 
+    /// Selecting an already-used root must not sweep a download started in this session.
+    #[tokio::test]
+    async fn chosen_folder_cleanup_runs_once_per_account_and_root() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        let chat = "200@s.whatsapp.net";
+        let dir =
+            download_folders::folder(root.path(), &worker.dirs.id, &worker.me(), chat, "Alice");
+        std::fs::create_dir_all(&dir).unwrap();
+        let partial = dir.join(".photo.0123456789abcdef.part");
+        std::fs::write(&partial, b"old").unwrap();
+        worker
+            .handle_command(Command::SetDownloadFolder(Some(root.path().to_owned())))
+            .await;
+        assert!(
+            !partial.exists(),
+            "a restarted worker clears crash leftovers"
+        );
+        std::fs::write(&partial, b"active").unwrap();
+        worker
+            .handle_command(Command::SetDownloadFolder(None))
+            .await;
+        worker
+            .handle_command(Command::SetDownloadFolder(Some(root.path().to_owned())))
+            .await;
+        assert_eq!(std::fs::read(&partial).unwrap(), b"active");
+    }
+
+    /// A local staging failure switches to a writable cache before any network transfer.
+    #[tokio::test]
+    async fn unavailable_staging_uses_the_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        let path = blocked.join("report.pdf");
+        let cache = root.path().join("cache/message.pdf");
+        assert!(stage_attachment(&path, None).await.is_err());
+        let (actual, temporary, file) = stage_attachment(&path, Some(&cache)).await.unwrap();
+        let staged = Staged(temporary.clone());
+        assert_eq!(actual, cache);
+        assert_eq!(temporary.parent(), cache.parent());
+        drop(file);
+        drop(staged);
+        assert!(!temporary.exists());
+        std::fs::write(root.path().join("cache-blocked"), b"blocked").unwrap();
+        assert!(
+            stage_attachment(&path, Some(&root.path().join("cache-blocked/file")))
+                .await
+                .is_err()
+        );
+    }
+
+    /// A late publication failure preserves the verified bytes in one finished cache file.
+    #[tokio::test]
+    async fn failed_publication_uses_verified_bytes_in_the_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let temporary = root.path().join(".verified.0123456789abcdef.part");
+        let staged = Staged(temporary.clone());
+        std::fs::write(&temporary, b"verified fixture").unwrap();
+        let blocked = root.path().join("blocked");
+        std::fs::write(&blocked, b"keep").unwrap();
+        let path = blocked.join("report.pdf");
+        let cache = root.path().join("cache/message.pdf");
+        assert!(
+            publish_download(&temporary, &path, true, None)
+                .await
+                .is_err()
+        );
+        let saved = publish_download(&temporary, &path, true, Some(&cache))
+            .await
+            .unwrap();
+        assert_eq!(saved, cache);
+        assert_eq!(std::fs::read(&saved).unwrap(), b"verified fixture");
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"keep");
+        drop(staged);
+        assert!(!temporary.exists());
+        assert_eq!(
+            std::fs::read_dir(cache.parent().unwrap()).unwrap().count(),
+            1
+        );
+    }
+
     #[test]
     fn view_once_placeholders_say_they_open_only_on_the_phone() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
@@ -17816,6 +17963,7 @@ mod receipt_tests {
             group_info_retry: Vec::new(),
             presence_subscribed: HashSet::new(),
             download_folder: None,
+            cleaned_download_folders: HashSet::new(),
             keep_chats_archived: true,
             phone_unarchive_chats: None,
             phone_unarchive_unread: false,
