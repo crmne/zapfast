@@ -2772,7 +2772,7 @@ impl Worker {
                 })
                 .unwrap_or_else(|| self.chat_name(&chat, None));
             let folder = download_folders::folder(root, &self.dirs.id, &self.me(), &chat, &name);
-            if std::fs::create_dir_all(&folder).is_ok() && folder.is_dir() {
+            if download_folders::create_folder(root, &folder).is_ok() {
                 return folder;
             }
             log::warn!("the download folder is unavailable; using the cache");
@@ -15576,6 +15576,29 @@ mod tests {
                 .join("report (1).pdf")
                 .exists()
         );
+    }
+
+    /// Existing account/chat links must fall back without creating anything outside the root.
+    #[cfg(unix)]
+    #[test]
+    fn linked_download_directories_use_the_cache() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        worker.download_folder = Some(root.path().to_owned());
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Alice").unwrap();
+        let folder =
+            download_folders::folder(root.path(), &worker.dirs.id, &worker.me(), chat, "Alice");
+        let account = folder.parent().unwrap();
+        std::os::unix::fs::symlink(outside.path(), account).unwrap();
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+        std::fs::remove_file(account).unwrap();
+        std::fs::create_dir(account).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &folder).unwrap();
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 
     /// Selecting an already-used root must not sweep a download started in this session.

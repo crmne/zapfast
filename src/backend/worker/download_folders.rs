@@ -6,6 +6,25 @@ use sha2::{Digest, Sha256};
 
 use crate::model::AccountId;
 
+/// Creates one layout level at a time, rejecting links before touching their children.
+pub(super) fn create_folder(root: &Path, folder: &Path) -> std::io::Result<()> {
+    let account = folder
+        .parent()
+        .filter(|account| account.parent() == Some(root))
+        .ok_or_else(|| std::io::Error::other("invalid download folder layout"))?;
+    std::fs::create_dir_all(root)?;
+    for directory in [account, folder] {
+        match std::fs::create_dir(directory) {
+            Ok(()) => {}
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && real_directory(directory) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Sweeps only this identity's real chat directories, never another account or symlink.
 pub(super) fn discard_staging(root: &Path, slot: &AccountId, account: &str) {
     let account = account_folder(root, slot, account);

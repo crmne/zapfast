@@ -47,6 +47,8 @@ If the destination is unavailable, downloads fall back to the account's normal
 cache as before. This also applies when the folder cannot accept new files or
 publishing the downloaded file fails. Restarting removes unfinished downloads
 from that account's chat folders, without following linked folders.
+If an account or chat folder is a symbolic link, new downloads use the cache
+instead.
 Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
