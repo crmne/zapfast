@@ -8910,6 +8910,14 @@ impl App {
                     account.backend.send(Command::ClearMediaCache { token });
                 }
             }
+            Action::SetAccountNotifications(id, on) => {
+                if let Some(account) = self.accounts.iter_mut().find(|known| known.id == id)
+                    && account.settings.notifications != on
+                {
+                    account.settings.notifications = on;
+                    account.mark_settings_dirty();
+                }
+            }
         }
     }
 
@@ -12675,6 +12683,62 @@ mod tests {
         assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chat_count_everywhere(), 3);
         assert_eq!(app.unread_chat_count_elsewhere(), 2);
+    }
+
+    /// The switcher's bell mutes one account without showing it: that
+    /// account stops notifying, stays linked, and the others keep notifying.
+    #[test]
+    fn the_switcher_mutes_an_account_that_is_not_on_screen() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let chat = "15550008888@s.whatsapp.net";
+        let mut theirs = Chat::new(chat.into(), "Grace".into());
+        theirs.unread = 1;
+        app.accounts[1].chats.push(theirs);
+        let message = |id: &str| Message {
+            id: id.into(),
+            chat: chat.into(),
+            sender: chat.into(),
+            sender_name: None,
+            from_me: false,
+            timestamp: crate::util::now(),
+            content: crate::model::Content::text("are you there?"),
+            status: crate::model::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            history_order: None,
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let arrives = |app: &mut App, id: &str| {
+            app.active = 1;
+            app.events_hidden = true;
+            app.maybe_notify(chat, &message(id));
+            app.events_hidden = false;
+            app.active = 0;
+        };
+        arrives(&mut app, "m1");
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        let second = AccountId::parse("2").unwrap();
+        app.apply(Action::SetAccountNotifications(second.clone(), false), &ctx);
+        assert_eq!(app.active, 0, "muting does not switch accounts");
+        assert!(!app.accounts[1].settings.notifications);
+        assert!(app.accounts[1].settings_dirty, "the choice is saved");
+        assert!(app.accounts[0].settings.notifications);
+        assert_eq!(app.accounts[1].link, LinkStatus::Connected);
+        arrives(&mut app, "m2");
+        assert_eq!(app.notifications.shown.len(), 1, "a muted account is quiet");
+
+        app.apply(Action::SetAccountNotifications(second, true), &ctx);
+        assert!(app.accounts[1].settings.notifications);
+        arrives(&mut app, "m3");
+        assert_eq!(app.notifications.shown.len(), 2);
     }
 
     #[test]

@@ -864,6 +864,8 @@ window is open behind others also highlights ZapFast in the taskbar until you
 switch to it. GNOME and Hyprland get no highlight: GNOME would show a second
 notice, and Hyprland can bring the window to the front instead. Muted chats do not send notifications, and
 archived chats stay quiet while they remain archived. You can change both settings.
+With several numbers linked, the bell beside a number in the account switcher
+mutes all of that number's notifications while it stays connected.
 To keep messages off the screen, turn off **Show message content in
 notifications** in Settings: notifications then say only "New message".
 To hear less from busy chats, set **Limit repeat notifications** in

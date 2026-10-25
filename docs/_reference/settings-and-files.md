@@ -170,7 +170,8 @@ name or description, in the interface language or in English.
 **Notifications**
 
 - **Desktop notifications**: for chats you are not looking at. Muted chats stay
-  quiet.
+  quiet. The bell beside each number in the account switcher turns the same
+  setting off and on for that number without switching to it.
 - **Show message content in notifications**: on by default. When off, every
   notification says only "New message" from ZapFast, without the chat, the
   sender, the text, or a picture, as behind the app lock, and plays only the

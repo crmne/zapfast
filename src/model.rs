@@ -3132,6 +3132,9 @@ pub enum Action {
     RemoveAccount(AccountId),
     /// Deletes one account's cached attachments, never its archive.
     ClearMediaCache(AccountId),
+    /// Turns one account's desktop notifications on or off, from the account
+    /// switcher, without showing that account. It stays linked either way.
+    SetAccountNotifications(AccountId, bool),
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
     /// Moves a chat into or out of the locked folder.

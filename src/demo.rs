@@ -3099,8 +3099,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // The switcher under our avatar open with the one account.
             "account-menu" => app.account_menu = true,
             // A second number linked beside the first, with unread chats of
-            // its own, and the switcher under our avatar open.
-            "accounts" | "accounts-closed" => {
+            // its own, and the switcher under our avatar open; with
+            // `accounts-muted` that number's notifications are off.
+            "accounts" | "accounts-closed" | "accounts-muted" => {
                 if app.accounts.len() < 2 {
                     let id = crate::model::AccountId::parse("2").expect("demo account");
                     if let Ok((mut work, _)) = crate::account::Account::detached(
@@ -3123,7 +3124,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         app.accounts.push(work);
                     }
                 }
-                app.account_menu = part == "accounts";
+                if part == "accounts-muted"
+                    && let Some(work) = app.accounts.get_mut(1)
+                {
+                    work.settings.notifications = false;
+                }
+                app.account_menu = part != "accounts-closed";
             }
             // One pinned message: its line under the chat header and its mark
             // on the bubble.
@@ -7568,6 +7574,8 @@ mod tests {
             "accounts",
             "accounts,light",
             "accounts-closed",
+            "accounts-muted",
+            "accounts-muted,light",
             "account-menu",
             "light",
             "archived",
@@ -14088,6 +14096,58 @@ mod tests {
         for gone in ["Profile and settings", "Close settings"] {
             assert!(!labels.contains(&gone.to_owned()), "{gone}: {labels:?}");
         }
+    }
+
+    /// Each account in the switcher has a bell, and a muted one says so to a
+    /// screen reader on its row, not only by its crossed-out bell.
+    #[test]
+    fn the_switcher_says_which_accounts_are_muted() {
+        let mut app = app();
+        apply_flags(&mut app, Some("accounts-muted"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            nodes = output
+                .platform_output
+                .accesskit_update
+                .expect("accessibility tree")
+                .nodes
+                .into_iter()
+                .map(|(_, node)| node)
+                .collect();
+        }
+        let bells: Vec<_> = nodes
+            .iter()
+            .filter(|node| node.label() == Some("Mute notifications"))
+            .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
+            .collect();
+        assert_eq!(bells, [false, true], "one bell per account, the second on");
+        // Only the muted account's row says so, not the one on screen.
+        let said: Vec<_> = nodes
+            .iter()
+            .filter_map(|node| node.label())
+            .filter(|label| label.ends_with(", notifications muted"))
+            .collect();
+        let muted = app.accounts[1].display_label(app.locale);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].starts_with(&muted), "{said:?}");
     }
 
     #[test]
