@@ -37,7 +37,14 @@ files. **Clear…** there deletes that account's cached attachments after asking
 its messages, its other caches, and the other accounts' files stay, and so do
 files in a download folder you chose.
 **Settings > Files > Change…** sends new downloads to another folder, leaving
-earlier ones in place. There, documents keep the name they were sent with; a
+earlier ones in place. New downloads use one fixed layout inside that folder:
+`Account <slot>-<account key>/<chat name>-<chat key>/file`. The short identity
+keys keep different accounts and identically named chats apart. Chat names
+stay readable, with filesystem-unsafe characters replaced and long names
+shortened. New downloads use the current name; existing files are not moved.
+The downloaded file itself goes there, without a second copy in the cache.
+If the destination is unavailable, downloads fall back to the account's normal
+cache as before. Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
 become `_`.

@@ -43,6 +43,7 @@ mod calls;
 mod channel_pictures;
 mod contact_names;
 mod device_store;
+mod download_folders;
 mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
@@ -2703,20 +2704,29 @@ impl Worker {
         }
     }
 
-    /// Where a new download goes: the chosen folder while it can be
-    /// created, otherwise the cache, so an unplugged drive does not stop
-    /// downloads.
-    fn download_dir(&self) -> PathBuf {
-        match &self.download_folder {
-            Some(folder) if std::fs::create_dir_all(folder).is_ok() && folder.is_dir() => {
-                folder.clone()
+    /// New downloads use account/chat folders inside the chosen destination.
+    /// An unavailable destination falls back to the cache, so an unplugged
+    /// drive does not stop downloads.
+    fn download_dir(&self, chat: &str) -> PathBuf {
+        if let Some(root) = &self.download_folder {
+            let chat = self.canonical_str(chat);
+            let name = self
+                .contact_name(&chat)
+                .or_else(|| {
+                    self.archive
+                        .chat(&chat)
+                        .ok()
+                        .flatten()
+                        .map(|chat| chat.name)
+                })
+                .unwrap_or_else(|| self.chat_name(&chat, None));
+            let folder = download_folders::folder(root, &self.dirs.id, &self.me(), &chat, &name);
+            if std::fs::create_dir_all(&folder).is_ok() && folder.is_dir() {
+                return folder;
             }
-            Some(_) => {
-                log::warn!("the download folder is unavailable; using the cache");
-                self.dirs.media_cache_dir()
-            }
-            None => self.dirs.media_cache_dir(),
+            log::warn!("the download folder is unavailable; using the cache");
         }
+        self.dirs.media_cache_dir()
     }
 
     fn set_online(&mut self, online: bool) {
@@ -9196,7 +9206,7 @@ impl Worker {
             }
             None
         };
-        let dir = self.download_dir();
+        let dir = self.download_dir(&chat);
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
@@ -15417,15 +15427,90 @@ mod tests {
         worker
             .handle_command(Command::SetDownloadFolder(Some(chosen.clone())))
             .await;
-        assert_eq!(worker.download_dir(), chosen);
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Alice").unwrap();
+        let expected =
+            download_folders::folder(&chosen, &worker.dirs.id, &worker.me(), chat, "Alice");
+        assert_eq!(worker.download_dir(chat), expected);
+        assert!(
+            expected.is_dir(),
+            "account and chat folders are created when needed"
+        );
         assert!(chosen.is_dir(), "the folder is created when needed");
         // A folder that cannot exist, such as one below a file, falls back.
         std::fs::write(root.join("file"), b"").unwrap();
         worker.download_folder = Some(root.join("file/inside"));
-        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         worker.download_folder = None;
-        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Canonical phone and privacy ids name the same destination, including groups.
+    #[test]
+    fn download_folders_use_canonical_chat_names() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        worker.download_folder = Some(root.path().to_owned());
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Alice").unwrap();
+        worker.learn_lid("9", "200");
+        let path = worker.download_dir(chat);
+        assert_eq!(path, worker.download_dir("9@lid"));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("Alice-")
+        );
+
+        let group = "100-200@g.us";
+        worker.archive.ensure_chat(group, "Family").unwrap();
+        assert!(
+            worker
+                .download_dir(group)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("Family-")
+        );
+
+        // An inaccessible nested chat folder also uses the ordinary cache.
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, b"blocked").unwrap();
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
+    }
+
+    /// Publication stays beside the destination, preserving names without a cache export.
+    #[tokio::test]
+    async fn organized_downloads_publish_once_without_overwriting() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        worker.download_folder = Some(root.path().to_owned());
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Alice").unwrap();
+        let dir = worker.download_dir(chat);
+        let path = named_media_path(&dir, "application/pdf", "report.pdf").unwrap();
+        std::fs::write(&path, b"existing").unwrap();
+        let (temporary, file) = temporary_attachment_file(&path).unwrap();
+        drop(file);
+        std::fs::write(&temporary, b"download").unwrap();
+        let published = publish_beside(&temporary, &path).await.unwrap();
+        assert_eq!(published, dir.join("report (1).pdf"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        assert_eq!(std::fs::read(&published).unwrap(), b"download");
+        assert!(!temporary.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        assert!(!worker.dirs.media_cache_dir().join("report.pdf").exists());
+        assert!(
+            !worker
+                .dirs
+                .media_cache_dir()
+                .join("report (1).pdf")
+                .exists()
+        );
     }
 
     #[test]
