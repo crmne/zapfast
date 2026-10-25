@@ -678,6 +678,20 @@ protocol. These notes are for coding agents and new contributors.
   gesture, glide included, with the pane it began over (`ScrollRoute`, #274),
   asking `Scrolling::gliding`; the image preview pans with a touchpad and
   zooms with a wheel by `Scrolling::from_trackpad`.
+- Middle-click autoscroll (`src/autoscroll.rs`, from Spotifast) is on in
+  Windows and, once turned on in Settings, Linux, where it is off by default
+  as in Spotifast because a middle click there pastes. Vertical lists show
+  through `autoscroll::show` or `show_rows`, which note where they are
+  (`clippy.toml` refuses `ScrollArea::show` and `show_rows` elsewhere); after
+  the frame `App` gives the gesture to the innermost list under the press and
+  moves only that list. The click or Escape that stops a gesture is kept from
+  the views by an input hook, so it neither opens what is under the pointer
+  nor closes what is behind the list. A widget that drags only with the
+  primary button, such as selectable text or a message row, calls
+  `autoscroll::primary_drag` so a middle press on it starts the gesture; text
+  fields and anything that drags with any button keep it. The message list
+  lets go of stick-to-bottom and the pin to the newest message while it
+  autoscrolls.
 - Platform-specific code belongs behind `cfg` blocks; a change for one
   platform must keep the other two compiling.
 

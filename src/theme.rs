@@ -1348,7 +1348,10 @@ pub fn selectable_text(
     font: egui::FontId,
     color: Color32,
 ) -> Response {
-    ui.add(egui::Label::new(egui::RichText::new(text).font(font).color(color)).selectable(true))
+    let response = ui
+        .add(egui::Label::new(egui::RichText::new(text).font(font).color(color)).selectable(true));
+    crate::autoscroll::primary_drag(ui, &response);
+    response
 }
 
 /// Wrapping text label.

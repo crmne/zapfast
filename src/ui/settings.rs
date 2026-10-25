@@ -233,10 +233,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         TITLE_MIN_CONTENT,
     );
-    egui::ScrollArea::vertical()
-        .id_salt("settings")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("settings")
+            .auto_shrink([false, false]),
+        |ui| {
             // The column keeps a readable width and sits in the middle of a
             // wide window instead of leaving the space on its right empty.
             let full = ui.available_width();
@@ -296,7 +298,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 },
             );
             ui.add_space(TOP_MARGIN);
-        });
+        },
+    );
 }
 
 /// Widest the settings column grows.
@@ -433,6 +436,17 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    // Windows always autoscrolls and macOS never does.
+    if cfg!(target_os = "linux") {
+        chats.toggle(
+            translated(locale, "Middle-click autoscroll"),
+            translated(
+                locale,
+                "Middle-click a list, then move the pointer to scroll it. Text fields still paste.",
+            ),
+            |settings| &mut settings.middle_click_autoscroll,
+        );
+    }
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
@@ -1229,18 +1243,13 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                 Layout::top_down(Align::Min).with_main_align(Align::Min),
                 |ui| {
                     let section = ui.max_rect();
-                    let header = Rect::from_min_size(
-                        section.left_top(),
-                        vec2(left_width, HEADER_HEIGHT),
-                    );
+                    let header =
+                        Rect::from_min_size(section.left_top(), vec2(left_width, HEADER_HEIGHT));
                     ui.painter().rect_filled(header, 0.0, palette.panel);
                     ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .max_rect(header)
-                            .layout(
-                                Layout::left_to_right(Align::Center)
-                                    .with_main_align(Align::Min),
-                            ),
+                        egui::UiBuilder::new().max_rect(header).layout(
+                            Layout::left_to_right(Align::Center).with_main_align(Align::Min),
+                        ),
                         |ui| {
                             ui.add_space(24.0);
                             if theme::icon_button(
@@ -1268,59 +1277,13 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                             .max_rect(palette_rect)
                             .layout(Layout::top_down(Align::Min).with_main_align(Align::Min)),
                         |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_salt("wallpaper-palette")
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.allocate_ui_with_layout(
-                                        vec2(palette_width, 28.0),
-                                        Layout::top_down(Align::Center),
-                                        |ui| {
-                                            let mut doodles = app.settings.show_wallpaper;
-                                            let checkbox = ui.checkbox(
-                                                &mut doodles,
-                                                crate::i18n::gettext(app.locale, "Add doodles"),
-                                            );
-                                            checkbox.on_hover_text(crate::i18n::gettext(
-                                                app.locale,
-                                                "Show the default doodles over the selected colour.",
-                                            ));
-                                            if doodles != app.settings.show_wallpaper {
-                                                app.actions.push(Action::SetWallpaperDoodles(doodles));
-                                            }
-                                        },
-                                    );
-                                    ui.add_space(12.0);
-                                    image_buttons(app, ui, palette_width);
-                                    ui.add_space(18.0);
-                                    let button_width = 80.0;
-                                    let item_spacing = ui.spacing().item_spacing.x;
-                                    let columns = ((palette_width + item_spacing)
-                                        / (button_width + item_spacing))
-                                        .floor()
-                                        .max(1.0)
-                                        as usize;
-                                    let grid_width = button_width * columns as f32
-                                        + item_spacing * columns.saturating_sub(1) as f32;
-                                    ui.horizontal(|ui| {
-                                        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            let selected =
-                                                app.settings.wallpaper_color_for(palette.dark);
-                                            for color in WallpaperColor::choices(palette.dark) {
-                                                if wallpaper_color_button(
-                                                    ui,
-                                                    &palette,
-                                                    app.locale,
-                                                    *color,
-                                                    selected,
-                                                ) {
-                                                    app.actions.push(Action::SetWallpaperColor(*color));
-                                                }
-                                            }
-                                        });
-                                    });
-                                });
+                            crate::autoscroll::show(
+                                ui,
+                                egui::ScrollArea::vertical()
+                                    .id_salt("wallpaper-palette")
+                                    .auto_shrink([false, false]),
+                                |ui| wallpaper_palette(app, ui, palette_width),
+                            );
                         },
                     );
                 },
@@ -1332,10 +1295,8 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                 Layout::top_down(Align::Min).with_main_align(Align::Min),
                 |ui| {
                     let section = ui.max_rect();
-                    let header = Rect::from_min_size(
-                        section.left_top(),
-                        vec2(preview_width, HEADER_HEIGHT),
-                    );
+                    let header =
+                        Rect::from_min_size(section.left_top(), vec2(preview_width, HEADER_HEIGHT));
                     ui.painter().rect_filled(header, 0.0, palette.panel);
                     ui.painter().text(
                         header.center(),
@@ -1361,6 +1322,51 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
             );
         },
     );
+}
+
+/// The doodles switch, the image buttons and the colour grid, beside the
+/// wallpaper preview.
+fn wallpaper_palette(app: &mut App, ui: &mut egui::Ui, palette_width: f32) {
+    let palette = app.palette;
+    ui.allocate_ui_with_layout(
+        vec2(palette_width, 28.0),
+        Layout::top_down(Align::Center),
+        |ui| {
+            let mut doodles = app.settings.show_wallpaper;
+            let checkbox = ui.checkbox(
+                &mut doodles,
+                crate::i18n::gettext(app.locale, "Add doodles"),
+            );
+            checkbox.on_hover_text(crate::i18n::gettext(
+                app.locale,
+                "Show the default doodles over the selected colour.",
+            ));
+            if doodles != app.settings.show_wallpaper {
+                app.actions.push(Action::SetWallpaperDoodles(doodles));
+            }
+        },
+    );
+    ui.add_space(12.0);
+    image_buttons(app, ui, palette_width);
+    ui.add_space(18.0);
+    let button_width = 80.0;
+    let item_spacing = ui.spacing().item_spacing.x;
+    let columns = ((palette_width + item_spacing) / (button_width + item_spacing))
+        .floor()
+        .max(1.0) as usize;
+    let grid_width =
+        button_width * columns as f32 + item_spacing * columns.saturating_sub(1) as f32;
+    ui.horizontal(|ui| {
+        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
+        ui.horizontal_wrapped(|ui| {
+            let selected = app.settings.wallpaper_color_for(palette.dark);
+            for color in WallpaperColor::choices(palette.dark) {
+                if wallpaper_color_button(ui, &palette, app.locale, *color, selected) {
+                    app.actions.push(Action::SetWallpaperColor(*color));
+                }
+            }
+        });
+    });
 }
 
 /// "Choose image…", and "Remove image" while one is set, centred over the

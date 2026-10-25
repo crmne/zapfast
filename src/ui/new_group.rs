@@ -101,16 +101,21 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
         contacts.retain(|contact| draft.offers(&contact.id));
     }
     let max_height = (ui.ctx().content_rect().height() - 300.0).clamp(ROW_HEIGHT * 3.0, 420.0);
-    egui::ScrollArea::vertical()
-        .id_salt("new-group-contacts")
-        .max_height(max_height)
-        .auto_shrink([false, true])
-        .show_rows(ui, ROW_HEIGHT, contacts.len(), |ui, range| {
+    crate::autoscroll::show_rows(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("new-group-contacts")
+            .max_height(max_height)
+            .auto_shrink([false, true]),
+        ROW_HEIGHT,
+        contacts.len(),
+        |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for contact in &contacts[range] {
                 member_row(app, ui, &contact.id, members.contains(&contact.id));
             }
-        });
+        },
+    );
     if contacts.is_empty() {
         ui.add_space(8.0);
         theme::text(

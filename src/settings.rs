@@ -449,6 +449,11 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// Linux: a middle click on a list scrolls it as the pointer moves. Off
+    /// by default, as in Spotifast, because Linux desktops usually paste the
+    /// primary selection on a middle click. Text fields keep middle-click
+    /// paste either way. Windows always autoscrolls and macOS never does.
+    pub middle_click_autoscroll: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -565,6 +570,7 @@ impl Default for Settings {
             search_pane_width: 380.0,
             info_pane_width: 380.0,
             enter_sends: true,
+            middle_click_autoscroll: false,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
@@ -1080,6 +1086,7 @@ mod tests {
             serde_json::from_str(r#"{"theme":"light","future_field":1}"#).expect("parses");
         assert_eq!(parsed.theme, ThemeChoice::Light);
         assert!(parsed.enter_sends);
+        assert!(!parsed.middle_click_autoscroll);
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
         assert!(parsed.show_wallpaper);
@@ -1231,6 +1238,7 @@ mod tests {
         let settings = Settings {
             zoom: 1.25,
             enter_sends: false,
+            middle_click_autoscroll: true,
             voice_speed: 1.5,
             pause_other_media: false,
             interface_language: Some(crate::i18n::Locale::German),

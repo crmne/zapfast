@@ -568,6 +568,10 @@ fn still(
                 let zoomed = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
                 (pointer, zoomed)
             });
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a picture pans with a drag and zooms; it is no list to autoscroll"
+            )]
             let output = egui::ScrollArea::both()
                 .id_salt("image-preview-scroll")
                 .auto_shrink([false, false])
@@ -987,6 +991,7 @@ fn strip_bar(
         scroll.bar_outer_margin = 2.0;
         scroll.foreground_color = true;
     }
+    #[expect(clippy::disallowed_methods, reason = "only vertical lists autoscroll")]
     egui::ScrollArea::horizontal()
         .id_salt("viewer-strip")
         .auto_shrink([false, false])

@@ -195,11 +195,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 0.0
             };
         let height = ui.available_height().max(minimum);
-        egui::ScrollArea::vertical()
-            .id_salt("navigation-rail")
-            .auto_shrink([false, false])
-            .min_scrolled_height(0.0)
-            .show(ui, |ui| {
+        crate::autoscroll::show(
+            ui,
+            egui::ScrollArea::vertical()
+                .id_salt("navigation-rail")
+                .auto_shrink([false, false])
+                .min_scrolled_height(0.0),
+            |ui| {
                 // Keep the usual spacing in a tall window. In a short one
                 // the content keeps its minimum height and scrolls instead
                 // of leaving the bottom buttons beyond the window.
@@ -238,7 +240,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 ui.vertical_centered(|ui| {
                     super::accounts::avatar_button(app, ui, AVATAR).tab_stop(Stop::Profile);
                 });
-            });
+            },
+        );
     });
     let rect = response.response.rect;
     ui.ctx().data_mut(|data| data.insert_temp(rect_id(), rect));

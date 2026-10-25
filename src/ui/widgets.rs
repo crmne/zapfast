@@ -266,6 +266,7 @@ pub fn selectable_rich_text(
     let width = ui.available_width().max(1.0);
     let line = line(ui, text, font, color, width, 1);
     let (rect, response) = ui.allocate_exact_size(line.size(), Sense::CLICK | Sense::DRAG);
+    crate::autoscroll::primary_drag(ui, &response);
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
     // Register emoji placements so copied text restores the original sequences.
@@ -1154,6 +1155,7 @@ fn vertical_fade(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {
 /// chips only while the pointer is on the row, and takes no room of its own.
 /// A plain mouse wheel scrolls the row too, since most mice have no sideways
 /// wheel.
+#[expect(clippy::disallowed_methods, reason = "only vertical lists autoscroll")]
 pub fn chip_scroll_row<R>(
     ui: &mut Ui,
     id_salt: &str,

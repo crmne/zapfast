@@ -644,6 +644,8 @@ pub struct App {
     pub(crate) scrolling: fastframe_scroll::Scrolling,
     /// Keeps a scroll gesture with the pane it began over.
     pub scroll_route: ScrollRoute,
+    /// Middle-click scrolling of the list it started in.
+    pub autoscroll: crate::autoscroll::Autoscroll,
 
     pub page: Page,
     pub dialog: Option<Dialog>,
@@ -1458,6 +1460,7 @@ impl App {
             picture_texture: None,
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
+            autoscroll: crate::autoscroll::Autoscroll::default(),
             page: Page::Chats,
             dialog: None,
             nav_history: History::default(),
@@ -9014,6 +9017,9 @@ impl App {
 
     /// Processes app state shared by windowed and headless modes.
     pub fn background_frame(&mut self, ctx: &egui::Context) {
+        if self.autoscroll.cancel_if_unfocused(ctx) {
+            self.scrolling.stop();
+        }
         // Events are drained before frame_ui observes focus. Losing focus in
         // this frame must take effect before an incoming chat update can read it.
         if self.window_hidden || ctx.input(|input| input.viewport().focused) == Some(false) {
@@ -9754,17 +9760,28 @@ impl App {
         }
         self.window_focused = focused;
         self.report_presence();
+        let autoscroll_on =
+            !locked && crate::autoscroll::enabled(self.settings.middle_click_autoscroll);
+        self.autoscroll.begin(ctx, autoscroll_on);
         if locked {
             // Files dropped or pasted on the lock screen go nowhere.
             self.dropping = false;
         } else {
-            self.scrolling.apply(ctx);
+            if self.autoscroll.active() {
+                self.scrolling.stop();
+                ctx.input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
+            } else {
+                self.scrolling.apply(ctx);
+            }
             self.route_scroll(ctx);
             Self::paste_shift_insert(ctx);
             self.take_drops_and_pastes(ctx);
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        if self.autoscroll.finish(ctx, autoscroll_on) {
+            self.scrolling.stop();
+        }
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         // Release the image caches of everything that scrolled away.

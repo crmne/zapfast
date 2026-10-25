@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
+"POT-Creation-Date: 2026-10-25 18:52+0100\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -22,7 +22,7 @@ msgctxt "mention"
 msgid "all"
 msgstr "所有人"
 
-#: src/new_group.rs:190 src/ui/new_group.rs:445
+#: src/new_group.rs:190 src/ui/new_group.rs:450
 msgid "Enter a name for the group."
 msgstr "请输入群组名称。"
 
@@ -80,7 +80,7 @@ msgstr "未读"
 msgid "Private"
 msgstr "私聊"
 
-#: src/model.rs:199 src/ui/picker.rs:1195
+#: src/model.rs:199 src/ui/picker.rs:1204
 msgid "Favorites"
 msgstr "收藏"
 
@@ -96,109 +96,109 @@ msgstr "频道"
 msgid "Missed"
 msgstr "未接"
 
-#: src/model.rs:1604 src/ui/image_preview.rs:1024 src/ui/info.rs:1218
+#: src/model.rs:1610 src/ui/image_preview.rs:1029 src/ui/info.rs:1234
 msgid "Photo"
 msgstr "照片"
 
-#: src/model.rs:1605 src/ui/image_preview.rs:1022 src/ui/info.rs:1216
+#: src/model.rs:1611 src/ui/image_preview.rs:1027 src/ui/info.rs:1232
 msgid "Video"
 msgstr "视频"
 
-#: src/model.rs:1606
+#: src/model.rs:1612 src/ui/picker.rs:110
 msgid "GIF"
 msgstr "GIF"
 
-#: src/model.rs:1607
+#: src/model.rs:1613
 msgid "Video message"
 msgstr "视频消息"
 
-#: src/model.rs:1608
+#: src/model.rs:1614
 msgid "Voice message"
 msgstr "语音消息"
 
-#: src/model.rs:1609 src/ui/conversation.rs:9575
+#: src/model.rs:1615 src/ui/conversation.rs:9629
 msgid "Audio"
 msgstr "音频"
 
-#: src/model.rs:1610
+#: src/model.rs:1616
 msgid "Document"
 msgstr "文档"
 
-#: src/model.rs:1611
+#: src/model.rs:1617
 msgid "Sticker"
 msgstr "贴纸"
 
-#: src/model.rs:1612 src/ui/dialogs.rs:1074
+#: src/model.rs:1618 src/ui/dialogs.rs:1239
 msgid "Sticker pack"
 msgstr "贴图包"
 
-#: src/model.rs:1613 src/ui/conversation.rs:6622
+#: src/model.rs:1619 src/ui/conversation.rs:6674
 msgid "Location"
 msgstr "位置"
 
-#: src/model.rs:1614 src/ui/conversation.rs:6669 src/ui/conversation.rs:6892
+#: src/model.rs:1620 src/ui/conversation.rs:6721 src/ui/conversation.rs:6945
 msgid "Live location"
 msgstr "实时位置"
 
-#: src/model.rs:1615 src/ui/conversation.rs:6667
+#: src/model.rs:1621 src/ui/conversation.rs:6719
 msgid "Live location ended"
 msgstr "实时位置已结束"
 
-#: src/model.rs:1616
+#: src/model.rs:1622
 msgid "Contact"
 msgstr "联系人"
 
-#: src/model.rs:1617
+#: src/model.rs:1623
 msgid "Poll"
 msgstr "投票"
 
-#: src/model.rs:1618
+#: src/model.rs:1624
 msgid "This message was deleted"
 msgstr "此消息已删除"
 
-#: src/model.rs:1619
+#: src/model.rs:1625
 msgid "Unsupported message"
 msgstr "不支持的消息"
 
-#: src/model.rs:1620
+#: src/model.rs:1626
 msgid "View once photo"
 msgstr "一次性照片"
 
-#: src/model.rs:1621
+#: src/model.rs:1627
 msgid "View once video"
 msgstr "一次性视频"
 
-#: src/model.rs:1622
+#: src/model.rs:1628
 msgid "View once voice message"
 msgstr "一次性语音消息"
 
-#: src/model.rs:1623
+#: src/model.rs:1629
 msgid "View once audio"
 msgstr "一次性音频"
 
-#: src/model.rs:1624
+#: src/model.rs:1630
 msgid "View once message"
 msgstr "一次性消息"
 
-#: src/model.rs:1625
+#: src/model.rs:1631
 msgid "Message on your phone"
 msgstr "手机上的消息"
 
-#: src/model.rs:1626 src/ui/calls.rs:94
+#: src/model.rs:1632 src/ui/calls.rs:94
 msgid "Missed voice call"
 msgstr "未接语音通话"
 
-#: src/model.rs:1627 src/ui/calls.rs:95
+#: src/model.rs:1633 src/ui/calls.rs:95
 msgid "Missed video call"
 msgstr "未接视频通话"
 
-#: src/model.rs:1628 src/ui/conversation.rs:734 src/ui/conversation.rs:4211
-#: src/ui/calls.rs:98 src/ui/calls.rs:383
+#: src/model.rs:1634 src/ui/conversation.rs:755 src/ui/conversation.rs:4262
+#: src/ui/calls.rs:98 src/ui/calls.rs:386
 msgid "Voice call"
 msgstr "语音通话"
 
-#: src/model.rs:1629 src/ui/conversation.rs:762 src/ui/conversation.rs:4219
-#: src/ui/calls.rs:99 src/ui/calls.rs:381
+#: src/model.rs:1635 src/ui/conversation.rs:783 src/ui/conversation.rs:4270
+#: src/ui/calls.rs:99 src/ui/calls.rs:384
 msgid "Video call"
 msgstr "视频通话"
 
@@ -366,73 +366,180 @@ msgstr "{hours} 小时"
 msgid "{hours} h {minutes} min"
 msgstr "{hours} 小时 {minutes} 分钟"
 
-#: src/ui/chats.rs:185 src/ui/chats.rs:517 src/app.rs:3191
+#: src/ui/chats.rs:184 src/ui/chats.rs:516 src/app.rs:3288
 msgid "Starred"
 msgstr "已加星标"
 
-#: src/ui/chats.rs:262 src/ui/conversation.rs:828
+#: src/ui/chats.rs:261 src/ui/conversation.rs:849
 msgid "Back to the calls"
 msgstr "返回通话"
 
-#: src/ui/chats.rs:271 src/ui/chats.rs:404
+#: src/ui/chats.rs:270 src/ui/chats.rs:403
 msgid "New call"
 msgstr "新建通话"
 
-#: src/ui/chats.rs:285
+#: src/ui/chats.rs:284
 msgid "Search name or number"
 msgstr "搜索姓名或号码"
 
-#: src/ui/chats.rs:318 src/ui/pane.rs:260
+#: src/ui/chats.rs:317 src/ui/pane.rs:260
 msgid "Search"
 msgstr "搜索"
 
-#: src/ui/chats.rs:686
+#: src/ui/chats.rs:685
 msgid "No starred messages"
 msgstr "没有已加星标的消息"
 
-#: src/ui/chats.rs:689
+#: src/ui/chats.rs:688
 msgid "Right-click a message and choose Star to keep it here."
 msgstr "右键点击消息并选择“加星标”，即可保留在这里。"
 
-#: src/ui/chats.rs:936
+#: src/ui/chats.rs:937
 msgid "No favorites yet"
 msgstr "还没有收藏"
 
-#: src/ui/chats.rs:1359 src/app.rs:2570
+#: src/ui/chats.rs:1369 src/app.rs:2622
 msgid "Message yourself"
 msgstr "给自己发消息"
 
-#: src/ui/chats.rs:1586
+#: src/ui/chats.rs:1596
 msgid "Draft:"
 msgstr "草稿："
 
-#: src/ui/chats.rs:1676 src/ui/chats.rs:2055 src/ui/picker.rs:1626
+#: src/ui/chats.rs:1686 src/ui/chats.rs:2084 src/ui/picker.rs:1647
 msgid "Remove from favorites"
 msgstr "取消收藏"
 
-#: src/ui/chats.rs:1678 src/ui/chats.rs:2057 src/ui/conversation.rs:5653
-#: src/ui/conversation.rs:6140 src/ui/dialogs.rs:1248 src/ui/picker.rs:1627
+#: src/ui/chats.rs:1688 src/ui/chats.rs:2086 src/ui/conversation.rs:5705
+#: src/ui/conversation.rs:6192 src/ui/dialogs.rs:1416 src/ui/picker.rs:1648
 msgid "Add to favorites"
 msgstr "添加到收藏"
 
-#: src/ui/chats.rs:1688 src/ui/chats.rs:2081 src/ui/conversation.rs:604
-#: src/ui/dialogs.rs:1579 src/ui/info.rs:583
+#: src/ui/chats.rs:1698 src/ui/chats.rs:2106 src/ui/conversation.rs:604
+#: src/ui/dialogs.rs:1747 src/ui/info.rs:589
 msgid "Leave group"
 msgstr "退出群组"
 
-#: src/ui/chats.rs:1689 src/ui/chats.rs:2079 src/ui/conversation.rs:602
-#: src/ui/dialogs.rs:1577 src/ui/info.rs:581
+#: src/ui/chats.rs:1699 src/ui/chats.rs:2104 src/ui/conversation.rs:602
+#: src/ui/dialogs.rs:1745 src/ui/info.rs:587
 msgid "Leave channel"
 msgstr "退出频道"
 
-#: src/ui/chats.rs:1705 src/ui/labels.rs:178 src/ui/labels.rs:223
+#: src/ui/chats.rs:1705 src/ui/chats.rs:2194 src/ui/chats.rs:2441
+#: src/ui/conversation.rs:638 src/ui/dialogs.rs:1125
+msgid "Clear chat"
+msgstr "清空聊天"
+
+#: src/ui/chats.rs:1706 src/ui/chats.rs:2206
+#, fuzzy
+msgid "Delete chat"
+msgstr "要删除聊天吗？"
+
+#: src/ui/chats.rs:1717 src/ui/labels.rs:178 src/ui/labels.rs:223
 msgid "Labels"
 msgstr "标签"
+
+#: src/ui/chats.rs:2051
+msgid "Mark as read"
+msgstr ""
+
+#: src/ui/chats.rs:2061
+msgid "Mark as unread"
+msgstr ""
+
+#: src/ui/chats.rs:2067 src/ui/conversation.rs:629
+msgid "Unpin"
+msgstr ""
+
+#: src/ui/chats.rs:2069 src/ui/conversation.rs:631
+msgid "Pin to top"
+msgstr ""
+
+#: src/ui/chats.rs:2094 src/ui/conversation.rs:634
+#, fuzzy
+msgid "Unarchive"
+msgstr "已归档"
+
+#: src/ui/chats.rs:2096 src/ui/conversation.rs:636
+#, fuzzy
+msgid "Archive"
+msgstr "已归档"
+
+#: src/ui/chats.rs:2122 src/ui/conversation.rs:9035 src/ui/call.rs:522
+msgid "Unmute"
+msgstr "取消静音"
+
+#: src/ui/chats.rs:2129
+#, fuzzy
+msgid "Mute for 8 hours"
+msgstr "1 小时后"
+
+#: src/ui/chats.rs:2133
+msgid "Mute for a week"
+msgstr ""
+
+#: src/ui/chats.rs:2136
+msgid "Mute indefinitely"
+msgstr ""
+
+#: src/ui/chats.rs:2147
+#, fuzzy
+msgid "Unlock chat"
+msgstr "已锁定的聊天"
+
+#: src/ui/chats.rs:2149 src/ui/dialogs.rs:441
+#, fuzzy
+msgid "Lock chat"
+msgstr "已锁定的聊天"
+
+#: src/ui/chats.rs:2173 src/ui/conversation.rs:639 src/ui/conversation.rs:8034
+msgid "Copy number"
+msgstr "复制号码"
+
+#: src/ui/chats.rs:2182 src/ui/conversation.rs:627
+msgid "Info"
+msgstr ""
+
+#: src/ui/chats.rs:2233
+#, fuzzy
+msgid "Default"
+msgstr "使用默认"
+
+#: src/ui/chats.rs:2234
+#, fuzzy
+msgid "System sound"
+msgstr "系统"
+
+#: src/ui/chats.rs:2235
+#, fuzzy
+msgid "No sound"
+msgstr "提及提示音"
+
+#: src/ui/chats.rs:2245
+msgid "Custom"
+msgstr ""
+
+#: src/ui/chats.rs:2250 src/ui/settings.rs:1998
+msgid "Choose a file…"
+msgstr "选择文件…"
+
+#: src/ui/chats.rs:2257
+#, fuzzy
+msgid "Notification sound"
+msgstr "通知"
 
 #: src/ui/conversation.rs:252
 #, rust-format
 msgid "Pinned message {index} of {count}: {text}"
 msgstr "置顶消息 {index}/{count}：{text}"
+
+#: src/ui/conversation.rs:296
+msgid "Your chats appear on the left as they load."
+msgstr ""
+
+#: src/ui/conversation.rs:298
+msgid "Select a chat on the left."
+msgstr ""
 
 #: src/ui/conversation.rs:308
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
@@ -442,392 +549,552 @@ msgstr "Ctrl+K 搜索 · ? 查看键盘快捷键"
 msgid "Select messages"
 msgstr "选择消息"
 
-#: src/ui/conversation.rs:727 src/ui/call.rs:129 src/ui/call.rs:577
+#: src/ui/conversation.rs:621
+msgid "More"
+msgstr ""
+
+#: src/ui/conversation.rs:640
+#, fuzzy
+msgid "Close chat"
+msgstr "清空聊天"
+
+#: src/ui/conversation.rs:748 src/ui/call.rs:129 src/ui/call.rs:577
 msgid "Hang up"
 msgstr "挂断"
 
-#: src/ui/conversation.rs:787 src/ui/pane.rs:224
+#: src/ui/conversation.rs:808 src/ui/pane.rs:224
 msgid "Search messages"
 msgstr "搜索消息"
 
-#: src/ui/conversation.rs:1353
+#: src/ui/conversation.rs:1379
 msgid "You left this channel"
 msgstr "你已退出此频道"
 
-#: src/ui/conversation.rs:1357
+#: src/ui/conversation.rs:1383
 msgid "Channels are read-only in ZapFast"
 msgstr "ZapFast 中的频道为只读"
 
-#: src/ui/conversation.rs:1386
+#: src/ui/conversation.rs:1406
 msgid "You left this group"
 msgstr "你已退出此群组"
 
-#: src/ui/conversation.rs:1437
+#: src/ui/conversation.rs:1457
 msgid "Original group message unavailable"
 msgstr "原始群组消息不可用"
 
-#: src/ui/conversation.rs:1560
+#: src/ui/conversation.rs:1584
 msgid "Attach"
 msgstr "添加附件"
 
-#: src/ui/conversation.rs:1656
+#: src/ui/conversation.rs:1684
 msgid "Type a message"
 msgstr "输入消息"
 
-#: src/ui/conversation.rs:1659
+#: src/ui/conversation.rs:1687
 msgid "Add a caption"
 msgstr "添加说明文字"
 
-#: src/ui/conversation.rs:1861
+#: src/ui/conversation.rs:1896
 msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr "回车发送 · Shift+回车换行 · *粗体* _斜体_ ~删除线~ · Ctrl+V 粘贴图片"
 
-#: src/ui/conversation.rs:1863
+#: src/ui/conversation.rs:1898
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
 msgstr "Ctrl+回车发送 · *粗体* _斜体_ ~删除线~ · Ctrl+V 粘贴图片"
 
-#: src/ui/conversation.rs:1874
+#: src/ui/conversation.rs:1909
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
 msgstr "隐藏快捷键提示（可从“键盘快捷键”恢复）"
 
-#: src/ui/conversation.rs:1889
+#: src/ui/conversation.rs:1924
 #, rust-format
 msgid "All shortcuts ({})"
 msgstr "全部快捷键（{}）"
 
-#: src/ui/conversation.rs:2017
+#: src/ui/conversation.rs:2052
 msgid "Send files"
 msgstr "发送文件"
 
-#: src/ui/conversation.rs:2023
+#: src/ui/conversation.rs:2058
 msgid "Send as document"
 msgstr "作为文档发送"
 
-#: src/ui/conversation.rs:2027 src/ui/locations.rs:16
+#: src/ui/conversation.rs:2062 src/ui/locations.rs:16
 msgid "Send location"
 msgstr "发送位置"
 
-#: src/ui/conversation.rs:2032
+#: src/ui/conversation.rs:2067 src/ui/polls.rs:16
 msgid "Create poll"
 msgstr "创建投票"
 
-#: src/ui/conversation.rs:2094
+#: src/ui/conversation.rs:2129
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "语音消息（{duration}）未发送"
 
-#: src/ui/conversation.rs:2096
+#: src/ui/conversation.rs:2131
 msgid "Discard voice message"
 msgstr "放弃语音消息"
 
-#: src/ui/conversation.rs:2356
+#: src/ui/conversation.rs:2391
 msgid "You pinned a message"
 msgstr "你置顶了一条消息"
 
-#: src/ui/conversation.rs:2359
+#: src/ui/conversation.rs:2394
 msgid "A message was pinned"
 msgstr "一条消息已被置顶"
 
-#: src/ui/conversation.rs:2361
+#: src/ui/conversation.rs:2396
 #, rust-format
 msgid "{} pinned a message"
 msgstr "{} 置顶了一条消息"
 
-#: src/ui/conversation.rs:2878 src/notify.rs:19
+#: src/ui/conversation.rs:2926 src/notify.rs:19
 #, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} 条未读消息"
 
-#: src/ui/conversation.rs:3061 src/ui/call.rs:1009 src/app/calls.rs:135
-#: src/app.rs:2552 src/app.rs:2571
+#: src/ui/conversation.rs:3110 src/ui/call.rs:1017 src/app/calls.rs:135
+#: src/app.rs:2604 src/app.rs:2623
 msgid "You"
 msgstr "你"
 
-#: src/ui/conversation.rs:3076
+#: src/ui/conversation.rs:3125
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "选择{sender}在{time}发送的消息：{summary}"
 
-#: src/ui/conversation.rs:4202
+#: src/ui/conversation.rs:4253
 msgid "Group calls happen on the phone"
 msgstr "群组通话请在手机上进行"
 
-#: src/ui/conversation.rs:5393 src/ui/conversation.rs:5661
-#: src/ui/conversation.rs:6224 src/ui/message_info.rs:17
+#: src/ui/conversation.rs:5445 src/ui/conversation.rs:5713
+#: src/ui/conversation.rs:6276 src/ui/message_info.rs:17
 msgid "Message info"
 msgstr "消息信息"
 
-#: src/ui/conversation.rs:5640 src/ui/conversation.rs:5951
+#: src/ui/conversation.rs:5692 src/ui/conversation.rs:6003
 #: src/ui/image_preview.rs:350
 msgid "Reply"
 msgstr "回复"
 
-#: src/ui/conversation.rs:5641 src/ui/conversation.rs:5970
+#: src/ui/conversation.rs:5693 src/ui/conversation.rs:6022
 msgid "Reply privately"
 msgstr "私下回复"
 
-#: src/ui/conversation.rs:5642 src/ui/conversation.rs:5982
+#: src/ui/conversation.rs:5694 src/ui/conversation.rs:6034
 msgid "Star"
 msgstr "加星标"
 
-#: src/ui/conversation.rs:5643 src/ui/conversation.rs:5980
+#: src/ui/conversation.rs:5695 src/ui/conversation.rs:6032
 msgid "Unstar"
 msgstr "取消星标"
 
-#: src/ui/conversation.rs:5644 src/ui/conversation.rs:5998
+#: src/ui/conversation.rs:5696 src/ui/conversation.rs:6050
 msgid "Pin message"
 msgstr "置顶消息"
 
-#: src/ui/conversation.rs:5645 src/ui/conversation.rs:5996
+#: src/ui/conversation.rs:5697 src/ui/conversation.rs:6048
 msgid "Unpin message"
 msgstr "取消置顶"
 
-#: src/ui/conversation.rs:5646 src/ui/conversation.rs:6014
-#: src/ui/dialogs.rs:548 src/ui/dialogs.rs:743 src/ui/image_preview.rs:382
+#: src/ui/conversation.rs:5698 src/ui/conversation.rs:6066
+#: src/ui/dialogs.rs:782 src/ui/dialogs.rs:801 src/ui/image_preview.rs:382
 msgid "Forward"
 msgstr "转发"
 
-#: src/ui/conversation.rs:5647 src/ui/conversation.rs:6030
+#: src/ui/conversation.rs:5699 src/ui/conversation.rs:6082
 msgid "Open in the viewer"
 msgstr "在预览中打开"
 
-#: src/ui/conversation.rs:5648 src/ui/conversation.rs:6045
+#: src/ui/conversation.rs:5700 src/ui/conversation.rs:6097
 msgid "Select"
 msgstr "选择"
 
-#: src/ui/conversation.rs:5649 src/ui/conversation.rs:6079
+#: src/ui/conversation.rs:5701 src/ui/conversation.rs:6131
 msgid "Copy text"
 msgstr "复制文本"
 
-#: src/ui/conversation.rs:5650 src/ui/conversation.rs:6097
+#: src/ui/conversation.rs:5702 src/ui/conversation.rs:6149
 msgid "Edit"
 msgstr "编辑"
 
-#: src/ui/conversation.rs:5651 src/ui/conversation.rs:5837
-#: src/ui/conversation.rs:6113 src/ui/conversation.rs:9805
+#: src/ui/conversation.rs:5703 src/ui/conversation.rs:5889
+#: src/ui/conversation.rs:6165 src/ui/conversation.rs:9872
 msgid "Delete for everyone"
 msgstr "为所有人删除"
 
-#: src/ui/conversation.rs:5652 src/ui/conversation.rs:5842
-#: src/ui/conversation.rs:6126 src/ui/conversation.rs:9806
+#: src/ui/conversation.rs:5704 src/ui/conversation.rs:5894
+#: src/ui/conversation.rs:6178 src/ui/conversation.rs:9873
 msgid "Delete for me"
 msgstr "为我删除"
 
-#: src/ui/conversation.rs:5654 src/ui/conversation.rs:6149
+#: src/ui/conversation.rs:5706 src/ui/conversation.rs:6201
 msgid "Open in system player"
 msgstr "用系统播放器打开"
 
-#: src/ui/conversation.rs:5655 src/ui/conversation.rs:6151
-#: src/ui/picker.rs:1520
+#: src/ui/conversation.rs:5707 src/ui/conversation.rs:6203
+#: src/ui/picker.rs:1541
 msgid "Open file"
 msgstr "打开文件"
 
-#: src/ui/conversation.rs:5656 src/ui/conversation.rs:6161
-#: src/ui/image_preview.rs:266 src/ui/image_preview.rs:591
+#: src/ui/conversation.rs:5708 src/ui/conversation.rs:6213
+#: src/ui/image_preview.rs:266 src/ui/image_preview.rs:595
 msgid "Copy image"
 msgstr "复制图片"
 
-#: src/ui/conversation.rs:5657 src/ui/conversation.rs:6170
-#: src/ui/image_preview.rs:407 src/ui/image_preview.rs:592
+#: src/ui/conversation.rs:5709 src/ui/conversation.rs:6222
+#: src/ui/image_preview.rs:407 src/ui/image_preview.rs:596
 msgid "Save as…"
 msgstr "另存为…"
 
-#: src/ui/conversation.rs:5658 src/ui/conversation.rs:6182
+#: src/ui/conversation.rs:5710 src/ui/conversation.rs:6234
 msgid "Show in folder"
 msgstr "在文件夹中显示"
 
-#: src/ui/conversation.rs:5659 src/ui/conversation.rs:6195
+#: src/ui/conversation.rs:5711 src/ui/conversation.rs:6247
 msgid "Downloading…"
 msgstr "正在下载…"
 
-#: src/ui/conversation.rs:5660 src/ui/conversation.rs:6197
-#: src/ui/image_preview.rs:423 src/ui/image_preview.rs:778
-#: src/ui/image_preview.rs:786 src/ui/image_preview.rs:868
+#: src/ui/conversation.rs:5712 src/ui/conversation.rs:6249
+#: src/ui/image_preview.rs:423 src/ui/image_preview.rs:782
+#: src/ui/image_preview.rs:790 src/ui/image_preview.rs:872
 msgid "Download"
 msgstr "下载"
 
-#: src/ui/conversation.rs:5662 src/ui/conversation.rs:6236
+#: src/ui/conversation.rs:5714 src/ui/conversation.rs:6288
 msgid "Reload earlier messages"
 msgstr "重新加载更早的消息"
 
-#: src/ui/conversation.rs:5663 src/ui/conversation.rs:6249
+#: src/ui/conversation.rs:5715 src/ui/conversation.rs:6301
 msgid "Copy message ID"
 msgstr "复制消息 ID"
 
-#: src/ui/conversation.rs:5898
+#: src/ui/conversation.rs:5950
 msgid "Remove your reaction"
 msgstr "移除你的回应"
 
-#: src/ui/conversation.rs:5933
+#: src/ui/conversation.rs:5985
 msgid "React with any emoji"
 msgstr "用任意表情回应"
 
-#: src/ui/conversation.rs:6679
+#: src/ui/conversation.rs:6731
 #, rust-format
 msgid "Updated {time}"
 msgstr "更新于 {time}"
 
-#: src/ui/conversation.rs:6694 src/ui/conversation.rs:6900
+#: src/ui/conversation.rs:6746 src/ui/conversation.rs:6953
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "在手机上打开 WhatsApp 即可查看。"
 
-#: src/ui/conversation.rs:6738
+#: src/ui/conversation.rs:6790
 msgid "Chat"
 msgstr "聊天"
 
-#: src/ui/conversation.rs:6753
+#: src/ui/conversation.rs:6805
 msgid "Add"
 msgstr "添加"
 
-#: src/ui/conversation.rs:6801
+#: src/ui/conversation.rs:6853
 #, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} 个贴图"
 
-#: src/ui/conversation.rs:6814
+#: src/ui/conversation.rs:6866
 msgid "View stickers"
 msgstr "查看贴图"
 
-#: src/ui/conversation.rs:6918
+#: src/ui/conversation.rs:6971
 msgid "View once photo. For your privacy, it opens only on your phone."
 msgstr "一次性照片。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:6922
+#: src/ui/conversation.rs:6975
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "一次性视频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:6926
+#: src/ui/conversation.rs:6979
 msgid "View once voice message. For your privacy, it opens only on your phone."
 msgstr "一次性语音消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:6930
+#: src/ui/conversation.rs:6983
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "一次性音频。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:6934
+#: src/ui/conversation.rs:6987
 msgid "View once message. For your privacy, it opens only on your phone."
 msgstr "一次性消息。为保护你的隐私，它只能在手机上打开。"
 
-#: src/ui/conversation.rs:6936
+#: src/ui/conversation.rs:6989
 msgid "This message can only be seen on your phone."
 msgstr "此消息只能在手机上查看。"
 
-#: src/ui/conversation.rs:7273
+#: src/ui/conversation.rs:7326
 msgid "Save all…"
 msgstr "全部保存…"
 
-#: src/ui/conversation.rs:7979
+#: src/ui/conversation.rs:8033 src/ui/dialogs.rs:2040
 msgid "Message"
 msgstr "发送消息"
 
-#: src/ui/conversation.rs:7980
-msgid "Copy number"
-msgstr "复制号码"
-
-#: src/ui/conversation.rs:8216 src/ui/locations.rs:45
+#: src/ui/conversation.rs:8270 src/ui/locations.rs:45
 msgid "Open in a map"
 msgstr "在地图中打开"
 
-#: src/ui/conversation.rs:8920
+#: src/ui/conversation.rs:8974
 msgid "Pause"
 msgstr "暂停"
 
-#: src/ui/conversation.rs:8922 src/ui/settings.rs:1972
+#: src/ui/conversation.rs:8976 src/ui/settings.rs:1981
 msgid "Play"
 msgstr "播放"
 
-#: src/ui/conversation.rs:8949
+#: src/ui/conversation.rs:9003
 msgid "Back to the message (Esc)"
 msgstr "返回消息 (Esc)"
 
-#: src/ui/conversation.rs:8951
+#: src/ui/conversation.rs:9005
 msgid "Fill the window"
 msgstr "填满窗口"
 
-#: src/ui/conversation.rs:8981 src/ui/call.rs:522
-msgid "Unmute"
-msgstr "取消静音"
-
-#: src/ui/conversation.rs:8983 src/ui/call.rs:529
+#: src/ui/conversation.rs:9037 src/ui/call.rs:529
 msgid "Mute"
 msgstr "静音"
 
-#: src/ui/conversation.rs:11593
+#: src/ui/conversation.rs:9819
+#, fuzzy
+msgid "Cancel selection"
+msgstr "取消 (Esc)"
+
+#: src/ui/conversation.rs:9828 src/ui/new_group.rs:144
+#, rust-format
+msgid "{count} selected"
+msgid_plural "{count} selected"
+msgstr[0] "已选择 {count} 人"
+
+#: src/ui/conversation.rs:9842
+#, fuzzy
+msgid "Forward…"
+msgstr "转发"
+
+#: src/ui/conversation.rs:9858
+#, fuzzy
+msgid "Delete…"
+msgstr "删除"
+
+#: src/ui/conversation.rs:11650
 msgid "View once"
 msgstr "查看一次"
 
-#: src/ui/conversation.rs:11622
+#: src/ui/conversation.rs:11679
 msgid "The recipient can open this photo only once, on their phone."
 msgstr "接收者只能在手机上打开这张照片一次。"
 
-#: src/ui/dialogs.rs:440 src/ui/new_group.rs:285
+#: src/ui/dialogs.rs:159
+#, fuzzy
+msgid "Choose an option"
+msgstr "选择文件…"
+
+#: src/ui/dialogs.rs:178 src/ui/dialogs.rs:890 src/ui/dialogs.rs:1223
+#: src/ui/dialogs.rs:1278 src/ui/message_info.rs:28 src/ui/labels.rs:234
+#: src/ui/info.rs:276 src/ui/mod.rs:871 src/ui/polls.rs:27 src/ui/polls.rs:471
+msgid "Close"
+msgstr "关闭"
+
+#: src/ui/dialogs.rs:189
+#, fuzzy
+msgid "This list is no longer available."
+msgstr "此消息已不可用。"
+
+#: src/ui/dialogs.rs:203
+msgid "This list can no longer receive replies."
+msgstr ""
+
+#: src/ui/dialogs.rs:205
+#, fuzzy
+msgid "Sending reply…"
+msgstr "正在发送贴图包…"
+
+#: src/ui/dialogs.rs:207
+#, fuzzy
+msgid "Connect to WhatsApp to reply"
+msgstr "请连接 WhatsApp 以创建群组。"
+
+#: src/ui/dialogs.rs:333
+#, fuzzy
+msgid "Set up locked chats"
+msgstr "已锁定的聊天"
+
+#: src/ui/dialogs.rs:335
+#, fuzzy
+msgid "Locked chats"
+msgstr "已锁定的聊天"
+
+#: src/ui/dialogs.rs:341
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's "
+"code. This hides chats in ZapFast, it does not add another encryption layer."
+msgstr ""
+
+#: src/ui/dialogs.rs:346
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr ""
+
+#: src/ui/dialogs.rs:357
+#, fuzzy
+msgid "Local code"
+msgstr "已锁定聊天的密码"
+
+#: src/ui/dialogs.rs:369
+#, fuzzy
+msgid "Confirm code"
+msgstr "源代码"
+
+#: src/ui/dialogs.rs:381
+#, fuzzy
+msgid "That code did not match. Try again."
+msgstr "无法创建群组，请重试。"
+
+#: src/ui/dialogs.rs:390
+msgid "Set code and open"
+msgstr ""
+
+#: src/ui/dialogs.rs:392
+#, fuzzy
+msgid "Open locked chats"
+msgstr "已锁定的聊天"
+
+#: src/ui/dialogs.rs:403 src/ui/dialogs.rs:455 src/ui/dialogs.rs:1204
+#: src/ui/dialogs.rs:1423 src/ui/dialogs.rs:1626 src/ui/dialogs.rs:1709
+#: src/ui/dialogs.rs:1775 src/ui/dialogs.rs:1866 src/ui/dialogs.rs:2051
+#: src/ui/locations.rs:75 src/ui/settings.rs:1061 src/ui/settings.rs:1751
+#: src/ui/lock.rs:142 src/ui/accounts.rs:266 src/ui/polls.rs:157
+msgid "Cancel"
+msgstr "取消"
+
+#: src/ui/dialogs.rs:426
+#, fuzzy
+msgid "Lock this chat?"
+msgstr "对方"
+
+#: src/ui/dialogs.rs:432
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your "
+"phone. Open Locked with a separate local ZapFast code to read it."
+msgstr ""
+
+#: src/ui/dialogs.rs:472
+#, fuzzy
+msgid "New chat"
+msgstr "新建通话"
+
+#: src/ui/dialogs.rs:474 src/ui/new_group.rs:84
+msgid "Search contacts"
+msgstr "搜索联系人"
+
+#: src/ui/dialogs.rs:497 src/ui/new_group.rs:290
 msgid "New group"
 msgstr "新建群组"
 
-#: src/ui/dialogs.rs:444
+#: src/ui/dialogs.rs:501
 msgid "Add contact"
 msgstr "添加联系人"
 
+#: src/ui/dialogs.rs:512 src/ui/calls.rs:553 src/ui/new_group.rs:123
+msgid "No matching contacts"
+msgstr "没有匹配的联系人"
+
 #
-#: src/ui/dialogs.rs:505
+#: src/ui/dialogs.rs:570
 msgid "Forward message"
 msgstr "转发消息"
 
-#: src/ui/dialogs.rs:509
+#: src/ui/dialogs.rs:574
 #, rust-format
 msgid "Forward {count} message"
 msgid_plural "Forward {count} messages"
 msgstr[0] "转发 {count} 条消息"
 
-#: src/ui/dialogs.rs:519
+#: src/ui/dialogs.rs:599
 msgid "Forward to these chats?"
 msgstr "转发到这些聊天？"
 
-#: src/ui/dialogs.rs:538 src/ui/info.rs:274 src/ui/info.rs:1050
-#: src/ui/info.rs:1690 src/ui/new_group.rs:35 src/ui/new_group.rs:456
+#: src/ui/dialogs.rs:772 src/ui/info.rs:274 src/ui/info.rs:1061
+#: src/ui/info.rs:1716 src/ui/new_group.rs:35 src/ui/new_group.rs:461
 msgid "Back"
 msgstr "返回"
 
-#: src/ui/dialogs.rs:693
-msgid "Messages forwarded many times can be sent to one chat at a time"
-msgstr "多次转发的消息每次只能发送到一个聊天"
+#
+#: src/ui/dialogs.rs:796
+msgid "Review recipients"
+msgstr "查看收件人"
 
-#: src/ui/dialogs.rs:701
-#, rust-format
-msgid "You can forward to up to {count} chat"
-msgid_plural "You can forward to up to {count} chats"
-msgstr[0] "最多可转发到 {count} 个聊天"
-
-#: src/ui/dialogs.rs:727
+#: src/ui/dialogs.rs:819
 #, rust-format
 msgid "{count} recipient selected"
 msgid_plural "{count} recipients selected"
 msgstr[0] "{count} 位收件人已选择"
 
-#
-#: src/ui/dialogs.rs:738
-msgid "Review recipients"
-msgstr "查看收件人"
+#: src/ui/dialogs.rs:843
+msgid "Messages forwarded many times can be sent to one chat at a time"
+msgstr "多次转发的消息每次只能发送到一个聊天"
 
-#: src/ui/dialogs.rs:875
+#: src/ui/dialogs.rs:851
+#, rust-format
+msgid "You can forward to up to {count} chat"
+msgid_plural "You can forward to up to {count} chats"
+msgstr[0] "最多可转发到 {count} 个聊天"
+
+#: src/ui/dialogs.rs:955 src/ui/settings.rs:887 src/ui/settings.rs:1829
+msgid "Keyboard shortcuts"
+msgstr "键盘快捷键"
+
+#: src/ui/dialogs.rs:1010
 msgid "Show shortcut hints under the message box"
 msgstr "在消息输入框下显示快捷键提示"
 
-#: src/ui/dialogs.rs:936
+#: src/ui/dialogs.rs:1020 src/ui/settings.rs:883 src/ui/settings.rs:1840
+msgid "About"
+msgstr "关于"
+
+#: src/ui/dialogs.rs:1026
+#, fuzzy, rust-format
+msgid "Version {version}"
+msgstr "更新到 {version}"
+
+#: src/ui/dialogs.rs:1036
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr ""
+
+#: src/ui/dialogs.rs:1045
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr ""
+
+#: src/ui/dialogs.rs:1054 src/ui/settings.rs:888 src/ui/settings.rs:1851
+msgid "Source code"
+msgstr "源代码"
+
+#: src/ui/dialogs.rs:1081
 #, rust-format
 msgid "{count} selected message"
 msgid_plural "{count} selected messages"
 msgstr[0] "{count} 条消息已选择"
 
-#: src/ui/dialogs.rs:946 src/ui/dialogs.rs:967
+#: src/ui/dialogs.rs:1091 src/ui/dialogs.rs:1112
 msgid "this chat"
 msgstr "对方"
 
-#: src/ui/dialogs.rs:951
+#: src/ui/dialogs.rs:1096
 #, rust-format
 msgid ""
 "This deletes your chat with {name}, including all messages, on this computer "
@@ -835,15 +1102,15 @@ msgid ""
 msgstr ""
 "这会在此电脑和你的手机上删除你与 {name} 的聊天及其所有消息。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:957
+#: src/ui/dialogs.rs:1102
 msgid "Delete chat?"
 msgstr "要删除聊天吗？"
 
-#: src/ui/dialogs.rs:959 src/ui/dialogs.rs:1349
+#: src/ui/dialogs.rs:1104 src/ui/dialogs.rs:1517
 msgid "Delete"
 msgstr "删除"
 
-#: src/ui/dialogs.rs:972
+#: src/ui/dialogs.rs:1117
 #, rust-format
 msgid ""
 "This clears every message in your chat with {name}, including downloaded "
@@ -853,58 +1120,82 @@ msgstr ""
 "这会在此电脑和你的手机上清空你与 {name} 的聊天中的所有消息，包括已下载的媒"
 "体。聊天本身会保留。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:978
+#: src/ui/dialogs.rs:1123
 msgid "Clear chat?"
 msgstr "要清空聊天吗？"
 
-#: src/ui/dialogs.rs:980
-msgid "Clear chat"
+#: src/ui/dialogs.rs:1139 src/ui/dialogs.rs:1151
+#, fuzzy
+msgid "Group invite"
+msgstr "群组信息"
+
+#: src/ui/dialogs.rs:1143
+#, fuzzy
+msgid "Looking up the group…"
+msgstr "正在创建群组…"
+
+#: src/ui/dialogs.rs:1160 src/ui/info.rs:476
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} 位成员"
+
+#: src/ui/dialogs.rs:1176
+msgid "An admin must approve your request before you join."
+msgstr ""
+
+#: src/ui/dialogs.rs:1186
+#, fuzzy
+msgid "Open chat"
 msgstr "清空聊天"
 
-#: src/ui/dialogs.rs:1079
+#: src/ui/dialogs.rs:1187
+msgid "Request to join"
+msgstr ""
+
+#: src/ui/dialogs.rs:1188
+#, fuzzy
+msgid "Join group"
+msgstr "新建群组"
+
+#: src/ui/dialogs.rs:1191
+#, fuzzy
+msgid "Joining…"
+msgstr "正在响铃…"
+
+#: src/ui/dialogs.rs:1244
 msgid "Downloading the pack…"
 msgstr "正在下载贴图包…"
 
-#: src/ui/dialogs.rs:1103
+#: src/ui/dialogs.rs:1271
 msgid "Add to my stickers"
 msgstr "添加到我的贴图"
 
-#: src/ui/dialogs.rs:1110 src/ui/message_info.rs:28 src/ui/labels.rs:234
-#: src/ui/info.rs:276 src/ui/mod.rs:869
-msgid "Close"
-msgstr "关闭"
-
-#: src/ui/dialogs.rs:1127
+#: src/ui/dialogs.rs:1295
 msgid "Make a sticker"
 msgstr "制作贴图"
 
-#: src/ui/dialogs.rs:1191
+#: src/ui/dialogs.rs:1359
 msgid "Size"
 msgstr "大小"
 
-#: src/ui/dialogs.rs:1206
+#: src/ui/dialogs.rs:1374
 msgid "Keep the transparent background"
 msgstr "保留透明背景"
 
-#: src/ui/dialogs.rs:1223
+#: src/ui/dialogs.rs:1391
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "描述它的表情，例如 😂 或 ❤️"
 
-#: src/ui/dialogs.rs:1240 src/ui/locations.rs:80
+#: src/ui/dialogs.rs:1408 src/ui/locations.rs:80
 msgid "Send"
 msgstr "发送"
 
-#: src/ui/dialogs.rs:1255 src/ui/dialogs.rs:1458 src/ui/dialogs.rs:1541
-#: src/ui/dialogs.rs:1607 src/ui/locations.rs:75 src/ui/settings.rs:1047
-#: src/ui/settings.rs:1742 src/ui/lock.rs:142
-msgid "Cancel"
-msgstr "取消"
-
-#: src/ui/dialogs.rs:1269
+#: src/ui/dialogs.rs:1437
 msgid "Start over?"
 msgstr "要重新开始吗？"
 
-#: src/ui/dialogs.rs:1273
+#: src/ui/dialogs.rs:1441
 msgid ""
 "ZapFast keeps your unreadable archive as a separate file, creates a new one, "
 "and asks you to link again. Linking again brings back recent history from "
@@ -915,7 +1206,7 @@ msgstr ""
 "新关联后，最近的历史记录会从手机恢复。之后，请在手机的“已关联的设备”中移除旧"
 "的 ZapFast 条目。"
 
-#: src/ui/dialogs.rs:1277
+#: src/ui/dialogs.rs:1445
 msgid ""
 "If you can restore the original keyring instead, choose Cancel and Try "
 "again: nothing is lost that way."
@@ -923,11 +1214,11 @@ msgstr ""
 "如果你能恢复原来的密钥环，请选择“取消”，然后选择“Try again”：这样不会丢失任何"
 "内容。"
 
-#: src/ui/dialogs.rs:1280
+#: src/ui/dialogs.rs:1448
 msgid "Start over"
 msgstr "重新开始"
 
-#: src/ui/dialogs.rs:1288
+#: src/ui/dialogs.rs:1456
 msgid ""
 "This removes the message from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
@@ -935,13 +1226,13 @@ msgstr ""
 "这会从你的手机和关联设备中删除此消息。其他人仍保留自己的副本。连接 WhatsApp "
 "后才能删除。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1289
+#: src/ui/dialogs.rs:1457
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" instead. It "
 "cannot be undone."
 msgstr "此聊天中的所有人将看到\"此消息已删除\"。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1290
+#: src/ui/dialogs.rs:1458
 msgid ""
 "This removes these messages from your phone and linked devices. Other people "
 "keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
@@ -949,7 +1240,7 @@ msgstr ""
 "这会从你的手机和关联设备中删除所选消息。其他人仍保留自己的副本。连接 "
 "WhatsApp 后才能删除。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1291
+#: src/ui/dialogs.rs:1459
 #, rust-format
 msgid ""
 "Everyone in this chat will see \"This message was deleted\" in place of the "
@@ -960,34 +1251,34 @@ msgid_plural ""
 msgstr[0] ""
 "此聊天中的所有人将看到“此消息已删除”，替代所选消息。此操作无法撤销。"
 
-#: src/ui/dialogs.rs:1319
+#: src/ui/dialogs.rs:1487
 msgid "Delete for everyone?"
 msgstr "为所有人删除？"
 
-#: src/ui/dialogs.rs:1321
+#: src/ui/dialogs.rs:1489
 msgid "Delete for me?"
 msgstr "为我删除？"
 
-#: src/ui/dialogs.rs:1363
+#: src/ui/dialogs.rs:1531
 #, rust-format
 msgid ""
 "This deletes \"{name}\" and its stickers from this computer. To use it "
 "again, import it again."
 msgstr "这会从此电脑删除“{name}”及其贴图。如需再次使用，请重新导入。"
 
-#: src/ui/dialogs.rs:1369
+#: src/ui/dialogs.rs:1537
 msgid "Remove sticker pack?"
 msgstr "要移除贴图包吗？"
 
-#: src/ui/dialogs.rs:1371 src/ui/dialogs.rs:1429 src/ui/dialogs.rs:1529
+#: src/ui/dialogs.rs:1539 src/ui/dialogs.rs:1597 src/ui/dialogs.rs:1697
 msgid "Remove"
 msgstr "移除"
 
-#: src/ui/dialogs.rs:1381 src/ui/lock.rs:123
+#: src/ui/dialogs.rs:1549 src/ui/lock.rs:123
 msgid "Unlink this computer?"
 msgstr "要取消关联此电脑吗？"
 
-#: src/ui/dialogs.rs:1384
+#: src/ui/dialogs.rs:1552
 msgid ""
 "This removes the device from WhatsApp and deletes the chats stored here. You "
 "can link again with a new code."
@@ -995,15 +1286,15 @@ msgstr ""
 "这会从 WhatsApp 移除此设备，并删除保存在这里的聊天。你可以用新的代码重新关"
 "联。"
 
-#: src/ui/dialogs.rs:1386 src/ui/lock.rs:139
+#: src/ui/dialogs.rs:1554 src/ui/lock.rs:139
 msgid "Unlink"
 msgstr "取消关联"
 
-#: src/ui/dialogs.rs:1402
+#: src/ui/dialogs.rs:1570
 msgid "Clear the media cache?"
 msgstr "清除媒体缓存？"
 
-#: src/ui/dialogs.rs:1406
+#: src/ui/dialogs.rs:1574
 #, rust-format
 msgid ""
 "This deletes the photos, videos, stickers and files {account} downloaded to "
@@ -1013,73 +1304,130 @@ msgstr ""
 "这将删除 {account} 下载到这台电脑上的照片、视频、贴纸和文件。消息会保留；只"
 "要 WhatsApp 仍保存着附件，打开时会重新下载。"
 
-#: src/ui/dialogs.rs:1411
+#: src/ui/dialogs.rs:1579
 msgid "Files in a download folder you chose are kept."
 msgstr "你选择的下载文件夹中的文件会保留。"
 
-#: src/ui/dialogs.rs:1414 src/ui/settings.rs:509
+#: src/ui/dialogs.rs:1582 src/ui/settings.rs:523
 msgid "Clear"
 msgstr "清除"
 
-#: src/ui/dialogs.rs:1424
+#: src/ui/dialogs.rs:1592
 msgid "Remove this account?"
 msgstr "移除此账号？"
 
-#: src/ui/dialogs.rs:1427
+#: src/ui/dialogs.rs:1595
 msgid ""
 "This unlinks the number on this computer and deletes its local chats. Other "
 "accounts stay."
 msgstr "这会解除此电脑上的号码关联并删除本地聊天。其他账号不受影响。"
 
-#: src/ui/dialogs.rs:1480
+#: src/ui/dialogs.rs:1648
 msgid "Reset the invite link?"
 msgstr ""
 
-#: src/ui/dialogs.rs:1486
+#: src/ui/dialogs.rs:1654
 msgid ""
 "The current link will stop working, and nobody can join with it any more. A "
 "new link replaces it."
 msgstr ""
 
-#: src/ui/dialogs.rs:1495 src/ui/info.rs:1608
+#: src/ui/dialogs.rs:1663 src/ui/info.rs:1634
 msgid "Reset link"
 msgstr ""
 
-#: src/ui/dialogs.rs:1512
+#: src/ui/dialogs.rs:1680
 msgid "Remove from the group?"
 msgstr ""
 
-#: src/ui/dialogs.rs:1518
+#: src/ui/dialogs.rs:1686
 #, rust-format
 msgid ""
 "{name} will no longer receive messages from {group}. You can add them again "
 "later."
 msgstr ""
 
-#: src/ui/dialogs.rs:1561
+#: src/ui/dialogs.rs:1729
 msgid "Leave this channel?"
 msgstr "退出此频道？"
 
-#: src/ui/dialogs.rs:1563
+#: src/ui/dialogs.rs:1731
 msgid "Leave this group?"
 msgstr "退出此群组？"
 
-#: src/ui/dialogs.rs:1570
+#: src/ui/dialogs.rs:1738
 msgid ""
 "You will not receive new messages. The local history stays on this computer."
 msgstr "你将不再收到新消息。本机上的历史记录会保留。"
 
-#: src/ui/dialogs.rs:1590
+#: src/ui/dialogs.rs:1758
 msgid "Leave channel and archive"
 msgstr "退出频道并归档"
 
-#: src/ui/dialogs.rs:1592
+#: src/ui/dialogs.rs:1760
 msgid "Leave group and archive"
 msgstr "退出群组并归档"
 
-#: src/ui/dialogs.rs:1812
+#: src/ui/dialogs.rs:1791
+msgid "Link with a phone number"
+msgstr ""
+
+#: src/ui/dialogs.rs:1797
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus "
+"sign or leading zero. You will get a code to enter on the phone."
+msgstr ""
+
+#: src/ui/dialogs.rs:1846
+msgid "Enter the whole number, starting with the country code"
+msgstr ""
+
+#: src/ui/dialogs.rs:1853
+#, fuzzy
+msgid "Get a code"
+msgstr "密码"
+
+#: src/ui/dialogs.rs:1879
+#, fuzzy
+msgid "New contact"
+msgstr "添加联系人"
+
+#: src/ui/dialogs.rs:1884
+msgid ""
+"Enter a phone number with its country code. Add a name to save the contact, "
+"or leave it blank to message the number without saving it. WhatsApp uses the "
+"first name as the display name."
+msgstr ""
+
+#: src/ui/dialogs.rs:1943
+#, fuzzy
+msgid "First name"
+msgstr "第一个摄像头"
+
+#: src/ui/dialogs.rs:1944
+#, fuzzy
+msgid "Surname"
+msgstr "你的名字"
+
+#: src/ui/dialogs.rs:2003
 msgid "Also save to your phone's contacts"
 msgstr "同时保存到手机联系人"
+
+#: src/ui/dialogs.rs:2013 src/ui/dialogs.rs:2022
+#, fuzzy
+msgid "Checking the number…"
+msgstr "正在创建群组…"
+
+#: src/ui/dialogs.rs:2026
+msgid ""
+"Enter a phone number with its country code, using only digits, spaces, "
+"hyphens and brackets"
+msgstr ""
+
+#: src/ui/dialogs.rs:2032
+#, fuzzy
+msgid "Save contact"
+msgstr "搜索联系人"
 
 #: src/ui/locations.rs:29
 msgid "Paste a map link or coordinates"
@@ -1094,163 +1442,173 @@ msgstr "短链接只能在线打开。请粘贴完整的地图链接或坐标。
 msgid "That is not a location."
 msgstr "这不是位置。"
 
-#: src/ui/settings.rs:273
+#: src/ui/settings.rs:275
 msgid "Settings"
 msgstr "设置"
 
-#: src/ui/settings.rs:290
+#: src/ui/settings.rs:292
 #, rust-format
 msgid "No settings match “{query}”."
 msgstr "没有与“{query}”匹配的设置。"
 
-#: src/ui/settings.rs:326
+#: src/ui/settings.rs:329
 msgid "Search settings"
 msgstr "搜索设置"
 
-#: src/ui/settings.rs:344
+#: src/ui/settings.rs:347
 msgid "Appearance"
 msgstr "外观"
 
-#: src/ui/settings.rs:351
+#: src/ui/settings.rs:354
 msgid "Follow system uses your Omarchy colours."
 msgstr "跟随系统时会使用你的 Omarchy 配色。"
 
-#: src/ui/settings.rs:355
+#: src/ui/settings.rs:358 src/ui/settings.rs:1139
 msgid "Theme"
 msgstr "主题"
 
-#: src/ui/settings.rs:357
+#: src/ui/settings.rs:360
 msgid "Font"
 msgstr "字体"
 
-#: src/ui/settings.rs:360
+#: src/ui/settings.rs:363
 msgid ""
 "System is your desktop's interface font. Inter looks the same on every "
 "computer."
 msgstr "“系统”使用桌面的界面字体。Inter 在每台电脑上都一样。"
 
-#: src/ui/settings.rs:365
+#: src/ui/settings.rs:368
 msgid "Wallpaper"
 msgstr "壁纸"
 
-#: src/ui/settings.rs:369 src/app.rs:3046 src/ui/image_preview.rs:212
+#: src/ui/settings.rs:372 src/app.rs:3137 src/ui/image_preview.rs:212
 msgid "Image"
 msgstr "图片"
 
-#: src/ui/settings.rs:379
+#: src/ui/settings.rs:382
 msgid "Zoom"
 msgstr "缩放"
 
-#: src/ui/settings.rs:382
+#: src/ui/settings.rs:385
 msgid "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it."
 msgstr "Ctrl+加号和 Ctrl+减号在任何界面都有效，Ctrl+0 恢复默认。"
 
-#: src/ui/settings.rs:391
+#: src/ui/settings.rs:394
 msgid "Larger"
 msgstr "放大"
 
-#: src/ui/settings.rs:409
+#: src/ui/settings.rs:412
 msgid "Smaller"
 msgstr "缩小"
 
-#: src/ui/settings.rs:417
+#: src/ui/settings.rs:420
 msgid "Language"
 msgstr "语言"
 
-#: src/ui/settings.rs:421 src/ui/settings.rs:1862
+#: src/ui/settings.rs:424 src/ui/settings.rs:1871
 msgid "Custom title bar"
 msgstr "自定义标题栏"
 
-#: src/ui/settings.rs:424
+#: src/ui/settings.rs:427
 msgid ""
 "Draw ZapFast's own title bar and window buttons instead of the desktop's."
 msgstr "使用 ZapFast 自己的标题栏和窗口按钮，而不是桌面环境提供的。"
 
-#: src/ui/settings.rs:430 src/ui/rail.rs:293
+#: src/ui/settings.rs:433 src/ui/rail.rs:296
 msgid "Chats"
 msgstr "聊天"
 
-#: src/ui/settings.rs:432
+#: src/ui/settings.rs:435
 msgid "Enter sends"
 msgstr "回车发送"
 
-#: src/ui/settings.rs:433
+#: src/ui/settings.rs:436
 msgid "When off, Ctrl+Enter sends."
 msgstr "关闭后，用 Ctrl+回车发送。"
 
-#: src/ui/settings.rs:437
+#: src/ui/settings.rs:442
+msgid "Middle-click autoscroll"
+msgstr "中键自动滚动"
+
+#: src/ui/settings.rs:445
+msgid ""
+"Middle-click a list, then move the pointer to scroll it. Text fields still "
+"paste."
+msgstr "在列表中按鼠标中键，然后移动指针即可滚动。文本框中仍可用中键粘贴。"
+
+#: src/ui/settings.rs:451
 msgid "Download files automatically"
 msgstr "自动下载文件"
 
-#: src/ui/settings.rs:440
+#: src/ui/settings.rs:454
 msgid "Files up to 64 MiB download as they come into view."
 msgstr "文件进入视野后自动下载，最大 64 MiB。"
 
-#: src/ui/settings.rs:445
+#: src/ui/settings.rs:459
 msgid "Fetch older history"
 msgstr "获取更早的历史记录"
 
-#: src/ui/settings.rs:448
+#: src/ui/settings.rs:462
 msgid ""
 "Asks your phone in the background for older messages in the open, pinned and "
 "ten most recent chats."
 msgstr "在后台向手机请求当前打开的聊天、置顶聊天和最近十个聊天中的更早消息。"
 
-#: src/ui/settings.rs:455
+#: src/ui/settings.rs:469
 msgid "Pause other media while recording or playing"
 msgstr "录音或播放时暂停其他媒体"
 
-#: src/ui/settings.rs:456
+#: src/ui/settings.rs:470
 msgid "Music and videos in other apps resume afterwards."
 msgstr "其他应用中的音乐和视频会在结束后继续播放。"
 
-#: src/ui/settings.rs:461 src/ui/settings.rs:470
+#: src/ui/settings.rs:475 src/ui/settings.rs:484
 msgid "Keep chats archived"
 msgstr "保持聊天归档"
 
-#: src/ui/settings.rs:464
+#: src/ui/settings.rs:478
 msgid "When off, a new message brings an archived chat back to the list."
 msgstr "关闭后，新消息会把已归档的聊天移回列表。"
 
-#: src/ui/settings.rs:485
+#: src/ui/settings.rs:499
 msgid "Locked chats code"
 msgstr "已锁定聊天的密码"
 
-#: src/ui/settings.rs:488
+#: src/ui/settings.rs:502
 msgid ""
 "Opens the Locked tab on this computer. It hides chats, it does not encrypt "
 "them."
 msgstr "在这台电脑上打开“已锁定”标签页。它只是隐藏聊天，并不会加密。"
 
-#: src/ui/settings.rs:500
+#: src/ui/settings.rs:514
 msgid "Secret code"
 msgstr "密码"
 
-#: src/ui/settings.rs:519 src/ui/settings.rs:2100
+#: src/ui/settings.rs:533 src/ui/settings.rs:2109
 msgid "Notifications"
 msgstr "通知"
 
-#: src/ui/settings.rs:521
+#: src/ui/settings.rs:535
 msgid "Desktop notifications"
 msgstr "桌面通知"
 
-#: src/ui/settings.rs:524
+#: src/ui/settings.rs:538
 msgid "For chats you are not looking at. Muted chats stay quiet."
 msgstr "用于你当前没在看的聊天。静音的聊天不会提醒。"
 
-#: src/ui/settings.rs:531
+#: src/ui/settings.rs:545
 msgid "Show message content in notifications"
 msgstr "在通知中显示消息内容"
 
-#: src/ui/settings.rs:532
+#: src/ui/settings.rs:546
 msgid "When off, they say only “New message”."
 msgstr "关闭后，通知只显示“新消息”。"
 
-#: src/ui/settings.rs:537
+#: src/ui/settings.rs:551
 msgid "Limit repeat notifications"
 msgstr "限制重复通知"
 
-#: src/ui/settings.rs:540
+#: src/ui/settings.rs:554
 msgid ""
 "After one notification, a chat stays quiet for 10 minutes. Opening the chat "
 "resets this. In groups, mentions and replies to you still notify."
@@ -1258,220 +1616,208 @@ msgstr ""
 "通知一次后，该聊天会安静 10 分钟。打开该聊天会重新计时。在群组中，提及你和回"
 "复你的消息仍会通知。"
 
-#: src/ui/settings.rs:566 src/ui/settings.rs:2107
+#: src/ui/settings.rs:580 src/ui/settings.rs:2116
 msgid "Play sounds for group messages"
 msgstr "群组消息播放提示音"
 
-#: src/ui/settings.rs:569
+#: src/ui/settings.rs:583
 msgid "When off, only mentions and replies to you make a sound."
 msgstr "关闭后，只有提及你或回复你时才会响。"
 
-#: src/ui/settings.rs:577
+#: src/ui/settings.rs:591
 msgid "Privacy"
 msgstr "隐私"
 
-#: src/ui/settings.rs:579
+#: src/ui/settings.rs:593
 msgid "Off for your account, so only groups get them."
 msgstr "你的账号已关闭，因此只有群组会发送。"
 
-#: src/ui/settings.rs:581
+#: src/ui/settings.rs:595
 msgid "Let people see when you read their messages."
 msgstr "让对方看到你何时读了他们的消息。"
 
-#: src/ui/settings.rs:584
+#: src/ui/settings.rs:598
 msgid "Send read receipts"
 msgstr "发送已读回执"
 
-#: src/ui/settings.rs:589
+#: src/ui/settings.rs:603
 msgid "Show when you are typing"
 msgstr "显示“正在输入”"
 
-#: src/ui/settings.rs:600
+#: src/ui/settings.rs:614
 msgid ""
 "Could not load your account privacy. Trying again when ZapFast reconnects."
 msgstr "无法加载账号隐私设置。ZapFast 重新连接后会再试一次。"
 
-#: src/ui/settings.rs:605
+#: src/ui/settings.rs:619
 msgid "Connect to WhatsApp to change your account privacy."
 msgstr "连接 WhatsApp 后才能更改账号隐私。"
 
-#: src/ui/settings.rs:610
+#: src/ui/settings.rs:624
 msgid "Loading your account privacy…"
 msgstr "正在加载账号隐私…"
 
-#: src/ui/settings.rs:635
+#: src/ui/settings.rs:649
 msgid "Change who is excluded on your phone."
 msgstr "请在手机上更改排除的联系人。"
 
-#: src/ui/settings.rs:653
+#: src/ui/settings.rs:667
 msgid "System"
 msgstr "系统"
 
-#: src/ui/settings.rs:655
+#: src/ui/settings.rs:669
 msgid "Keep running when the window closes"
 msgstr "关闭窗口后继续运行"
 
-#: src/ui/settings.rs:656
+#: src/ui/settings.rs:670
 msgid "Quit from the tray or with Ctrl+Q."
 msgstr "从托盘退出，或按 Ctrl+Q。"
 
-#: src/ui/settings.rs:661 src/ui/settings.rs:669
+#: src/ui/settings.rs:675 src/ui/settings.rs:683
 msgid "Start at login"
 msgstr "登录时启动"
 
-#: src/ui/settings.rs:662
+#: src/ui/settings.rs:676
 msgid "Starts in the tray, without a window."
 msgstr "在托盘中启动，不打开窗口。"
 
-#: src/ui/settings.rs:685
+#: src/ui/settings.rs:699
 msgid "Check for updates"
 msgstr "检查更新"
 
-#: src/ui/settings.rs:688
+#: src/ui/settings.rs:702
 msgid "Asks GitHub once a day, sending only the ZapFast version."
 msgstr "每天向 GitHub 查询一次，只发送 ZapFast 版本号。"
 
-#: src/ui/settings.rs:693
+#: src/ui/settings.rs:707
 msgid "Download updates automatically"
 msgstr "自动下载更新"
 
-#: src/ui/settings.rs:696
+#: src/ui/settings.rs:710
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
 "ZapFast themselves."
 msgstr "重启时机仍由你决定。包管理器和 Flatpak 会自行更新 ZapFast。"
 
-#: src/ui/settings.rs:709
+#: src/ui/settings.rs:723
 #, rust-format
 msgid "Using {proxy} from the environment."
 msgstr "正在使用环境中的 {proxy}。"
 
-#: src/ui/settings.rs:717
+#: src/ui/settings.rs:731
 msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
 msgstr "用于 WhatsApp、媒体和更新。留空则使用 ALL_PROXY 或 HTTPS_PROXY。"
 
-#: src/ui/settings.rs:720
+#: src/ui/settings.rs:734
 msgid "Proxy"
 msgstr "代理"
 
-#: src/ui/settings.rs:740
+#: src/ui/settings.rs:754
 msgid "GIPHY API key"
 msgstr "GIPHY API 密钥"
 
-#: src/ui/settings.rs:744
+#: src/ui/settings.rs:758
 msgid "For GIF search. Replaces the key this build includes."
 msgstr "用于 GIF 搜索。会替换此版本内置的密钥。"
 
-#: src/ui/settings.rs:749
+#: src/ui/settings.rs:763
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr "用于 GIF 搜索。可在 developers.giphy.com 获取免费密钥。"
 
-#: src/ui/settings.rs:765 src/ui/settings.rs:2154 src/ui/settings.rs:2160
+#: src/ui/settings.rs:779 src/ui/settings.rs:2163 src/ui/settings.rs:2169
 msgid "Account"
 msgstr "账号"
 
-#: src/ui/settings.rs:768 src/ui/settings.rs:1641
+#: src/ui/settings.rs:782 src/ui/settings.rs:1650
 msgid "Your name"
 msgstr "你的名字"
 
-#: src/ui/settings.rs:770 src/ui/settings.rs:1649
+#: src/ui/settings.rs:784 src/ui/settings.rs:1658
 msgctxt "profile"
 msgid "About"
 msgstr "个人简介"
 
-#: src/ui/settings.rs:773 src/ui/settings.rs:1618
+#: src/ui/settings.rs:787 src/ui/settings.rs:1627
 msgid "Change profile picture"
 msgstr "更换头像"
 
-#: src/ui/settings.rs:774 src/ui/settings.rs:1701 src/ui/settings.rs:2156
+#: src/ui/settings.rs:788 src/ui/settings.rs:1710 src/ui/settings.rs:2165
 msgid "Unlink this computer"
 msgstr "取消关联此电脑"
 
-#: src/ui/settings.rs:775 src/ui/settings.rs:1712 src/ui/accounts.rs:123
+#: src/ui/settings.rs:789 src/ui/settings.rs:1721 src/ui/accounts.rs:123
 msgid "Add account"
 msgstr "添加账号"
 
-#: src/ui/settings.rs:776 src/ui/settings.rs:1688
+#: src/ui/settings.rs:790 src/ui/settings.rs:1697 src/ui/accounts.rs:270
 msgid "Remove this account"
 msgstr "移除此账号"
 
-#: src/ui/settings.rs:781
+#: src/ui/settings.rs:795
 msgid "Files"
 msgstr "文件"
 
-#: src/ui/settings.rs:784
+#: src/ui/settings.rs:798
 msgid "Open folder"
 msgstr "打开文件夹"
 
-#: src/ui/settings.rs:786
+#: src/ui/settings.rs:800
 msgid "Message archive"
 msgstr "消息存档"
 
-#: src/ui/settings.rs:804
+#: src/ui/settings.rs:818
 msgid "Downloads"
 msgstr "下载"
 
-#: src/ui/settings.rs:817
+#: src/ui/settings.rs:831
 msgid "Change…"
 msgstr "更改…"
 
-#: src/ui/settings.rs:829
+#: src/ui/settings.rs:843
 msgid "Use default"
 msgstr "使用默认"
 
-#: src/ui/settings.rs:840 src/ui/settings.rs:1454
+#: src/ui/settings.rs:854 src/ui/settings.rs:1463
 msgid "Storage used"
 msgstr "已用空间"
 
-#: src/ui/settings.rs:841
+#: src/ui/settings.rs:855
 msgid "Media cache"
 msgstr "媒体缓存"
 
-#: src/ui/settings.rs:842 src/ui/settings.rs:1508
+#: src/ui/settings.rs:856 src/ui/settings.rs:1517
 msgid "Images"
 msgstr "图片"
 
-#: src/ui/settings.rs:843 src/ui/settings.rs:1514
+#: src/ui/settings.rs:857 src/ui/settings.rs:1523
 msgid "Videos and GIFs"
 msgstr "视频和 GIF"
 
-#: src/ui/settings.rs:844 src/ui/settings.rs:1520
+#: src/ui/settings.rs:858 src/ui/settings.rs:1529 src/ui/picker.rs:111
 msgid "Stickers"
 msgstr "贴纸"
 
-#: src/ui/settings.rs:845 src/ui/settings.rs:1526
+#: src/ui/settings.rs:859 src/ui/settings.rs:1535
 msgid "Other"
 msgstr "其他"
 
-#: src/ui/settings.rs:846 src/ui/settings.rs:1460
+#: src/ui/settings.rs:860 src/ui/settings.rs:1469
 msgid "Clear…"
 msgstr "清除…"
 
-#: src/ui/settings.rs:852
+#: src/ui/settings.rs:866
 msgid "Log"
 msgstr "日志"
 
-#: src/ui/settings.rs:859
+#: src/ui/settings.rs:873
 msgid "Open"
 msgstr "打开"
 
-#: src/ui/settings.rs:869 src/ui/settings.rs:1831
-msgid "About"
-msgstr "关于"
-
-#: src/ui/settings.rs:873 src/ui/settings.rs:1820
-msgid "Keyboard shortcuts"
-msgstr "键盘快捷键"
-
-#: src/ui/settings.rs:874 src/ui/settings.rs:1842
-msgid "Source code"
-msgstr "源代码"
-
-#: src/ui/settings.rs:899 src/ui/settings.rs:926
+#: src/ui/settings.rs:913 src/ui/settings.rs:940
 msgid "App lock"
 msgstr "应用锁"
 
-#: src/ui/settings.rs:902
+#: src/ui/settings.rs:916
 msgid ""
 "Asks for a password at start and after a while unused. It keeps people using "
 "this computer out of your chats and encrypts nothing more. A forgotten "
@@ -1480,109 +1826,114 @@ msgstr ""
 "启动时以及闲置一段时间后要求输入密码。它能阻止使用此电脑的其他人查看你的聊"
 "天，但不会额外加密任何内容。忘记密码只能取消关联。"
 
-#: src/ui/settings.rs:909
+#: src/ui/settings.rs:923
 msgid "Turn off…"
 msgstr "关闭…"
 
-#: src/ui/settings.rs:910
+#: src/ui/settings.rs:924
 msgid "Change password…"
 msgstr "更改密码…"
 
-#: src/ui/settings.rs:913
+#: src/ui/settings.rs:927
 msgid "Set password…"
 msgstr "设置密码…"
 
-#: src/ui/settings.rs:927 src/ui/settings.rs:934
+#: src/ui/settings.rs:941 src/ui/settings.rs:948
 msgid "Lock after"
 msgstr "锁定时间"
 
-#: src/ui/settings.rs:937
+#: src/ui/settings.rs:951
 msgid ""
 "Time without using ZapFast, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
 "未使用 ZapFast 的时长，在托盘中时也会计时。按 Ctrl+Shift+L 可立即锁定。"
 
-#: src/ui/settings.rs:979
+#: src/ui/settings.rs:993
 msgid "Set an app lock password"
 msgstr "设置应用锁密码"
 
-#: src/ui/settings.rs:980
+#: src/ui/settings.rs:994
 msgid "Change the app lock password"
 msgstr "更改应用锁密码"
 
-#: src/ui/settings.rs:981
+#: src/ui/settings.rs:995
 msgid "Turn off the app lock"
 msgstr "关闭应用锁"
 
-#: src/ui/settings.rs:991
+#: src/ui/settings.rs:1005
 msgid "Current password"
 msgstr "当前密码"
 
-#: src/ui/settings.rs:998
+#: src/ui/settings.rs:1012
 #, rust-format
 msgid "New password, at least {count} characters"
 msgstr "新密码，至少 {count} 个字符"
 
-#: src/ui/settings.rs:1003
+#: src/ui/settings.rs:1017
 msgid "Type the new password again"
 msgstr "再次输入新密码"
 
-#: src/ui/settings.rs:1027
+#: src/ui/settings.rs:1041
 #, rust-format
 msgid "The password needs at least {count} characters."
 msgstr "密码至少需要 {count} 个字符。"
 
-#: src/ui/settings.rs:1029
+#: src/ui/settings.rs:1043
 msgid "The two new passwords are different."
 msgstr "两次输入的新密码不一致。"
 
-#: src/ui/settings.rs:1030 src/ui/lock.rs:85
+#: src/ui/settings.rs:1044 src/ui/lock.rs:85
 msgid "Wrong password. Try again."
 msgstr "密码错误，请重试。"
 
-#: src/ui/settings.rs:1037
+#: src/ui/settings.rs:1051
 msgid "Turn on"
 msgstr "开启"
 
-#: src/ui/settings.rs:1038
+#: src/ui/settings.rs:1052
 msgid "Change password"
 msgstr "更改密码"
 
-#: src/ui/settings.rs:1039
+#: src/ui/settings.rs:1053
 msgid "Turn off"
 msgstr "关闭"
 
-#: src/ui/settings.rs:1142
+#: src/ui/settings.rs:1148
+#, fuzzy
+msgid "Open themes folder"
+msgstr "打开文件夹"
+
+#: src/ui/settings.rs:1159
 msgid "How to make a theme"
 msgstr "如何制作主题"
 
-#: src/ui/settings.rs:1183 src/ui/settings.rs:1192
+#: src/ui/settings.rs:1200 src/ui/settings.rs:1209
 msgid "Auto"
 msgstr "自动"
 
-#: src/ui/settings.rs:1279
+#: src/ui/settings.rs:1338
 msgid "Add doodles"
 msgstr "添加涂鸦"
 
-#: src/ui/settings.rs:1283
+#: src/ui/settings.rs:1342
 msgid "Show the default doodles over the selected colour."
 msgstr "在所选颜色上显示默认涂鸦。"
 
-#: src/ui/settings.rs:1367
+#: src/ui/settings.rs:1376
 msgid "Choose image…"
 msgstr "选择图片…"
 
-#: src/ui/settings.rs:1368
+#: src/ui/settings.rs:1377
 msgid "Remove image"
 msgstr "移除图片"
 
-#: src/ui/settings.rs:1396
+#: src/ui/settings.rs:1405
 msgctxt "wallpaper colour"
 msgid "Theme"
 msgstr "主题"
 
-#: src/ui/settings.rs:1489
+#: src/ui/settings.rs:1498
 #, rust-format
 msgid ""
 "Photos, videos, stickers and files {account} downloaded to this computer. "
@@ -1592,56 +1943,52 @@ msgstr ""
 "{account} 下载到这台电脑上的照片、视频、贴纸和文件。清除后消息仍会保留；打开"
 "附件时会重新下载。"
 
-#: src/ui/settings.rs:1657
+#: src/ui/settings.rs:1666
 msgid "Linked device"
 msgstr "已关联的设备"
 
-#: src/ui/settings.rs:1668
+#: src/ui/settings.rs:1677
 msgid "Edit your name and About"
 msgstr "编辑你的名字和个人简介"
 
-#: src/ui/settings.rs:1732
+#: src/ui/settings.rs:1741
 msgid "Save"
 msgstr "保存"
 
-#: src/ui/settings.rs:1799
+#: src/ui/settings.rs:1808
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
 msgstr "用 Rust、egui 和 whatsapp-rust 构建的原生 WhatsApp 客户端。"
 
-#: src/ui/settings.rs:1810
+#: src/ui/settings.rs:1819
 #, rust-format
 msgid "Update to {version}"
 msgstr "更新到 {version}"
 
-#: src/ui/settings.rs:1928
+#: src/ui/settings.rs:1937
 msgid "Mention sound"
 msgstr "提及提示音"
 
-#: src/ui/settings.rs:1929
+#: src/ui/settings.rs:1938
 msgid "When a group mentions you or replies to you."
 msgstr "当群组提及你或回复你时。"
 
-#: src/ui/settings.rs:1932
+#: src/ui/settings.rs:1941
 msgid "Message sound"
 msgstr "消息提示音"
 
-#: src/ui/settings.rs:1949
+#: src/ui/settings.rs:1958
 msgid "Pidgin alert"
 msgstr "Pidgin 提示音"
 
-#: src/ui/settings.rs:1950 src/ui/call.rs:597
+#: src/ui/settings.rs:1959 src/ui/call.rs:597
 msgid "System default"
 msgstr "系统默认"
 
 #. Translators: no notification sound.
-#: src/ui/settings.rs:1952
+#: src/ui/settings.rs:1961
 msgctxt "sound"
 msgid "None"
 msgstr "无"
-
-#: src/ui/settings.rs:1989
-msgid "Choose a file…"
-msgstr "选择文件…"
 
 #: src/ui/call.rs:142
 msgid "Return to the call"
@@ -1703,7 +2050,7 @@ msgstr "无法连接"
 msgid "No answer"
 msgstr "无人接听"
 
-#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4166
+#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4298
 msgid "Connection lost"
 msgstr "连接已断开"
 
@@ -1808,7 +2155,7 @@ msgstr "拒绝"
 msgid "Accept"
 msgstr "接听"
 
-#: src/ui/call.rs:1218
+#: src/ui/call.rs:1226
 msgid "Invited"
 msgstr "已邀请"
 
@@ -1841,7 +2188,7 @@ msgid ""
 "Calls from your phone's call log and the ones you make here appear here."
 msgstr "手机通话记录中的通话以及你在这里拨打的通话会显示在这里。"
 
-#: src/ui/calls.rs:207 src/ui/message_info.rs:93
+#: src/ui/calls.rs:207 src/ui/message_info.rs:96
 msgid "Loading…"
 msgstr "加载中…"
 
@@ -1857,37 +2204,33 @@ msgstr "没有未接来电"
 msgid "Choose All to see every call."
 msgstr "选择“全部”即可查看所有通话。"
 
-#: src/ui/calls.rs:255
+#: src/ui/calls.rs:257
 msgid "No matching calls"
 msgstr "没有匹配的通话"
 
-#: src/ui/calls.rs:536
+#: src/ui/calls.rs:541
 msgid "Frequently contacted"
 msgstr "常用联系人"
 
-#: src/ui/calls.rs:548 src/ui/new_group.rs:118
-msgid "No matching contacts"
-msgstr "没有匹配的联系人"
-
-#: src/ui/calls.rs:554
+#: src/ui/calls.rs:559
 msgid "All contacts"
 msgstr "所有联系人"
 
-#: src/ui/calls.rs:618
+#: src/ui/calls.rs:624
 #, rust-format
 msgid "Video call {name}"
 msgstr "与 {name} 视频通话"
 
-#: src/ui/calls.rs:632
+#: src/ui/calls.rs:638
 #, rust-format
 msgid "Voice call {name}"
 msgstr "与 {name} 语音通话"
 
-#: src/ui/calls.rs:662
+#: src/ui/calls.rs:668
 msgid "Start call"
 msgstr "开始通话"
 
-#: src/ui/calls.rs:683
+#: src/ui/calls.rs:689
 msgid ""
 "Call one person by voice or video, or choose a call in the list to see it."
 msgstr "通过语音或视频呼叫一个人，或在列表中选择一个通话来查看。"
@@ -1921,7 +2264,7 @@ msgstr ""
 "{caller} 正在呼叫你和其他人。ZapFast 暂时无法加入群组通话：请在手机上接听。"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
-#: src/ui/widgets.rs:944
+#: src/ui/widgets.rs:945
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "由 {name} 倾心打造"
@@ -1930,119 +2273,119 @@ msgstr "由 {name} 倾心打造"
 msgid "This message is no longer available."
 msgstr "此消息已不可用。"
 
-#: src/ui/message_info.rs:192
+#: src/ui/message_info.rs:195
 msgid "Played"
 msgstr "已播放"
 
-#: src/ui/message_info.rs:194
+#: src/ui/message_info.rs:197
 msgid "Read"
 msgstr "已读"
 
-#: src/ui/message_info.rs:208
+#: src/ui/message_info.rs:211
 msgid "Delivered"
 msgstr "已送达"
 
-#: src/ui/message_info.rs:224
+#: src/ui/message_info.rs:227
 msgid "Time not recorded"
 msgstr "未记录时间"
 
-#: src/ui/message_info.rs:246
+#: src/ui/message_info.rs:249
 msgid ""
 "No receipts were recorded for this message. Details are available for "
 "messages sent from now on."
 msgstr "此消息没有记录任何回执。从现在起发送的消息都会有详细信息。"
 
-#: src/ui/message_info.rs:258
+#: src/ui/message_info.rs:261
 msgid ""
 "Some receipts for this message were not recorded. Details are complete for "
 "messages sent from now on."
 msgstr "此消息的部分回执没有记录。从现在起发送的消息都会有完整详细信息。"
 
-#: src/ui/message_info.rs:268
+#: src/ui/message_info.rs:271
 msgid "Played by"
 msgstr "播放者"
 
-#: src/ui/message_info.rs:277
+#: src/ui/message_info.rs:280
 msgid "Read by"
 msgstr "已读人员"
 
-#: src/ui/message_info.rs:285
+#: src/ui/message_info.rs:288
 msgid "Delivered to"
 msgstr "送达对象"
 
-#: src/ui/message_info.rs:295
+#: src/ui/message_info.rs:298
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
 msgstr[0] "剩余 {}"
 
-#: src/ui/message_info.rs:322
+#: src/ui/message_info.rs:325
 msgid "No one yet"
 msgstr "还没有人"
 
-#: src/app.rs:885
+#: src/app.rs:897
 msgid "Could not check the number. Please try again."
 msgstr "无法验证号码。请重试。"
 
-#: src/app.rs:889
+#: src/app.rs:901
 msgid "This number is not on WhatsApp"
 msgstr "此号码未注册 WhatsApp"
 
-#: src/app.rs:892
+#: src/app.rs:904
 msgid "Not connected to WhatsApp"
 msgstr "未连接到 WhatsApp"
 
-#: src/app.rs:895 src/app.rs:7750
+#: src/app.rs:907 src/app.rs:7931
 msgid "Enter a valid international phone number"
 msgstr "请输入有效的国际电话号码"
 
-#: src/app.rs:1821
+#: src/app.rs:1869
 msgid "Could not delete the removed account's files"
 msgstr "无法删除已移除账号的文件"
 
-#: src/app.rs:2462
+#: src/app.rs:2514
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "已存在名为“{name}”的标签。"
 
-#: src/app.rs:2551
+#: src/app.rs:2603
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name}（你）"
 
-#: src/app.rs:3113
+#: src/app.rs:3204
 msgid "Media cache cleared"
 msgstr "媒体缓存已清除"
 
-#: src/app.rs:3193
+#: src/app.rs:3290
 msgid "Star removed"
 msgstr "已取消星标"
 
-#: src/app.rs:3229
+#: src/app.rs:3326
 msgid "Pinned for 7 days"
 msgstr "已置顶 7 天"
 
-#: src/app.rs:3231
+#: src/app.rs:3328
 msgid "Pin removed"
 msgstr "已取消置顶"
 
-#: src/app.rs:3730
+#: src/app.rs:3841
 msgid "Loading chat history"
 msgstr "正在加载聊天记录"
 
-#: src/app.rs:3824
+#: src/app.rs:3935
 msgid "Could not use this image"
 msgstr "无法使用此图片"
 
-#: src/app.rs:3882
+#: src/app.rs:3993
 msgid "Could not use this picture."
 msgstr "无法使用此图片。"
 
-#: src/app.rs:4096 src/app.rs:7639
+#: src/app.rs:4207 src/app.rs:7820
 msgid "This chat already has three pinned messages"
 msgstr "此聊天已有三条置顶消息"
 
-#: src/app.rs:4101
+#: src/app.rs:4212
 msgid ""
 "WhatsApp hasn't turned on group calls from a computer for your account yet. "
 "Ask someone in the group to call it, and answer here."
@@ -2050,84 +2393,84 @@ msgstr ""
 "WhatsApp 尚未为你的账号开启电脑端群组通话。请让群组中的其他人发起通话，然后在"
 "这里接听。"
 
-#: src/app.rs:4106 src/app.rs:6697
+#: src/app.rs:4217 src/app.rs:6873
 msgid "ZapFast can't join group calls yet: open the link on your phone."
 msgstr "ZapFast 暂时无法加入群组通话：请在手机上打开此链接。"
 
-#: src/app.rs:4176
+#: src/app.rs:4308
 msgid "Connecting"
 msgstr "正在连接"
 
-#: src/app.rs:4809
+#: src/app.rs:4948
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "未发送：ZapFast 未连接到 WhatsApp。"
 
-#: src/app.rs:4813
+#: src/app.rs:4952
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr "未发送：你要回复的消息不在这台电脑上。取消回复即可不带引用发送。"
 
-#: src/app.rs:4918 src/app.rs:5751
+#: src/app.rs:4956 src/app.rs:5791
 msgid "Not sent: view-once mode is available for one photo at a time."
 msgstr "未发送：一次性查看模式一次只能用于一张照片。"
 
 #
-#: src/app.rs:6861
+#: src/app.rs:7037
 msgid "A selected chat is no longer writable"
 msgstr "无法再向某个所选聊天发送消息"
 
-#: src/app.rs:7397
+#: src/app.rs:7578
 msgid "Added to favorites"
 msgstr "已添加到收藏"
 
-#: src/app.rs:7474
+#: src/app.rs:7655
 msgid "Sending the sticker pack…"
 msgstr "正在发送贴图包…"
 
-#: src/app.rs:7870 src/ui/labels.rs:257
+#: src/app.rs:8051 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
 
-#: src/app.rs:8272
+#: src/app.rs:8453
 msgid "Invite link copied"
 msgstr ""
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:8539
+#: src/app.rs:8720
 #, rust-format
 msgid "{}: {}"
 msgstr "{}：{}"
 
-#: src/app.rs:8649
+#: src/app.rs:8830
 msgid "The old link no longer works. Here is a new one."
 msgstr ""
 
-#: src/app.rs:8691
+#: src/app.rs:8872
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
 msgstr[0] ""
 
-#: src/app.rs:9095
+#: src/app.rs:9280
 msgid "App lock password saved"
 msgstr "应用锁密码已保存"
 
-#: src/app.rs:9103
+#: src/app.rs:9288
 msgid "App lock turned off"
 msgstr "应用锁已关闭"
 
-#: src/app.rs:9237
+#: src/app.rs:9422
 msgid "This video opens in your system player"
 msgstr "此视频将用系统播放器打开"
 
-#: src/app.rs:9905
+#: src/app.rs:10128
 msgid "Copied image"
 msgstr "已复制图片"
 
-#: src/app.rs:9908 src/app.rs:9913
+#: src/app.rs:10131 src/app.rs:10136
 msgid "Failed to copy image"
 msgstr "复制图片失败"
 
@@ -2204,7 +2547,7 @@ msgstr "标签只保存在这台电脑上，不会同步到手机，聊天对象
 msgid "New label"
 msgstr "新建标签"
 
-#: src/ui/labels.rs:281 src/ui/new_group.rs:444
+#: src/ui/labels.rs:281 src/ui/new_group.rs:449
 msgid "Create"
 msgstr "创建"
 
@@ -2232,104 +2575,136 @@ msgstr "重命名或改颜色"
 msgid "Delete this label. Its chats keep their messages."
 msgstr "删除此标签。其中的聊天会保留消息。"
 
-#: src/ui/picker.rs:1194
+#: src/ui/picker.rs:109
+msgid "Emoji"
+msgstr ""
+
+#: src/ui/picker.rs:446
+#, fuzzy
+msgid "React to message"
+msgstr "选择消息"
+
+#: src/ui/picker.rs:457
+#, fuzzy
+msgid "Close reactions"
+msgstr "关闭搜索"
+
+#: src/ui/picker.rs:636
+#, fuzzy
+msgid "Search emoji"
+msgstr "搜索设置"
+
+#: src/ui/picker.rs:1017
+msgid "Search GIFs via GIPHY"
+msgstr ""
+
+#: src/ui/picker.rs:1030
+#, fuzzy
+msgid "Searching…"
+msgstr "正在保存…"
+
+#: src/ui/picker.rs:1088
+msgid "Search for a GIF or browse trending results."
+msgstr ""
+
+#: src/ui/picker.rs:1203
 msgid "Recent"
 msgstr "最近"
 
-#: src/ui/picker.rs:1196
+#: src/ui/picker.rs:1205
 msgid "Received"
 msgstr "收到的"
 
-#: src/ui/picker.rs:1197
+#: src/ui/picker.rs:1206
 msgid "Add stickers"
 msgstr "添加贴图"
 
-#: src/ui/picker.rs:1232
+#: src/ui/picker.rs:1241
 msgid "Search by emoji, word, or pack"
 msgstr "按表情、文字或贴图包搜索"
 
-#: src/ui/picker.rs:1271
+#: src/ui/picker.rs:1280
 msgid "No stickers match your search."
 msgstr "没有匹配的贴图。"
 
-#: src/ui/picker.rs:1285
+#: src/ui/picker.rs:1297
 msgid "Loading your stickers…"
 msgstr "正在加载你的贴图…"
 
-#: src/ui/picker.rs:1287
+#: src/ui/picker.rs:1299
 msgid "Stickers you send appear here."
 msgstr "你发送的贴图会出现在这里。"
 
-#: src/ui/picker.rs:1296
+#: src/ui/picker.rs:1308
 msgid ""
 "Right-click any sticker to add it to your favorites. They stay in sync with "
 "your phone."
 msgstr "右键点击任意贴图即可加入收藏。收藏会与手机同步。"
 
-#: src/ui/picker.rs:1302
+#: src/ui/picker.rs:1314
 msgid "Stickers people send you appear here."
 msgstr "别人发给你的贴图会出现在这里。"
 
-#: src/ui/picker.rs:1317
+#: src/ui/picker.rs:1329
 msgid "Remove this pack"
 msgstr "移除此贴图包"
 
-#: src/ui/picker.rs:1331
+#: src/ui/picker.rs:1343
 msgid "Send this pack to the chat"
 msgstr "把这个贴图包发送到聊天"
 
-#: src/ui/picker.rs:1345
+#: src/ui/picker.rs:1357
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
 msgstr "这里还是空的。右键点击任意贴图即可加入此贴图包。"
 
-#: src/ui/picker.rs:1422
+#: src/ui/picker.rs:1442
 msgid "Import a pack"
 msgstr "导入贴图包"
 
-#: src/ui/picker.rs:1430
+#: src/ui/picker.rs:1450
 msgid ""
 "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
 msgstr "粘贴 signalstickers.org 的 signal.art 链接，或打开 .wastickers 文件。"
 
-#: src/ui/picker.rs:1440
+#: src/ui/picker.rs:1460
 msgid "Make your own"
 msgstr "自己制作"
 
-#: src/ui/picker.rs:1448
+#: src/ui/picker.rs:1468
 msgid ""
 "Start a pack, then right-click any sticker to add it. Or turn a picture into "
 "a sticker."
 msgstr "新建一个贴图包，然后右键点击贴图加入。也可以把图片做成贴图。"
 
-#: src/ui/picker.rs:1460
+#: src/ui/picker.rs:1480
 msgid "Make a sticker from a picture…"
 msgstr "用图片制作贴图…"
 
-#: src/ui/picker.rs:1475
+#: src/ui/picker.rs:1496
 msgid "Create pack"
 msgstr "创建贴图包"
 
-#: src/ui/picker.rs:1486
+#: src/ui/picker.rs:1507
 msgid "New pack…"
 msgstr "新建贴图包…"
 
-#: src/ui/picker.rs:1519
+#: src/ui/picker.rs:1540
 msgid "Find packs"
 msgstr "查找贴图包"
 
-#: src/ui/picker.rs:1535
+#: src/ui/picker.rs:1556
 msgid "Paste a signal.art link"
 msgstr "粘贴 signal.art 链接"
 
-#: src/ui/picker.rs:1563
+#: src/ui/picker.rs:1584
 msgid "Browse signalstickers.org"
 msgstr "浏览 signalstickers.org"
 
-#: src/ui/picker.rs:1579
+#: src/ui/picker.rs:1600
 msgid "Importing the pack…"
 msgstr "正在导入贴图包…"
 
-#: src/ui/picker.rs:1628
+#: src/ui/picker.rs:1649
 msgid "Remove from recents"
 msgstr "从最近中移除"
 
@@ -2337,7 +2712,7 @@ msgstr "从最近中移除"
 msgid "Close search"
 msgstr "关闭搜索"
 
-#: src/ui/pane.rs:242 src/ui/pane.rs:420
+#: src/ui/pane.rs:242 src/ui/pane.rs:423
 msgid "Filter by date"
 msgstr "按日期筛选"
 
@@ -2354,20 +2729,20 @@ msgstr "没有找到消息"
 msgid "Try another word or pick a different day."
 msgstr "换个词试试，或选择其他日期。"
 
-#: src/ui/pane.rs:346
+#: src/ui/pane.rs:348
 #, rust-format
 msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
 msgstr "只列出最新的 {} 条结果。请缩小搜索范围或选择某一天。"
 
-#: src/ui/pane.rs:435
+#: src/ui/pane.rs:438
 msgid "Clear the day filter"
 msgstr "清除日期筛选"
 
-#: src/ui/pane.rs:502
+#: src/ui/pane.rs:505
 msgid "Next month"
 msgstr "下个月"
 
-#: src/ui/pane.rs:514
+#: src/ui/pane.rs:517
 msgid "Previous month"
 msgstr "上个月"
 
@@ -2468,7 +2843,7 @@ msgstr "向左旋转"
 msgid "Close preview (Esc)"
 msgstr "关闭预览 (Esc)"
 
-#: src/ui/image_preview.rs:258 src/ui/image_preview.rs:594
+#: src/ui/image_preview.rs:258 src/ui/image_preview.rs:598
 msgid "Open in another app"
 msgstr "在其他应用中打开"
 
@@ -2508,15 +2883,15 @@ msgstr "显示照片"
 msgid "Play motion photo"
 msgstr "播放动态照片"
 
-#: src/ui/image_preview.rs:701
+#: src/ui/image_preview.rs:705
 msgid "This image could not be displayed in ZapFast."
 msgstr "ZapFast 无法显示此图片。"
 
-#: src/ui/image_preview.rs:704
+#: src/ui/image_preview.rs:708
 msgid "Open externally"
 msgstr "用外部程序打开"
 
-#: src/ui/image_preview.rs:866
+#: src/ui/image_preview.rs:870
 msgid "Play or pause the video"
 msgstr "播放或暂停视频"
 
@@ -2585,7 +2960,7 @@ msgstr "单聊"
 msgid "Direct messages and groups"
 msgstr "单聊和群组"
 
-#: src/account.rs:304
+#: src/account.rs:308
 #, rust-format
 msgid "Account {id}"
 msgstr "账号 {id}"
@@ -2603,6 +2978,11 @@ msgstr "未关联"
 msgid "{count} unread chats"
 msgstr "{count} 个未读聊天"
 
+#: src/ui/accounts.rs:268
+#, fuzzy
+msgid "Use another account"
+msgstr "移除此账号"
+
 #: src/ui/info.rs:45
 msgid "Media, links and docs"
 msgstr "媒体、链接和文档"
@@ -2619,188 +2999,305 @@ msgstr "频道信息"
 msgid "Contact info"
 msgstr "联系人信息"
 
-#: src/ui/info.rs:338
+#: src/ui/info.rs:341
 msgid "Edit group name"
 msgstr "编辑群组名称"
 
-#: src/ui/info.rs:465 src/ui/info.rs:1746
+#: src/ui/info.rs:468 src/ui/info.rs:1774
 msgid "Saving…"
 msgstr "正在保存…"
 
-#: src/ui/info.rs:473
-#, rust-format
-msgid "{} member"
-msgid_plural "{} members"
-msgstr[0] "{} 位成员"
-
-#: src/ui/info.rs:543
+#: src/ui/info.rs:546
 msgid "Description"
 msgstr "描述"
 
-#: src/ui/info.rs:566 src/ui/info.rs:1691
+#: src/ui/info.rs:572 src/ui/info.rs:1717
 msgid "Group permissions"
 msgstr ""
 
-#: src/ui/info.rs:741 src/ui/new_group.rs:69
+#: src/ui/info.rs:747 src/ui/new_group.rs:69
 msgid "Add members"
 msgstr ""
 
-#: src/ui/info.rs:795
+#: src/ui/info.rs:805
 #, rust-format
 msgid "Options for {name}"
 msgstr ""
 
-#: src/ui/info.rs:847
+#: src/ui/info.rs:857
 msgid "Group admin"
 msgstr ""
 
-#: src/ui/info.rs:975
+#: src/ui/info.rs:986
 #, rust-format
 msgid "{}+"
 msgstr "{}+"
 
-#: src/ui/info.rs:1028
+#: src/ui/info.rs:1039
 msgid "Could not list the media."
 msgstr "无法列出媒体。"
 
-#: src/ui/info.rs:1036 src/ui/info.rs:1583 src/ui/login.rs:114
+#: src/ui/info.rs:1047 src/ui/info.rs:1609 src/ui/login.rs:136
 msgid "Try again"
 msgstr "重试"
 
-#: src/ui/info.rs:1148
+#: src/ui/info.rs:1159
 msgid "No media"
 msgstr "暂无媒体"
 
-#: src/ui/info.rs:1151
+#: src/ui/info.rs:1162
 msgid "Photos and videos shared in this chat will show here."
 msgstr "此聊天中分享的照片和视频将显示在这里。"
 
-#: src/ui/info.rs:1325
+#: src/ui/info.rs:1341
 msgid "No documents"
 msgstr "暂无文档"
 
-#: src/ui/info.rs:1326
+#: src/ui/info.rs:1342
 msgid "Files shared in this chat will show here."
 msgstr "此聊天中分享的文件将显示在这里。"
 
-#: src/ui/info.rs:1349
+#: src/ui/info.rs:1369
 #, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
 msgstr[0] "{} 页"
 
-#: src/ui/info.rs:1371
+#: src/ui/info.rs:1392
 msgid "No links"
 msgstr "暂无链接"
 
-#: src/ui/info.rs:1372
+#: src/ui/info.rs:1393
 msgid "Links shared in this chat will show here."
 msgstr "此聊天中分享的链接将显示在这里。"
 
-#: src/ui/info.rs:1445
+#: src/ui/info.rs:1471
 msgid "Only the newest items are listed."
 msgstr "仅列出最新项目。"
 
-#: src/ui/info.rs:1461
+#: src/ui/info.rs:1487
 msgctxt "info tab"
 msgid "Media"
 msgstr "媒体"
 
-#: src/ui/info.rs:1462
+#: src/ui/info.rs:1488
 msgctxt "info tab"
 msgid "Docs"
 msgstr "文档"
 
-#: src/ui/info.rs:1463
+#: src/ui/info.rs:1489
 msgctxt "info tab"
 msgid "Links"
 msgstr "链接"
 
-#: src/ui/info.rs:1546
+#: src/ui/info.rs:1572
 msgid "Invite via link"
 msgstr ""
 
-#: src/ui/info.rs:1556
+#: src/ui/info.rs:1582
 msgid "Getting the link…"
 msgstr ""
 
-#: src/ui/info.rs:1593
+#: src/ui/info.rs:1619
 msgid "Copy link"
 msgstr ""
 
-#: src/ui/info.rs:1657
+#: src/ui/info.rs:1683
 msgid "Make group admin"
 msgstr ""
 
-#: src/ui/info.rs:1661
+#: src/ui/info.rs:1687
 msgid "Dismiss as admin"
 msgstr ""
 
-#: src/ui/info.rs:1665
+#: src/ui/info.rs:1691
 msgid "Remove from group"
 msgstr ""
 
-#: src/ui/info.rs:1730
+#: src/ui/info.rs:1758
 msgid "Admins can:"
 msgstr ""
 
-#: src/ui/info.rs:1732
+#: src/ui/info.rs:1760
 msgid "Members can:"
 msgstr ""
 
-#: src/ui/info.rs:1875
+#: src/ui/info.rs:1904
 msgid "Change group photo"
 msgstr "更换群组头像"
 
-#: src/ui/info.rs:1882 src/ui/new_group.rs:304
+#: src/ui/info.rs:1911 src/ui/new_group.rs:309
 msgid "Change photo"
 msgstr "更换头像"
 
-#: src/ui/info.rs:1883 src/ui/new_group.rs:305
+#: src/ui/info.rs:1912 src/ui/new_group.rs:310
 msgid "Remove photo"
 msgstr "移除头像"
 
-#: src/ui/info.rs:1921
+#: src/ui/info.rs:1950
 msgid "Group name"
 msgstr "群组名称"
 
-#: src/ui/info.rs:1964
+#: src/ui/info.rs:1993
 msgid "Save name (Enter)"
 msgstr "保存名称（Enter）"
 
-#: src/ui/info.rs:1976
+#: src/ui/info.rs:2005
 msgid "Cancel (Escape)"
 msgstr "取消（Esc）"
 
-#: src/ui/login.rs:125
+#: src/ui/login.rs:16
+msgid "A native WhatsApp client."
+msgstr ""
+
+#: src/ui/login.rs:92 src/ui/mod.rs:536
+#, fuzzy
+msgid "Connecting to WhatsApp…"
+msgstr "未连接到 WhatsApp"
+
+#: src/ui/login.rs:99
+msgid "Linked. Waiting for your chats…"
+msgstr ""
+
+#: src/ui/login.rs:108
+msgid "This computer was unlinked from your phone. Requesting a new code."
+msgstr ""
+
+#: src/ui/login.rs:117
+msgid "Requesting a new code…"
+msgstr ""
+
+#: src/ui/login.rs:147
 msgid "Start over…"
 msgstr "重新开始…"
 
-#: src/ui/rail.rs:302
+#: src/ui/login.rs:165
+#, rust-format
+msgid "Requesting a code for +{phone}…"
+msgstr ""
+
+#: src/ui/login.rs:174
+msgid "Waiting for a code from WhatsApp…"
+msgstr ""
+
+#: src/ui/login.rs:185
+msgid "Unofficial client. Using it may be against WhatsApp's terms of service."
+msgstr ""
+
+#: src/ui/login.rs:211
+#, fuzzy
+msgid "Link this computer"
+msgstr "取消关联此电脑"
+
+#: src/ui/login.rs:225 src/ui/login.rs:281
+#, fuzzy
+msgid "Open WhatsApp on your phone"
+msgstr "在手机上打开 WhatsApp 即可查看。"
+
+#: src/ui/login.rs:226 src/ui/login.rs:282
+msgid "Tap Menu or Settings, then Linked devices"
+msgstr ""
+
+#: src/ui/login.rs:227
+msgid "Tap Link a device and point the phone at this code"
+msgstr ""
+
+#: src/ui/login.rs:244
+msgid "Link with phone number instead"
+msgstr ""
+
+#: src/ui/login.rs:259
+#, fuzzy
+msgid "Enter this code on your phone"
+msgstr "请在手机上更改排除的联系人。"
+
+#: src/ui/login.rs:264
+#, rust-format
+msgid "for +{phone}"
+msgstr ""
+
+#: src/ui/login.rs:285
+msgid "Tap Link a device, then Link with phone number instead"
+msgstr ""
+
+#: src/ui/login.rs:307
+#, fuzzy
+msgid "Copy code"
+msgstr "复制文本"
+
+#: src/ui/rail.rs:305
 msgid "Calls"
 msgstr "通话"
 
-#: src/ui/rail.rs:309
+#: src/ui/rail.rs:312
 msgid "Starred messages"
 msgstr "已加星标的消息"
 
-#: src/ui/rail.rs:317
+#: src/ui/rail.rs:320
 msgid "Archived"
 msgstr "已归档"
 
-#: src/ui/rail.rs:323
+#: src/ui/rail.rs:326
 msgid "Locked"
 msgstr "已锁定"
 
-#: src/ui/mod.rs:866
+#: src/ui/mod.rs:492
+#, fuzzy, rust-format
+msgid "Drop to send to {name}"
+msgstr "来自 {name} 的群组语音通话"
+
+#: src/ui/mod.rs:513
+#, fuzzy, rust-format
+msgid "Loading chat history… {percent}%"
+msgstr "正在加载聊天记录"
+
+#: src/ui/mod.rs:516
+#, fuzzy
+msgid "Loading chat history…"
+msgstr "正在加载聊天记录"
+
+#: src/ui/mod.rs:526
+#, rust-format
+msgid "ZapFast {version} is available"
+msgstr ""
+
+#: src/ui/mod.rs:543
+#, rust-format
+msgid "Offline ({reason}). Reconnecting…"
+msgstr ""
+
+#: src/ui/mod.rs:558
+#, fuzzy
+msgid "Not linked to a phone"
+msgstr "未关联"
+
+#: src/ui/mod.rs:592
+#, fuzzy
+msgid "Update"
+msgstr "更新于 {time}"
+
+#: src/ui/mod.rs:603
+msgid "Retry"
+msgstr ""
+
+#: src/ui/mod.rs:718
+msgid "Dismiss"
+msgstr ""
+
+#: src/ui/mod.rs:733
+#, fuzzy
+msgid "Copy this message"
+msgstr "复制消息 ID"
+
+#: src/ui/mod.rs:868
 msgid "Minimize"
 msgstr "最小化"
 
-#: src/ui/mod.rs:867
+#: src/ui/mod.rs:869
 msgid "Maximize"
 msgstr "最大化"
 
-#: src/ui/mod.rs:868
+#: src/ui/mod.rs:870
 msgid "Restore"
 msgstr "还原"
 
@@ -2808,49 +3305,39 @@ msgstr "还原"
 msgid "Add group members"
 msgstr "添加群组成员"
 
-#: src/ui/new_group.rs:84
-msgid "Search contacts"
-msgstr "搜索联系人"
-
-#: src/ui/new_group.rs:139
-#, rust-format
-msgid "{count} selected"
-msgid_plural "{count} selected"
-msgstr[0] "已选择 {count} 人"
-
-#: src/ui/new_group.rs:149
+#: src/ui/new_group.rs:154
 msgctxt "add group members"
 msgid "Add"
 msgstr ""
 
-#: src/ui/new_group.rs:151
+#: src/ui/new_group.rs:156
 msgid "Next"
 msgstr "下一步"
 
-#: src/ui/new_group.rs:153
+#: src/ui/new_group.rs:158
 msgid "Choose at least one person"
 msgstr "请至少选择一个人"
 
-#: src/ui/new_group.rs:179
+#: src/ui/new_group.rs:184
 #, rust-format
 msgid "Remove {name}"
 msgstr "移除 {name}"
 
-#: src/ui/new_group.rs:303
+#: src/ui/new_group.rs:308
 msgid "Add group photo"
 msgstr "添加群组头像"
 
-#: src/ui/new_group.rs:334
+#: src/ui/new_group.rs:339
 msgid "Group name (required)"
 msgstr "群组名称（必填）"
 
-#: src/ui/new_group.rs:409
+#: src/ui/new_group.rs:414
 #, rust-format
 msgid "{count} member besides you"
 msgid_plural "{count} members besides you"
 msgstr[0] "除你之外的 {count} 位成员"
 
-#: src/ui/new_group.rs:438
+#: src/ui/new_group.rs:443
 msgid "Creating the group…"
 msgstr "正在创建群组…"
 
@@ -2954,6 +3441,177 @@ msgstr ""
 #, rust-format
 msgid "{name} was removed from the group."
 msgstr ""
+
+#: src/ui/polls.rs:39
+#, fuzzy
+msgid "Question"
+msgstr "描述"
+
+#: src/ui/polls.rs:52
+msgid "Ask a question"
+msgstr ""
+
+#: src/ui/polls.rs:66
+#, fuzzy
+msgid "Answers"
+msgstr "无人接听"
+
+#: src/ui/polls.rs:92
+#, rust-format
+msgid "Answer {index}"
+msgstr ""
+
+#: src/ui/polls.rs:111
+#, fuzzy
+msgid "Remove answer"
+msgstr "无人接听"
+
+#: src/ui/polls.rs:129
+#, fuzzy
+msgid "Add answer"
+msgstr "无人接听"
+
+#: src/ui/polls.rs:141
+msgid "Allow multiple answers"
+msgstr ""
+
+#: src/ui/polls.rs:168
+#, fuzzy
+msgid "Sending…"
+msgstr "正在保存…"
+
+#: src/ui/polls.rs:170
+#, fuzzy
+msgid "Send poll"
+msgstr "发送文件"
+
+#: src/ui/polls.rs:220
+#, fuzzy
+msgid "Select one answer"
+msgstr "选择消息"
+
+#: src/ui/polls.rs:222
+#, fuzzy
+msgid "Select answers"
+msgstr "选择消息"
+
+#: src/ui/polls.rs:324
+#, fuzzy
+msgid "Sending vote…"
+msgstr "正在发送贴图包…"
+
+#: src/ui/polls.rs:328
+msgid "Waiting for your phone · earlier votes may be missing"
+msgstr ""
+
+#: src/ui/polls.rs:331
+msgid "Loading earlier votes from your phone…"
+msgstr ""
+
+#: src/ui/polls.rs:333
+msgid "Earlier votes have not been loaded yet"
+msgstr ""
+
+#: src/ui/polls.rs:335
+#, rust-format
+msgid "{} voter"
+msgid_plural "{} voters"
+msgstr[0] ""
+
+#: src/ui/polls.rs:354
+msgid "Voting key unavailable · use your phone"
+msgstr ""
+
+#: src/ui/polls.rs:361
+#, fuzzy
+msgid "Reconnect to vote"
+msgstr "连接已断开"
+
+#: src/ui/polls.rs:404 src/ui/polls.rs:433
+msgid "Show votes"
+msgstr ""
+
+#: src/ui/polls.rs:460
+msgid "Poll results"
+msgstr ""
+
+#: src/ui/polls.rs:487
+#, fuzzy
+msgid "This poll is no longer available."
+msgstr "此消息已不可用。"
+
+#: src/ui/polls.rs:508
+msgid "Earlier votes may still be missing. Results update as they arrive."
+msgstr ""
+
+#: src/ui/polls.rs:542
+#, rust-format
+msgid "{} vote"
+msgid_plural "{} votes"
+msgstr[0] ""
+
+#: src/ui/polls.rs:586
+msgid "Participant details are not available yet"
+msgstr ""
+
+#: src/ui/update.rs:25 src/ui/update.rs:38
+msgid "Update ZapFast"
+msgstr ""
+
+#: src/ui/update.rs:49
+#, fuzzy
+msgid "Close update"
+msgstr "检查更新"
+
+#: src/ui/update.rs:63
+msgid "Release notes"
+msgstr ""
+
+#: src/ui/update.rs:70
+msgid "Checking download…"
+msgstr ""
+
+#: src/ui/update.rs:72
+#, fuzzy
+msgid "Downloading update…"
+msgstr "正在下载…"
+
+#: src/ui/update.rs:85
+#, rust-format
+msgid "{received} of {total} MB"
+msgstr ""
+
+#: src/ui/update.rs:104
+msgid "Ready to install"
+msgstr ""
+
+#: src/ui/update.rs:113
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr ""
+
+#: src/ui/update.rs:121
+msgid "Restart to update"
+msgstr ""
+
+#: src/ui/update.rs:130
+msgid "Preparing to restart…"
+msgstr ""
+
+#: src/ui/update.rs:147
+msgid "Download from GitHub"
+msgstr ""
+
+#: src/ui/update.rs:152
+#, fuzzy
+msgid "Retry download"
+msgstr "下载"
+
+#: src/ui/update.rs:154
+#, fuzzy
+msgid "Download update"
+msgstr "下载"
 
 #~ msgid "Back to the chats"
 #~ msgstr "返回聊天"

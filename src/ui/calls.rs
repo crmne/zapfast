@@ -242,10 +242,12 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
         .map(|row| row.into_iter().cloned().collect())
         .collect();
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("call-history")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("call-history")
+            .auto_shrink([false, false]),
+        |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             if rows.is_empty() {
                 ui.add_space(12.0);
@@ -262,7 +264,8 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 history_row(app, ui, row, &mut actions);
             }
             ui.add_space(12.0);
-        });
+        },
+    );
     app.actions.extend(actions);
 }
 
@@ -527,10 +530,12 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
         Vec::new()
     };
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("new-call-contacts")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("new-call-contacts")
+            .auto_shrink([false, false]),
+        |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             if !frequent.is_empty() {
                 section(ui, &palette, &gettext(app.locale, "Frequently contacted"));
@@ -559,7 +564,8 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
             ui.add_space(12.0);
-        });
+        },
+    );
     if !actions.is_empty() {
         actions.push(Action::ShowNewCall(false));
     }

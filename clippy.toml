@@ -1,0 +1,6 @@
+# Lists show through `autoscroll::show` and `show_rows`, which note them for
+# middle-click autoscroll; a list shown directly would not scroll with it.
+disallowed-methods = [
+    { path = "egui::ScrollArea::show", reason = "show a list through crate::autoscroll::show, so middle-click autoscroll reaches it" },
+    { path = "egui::ScrollArea::show_rows", reason = "show a list through crate::autoscroll::show_rows, so middle-click autoscroll reaches it" },
+]

@@ -1228,11 +1228,15 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
 
     let list = widgets::raised(ui, &palette, suggestion_frame(&palette), |ui| {
         let row_height = 38.0;
-        egui::ScrollArea::vertical()
-            .id_salt("mention-members")
-            .max_height(row_height * candidates.len().min(5) as f32)
-            .auto_shrink([false, true])
-            .show_rows(ui, row_height, candidates.len(), |ui, range| {
+        crate::autoscroll::show_rows(
+            ui,
+            egui::ScrollArea::vertical()
+                .id_salt("mention-members")
+                .max_height(row_height * candidates.len().min(5) as f32)
+                .auto_shrink([false, true]),
+            row_height,
+            candidates.len(),
+            |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for index in range {
                     let (id, label) = &candidates[index];
@@ -1327,7 +1331,8 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                         picked = Some((id.clone(), label.clone()));
                     }
                 }
-            });
+            },
+        );
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(suggestion_list_id(), list.response.rect));
@@ -1637,6 +1642,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         // Grow from one to six lines, then scroll. The height
                         // is this frame's draft, measured above, rather than
                         // the scroll area's memory of the last frame.
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the composer's text field takes a middle press for pasting"
+                        )]
                         egui::ScrollArea::vertical()
                             .id_salt("composer-scroll")
                             .max_height(text_height)
@@ -2648,9 +2657,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     // The list has not been shown before: it starts at the top.
     let first_show = scroll_state.is_none();
     let offset = scroll_state.map_or(0.0, |state| state.offset.y);
+    // A middle click is scrolling this list. Like a wheel turn, it lets go
+    // of the newest message and stops a keyboard scroll.
+    let autoscrolled = app.autoscroll.scrolls(scroll_id);
     // A keyboard scroll under way stops for a jump to a message, for the
     // reaction bar, which holds the view still, and for a wheel or trackpad
-    // turn over the message list, before it takes another step.
+    // turn or a middle-click autoscroll of the message list, before it takes
+    // another step.
     let mut key_scroll = conversation.key_scroll.take();
     let list = ui.available_rect_before_wrap();
     let wheel_over_list = ui.input(|input| {
@@ -2671,7 +2684,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     } else {
         carried
     };
-    if view.anchor.is_some() || view.reaction.is_some() || wheel_over_list || carried != 0.0 {
+    if view.anchor.is_some()
+        || view.reaction.is_some()
+        || wheel_over_list
+        || carried != 0.0
+        || autoscrolled
+    {
         key_scroll = None;
     }
     let key_duration = ui.style().scroll_animation.duration.max;
@@ -2680,17 +2698,21 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let key_start = time - f64::from(ui.input(|input| input.stable_dt.min(0.1)));
     let mut pinned = false;
     let mut visible_day = None;
-    let output = egui::ScrollArea::vertical()
-        .id_salt(("messages", &chat.id))
-        .auto_shrink([false, false])
-        .stick_to_bottom(view.reaction.is_none())
-        .scroll_source(if view.reaction.is_some() {
-            egui::scroll_area::ScrollSource::NONE
-        } else {
-            Default::default()
-        })
-        .animated(false)
-        .show(ui, |ui| {
+    let output = crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("messages", &chat.id))
+            .auto_shrink([false, false])
+            // egui would put a list that was at its end straight back there,
+            // since autoscroll sets the offset rather than scrolling by a delta.
+            .stick_to_bottom(view.reaction.is_none() && !autoscrolled)
+            .scroll_source(if view.reaction.is_some() {
+                egui::scroll_area::ScrollSource::NONE
+            } else {
+                Default::default()
+            })
+            .animated(false),
+        |ui| {
             // Scroll while selecting near an edge. `scroll_with_delta` also
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
@@ -3046,6 +3068,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     Sense::hover()
                                 },
                             );
+                            crate::autoscroll::primary_drag(ui, &pick);
                             let fill = if checked {
                                 palette.accent.gamma_multiply(0.16)
                             } else if pick.hovered() {
@@ -3297,7 +3320,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                 );
                 ui.ctx().request_repaint();
             }
-        });
+        },
+    );
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day);
@@ -3310,7 +3334,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         );
     });
     // Keep the view at the end while initial content expands, until the user
-    // scrolls with the wheel, trackpad, or scrollbar.
+    // scrolls with the wheel, trackpad, scrollbar, or middle-click autoscroll.
     let bar = Rect::from_min_max(
         pos2(output.inner_rect.right() - 16.0, output.inner_rect.top()),
         output.inner_rect.right_bottom(),
@@ -3327,7 +3351,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     .pointer
                     .interact_pos()
                     .is_some_and(|pos| bar.contains(pos)))
-    });
+    }) || autoscrolled;
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
@@ -3861,6 +3885,7 @@ fn bubble(
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
         let strip = ui.interact(strip, id.with("row"), Sense::click_and_drag());
+        crate::autoscroll::primary_drag(ui, &strip);
         if strip.clicked() {
             actions.push(Action::FocusComposer);
         }
@@ -7963,6 +7988,7 @@ fn rich_body(
         id.with("body-text"),
         Sense::CLICK | Sense::DRAG,
     );
+    crate::autoscroll::primary_drag(ui, &response);
     // The expanded target owns pointer input in the padding. Preserve the
     // bubble gestures that lived there before, while double-clicks on actual
     // text still select a word.

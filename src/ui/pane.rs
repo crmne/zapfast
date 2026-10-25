@@ -324,10 +324,12 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
     // Taken for the frame rather than cloned: the rows only push actions.
     let hits = std::mem::take(&mut app.chat_search_hits);
     let query = app.chat_search.trim().to_owned();
-    egui::ScrollArea::vertical()
-        .id_salt("chat-search-hits")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt("chat-search-hits")
+            .auto_shrink([false, false]),
+        |ui| {
             for (index, hit) in hits.iter().enumerate() {
                 let selected = app.chat_search_selected == Some(index);
                 if hit_row(app, ui, hit, &query, selected, scroll_to == Some(index)) {
@@ -359,7 +361,8 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 });
             }
             ui.add_space(8.0);
-        });
+        },
+    );
     app.chat_search_hits = hits;
     if picked && overlay {
         // Folded, not closed: the query, day and results wait for the

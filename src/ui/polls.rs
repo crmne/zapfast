@@ -70,10 +70,12 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         let height = (ui.ctx().content_rect().height() - 320.0).clamp(90.0, 330.0);
         let mut remove = None;
         let removable = app.poll_draft.options.len() > 2;
-        egui::ScrollArea::vertical()
-            .id_salt("poll-answers")
-            .max_height(height)
-            .show(ui, |ui| {
+        crate::autoscroll::show(
+            ui,
+            egui::ScrollArea::vertical()
+                .id_salt("poll-answers")
+                .max_height(height),
+            |ui| {
                 let answer_format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
                 let mut answer_layouter =
                     |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
@@ -114,7 +116,8 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                         }
                     });
                 }
-            });
+            },
+        );
         if let Some(index) = remove {
             app.poll_draft.options.remove(index);
         }
@@ -509,13 +512,15 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         );
     }
     let height = widgets::dialog_scroll_height(ui);
-    let area = egui::ScrollArea::vertical()
-        .id_salt(("poll-results", chat, id))
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-        .max_height(height)
-        .min_scrolled_height(height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
+    let area = crate::autoscroll::show(
+        ui,
+        egui::ScrollArea::vertical()
+            .id_salt(("poll-results", chat, id))
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .max_height(height)
+            .min_scrolled_height(height)
+            .auto_shrink([false, true]),
+        |ui| {
             for (index, option) in options.iter().enumerate() {
                 ui.add_space(16.0);
                 let count = state.counts.get(index).copied().unwrap_or(0);
@@ -584,7 +589,8 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     );
                 }
             }
-        });
+        },
+    );
     ui.ctx().data_mut(|data| {
         data.insert_temp(
             super::conversation::bubble_id(chat, id).with("poll-results-viewport"),

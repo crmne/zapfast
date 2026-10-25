@@ -635,6 +635,19 @@ between the chat list, Settings, and the wallpaper picker. Forward repeats a
 step until you visit something new. The buttons do nothing while a dialog,
 menu, or other overlay is open; close it first, with Escape or its own button.
 
+On Windows, and on Linux once you turn on **Middle-click autoscroll** in
+Settings, middle-click anywhere in a list, such as the chat list, a
+conversation, or Settings, then move the pointer away from that point. The
+list follows the pointer, faster as the distance grows, and the pointer shows
+the direction it is scrolling; speed and dead zone match Chromium's
+autoscroll. Moving across another pane keeps the original list in control.
+Hold the middle button while moving and release it to stop. After a plain
+middle click, click again, press Escape, turn the wheel, or switch to another
+window; that click or Escape only stops the scrolling. Text fields keep
+middle-click paste, and sliders and scroll bars keep their own dragging. It is
+off by default on Linux, where a middle click usually pastes. macOS keeps its
+existing middle-click behaviour.
+
 Sending while reading older messages keeps your place. Use the
 newest-message button or `End` to return to the latest message when you are
 ready. After you send, the chat moves to the top of the chat list, and the list
