@@ -2624,6 +2624,11 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// Downloads missing attachments in a selection through a bounded queue.
+    DownloadSelected {
+        chat: ChatId,
+        messages: Vec<String>,
+    },
     /// Downloads a motion photo's clip.
     DownloadMotion {
         chat: ChatId,

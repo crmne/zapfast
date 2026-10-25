@@ -123,6 +123,16 @@ no box. If a selected message is deleted, it leaves the selection automatically.
 Keyboard focus outlines the box; screen readers identify its message
 by sender, time, and a short summary.
 
+**Development builds** also offer **Download** (the downward arrow) in the
+selection bar. It downloads only missing attachments from the selected messages
+into the normal download location. Saved files and downloads already in progress
+are skipped. Each account can have up to 128 selected files waiting or running,
+with two batch downloads running at a time. A selection that does not fit is
+refused in full; select fewer files or wait for the current batch. Errors appear
+on each attachment as usual, where you can retry. Disconnecting cancels waiting
+files; select them again after reconnecting. Waiting files are not saved across
+restarts, and locking the app pauses new batch downloads until you unlock it.
+
 ## Starred messages
 
 **Development builds** can star messages. Right-click a message and choose

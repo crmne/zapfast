@@ -4282,6 +4282,17 @@ impl App {
 
     /// Updates one account's link state, discarding its drafts when it is unlinked.
     fn handle_link(&mut self, status: LinkStatus, live: bool) {
+        if !status.is_connected() {
+            let waiting: Vec<_> = self.selected_downloads.cancel_pending().collect();
+            for target in waiting {
+                self.handle_media(
+                    &target.chat,
+                    &target.message,
+                    None,
+                    Err("Not connected to WhatsApp".into()),
+                );
+            }
+        }
         // Only a drop after being connected is news; the startup sequence
         // (Starting, Connecting, Connected) stays silent. An account that is
         // not on screen is never announced.
@@ -4344,6 +4355,7 @@ impl App {
                 self.new_contact_dialog_request = None;
                 self.new_contact_pending = false;
                 let account = self.account().id.clone();
+                self.selected_downloads = Default::default();
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
@@ -5068,6 +5080,10 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        // Always settle the batch slot, even if its chat or message was deleted.
+        if card.is_none() {
+            self.selected_downloads.finish(chat, id);
+        }
         // The info panel's listing keeps its own copy of the message, so a
         // picture without a preview stops being blank once its file is there.
         if let Ok(path) = &result
@@ -6640,6 +6656,39 @@ impl App {
                 }
                 motion.state = MediaState::Downloading;
                 self.backend.send(Command::DownloadMotion { chat, message });
+            }
+            Action::DownloadSelected { chat, messages } => {
+                if !self.is_connected() {
+                    self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "Not connected to WhatsApp",
+                    ));
+                    return;
+                }
+                let Some(conversation) = self.conversations.get(&chat) else {
+                    return;
+                };
+                let targets =
+                    crate::selected_downloads::targets(&chat, &conversation.messages, &messages)
+                        .collect();
+                match self.selected_downloads.enqueue(targets) {
+                    Ok(added) => {
+                        for target in added {
+                            if let Some(media) = self
+                                .conversations
+                                .get_mut(&target.chat)
+                                .and_then(|conversation| conversation.message_mut(&target.message))
+                                .and_then(|message| message.content.media_mut())
+                            {
+                                media.state = MediaState::Downloading;
+                            }
+                        }
+                    }
+                    Err(()) => self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "Too many changes at once. Try again later.",
+                    )),
+                }
             }
             Action::Download {
                 manual,
@@ -9044,11 +9093,51 @@ impl App {
         self.tick_audio(ctx);
         self.tick_video(ctx);
         self.apply_actions(ctx);
+        self.pump_selected_downloads();
         self.sync_prefetch();
         self.hold_media();
         self.follow_receipts();
         self.sync_badge();
         self.request_attention(ctx);
+    }
+
+    /// Completion events wake the app and free the next batch slot. Each
+    /// account sends through its own backend, including while off screen.
+    fn pump_selected_downloads(&mut self) {
+        let locked = self.app_lock.is_locked();
+        for account in &mut self.accounts {
+            if !account.link.is_connected() {
+                continue;
+            }
+            if locked {
+                continue;
+            }
+            while let Some(target) = account.selected_downloads.next() {
+                let eligible = account
+                    .conversations
+                    .get(&target.chat)
+                    .and_then(|conversation| conversation.message(&target.message))
+                    .is_some_and(|message| {
+                        can_select(&message.content)
+                            && message
+                                .content
+                                .media()
+                                .is_some_and(|media| media.path.is_none())
+                    });
+                if !eligible {
+                    account
+                        .selected_downloads
+                        .finish(&target.chat, &target.message);
+                    continue;
+                }
+                account.backend.send(Command::Download {
+                    manual: true,
+                    card: None,
+                    chat: target.chat,
+                    message: target.message,
+                });
+            }
+        }
     }
 
     /// Answers the system's sleep and wake. Every account reconnects its link
@@ -10483,6 +10572,7 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 }
 
 mod calls;
+mod selected_downloads;
 pub use calls::CallPerson;
 
 #[cfg(test)]

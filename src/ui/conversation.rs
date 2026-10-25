@@ -9830,6 +9830,31 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                     messages: selected.to_vec(),
                 }));
             }
+            let downloadable = app.is_connected()
+                && app.conversations.get(chat).is_some_and(|conversation| {
+                    crate::selected_downloads::targets(chat, &conversation.messages, selected)
+                        .next()
+                        .is_some()
+                });
+            if ui
+                .add_enabled_ui(downloadable, |ui| {
+                    theme::icon_button(
+                        ui,
+                        Icon::Download,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &crate::i18n::gettext(locale, "Download"),
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                app.actions.push(Action::DownloadSelected {
+                    chat: chat.to_owned(),
+                    messages: selected.to_vec(),
+                });
+            }
             let delete = ui
                 .add_enabled_ui(!selected.is_empty(), |ui| {
                     theme::pill_button(

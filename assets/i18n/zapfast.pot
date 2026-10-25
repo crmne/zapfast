@@ -9,7 +9,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-24 10:21+0200\n"
+"POT-Creation-Date: 2026-10-25 01:17-0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -715,12 +715,12 @@ msgid "Edit"
 msgstr ""
 
 #: src/ui/conversation.rs:5684 src/ui/conversation.rs:5870
-#: src/ui/conversation.rs:6146 src/ui/conversation.rs:9852
+#: src/ui/conversation.rs:6146 src/ui/conversation.rs:9877
 msgid "Delete for everyone"
 msgstr ""
 
 #: src/ui/conversation.rs:5685 src/ui/conversation.rs:5875
-#: src/ui/conversation.rs:6159 src/ui/conversation.rs:9853
+#: src/ui/conversation.rs:6159 src/ui/conversation.rs:9878
 msgid "Delete for me"
 msgstr ""
 
@@ -752,8 +752,9 @@ msgid "Downloading…"
 msgstr ""
 
 #: src/ui/conversation.rs:5693 src/ui/conversation.rs:6230
-#: src/ui/image_preview.rs:423 src/ui/image_preview.rs:778
-#: src/ui/image_preview.rs:786 src/ui/image_preview.rs:868
+#: src/ui/conversation.rs:9847 src/ui/image_preview.rs:423
+#: src/ui/image_preview.rs:778 src/ui/image_preview.rs:786
+#: src/ui/image_preview.rs:868
 msgid "Download"
 msgstr ""
 
@@ -872,15 +873,15 @@ msgstr[1] ""
 msgid "Forward…"
 msgstr ""
 
-#: src/ui/conversation.rs:9838
+#: src/ui/conversation.rs:9863
 msgid "Delete…"
 msgstr ""
 
-#: src/ui/conversation.rs:11630
+#: src/ui/conversation.rs:11655
 msgid "View once"
 msgstr ""
 
-#: src/ui/conversation.rs:11659
+#: src/ui/conversation.rs:11684
 msgid "The recipient can open this photo only once, on their phone."
 msgstr ""
 
@@ -1988,7 +1989,7 @@ msgstr ""
 msgid "No answer"
 msgstr ""
 
-#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4295
+#: src/ui/call.rs:407 src/ui/calls.rs:120 src/app.rs:4306
 msgid "Connection lost"
 msgstr ""
 
@@ -2268,11 +2269,11 @@ msgstr ""
 msgid "This number is not on WhatsApp"
 msgstr ""
 
-#: src/app.rs:902
+#: src/app.rs:902 src/app.rs:6664
 msgid "Not connected to WhatsApp"
 msgstr ""
 
-#: src/app.rs:905 src/app.rs:7928
+#: src/app.rs:905 src/app.rs:7977
 msgid "Enter a valid international phone number"
 msgstr ""
 
@@ -2318,7 +2319,7 @@ msgstr ""
 msgid "Could not use this picture."
 msgstr ""
 
-#: src/app.rs:4204 src/app.rs:7817
+#: src/app.rs:4204 src/app.rs:7866
 msgid "This chat already has three pinned messages"
 msgstr ""
 
@@ -2328,84 +2329,88 @@ msgid ""
 "Ask someone in the group to call it, and answer here."
 msgstr ""
 
-#: src/app.rs:4214 src/app.rs:6870
+#: src/app.rs:4214 src/app.rs:6919
 msgid "ZapFast can't join group calls yet: open the link on your phone."
 msgstr ""
 
-#: src/app.rs:4305
+#: src/app.rs:4316
 msgid "Connecting"
 msgstr ""
 
-#: src/app.rs:4945
+#: src/app.rs:4957
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr ""
 
-#: src/app.rs:4949
+#: src/app.rs:4961
 msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
 
-#: src/app.rs:4953 src/app.rs:5788
+#: src/app.rs:4965 src/app.rs:5804
 msgid "Not sent: view-once mode is available for one photo at a time."
 msgstr ""
 
-#: src/app.rs:7034
+#: src/app.rs:6689 src/group_admin.rs:219
+msgid "Too many changes at once. Try again later."
+msgstr ""
+
+#: src/app.rs:7083
 msgid "A selected chat is no longer writable"
 msgstr ""
 
-#: src/app.rs:7575
+#: src/app.rs:7624
 msgid "Added to favorites"
 msgstr ""
 
-#: src/app.rs:7652
+#: src/app.rs:7701
 msgid "Sending the sticker pack…"
 msgstr ""
 
-#: src/app.rs:8048 src/ui/labels.rs:257
+#: src/app.rs:8097 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr ""
 
-#: src/app.rs:8450
+#: src/app.rs:8499
 msgid "Invite link copied"
 msgstr ""
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
-#: src/app.rs:8717
+#: src/app.rs:8766
 #, rust-format
 msgid "{}: {}"
 msgstr ""
 
-#: src/app.rs:8827
+#: src/app.rs:8876
 msgid "The old link no longer works. Here is a new one."
 msgstr ""
 
-#: src/app.rs:8869
+#: src/app.rs:8918
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/app.rs:9274
+#: src/app.rs:9363
 msgid "App lock password saved"
 msgstr ""
 
-#: src/app.rs:9282
+#: src/app.rs:9371
 msgid "App lock turned off"
 msgstr ""
 
-#: src/app.rs:9416
+#: src/app.rs:9505
 msgid "This video opens in your system player"
 msgstr ""
 
-#: src/app.rs:10111
+#: src/app.rs:10200
 msgid "Copied image"
 msgstr ""
 
-#: src/app.rs:10114 src/app.rs:10119
+#: src/app.rs:10203 src/app.rs:10208
 msgid "Failed to copy image"
 msgstr ""
 
@@ -2890,7 +2895,7 @@ msgstr ""
 msgid "Direct messages and groups"
 msgstr ""
 
-#: src/account.rs:308
+#: src/account.rs:310
 #, rust-format
 msgid "Account {id}"
 msgstr ""
@@ -3305,10 +3310,6 @@ msgstr ""
 
 #: src/group_admin.rs:218
 msgid "Only group admins can do that."
-msgstr ""
-
-#: src/group_admin.rs:219
-msgid "Too many changes at once. Try again later."
 msgstr ""
 
 #: src/group_admin.rs:220

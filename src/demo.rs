@@ -2975,6 +2975,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "clear-chat" => {
                 app.dialog = app.open_chat.clone().map(Dialog::ConfirmClearChat);
             }
+            "download-selection" => {
+                if let Some(chat) = app.open_chat.clone() {
+                    app.selection = Some((
+                        chat,
+                        vec!["ada-doc".into(), "ada-voice".into(), "ada-reply".into()],
+                    ));
+                }
+            }
             "select" => {
                 if let Some(chat) = app.open_chat.clone() {
                     let ids: Vec<String> = app
@@ -6203,6 +6211,7 @@ mod tests {
             "quotes",
             "quote-jump",
             "select",
+            "download-selection",
             "delete-message",
             "delete-message-mine",
             "remove-pack",
@@ -6779,6 +6788,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn selection_download_button_uses_the_existing_downloader_for_missing_files_only() {
+        let mut app = app();
+        apply_flags(&mut app, Some("download-selection"));
+        let chat = app.open_chat.clone().unwrap();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let pos = nodes
+            .iter()
+            .filter(|(label, _, _)| label == "Download")
+            .max_by(|a, b| a.2.y.total_cmp(&b.2.y))
+            .expect("selection download control")
+            .2;
+        for pressed in [true, false] {
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        app.background_frame(&ctx);
+        let commands = app.backend.take_demo_commands();
+        let downloads: Vec<_> = commands
+            .iter()
+            .filter_map(|command| match command {
+                crate::backend::Command::Download {
+                    chat: target,
+                    message,
+                    manual: true,
+                    card: None,
+                } if target == &chat => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(downloads, ["ada-doc", "ada-voice"]);
+        assert_eq!(
+            app.selection.as_ref().unwrap().1.len(),
+            3,
+            "downloading keeps the selection"
+        );
     }
 
     /// Whole-message exports resolve mentions and retain captions and media labels.

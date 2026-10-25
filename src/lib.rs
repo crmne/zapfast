@@ -43,6 +43,7 @@ pub mod privacy;
 pub mod proxy;
 pub mod qr;
 pub mod safety;
+mod selected_downloads;
 pub mod settings;
 pub mod single_instance;
 pub mod sticker_meta;
