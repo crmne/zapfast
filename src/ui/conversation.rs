@@ -6201,12 +6201,12 @@ fn reactor_row(ui: &mut egui::Ui, view: &View<'_>, reaction: &Reaction) -> egui:
     };
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), REACTOR_ROW_HEIGHT), sense);
+    let (id, name) = reactor(view, reaction);
     if ui.is_rect_visible(rect) {
         if reaction.from_me && response.hovered() {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
         }
-        let (id, name) = reactor(view, reaction);
         let avatar =
             Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), Vec2::splat(28.0));
         let picture = view.avatars.get(id).and_then(|picture| picture.as_deref());
@@ -6241,6 +6241,13 @@ fn reactor_row(ui: &mut egui::Ui, view: &View<'_>, reaction: &Reaction) -> egui:
         });
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Label,
+                true,
+                format!("{name}: {}", reaction.emoji),
+            )
+        });
         response
     }
 }
