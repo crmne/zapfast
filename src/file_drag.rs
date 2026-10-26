@@ -111,6 +111,9 @@ pub fn start(
                     (xlib.XUngrabPointer)(display.as_ptr().cast(), x11_dl::xlib::CurrentTime);
                     (xlib.XFlush)(display.as_ptr().cast());
                 }
+                // Our implicit grab is gone even if the helper fails to start.
+                ctx.stop_dragging();
+                ctx.input_mut(|input| input.pointer = Default::default());
                 x11::start(
                     handle.window.try_into().map_err(|_| Failure::Unsupported)?,
                     path,
