@@ -29,18 +29,26 @@ impl Worker {
     pub(super) async fn stop_chat_export(&mut self) {
         if let Some(job) = self.chat_export.job.take() {
             job.cancelled.store(true, Ordering::Release);
-            if let Some(task) = job.task
-                && task.await.is_err()
-            {
-                self.emit(Event::ChatExportFinished {
-                    request: job.request,
-                    result: Err("The export stopped unexpectedly".into()),
-                });
-                return;
-            }
+            let result = if let Some(mut task) = job.task {
+                match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
+                    Ok(Ok(())) => Ok(None),
+                    Ok(Err(_)) => Err("The export stopped unexpectedly".into()),
+                    Err(_) => {
+                        // Queued blocking tasks can be aborted; running ones retain their
+                        // cancellation flag and temporary-file cleanup until I/O returns.
+                        task.abort();
+                        Err(
+                            "Export cancellation is pending while storage finishes responding"
+                                .into(),
+                        )
+                    }
+                }
+            } else {
+                Ok(None)
+            };
             self.emit(Event::ChatExportFinished {
                 request: job.request,
-                result: Ok(None),
+                result,
             });
         }
     }
@@ -80,7 +88,7 @@ impl Worker {
         self.chat_export.job = Some(Job {
             request,
             chat,
-            cancelled: cancelled.clone(),
+            cancelled,
             task: None,
         });
         let commands = self.commands.clone();
@@ -98,13 +106,11 @@ impl Worker {
                     &[extension],
                 )
                 .save_file();
-            if !cancelled.load(Ordering::Acquire) {
-                let _ = commands.send(Command::ChatExportTarget {
-                    request,
-                    include_media,
-                    target,
-                });
-            }
+            let _ = commands.send(Command::ChatExportTarget {
+                request,
+                include_media,
+                target,
+            });
         });
     }
 
@@ -123,6 +129,14 @@ impl Worker {
             return;
         };
         if job.task.is_some() {
+            return;
+        }
+        if job.cancelled.load(Ordering::Acquire) {
+            self.chat_export.job = None;
+            self.emit(Event::ChatExportFinished {
+                request,
+                result: Ok(None),
+            });
             return;
         }
         let Some(target) = target else {
@@ -216,6 +230,77 @@ impl Worker {
 mod tests {
     use super::super::receipt_tests;
     use super::*;
+
+    #[test]
+    fn a_cancelled_picker_result_finishes_without_opening_the_archive_or_target() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.chat_export.job = Some(Job {
+            request: 7,
+            chat: "fixture".into(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            task: None,
+        });
+        worker.cancel_chat_export_for("fixture");
+        worker.chat_export_target(7, true, Some(PathBuf::from("not-opened.zip")));
+        assert!(worker.chat_export.job.is_none());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Event::ChatExportFinished {
+                request: 7,
+                result: Ok(None)
+            }
+        ));
+        worker.chat_export_target(7, true, None);
+        assert!(events.try_recv().is_err(), "a late duplicate stays stale");
+    }
+
+    #[tokio::test]
+    async fn cancellation_does_not_wait_forever_for_blocking_storage() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let (release, blocked) = std::sync::mpsc::channel();
+        struct Release(std::sync::mpsc::Sender<()>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let release = Release(release);
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (finished, done) = tokio::sync::oneshot::channel();
+        let task = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = blocked.recv();
+            let _ = finished.send(flag.load(Ordering::Acquire));
+        });
+        ready.await.unwrap();
+        worker.chat_export.job = Some(Job {
+            request: 8,
+            chat: "fixture".into(),
+            cancelled: cancelled.clone(),
+            task: Some(task),
+        });
+        tokio::time::timeout(Duration::from_secs(3), worker.stop_chat_export())
+            .await
+            .unwrap();
+        assert!(cancelled.load(Ordering::Acquire));
+        assert!(worker.chat_export.job.is_none());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Event::ChatExportFinished {
+                request: 8,
+                result: Err(_)
+            }
+        ));
+        drop(release);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), done)
+                .await
+                .unwrap()
+                .unwrap()
+        );
+    }
 
     #[tokio::test]
     async fn withheld_exports_never_open_a_picker_and_stale_callbacks_leave_new_work_alone() {

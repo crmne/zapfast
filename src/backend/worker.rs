@@ -2047,18 +2047,15 @@ impl Worker {
     }
 
     fn emit_chat(&self, id: &str) {
-        if self
-            .archive
-            .chat(id)
-            .ok()
-            .flatten()
-            .is_none_or(|chat| chat.locked)
-        {
-            self.cancel_chat_export_for(id);
-        }
-        if let Ok(Some(mut chat)) = self.archive.chat(id) {
-            self.polish_chat(&mut chat);
-            self.emit(Event::ChatUpdated(Box::new(chat)));
+        match self.archive.chat(id) {
+            Ok(Some(mut chat)) => {
+                if chat.locked {
+                    self.cancel_chat_export_for(id);
+                }
+                self.polish_chat(&mut chat);
+                self.emit(Event::ChatUpdated(Box::new(chat)));
+            }
+            _ => self.cancel_chat_export_for(id),
         }
     }
 

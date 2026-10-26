@@ -14,7 +14,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, mut include_med
         palette.text,
     );
     if let Some(chat) = app.chat(chat) {
-        ui.label(&chat.name);
+        ui.label(app.chat_title(chat));
     }
     ui.label(gettext(locale, "Save all messages stored on this computer. Missing history and attachments will not be downloaded."));
     ui.label(gettext(

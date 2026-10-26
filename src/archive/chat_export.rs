@@ -171,12 +171,14 @@ impl Archive {
                     .compression_method(zip::CompressionMethod::Deflated),
             )?;
             copy_cancelled(transcript.as_file_mut(), &mut zip, cancelled)?;
-            zip.finish()?.sync_all()?;
+            check_cancelled(cancelled)?;
+            zip.finish()?;
         }
         drop(zip);
         check_cancelled(cancelled)?;
         let file = bundle.unwrap_or(transcript);
         file.as_file().sync_all()?;
+        check_cancelled(cancelled)?;
         file.persist(target).map_err(|error| error.error)?;
         Ok(counts)
     }

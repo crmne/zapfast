@@ -3632,21 +3632,19 @@ impl App {
                     .is_some_and(|(pending, _)| *pending == request)
                 {
                     self.chat_export = None;
-                    if live {
-                        if matches!(self.dialog, Some(Dialog::ExportChat { .. })) {
-                            self.dialog = None;
-                        }
-                        match result {
-                            Ok(Some((path, counts))) => self.toast(
-                                crate::i18n::gettext(self.locale, "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: {missing}.")
-                                    .replace("{path}", &path.display().to_string())
-                                    .replace("{messages}", &counts.messages.to_string())
-                                    .replace("{files}", &counts.files.to_string())
-                                    .replace("{missing}", &counts.missing.to_string()),
-                            ),
-                            Ok(None) => {}
-                            Err(error) => self.toast_error(error),
-                        }
+                    if live && matches!(self.dialog, Some(Dialog::ExportChat { .. })) {
+                        self.dialog = None;
+                    }
+                    match result {
+                        Ok(Some((path, counts))) => self.toast(
+                            crate::i18n::gettext(self.locale, "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: {missing}.")
+                                .replace("{path}", &path.display().to_string())
+                                .replace("{messages}", &counts.messages.to_string())
+                                .replace("{files}", &counts.files.to_string())
+                                .replace("{missing}", &counts.missing.to_string()),
+                        ),
+                        Ok(None) => {}
+                        Err(error) => self.toast_error(error),
                     }
                 }
             }
@@ -12581,6 +12579,42 @@ mod tests {
             false,
         );
         assert!(app.chat_export.is_none());
+    }
+
+    #[test]
+    fn hidden_account_exports_report_outcomes_without_closing_the_visible_dialog() {
+        for failed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            app.accounts[1].me_name = Some("Studio".into());
+            app.accounts[1].chat_export = Some((7, Default::default()));
+            app.dialog = Some(Dialog::ExportChat {
+                chat: "visible".into(),
+                include_media: false,
+            });
+            app.active = 1;
+            app.events_hidden = true;
+            let result = if failed {
+                Err("Synthetic storage failure".into())
+            } else {
+                Ok(Some((PathBuf::from("fixture.txt"), Default::default())))
+            };
+            app.apply_backend_event(Event::ChatExportFinished { request: 7, result }, false);
+            assert!(app.chat_export.is_none());
+            assert!(
+                matches!(&app.dialog, Some(Dialog::ExportChat { chat, .. }) if chat == "visible")
+            );
+            app.events_hidden = false;
+            app.active = 0;
+            app.announcer.show(&egui::Context::default(), true);
+            let spoken = app.announcer.spoken().join(" ");
+            let expected = if failed {
+                "Studio: Synthetic storage failure"
+            } else {
+                "Studio: Saved fixture.txt"
+            };
+            assert!(spoken.contains(expected), "{spoken}");
+        }
     }
 
     /// Background history is each account's own switch. Only the account on
