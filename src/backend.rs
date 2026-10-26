@@ -199,6 +199,26 @@ pub enum Command {
         chat: ChatId,
         composing: bool,
     },
+    SetChatExportAllowed(bool),
+    ExportChat {
+        request: u64,
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
+    ChatExportTarget {
+        request: u64,
+        include_media: bool,
+        target: Option<PathBuf>,
+    },
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
     /// Stores the open chat's unsent text, so it survives a restart.
     SaveDraft {
         chat: ChatId,
@@ -1148,6 +1168,14 @@ pub enum Event {
         complete: bool,
     },
     MessageUpdated(Box<Message>),
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
     /// The account's media cache as measured, `None` when it could not be
     /// read. `cleared` says the cache was just emptied, so files the
     /// interface still points into it are gone.

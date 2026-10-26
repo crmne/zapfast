@@ -32,6 +32,7 @@ hkdf = "0.13"
 hmac = "0.13"
 # Reads .wastickers zip archives.
 zip = { version = "9", default-features = false, features = ["deflate"] }
+tempfile = "3"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -305,7 +306,6 @@ windows = { version = "0.62", features = ["Media_Control", "Foundation_Collectio
 winresource = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
 # Checks the default log filter the way fastframe-log's logger reads it.
 # Already in the tree through fastframe-log, at this version.
 env_logger = { version = "0.11", default-features = false }

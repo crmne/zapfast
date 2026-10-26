@@ -2275,6 +2275,10 @@ pub enum Dialog {
     ConfirmDeleteChat(ChatId),
     /// Confirms clearing a chat's messages, which cannot be undone.
     ConfirmClearChat(ChatId),
+    ExportChat {
+        chat: ChatId,
+        include_media: bool,
+    },
     /// Leaves a group or channel, optionally archiving the chat.
     ConfirmLeaveGroup(ChatId),
     /// Confirms deleting one message. The archive is the only copy, so a
@@ -2724,6 +2728,11 @@ pub enum Action {
     OpenLog(PathBuf),
     OpenFolder(PathBuf),
     /// Saves a copy of a downloaded attachment where the person chooses.
+    ExportChat {
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
     SaveAttachmentAs {
         path: PathBuf,
         name: String,

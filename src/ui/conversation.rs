@@ -635,6 +635,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     } else {
                         crate::i18n::gettext(app.locale, "Archive")
                     };
+                    let export_label = crate::i18n::gettext(app.locale, "Export chat…");
                     let clear_label = crate::i18n::gettext(app.locale, "Clear chat");
                     let copy_number_label = crate::i18n::gettext(app.locale, "Copy number");
                     let close_label = crate::i18n::gettext(app.locale, "Close chat");
@@ -646,6 +647,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             pin_label.as_ref(),
                             archive_label.as_ref(),
                             clear_label.as_ref(),
+                            export_label.as_ref(),
                             leave_label.as_ref(),
                             copy_number_label.as_ref(),
                             close_label.as_ref(),
@@ -694,6 +696,18 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             ) {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+                            }
+                            if widgets::menu_item_enabled(
+                                ui,
+                                &palette,
+                                Some(Icon::Download),
+                                export_label.as_ref(),
+                                !chat.locked && app.chat_export.is_none(),
+                            ) {
+                                app.actions.push(Action::ShowDialog(Dialog::ExportChat {
+                                    chat: chat.id.clone(),
+                                    include_media: false,
+                                }));
                             }
                             // Clearing reaches the phone, so it waits for a
                             // connection, as deleting does in the chat list.

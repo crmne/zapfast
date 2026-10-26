@@ -1,8 +1,9 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
-pub mod accounts;
+mod accounts;
 pub mod call;
 pub mod calls;
+pub mod chat_export;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;

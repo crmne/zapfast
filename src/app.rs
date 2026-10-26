@@ -3616,6 +3616,40 @@ impl App {
                     self.toast_error(error);
                 }
             }
+            Event::ChatExportProgress { request, counts } => {
+                if self
+                    .chat_export
+                    .as_ref()
+                    .is_some_and(|(pending, _)| *pending == request)
+                {
+                    self.chat_export = Some((request, counts));
+                }
+            }
+            Event::ChatExportFinished { request, result } => {
+                if self
+                    .chat_export
+                    .as_ref()
+                    .is_some_and(|(pending, _)| *pending == request)
+                {
+                    self.chat_export = None;
+                    if live {
+                        if matches!(self.dialog, Some(Dialog::ExportChat { .. })) {
+                            self.dialog = None;
+                        }
+                        match result {
+                            Ok(Some((path, counts))) => self.toast(
+                                crate::i18n::gettext(self.locale, "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: {missing}.")
+                                    .replace("{path}", &path.display().to_string())
+                                    .replace("{messages}", &counts.messages.to_string())
+                                    .replace("{files}", &counts.files.to_string())
+                                    .replace("{missing}", &counts.missing.to_string()),
+                            ),
+                            Ok(None) => {}
+                            Err(error) => self.toast_error(error),
+                        }
+                    }
+                }
+            }
             Event::MessageUpdated(message) => {
                 let message = *message;
                 // The starred panel holds its own copy. An edit has to
@@ -6109,6 +6143,17 @@ impl App {
     /// account on screen has one: a hidden account's remembered chat is not
     /// being read. Sent only when it changes, so it can run every frame and
     /// follow every way a chat opens, closes or disappears.
+    /// A lock cancels exports for every account, including those off screen.
+    fn sync_chat_export_permission(&mut self) {
+        let allowed = !self.app_lock.is_locked();
+        for account in &mut self.accounts {
+            if account.chat_export_allowed_sent != Some(allowed) {
+                account.backend.send(Command::SetChatExportAllowed(allowed));
+                account.chat_export_allowed_sent = Some(allowed);
+            }
+        }
+    }
+
     fn sync_prefetch(&mut self) {
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
@@ -7006,6 +7051,23 @@ impl App {
                 }
             }
             Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
+            Action::ExportChat {
+                chat,
+                include_media,
+            } => {
+                if self.chat(&chat).is_some_and(|chat| !chat.locked) && self.chat_export.is_none() {
+                    self.sync_chat_export_permission();
+                    self.chat_export_sequence = self.chat_export_sequence.wrapping_add(1);
+                    let request = self.chat_export_sequence;
+                    self.chat_export = Some((request, Default::default()));
+                    self.backend.send(Command::ExportChat {
+                        request,
+                        chat,
+                        include_media,
+                    });
+                }
+            }
+            Action::CancelChatExport => self.backend.send(Command::CancelChatExport),
             Action::SaveAttachmentAs { path, name } => {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
@@ -8047,6 +8109,11 @@ impl App {
                 self.dialog = Some(dialog);
             }
             Action::CloseDialog => {
+                if matches!(self.dialog, Some(Dialog::ExportChat { .. }))
+                    && self.chat_export.is_some()
+                {
+                    self.backend.send(Command::CancelChatExport);
+                }
                 self.cancel_contact_dialog_request();
                 self.clear_chat_lock_entry();
                 self.dialog = None;
@@ -9284,6 +9351,7 @@ impl App {
         self.tick_audio(ctx);
         self.tick_video(ctx);
         self.apply_actions(ctx);
+        self.sync_chat_export_permission();
         self.sync_prefetch();
         self.hold_media();
         self.follow_receipts();
@@ -12465,6 +12533,54 @@ mod tests {
         app.accounts.push(second);
         app.active = 0;
         (app, commands)
+    }
+
+    #[test]
+    fn chat_exports_are_account_local_and_ignore_stale_progress() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        app.active = 1;
+        app.chats
+            .push(Chat::new("fixture".into(), "Fixture".into()));
+        app.apply(
+            Action::ExportChat {
+                chat: "fixture".into(),
+                include_media: true,
+            },
+            &egui::Context::default(),
+        );
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::SetChatExportAllowed(true)
+        ));
+        let request = match commands.try_recv().unwrap() {
+            Command::ExportChat {
+                request,
+                chat,
+                include_media: true,
+            } => {
+                assert_eq!(chat, "fixture");
+                request
+            }
+            _ => panic!("expected an account-local export"),
+        };
+        assert!(app.accounts[0].chat_export.is_none());
+        app.apply_backend_event(
+            Event::ChatExportFinished {
+                request: request.wrapping_add(1),
+                result: Ok(None),
+            },
+            false,
+        );
+        assert!(app.chat_export.is_some());
+        app.apply_backend_event(
+            Event::ChatExportFinished {
+                request,
+                result: Ok(None),
+            },
+            false,
+        );
+        assert!(app.chat_export.is_none());
     }
 
     /// Background history is each account's own switch. Only the account on

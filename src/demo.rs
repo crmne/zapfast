@@ -2980,6 +2980,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "delete-chat" => {
                 app.dialog = app.open_chat.clone().map(Dialog::ConfirmDeleteChat);
             }
+            "export-chat" | "export-chat-progress" => {
+                app.dialog = app.open_chat.clone().map(|chat| Dialog::ExportChat {
+                    chat,
+                    include_media: true,
+                });
+                if part == "export-chat-progress" {
+                    app.chat_export = Some((
+                        1,
+                        crate::archive::chat_export::Counts {
+                            messages: 128,
+                            files: 12,
+                            missing: 2,
+                        },
+                    ));
+                }
+            }
             "clear-chat" => {
                 app.dialog = app.open_chat.clone().map(Dialog::ConfirmClearChat);
             }
@@ -7438,6 +7454,10 @@ mod tests {
             render(&mut app, &ctx);
         }
         for page in [
+            "export-chat",
+            "export-chat,light",
+            "export-chat-progress",
+            "export-chat-progress,light",
             "chat-menu",
             "chat-header-menu",
             "channel",
