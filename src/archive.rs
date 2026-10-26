@@ -4584,6 +4584,7 @@ pub(crate) mod tests {
         assert_eq!(stored.reactions[0].sender, "3@s.whatsapp.net");
     }
 
+    /// A cumulative receipt advances earlier acknowledged sends, preserving later and incoming rows.
     #[test]
     fn a_read_receipt_covers_everything_before_it() {
         let archive = Archive::in_memory().expect("opens");
