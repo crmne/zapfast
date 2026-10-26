@@ -121,19 +121,16 @@ is shared by Carmine's Windows apps and managed in `crmne/terraform`
 No secret is involved. The Windows build jobs run in this repository's
 `windows-signing` environment, which deploys only from `v*` tags, and sign in
 through GitHub's OIDC token as the Entra app `GitHub zapfast Windows signing`.
-That app trusts only `repo:crmne/zapfast:environment:windows-signing` and holds
+That app trusts only `repo:crmne@106617/zapfast@1350713137:environment:windows-signing` (GitHub's immutable subject, with the owner's and repository's ids) and holds
 the "Artifact Signing Certificate Profile Signer" role on the account. The
 environment's variables, none of them secret, are `AZURE_CLIENT_ID`,
 `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_SIGNING_ENDPOINT`,
 `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`.
 
-Signing starts once `AZURE_SIGNING_PROFILE` is set; until then releases build
-unsigned, as before. The certificate profile waits for PlentyLabs' Public Trust
-identity validation, after which:
-
-```sh
-echo plentylabs | gh variable set AZURE_SIGNING_PROFILE -R crmne/zapfast -e windows-signing
-```
+`AZURE_SIGNING_PROFILE` names the Public Trust certificate profile
+`plentylabs`, created once PlentyLabs' identity validation completed
+(2026-10-26), so every tag release signs. Without that variable releases build
+unsigned, as before.
 
 A signature doesn't silence SmartScreen at once: reputation builds as people
 download releases signed by the same publisher, so keep signing every release
