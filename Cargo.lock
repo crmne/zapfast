@@ -5929,7 +5929,7 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.22.2"
-source = "git+https://github.com/crmne/rodio?rev=742090d57a4c83b23bd990ba0dcf939d09dbeb94#742090d57a4c83b23bd990ba0dcf939d09dbeb94"
+source = "git+https://github.com/crmne/rodio?rev=685e05765c2aff8fbb51e32cda5b18428d09ffbe#685e05765c2aff8fbb51e32cda5b18428d09ffbe"
 dependencies = [
  "dasp_sample",
  "rubato",

@@ -137,7 +137,7 @@ mp4 = "0.14"
 # which an MP4 with a picture and a sound track plays a tenth of a second of
 # its sound (0.23.0 was cut from the 0.22 branch without it). Drop the pin at
 # the first release with it.
-rodio = { git = "https://github.com/crmne/rodio", rev = "742090d57a4c83b23bd990ba0dcf939d09dbeb94", default-features = false, features = ["mp3", "mp4", "wav", "vorbis"] }
+rodio = { git = "https://github.com/crmne/rodio", rev = "685e05765c2aff8fbb51e32cda5b18428d09ffbe", default-features = false, features = ["mp3", "mp4", "wav", "vorbis"] }
 # The ring a microphone's samples cross from the audio thread to the reader,
 # which never waits or allocates on the audio thread. Already in the tree.
 rtrb = "0.3"
