@@ -35,7 +35,10 @@ including the stickers used on the phone.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
-opens the full emoji picker. Hover over a reaction to see who added it. When
+opens the full emoji picker. Hover over a reaction to see who added it, or
+click it for a list of everyone who reacted and with which emoji. Click an
+emoji at the top of that list to react with it instead; click your own emoji
+or your own row to take your reaction back. When
 someone reacts to one of your messages, the chat moves to the top of the list.
 Editing uses the composer. Press Escape to cancel. If WhatsApp refuses an
 edit, the message keeps its earlier text.

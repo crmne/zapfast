@@ -15,7 +15,7 @@ use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab, Scroll,
+    PickerTab, Reaction, Scroll,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -2581,6 +2581,23 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let cursor_id = cursor.map(|index| conversation.messages[index].id.clone());
     let typing = app.typing_in(&chat.id);
     let mut avatars = HashMap::new();
+    // Whoever reacted shows in the reaction popup, in any chat.
+    let reactors: HashSet<String> = conversation
+        .messages
+        .iter()
+        .flat_map(|message| &message.reactions)
+        .filter_map(|reaction| {
+            if reaction.from_me {
+                app.me.clone()
+            } else {
+                Some(reaction.sender.clone())
+            }
+        })
+        .collect();
+    for id in reactors {
+        let picture = app.avatar(&id);
+        avatars.insert(id, picture);
+    }
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
             .messages
@@ -5950,31 +5967,19 @@ fn footer(
 
 fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
-    let mut counts: Vec<(String, u32, bool, Vec<String>)> = Vec::new();
-    for reaction in &message.reactions {
-        let who = if reaction.from_me {
-            "You".to_owned()
-        } else {
-            (view.names_or)(&reaction.sender, None)
-        };
-        match counts
-            .iter_mut()
-            .find(|(emoji, _, _, _)| *emoji == reaction.emoji)
-        {
-            Some((_, count, mine, names)) => {
-                *count += 1;
-                *mine |= reaction.from_me;
-                names.push(who);
-            }
-            None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
-        }
-    }
+    let groups = reaction_groups(message);
     ui.spacing_mut().item_spacing.x = 3.0;
-    for (emoji, count, mine, names) in counts {
+    for (emoji, people) in &groups {
+        let count = people.len();
+        let mine = people.iter().any(|reaction| reaction.from_me);
+        let names: Vec<String> = people
+            .iter()
+            .map(|reaction| reactor(view, reaction).1)
+            .collect();
         let label = if count > 1 {
             format!("{emoji} {count}")
         } else {
-            emoji.clone()
+            (*emoji).to_string()
         };
         let line = widgets::line(ui, &label, theme::regular(13.0), palette.text, 200.0, 1);
         let size = line.size() + vec2(12.0, 6.0);
@@ -5999,14 +6004,164 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
         let response = response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(names.join(", "));
-        if response.clicked() {
-            // Clicking our reaction removes it; clicking another adds it.
-            actions.push(Action::React {
-                chat: view.chat.id.clone(),
-                message: message.id.clone(),
-                emoji: if mine { String::new() } else { emoji },
-            });
+        // A click lists who reacted with what, as in WhatsApp.
+        egui::Popup::menu(&response)
+            .frame(widgets::menu_frame(&palette))
+            .show(|ui| reaction_details(ui, view, message, &groups, actions));
+    }
+}
+
+/// A message's reactions grouped by emoji, in the order each emoji first came.
+fn reaction_groups(message: &Message) -> Vec<(&str, Vec<&Reaction>)> {
+    let mut groups: Vec<(&str, Vec<&Reaction>)> = Vec::new();
+    for reaction in &message.reactions {
+        match groups
+            .iter_mut()
+            .find(|(emoji, _)| *emoji == reaction.emoji)
+        {
+            Some((_, people)) => people.push(reaction),
+            None => groups.push((&reaction.emoji, vec![reaction])),
         }
+    }
+    groups
+}
+
+/// Everyone who reacted, ours first, then the others in emoji order.
+fn reactors<'a>(groups: &[(&'a str, Vec<&'a Reaction>)]) -> Vec<&'a Reaction> {
+    let mut people: Vec<&Reaction> = groups
+        .iter()
+        .flat_map(|(_, people)| people.iter().copied())
+        .collect();
+    // The sort is stable, so the others keep their order.
+    people.sort_by_key(|reaction| !reaction.from_me);
+    people
+}
+
+/// The id and shown name of whoever left a reaction.
+fn reactor<'a>(view: &View<'a>, reaction: &'a Reaction) -> (&'a str, String) {
+    if reaction.from_me {
+        (
+            view.me.unwrap_or_default(),
+            crate::i18n::gettext(view.locale, "You").into_owned(),
+        )
+    } else {
+        (&reaction.sender, (view.names_or)(&reaction.sender, None))
+    }
+}
+
+/// The popup under a reaction chip: every emoji with its count, then each
+/// person with the emoji they chose. Clicking an emoji at the top makes it
+/// ours; clicking our current one, or our own row, takes ours back.
+fn reaction_details(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    groups: &[(&str, Vec<&Reaction>)],
+    actions: &mut Vec<Action>,
+) {
+    let palette = view.palette;
+    let mine = own_reaction(message);
+    let react = |emoji: &str| Action::React {
+        chat: view.chat.id.clone(),
+        message: message.id.clone(),
+        emoji: reaction_choice(mine, emoji),
+    };
+    ui.set_min_width(200.0);
+    ui.horizontal(|ui| {
+        ui.add_space(6.0);
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (emoji, people) in groups {
+            let label = format!("{emoji} {}", people.len());
+            if reaction_summary_chip(ui, &palette, &label, mine == Some(*emoji)).clicked() {
+                actions.push(react(emoji));
+                ui.close();
+            }
+        }
+    });
+    widgets::menu_separator(ui, &palette);
+    for reaction in reactors(groups) {
+        if reactor_row(ui, view, reaction).clicked() {
+            actions.push(react(&reaction.emoji));
+            ui.close();
+        }
+    }
+}
+
+/// One emoji and its count at the top of the reaction popup, ringed when it
+/// is our reaction.
+fn reaction_summary_chip(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    chosen: bool,
+) -> egui::Response {
+    let line = widgets::line(ui, label, theme::regular(13.5), palette.text, 180.0, 1);
+    let (rect, response) = ui.allocate_exact_size(line.size() + vec2(14.0, 8.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let radius = rect.height() / 2.0;
+        let (fill, border) = if chosen {
+            (palette.surface_active, Stroke::new(1.5, palette.accent))
+        } else if response.hovered() {
+            (palette.surface_hover, Stroke::new(1.0, palette.outline))
+        } else {
+            (Color32::TRANSPARENT, Stroke::new(1.5, palette.outline))
+        };
+        ui.painter().rect_filled(rect, radius, fill);
+        ui.painter()
+            .rect_stroke(rect, radius, border, egui::StrokeKind::Inside);
+        line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if chosen {
+        response.on_hover_text("Remove your reaction")
+    } else {
+        response
+    }
+}
+
+/// One person in the reaction popup: avatar, name, and their emoji on the
+/// right. Only our own row is clickable.
+fn reactor_row(ui: &mut egui::Ui, view: &View<'_>, reaction: &Reaction) -> egui::Response {
+    let palette = view.palette;
+    let sense = if reaction.from_me {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), sense);
+    if ui.is_rect_visible(rect) {
+        if reaction.from_me && response.hovered() {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
+        }
+        let (id, name) = reactor(view, reaction);
+        let avatar =
+            Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), Vec2::splat(28.0));
+        let picture = view.avatars.get(id).and_then(|picture| picture.as_deref());
+        widgets::paint_avatar(ui, &palette, avatar, &name, id, picture);
+
+        let right = rect.right() - 10.0;
+        let emoji = widgets::line(
+            ui,
+            &reaction.emoji,
+            theme::regular(16.0),
+            palette.text,
+            40.0,
+            1,
+        );
+        let emoji_top = rect.center().y - emoji.size().y / 2.0;
+        emoji.paint(ui, pos2(right - emoji.size().x, emoji_top), palette.text);
+
+        let left = avatar.right() + 10.0;
+        let width = (right - emoji.size().x - 8.0 - left).max(1.0);
+        let label = widgets::line(ui, &name, theme::regular(13.5), palette.text, width, 1);
+        let label_top = rect.center().y - label.size().y / 2.0;
+        label.paint(ui, pos2(left, label_top), palette.text);
+    }
+    if reaction.from_me {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
     }
 }
 
@@ -11670,6 +11825,41 @@ mod reaction_tests {
             own_reaction(&with_reactions(vec![reaction(false, "😂")])),
             None
         );
+    }
+
+    #[test]
+    fn reaction_groups_keep_each_emojis_people_together_in_first_seen_order() {
+        let message = with_reactions(vec![
+            reaction(false, "👍"),
+            reaction(false, "👎"),
+            reaction(true, "👍"),
+        ]);
+        let groups: Vec<(&str, usize, bool)> = reaction_groups(&message)
+            .iter()
+            .map(|(emoji, people)| {
+                (
+                    *emoji,
+                    people.len(),
+                    people.iter().any(|reaction| reaction.from_me),
+                )
+            })
+            .collect();
+        assert_eq!(groups, vec![("👍", 2, true), ("👎", 1, false)]);
+    }
+
+    #[test]
+    fn reactors_list_our_reaction_first_and_keep_the_others_in_emoji_order() {
+        let message = with_reactions(vec![
+            reaction(false, "👍"),
+            reaction(false, "👎"),
+            reaction(true, "👎"),
+        ]);
+        let groups = reaction_groups(&message);
+        let people: Vec<(bool, &str)> = reactors(&groups)
+            .iter()
+            .map(|reaction| (reaction.from_me, reaction.emoji.as_str()))
+            .collect();
+        assert_eq!(people, vec![(true, "👎"), (false, "👍"), (false, "👎")]);
     }
 
     #[test]
