@@ -41,7 +41,7 @@ jobs:
   packaging:
     permissions:
       contents: write
-    uses: crmne/native-packages/.github/workflows/package.yml@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+    uses: crmne/native-packages/.github/workflows/package.yml@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
     with:
       targets: linux-amd64,linux-arm64
       version: ${{ inputs.version || 'v0.13.1' }}
@@ -75,7 +75,7 @@ jobs:
       - name: Package as the release does
         shell: pwsh
         run: |
-          gem install native-packages --version 0.10.0 --no-document
+          gem install native-packages --version 0.11.0 --no-document
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $payload = "dist\windows-input-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force $payload | Out-Null

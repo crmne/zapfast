@@ -41,6 +41,12 @@ jobs:
     # registration that trusts only this environment, which deploys only
     # from v* tags (PACKAGING.md, "Windows signing").
     environment: ${{ startsWith(matrix.os, 'windows') && 'windows-signing' || '' }}
+    # The Artifact Signing account native-packages signs with; empty
+    # outside the windows-signing environment, which leaves builds unsigned.
+    env:
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
     # Linux builds run in Debian 12: the binary needs the glibc it was built
     # against or newer (2.36), and bookworm's libpipewire (0.3.65) meets the
     # PipeWire output's 0.3.53, which Ubuntu 22.04's does not. The packages
@@ -92,9 +98,16 @@ jobs:
       # restored from an Actions cache.
       - run: cargo build --locked --release --target ${{ matrix.target }}
 
-      # Signed before anything packs them, so the zip, the setup program and
-      # the MSI all carry signed binaries. Signing starts once the
+      # native-packages signs the Windows code (native-packages.yaml,
+      # windows.signing) through the Azure CLI sign-in below, once the
       # windows-signing environment names a certificate profile.
+      - uses: ruby/setup-ruby@v1
+        if: runner.os == 'Windows'
+        with:
+          ruby-version: '4.0'
+      - name: Install native-packages
+        if: runner.os == 'Windows'
+        run: gem install native-packages --version 0.11.0 --no-document
       - name: Sign in to Azure for code signing
         if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -102,29 +115,12 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign binaries (Azure Artifact Signing)
+      # Signed before anything packs them, so the zip, the setup program and
+      # the MSI all carry signed binaries.
+      - name: Sign the binaries
         if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
-        with:
-          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          files: |
-            ${{ github.workspace }}\target\${{ matrix.target }}\release\zapfast.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: ZapFast
-          description-url: https://github.com/crmne/zapfast
-          # Only the Azure CLI sign-in above: no secrets, no other identity.
-          exclude-environment-credential: true
-          exclude-workload-identity-credential: true
-          exclude-managed-identity-credential: true
-          exclude-shared-token-cache-credential: true
-          exclude-visual-studio-credential: true
-          exclude-visual-studio-code-credential: true
-          exclude-azure-powershell-credential: true
-          exclude-azure-developer-cli-credential: true
+        shell: pwsh
+        run: native-packages sign-windows target\${{ matrix.target }}\release\zapfast.exe
 
       - name: Package
         shell: bash
@@ -167,16 +163,11 @@ jobs:
       # The Windows Installer package, which replaces the setup program
       # above once every install has updated through one release carrying
       # both.
-      - uses: ruby/setup-ruby@v1
-        if: runner.os == 'Windows'
-        with:
-          ruby-version: '4.0'
+      # native-packages signs the MSI before recording its checksum.
       - name: Windows Installer package
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          gem install native-packages --version 0.10.0 --no-document
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tool install --global wix --version 5.0.2
           wix extension add --global WixToolset.Util.wixext/5.0.2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -193,46 +184,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\$packageTarget\msi\*.msi" dist\
           Remove-Item -Recurse $payload
-
-      - name: Sign installers (Azure Artifact Signing)
-        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
-        with:
-          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\dist
-          files-folder-filter: exe,msi
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: ZapFast
-          description-url: https://github.com/crmne/zapfast
-          # Only the Azure CLI sign-in above: no secrets, no other identity.
-          exclude-environment-credential: true
-          exclude-workload-identity-credential: true
-          exclude-managed-identity-credential: true
-          exclude-shared-token-cache-credential: true
-          exclude-visual-studio-credential: true
-          exclude-visual-studio-code-credential: true
-          exclude-azure-powershell-credential: true
-          exclude-azure-developer-cli-credential: true
-      - name: Check the signatures
+      - name: Sign the setup program
         if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         shell: pwsh
-        run: |
-          $release = "target\${{ matrix.target }}\release"
-          $files = @("$release\zapfast.exe") + (Get-ChildItem dist\*-setup.exe, dist\*.msi).FullName
-          foreach ($file in $files) {
-            $signature = Get-AuthenticodeSignature $file
-            if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
-              throw "$file is not validly signed and timestamped: $($signature.Status) $($signature.StatusMessage)"
-            }
-            "$file signed by $($signature.SignerCertificate.Subject)"
-          }
+        run: native-packages sign-windows (Get-ChildItem dist\*-setup.exe).FullName
 
       - name: Attest release packages
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: |
             dist/*.tar.gz
@@ -293,7 +251,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.10.0 --no-document
+        run: gem install native-packages --version 0.11.0 --no-document
 
       - name: App bundle
         run: |
@@ -313,7 +271,7 @@ jobs:
         run: bash packaging/macos/verify.sh "dist/zapfast-${GITHUB_REF_NAME}-macos-universal.dmg"
 
       - name: Attest macOS package
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: dist/*.dmg
       - uses: actions/upload-artifact@v7
@@ -353,7 +311,7 @@ jobs:
           cache: false
           upload-artifact: false
       - name: Attest Flatpak bundle
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: "*.flatpak"
       - uses: actions/upload-artifact@v7
@@ -381,7 +339,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Sign update manifest
-        uses: crmne/native-packages/.github/actions/sign-release@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/sign-release@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           directory: dist
           public-key: assets/update-public-key.hex

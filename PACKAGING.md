@@ -111,10 +111,17 @@ recipe generation to the Linux packaging job after release assets exist.
 
 ## Windows signing
 
-Tag releases sign `zapfast.exe`, the setup program and the MSI with Azure Artifact Signing, as
-**PlentyLabs UG (haftungsbeschränkt) & Co. KG**: SHA-256 Authenticode with
-Microsoft's RFC 3161 timestamp, and a check that every signed file is `Valid`
-before it is attested and uploaded. The account, `plentylabs` in West Europe,
+Tag releases sign `zapfast.exe`, the setup program and the MSI with Azure
+Artifact Signing, as **PlentyLabs UG (haftungsbeschränkt) & Co. KG**, through
+native-packages: `windows.signing` in `native-packages.yaml` turns it on,
+`native-packages sign-windows` signs `zapfast.exe` before the zip, the setup
+program and the MSI pack it, and the setup program once Inno has built it, and
+`native-packages build` signs the MSI before recording its checksum. Each
+signature is SHA-256 Authenticode with Microsoft's RFC 3161 timestamp, checked
+to be `Valid` and PlentyLabs' before anything is attested or uploaded (see
+native-packages'
+[Windows code signing](https://github.com/crmne/native-packages/blob/v0.11.0/docs/_guides/windows-signing.md)).
+The account, `plentylabs` in West Europe,
 is shared by Carmine's Windows apps and managed in `crmne/terraform`
 (`azure/signing.tf`, its README's "Code signing").
 
@@ -129,8 +136,9 @@ environment's variables, none of them secret, are `AZURE_CLIENT_ID`,
 
 `AZURE_SIGNING_PROFILE` names the Public Trust certificate profile
 `plentylabs`, created once PlentyLabs' identity validation completed
-(2026-10-26), so every tag release signs. Without that variable releases build
-unsigned, as before.
+(2026-10-26), so every tag release signs. Without the environment's signing
+variables releases build unsigned; with only some of them, the Windows build
+fails rather than ship unsigned.
 
 A signature doesn't silence SmartScreen at once: reputation builds as people
 download releases signed by the same publisher, so keep signing every release
