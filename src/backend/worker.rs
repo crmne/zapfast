@@ -6919,9 +6919,14 @@ impl Worker {
                 cancelled,
             } => {
                 // A cancel that reached the worker first wins over the send.
-                if !cancelled
+                if cancelled
                     .is_some_and(|cancelled| cancelled.load(std::sync::atomic::Ordering::Relaxed))
                 {
+                    // The file already went into the cache; nothing will point at it now.
+                    if let Some(path) = row.content.media().and_then(|media| media.path.clone()) {
+                        self.drop_cached_media(&[path]);
+                    }
+                } else {
                     self.outbound(chat, *row, raw);
                 }
             }
@@ -14209,18 +14214,34 @@ mod tests {
     }
 
     /// An attachment whose upload was cancelled while its message was being
-    /// built is dropped at the handoff; one that was not goes on to be sent.
+    /// built is dropped at the handoff, with the file it left in the cache;
+    /// one that was not goes on to be sent.
     #[tokio::test]
     async fn a_cancelled_upload_is_not_sent_at_the_handoff() {
         let (mut worker, events, _, _) = super::receipt_tests::worker();
-        let outbound = |cancelled: bool| Command::Outbound {
-            chat: super::receipt_tests::PEER.into(),
-            row: Box::new(super::receipt_tests::own_message("m1", 1)),
-            raw: Vec::new(),
-            cancelled: Some(Arc::new(std::sync::atomic::AtomicBool::new(cancelled))),
+        let cache = worker.dirs.media_cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let cached = cache.join("synthetic-upload.jpg");
+        std::fs::write(&cached, b"jpeg").unwrap();
+        let outbound = |cancelled: bool| {
+            let mut row = super::receipt_tests::own_message("m1", 1);
+            let mut attachment = media(None, None, None, None);
+            attachment.path = Some(cached.clone());
+            row.content = Content::Image {
+                motion: None,
+                caption: None,
+                media: attachment,
+            };
+            Command::Outbound {
+                chat: super::receipt_tests::PEER.into(),
+                row: Box::new(row),
+                raw: Vec::new(),
+                cancelled: Some(Arc::new(std::sync::atomic::AtomicBool::new(cancelled))),
+            }
         };
         worker.handle_command(outbound(true)).await;
         assert!(events.try_iter().next().is_none(), "nothing goes out");
+        assert!(!cached.exists(), "the cached file goes with it");
         // Without a connection, an attachment that reaches sending says so.
         worker.handle_command(outbound(false)).await;
         assert!(matches!(
