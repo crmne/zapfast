@@ -14,6 +14,8 @@ undo history. Saved drafts remain available when you return to their chat.
 
 Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
+The emoji picker stays open while you choose emoji and closes when you send
+the text.
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
 like WhatsApp, and a message of nothing but emoji shows large.
 Paste text with Ctrl+V (Command+V on macOS) or Shift+Insert, as in other
