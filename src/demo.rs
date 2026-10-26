@@ -3525,7 +3525,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         );
                         attachment.path =
                             Some(stock::save_photo(&app.dirs.media_cache_dir(), *photo));
-                        message(
+                        let mut row = message(
                             &chat,
                             &format!("preview-{index}"),
                             false,
@@ -3535,7 +3535,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                                 caption: None,
                                 media: attachment,
                             },
-                        )
+                        );
+                        row.thumbnail = Some(stock::thumbnail(*photo));
+                        row
                     })
                     .collect::<Vec<_>>();
                 rows.insert(
