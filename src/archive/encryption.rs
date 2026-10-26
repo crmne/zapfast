@@ -250,6 +250,7 @@ pub(super) fn read_only(path: &Path, key: &[u8; 32]) -> Result<Connection> {
     )
 }
 
+/// Applies the supplied SQLCipher key and verifies a page before allowing archive access.
 fn unlock(connection: Connection, key: &[u8; 32]) -> Result<Connection> {
     connection.pragma_update(None, "key", &*key_literal(key))?;
     let version: String = connection

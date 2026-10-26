@@ -22,8 +22,7 @@ pub struct Counts {
 
 impl Archive {
     /// A separate, verified SQLCipher reader. No migrations or new archive may be created.
-    pub(crate) fn export_reader(&self) -> Result<Self> {
-        let path = Path::new(self.connection.path().context("The archive has no file")?);
+    pub(crate) fn export_reader(path: &Path) -> Result<Self> {
         ensure!(path.is_file(), "The archive is unavailable");
         let key = super::encryption::key_for(path)?;
         Ok(Self {
@@ -184,6 +183,7 @@ impl Archive {
     }
 }
 
+/// Stops export work when the account-owned cancellation flag has been set.
 pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<()> {
     if cancelled.load(Ordering::Acquire) {
         bail!("Export cancelled");
@@ -191,6 +191,8 @@ pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
+/// Copies in bounded chunks, checking cancellation before every read.
+/// Read and write failures propagate so temporary output cannot be published as complete.
 fn copy_cancelled(
     input: &mut impl Read,
     output: &mut impl Write,
@@ -207,10 +209,13 @@ fn copy_cancelled(
     }
 }
 
+/// Keeps transcript headers on one line while leaving message bodies untouched.
 fn one_line(text: &str) -> String {
     text.replace(['\r', '\n'], " ")
 }
 
+/// Builds a bounded filename component without separators, control characters or dot-only names.
+/// The caller adds a numeric prefix to keep ZIP entries unique.
 fn safe_name(name: &str) -> String {
     let name: String = name
         .chars()
@@ -231,6 +236,7 @@ fn safe_name(name: &str) -> String {
     }
 }
 
+/// Formats saved message content as readable text without exposing raw protocol fields.
 fn readable(content: &Content) -> String {
     match content {
         Content::Document {
@@ -284,6 +290,8 @@ fn readable(content: &Content) -> String {
     }
 }
 
+/// Lists saved attachment slots and display names, including motion clips and carousel images.
+/// Missing paths remain in the list so the transcript can report unavailable files.
 fn attachments(content: &Content) -> Vec<(Option<PathBuf>, String)> {
     let mut files = Vec::new();
     if let Some(media) = content.media() {
@@ -325,12 +333,14 @@ mod tests {
 
     const CHAT: &str = "fixture@s.whatsapp.net";
 
+    /// Creates an isolated synthetic archive with one named chat for export tests.
     fn fixture() -> Archive {
         let archive = Archive::in_memory().unwrap();
         archive.ensure_chat(CHAT, "Synthetic chat").unwrap();
         archive
     }
 
+    /// Builds a synthetic document row with an optional downloaded attachment.
     fn document(id: &str, path: Option<PathBuf>, name: &str) -> crate::model::Message {
         let mut row = message(CHAT, id, 100, false);
         row.content = Content::Document {
@@ -350,6 +360,7 @@ mod tests {
         row
     }
 
+    /// Text export retains Unicode, multiline bodies and stable ordering across archive pages.
     #[test]
     fn text_export_crosses_page_boundaries_and_keeps_unicode_multiline_order() {
         let archive = fixture();
@@ -380,6 +391,7 @@ mod tests {
         assert!(!text.contains("must stay out"));
     }
 
+    /// ZIP export assigns distinct safe names and reports unavailable attachment slots.
     #[test]
     fn zip_keeps_duplicate_files_separate_and_reports_missing_files() {
         let archive = fixture();
@@ -444,6 +456,7 @@ mod tests {
         assert_eq!(bytes, b"fixture bytes");
     }
 
+    /// Cancelled exports preserve the destination and remove their temporary files.
     #[test]
     fn cancellation_preserves_existing_output_and_removes_partial_files() {
         let archive = fixture();
@@ -466,6 +479,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
+    /// Privacy denial or invalid archived content prevents publishing partial output.
     #[test]
     fn locked_chats_and_unreadable_rows_cannot_publish_an_export() {
         let archive = fixture();
@@ -504,6 +518,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
+    /// The export reader fails closed without a valid key and cannot create or modify an archive.
     #[test]
     fn export_reader_requires_the_key_and_never_creates_or_writes_an_archive() {
         let directory = tempfile::tempdir().unwrap();

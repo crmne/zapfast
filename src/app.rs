@@ -6136,11 +6136,6 @@ impl App {
         self.settings_dirty = true;
     }
 
-    /// Tells each account's worker whether it may fetch older history in the
-    /// background, and which chat is on screen so it goes first. Only the
-    /// account on screen has one: a hidden account's remembered chat is not
-    /// being read. Sent only when it changes, so it can run every frame and
-    /// follow every way a chat opens, closes or disappears.
     /// A lock cancels exports for every account, including those off screen.
     fn sync_chat_export_permission(&mut self) {
         let allowed = !self.app_lock.is_locked();
@@ -6152,6 +6147,11 @@ impl App {
         }
     }
 
+    /// Tells each account's worker whether it may fetch older history in the
+    /// background, and which chat is on screen so it goes first. Only the
+    /// account on screen has one: a hidden account's remembered chat is not
+    /// being read. Sent only when it changes, so it can run every frame and
+    /// follow every way a chat opens, closes or disappears.
     fn sync_prefetch(&mut self) {
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
@@ -12533,6 +12533,7 @@ mod tests {
         (app, commands)
     }
 
+    /// Export state follows its account and ignores progress from an older request.
     #[test]
     fn chat_exports_are_account_local_and_ignore_stale_progress() {
         let directory = tempfile::tempdir().unwrap();
@@ -12581,6 +12582,7 @@ mod tests {
         assert!(app.chat_export.is_none());
     }
 
+    /// Hidden-account results report their account while preserving the visible account's dialog.
     #[test]
     fn hidden_account_exports_report_outcomes_without_closing_the_visible_dialog() {
         for failed in [false, true] {

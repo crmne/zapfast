@@ -4,6 +4,7 @@ use crate::i18n::gettext;
 use crate::model::{Action, Dialog};
 use crate::theme;
 
+/// Draws the resolved chat title and local-only export choices, or the current job's progress.
 pub(super) fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, mut include_media: bool) {
     let locale = app.locale;
     let palette = app.palette;
