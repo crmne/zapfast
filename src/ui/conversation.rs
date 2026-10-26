@@ -6072,7 +6072,7 @@ fn reaction_details(
         ui.spacing_mut().item_spacing.x = 4.0;
         for (emoji, people) in groups {
             let label = format!("{emoji} {}", people.len());
-            if reaction_summary_chip(ui, &palette, &label, mine == Some(*emoji)).clicked() {
+            if reaction_summary_chip(ui, view, &label, mine == Some(*emoji)).clicked() {
                 actions.push(react(emoji));
                 ui.close();
             }
@@ -6091,10 +6091,11 @@ fn reaction_details(
 /// is our reaction.
 fn reaction_summary_chip(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    view: &View<'_>,
     label: &str,
     chosen: bool,
 ) -> egui::Response {
+    let palette = view.palette;
     let line = widgets::line(ui, label, theme::regular(13.5), palette.text, 180.0, 1);
     let (rect, response) = ui.allocate_exact_size(line.size() + vec2(14.0, 8.0), Sense::click());
     if ui.is_rect_visible(rect) {
@@ -6113,7 +6114,7 @@ fn reaction_summary_chip(
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if chosen {
-        response.on_hover_text("Remove your reaction")
+        response.on_hover_text(crate::i18n::gettext(view.locale, "Remove your reaction"))
     } else {
         response
     }
