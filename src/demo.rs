@@ -433,6 +433,7 @@ pub fn populate(app: &mut App) {
     // Demo mode has no backend to handle downloads.
     app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
+    app.blocklist.ids = Some(Default::default());
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());
     app.chats.clear();
@@ -2013,6 +2014,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
         match part {
             "history-date" => history_date_sample(app),
             "chat" | "" => {}
+            "blocked" | "blocked-contacts" | "block-confirm" => {
+                app.blocklist.ids = Some(if part == "block-confirm" {
+                    Default::default()
+                } else {
+                    [SAMPLES[0].id.into(), DOROTHY.into()].into()
+                });
+                if part == "blocked-contacts" {
+                    app.dialog = Some(Dialog::BlockedContacts);
+                }
+                if part == "block-confirm" {
+                    app.dialog = Some(Dialog::ConfirmBlock {
+                        chat: SAMPLES[0].id.into(),
+                        blocked: true,
+                        from_list: false,
+                    });
+                }
+            }
             "phone-menu" => phone_menu_sample(app),
             "short-chat" => short_chat_sample(app),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
@@ -5867,6 +5885,202 @@ mod tests {
         assert!(!labels.contains(&"admins"));
     }
 
+    #[test]
+    fn blocking_surfaces_show_the_confirmed_state_and_hide_locked_names() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("blocked"));
+        assert!(
+            accessible_labels(&mut app, &ctx)
+                .iter()
+                .any(|text| text == "You blocked this contact")
+        );
+        assert!(crate::ui::focus::control(&ctx, crate::ui::focus::Stop::Composer).is_some());
+        app.recording = Some(crate::audio::Recorder::simulated(
+            crate::backend::Waker::default(),
+        ));
+        assert!(
+            accessible_labels(&mut app, &ctx)
+                .iter()
+                .any(|text| text == "Discard")
+        );
+        app.recording = None;
+        app.composer = "Preserved draft".into();
+        for light in [false, true] {
+            app.settings.theme = if light {
+                ThemeChoice::Light
+            } else {
+                ThemeChoice::Dark
+            };
+            apply_flags(&mut app, Some("blocked-contacts"));
+            let chat = app
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == SAMPLES[0].id)
+                .unwrap();
+            chat.locked = true;
+            chat.name = "Private blocking fixture".into();
+            app.contacts.remove(SAMPLES[0].id);
+            let labels = accessible_labels(&mut app, &ctx).join("\n");
+            assert!(
+                labels.contains("Blocked contacts") && labels.contains("Locked chat"),
+                "{labels}"
+            );
+            assert!(!labels.contains("Private blocking fixture"), "{labels}");
+            assert_eq!(app.composer, "Preserved draft");
+            render_sized(&mut app, &ctx, egui::vec2(420.0, 600.0));
+        }
+        for (ids, failed, expected) in [
+            (None, true, "Could not load blocked contacts."),
+            (Some(Default::default()), false, "No blocked contacts"),
+        ] {
+            app.blocklist.ids = ids;
+            app.blocklist.failed = failed;
+            assert!(
+                accessible_labels(&mut app, &ctx)
+                    .iter()
+                    .any(|text| text == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn blocking_confirmations_route_clicks_and_keep_the_last_confirmed_state() {
+        use egui::accesskit::Role;
+        for (page, label, blocked, from_list) in [
+            ("info", "Block contact", true, false),
+            ("blocked-contacts", "Unblock", false, true),
+        ] {
+            for light in [false, true] {
+                let mut app = app();
+                let ctx = egui::Context::default();
+                ctx.enable_accesskit();
+                app.attach(&ctx);
+                apply_flags(
+                    &mut app,
+                    Some(&format!("{page}{}", if light { ",light" } else { "" })),
+                );
+                let target = if from_list { DOROTHY } else { SAMPLES[0].id };
+                if from_list {
+                    // Exercise unblocking someone who has no local chat.
+                    app.blocklist.ids = Some([target.into()].into());
+                    assert!(app.chat(target).is_none());
+                }
+                render(&mut app, &ctx);
+                app.backend.take_demo_commands();
+                let confirmation = Dialog::ConfirmBlock {
+                    chat: target.into(),
+                    blocked,
+                    from_list,
+                };
+                let parent = from_list.then_some(Dialog::BlockedContacts);
+                let positive = if blocked { "Block" } else { "Unblock" };
+                press_labelled(&mut app, &ctx, label, Role::Button);
+                assert_eq!(app.dialog, Some(confirmation.clone()));
+                // A refresh arriving while the confirmation is open disables
+                // its write, but Cancel must remain usable.
+                app.blocklist.loading = true;
+                press_labelled(&mut app, &ctx, positive, Role::Button);
+                assert_eq!(app.dialog, Some(confirmation));
+                press_labelled(&mut app, &ctx, "Cancel", Role::Button);
+                assert_eq!(app.dialog, parent);
+                assert!(
+                    !app.backend
+                        .take_demo_commands()
+                        .iter()
+                        .any(|command| matches!(
+                            command,
+                            crate::backend::Command::SetBlocked { .. }
+                        ))
+                );
+                app.blocklist.loading = false;
+                render(&mut app, &ctx);
+                press_labelled(&mut app, &ctx, label, Role::Button);
+                assert_eq!(
+                    app.dialog,
+                    Some(Dialog::ConfirmBlock {
+                        chat: target.into(),
+                        blocked,
+                        from_list,
+                    }),
+                    "{page}, light={light}: reopen confirmation"
+                );
+                press_labelled(&mut app, &ctx, positive, Role::Button);
+                let writes: Vec<_> = app
+                    .backend
+                    .take_demo_commands()
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        crate::backend::Command::SetBlocked { chat, blocked } => {
+                            Some((chat, blocked))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    writes,
+                    [(target.to_owned(), blocked)],
+                    "{page}, light={light}: dialog={:?}, connected={}, editable={}",
+                    app.dialog,
+                    app.is_connected(),
+                    app.blocklist.editable()
+                );
+                assert_eq!(app.dialog, parent);
+                assert_eq!(
+                    app.blocklist.contains(target),
+                    !blocked,
+                    "clicking cannot change the state before the server answers"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocking_navigation_only_refreshes_when_the_blocked_list_opens() {
+        let reads = |app: &App| {
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .filter(|command| matches!(command, crate::backend::Command::FetchBlocklist))
+                .count()
+        };
+        for page in ["chat-menu", "chat-header-menu"] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            reads(&app);
+            for _ in 0..2 {
+                apply_flags(&mut app, Some(page));
+                render(&mut app, &ctx);
+                assert_eq!(reads(&app), 0, "{page} uses the confirmed cache");
+                render(&mut app, &ctx);
+                assert_eq!(reads(&app), 0, "{page} must not poll while idle");
+                app.open_chat_menu = None;
+                app.open_header_menu = None;
+                egui::Popup::close_all(&ctx);
+                render(&mut app, &ctx);
+            }
+            let chat = SAMPLES[2].id.to_owned();
+            for action in [
+                crate::model::Action::OpenChat(chat.clone()),
+                crate::model::Action::OpenInfo(chat),
+                crate::model::Action::Open(Page::Settings),
+            ] {
+                app.actions.push(action);
+                render(&mut app, &ctx);
+                assert_eq!(reads(&app), 0, "navigation must not query the server");
+            }
+            app.actions
+                .push(crate::model::Action::ShowDialog(Dialog::BlockedContacts));
+            render(&mut app, &ctx);
+            assert_eq!(reads(&app), 1, "opening the list refreshes its contents");
+            render(&mut app, &ctx);
+            assert_eq!(reads(&app), 0, "the open list must not poll");
+        }
+    }
+
     /// Every label and value in the accessibility tree of one frame.
     fn accessible_labels(app: &mut App, ctx: &egui::Context) -> Vec<String> {
         render(app, ctx);
@@ -6789,11 +7003,19 @@ mod tests {
         press_key(&mut app, &ctx, egui::Key::Num2, messages_shortcut());
         press_key(&mut app, &ctx, egui::Key::ArrowUp, egui::Modifiers::NONE);
         let cursor = app.message_cursor.get(&chat).cloned();
+        app.backend.take_demo_commands();
         frame_with_window_focus(&mut app, &ctx, false);
         frame_with_window_focus(&mut app, &ctx, true);
         render(&mut app, &ctx);
         assert_eq!(ctx.memory(|memory| memory.focused()), Some(list));
         assert_eq!(app.message_cursor.get(&chat).cloned(), cursor);
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| { matches!(command, crate::backend::Command::FetchBlocklist) }),
+            "returning to the window must not query the blocklist"
+        );
     }
 
     /// A notification for the open chat, clicked while the reader is in its
@@ -7438,6 +7660,9 @@ mod tests {
             render(&mut app, &ctx);
         }
         for page in [
+            "blocked",
+            "blocked-contacts",
+            "block-confirm",
             "chat-menu",
             "chat-header-menu",
             "channel",

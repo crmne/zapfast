@@ -3252,6 +3252,29 @@ impl App {
                     }
                 }
             }
+            Event::Blocklist { state, error } => {
+                self.blocklist = state;
+                if !self.events_hidden
+                    && let Some(error) = error
+                {
+                    self.toast_error(error.message(self.locale).into_owned());
+                }
+            }
+            Event::BlocklistMapped {
+                from,
+                to,
+                chats,
+                state,
+            } => {
+                if !self.events_hidden
+                    && let Some(Dialog::ConfirmBlock { chat, .. }) = &mut self.dialog
+                    && chat == &from
+                {
+                    *chat = to;
+                }
+                self.blocklist = state;
+                self.apply_backend_event(Event::Chats(chats), live);
+            }
             Event::Link(status) => self.handle_link(status, live),
             Event::Me {
                 id,
@@ -3600,7 +3623,7 @@ impl App {
             Event::PollCreated { chat, error } => {
                 self.poll_creating = false;
                 if let Some(error) = error {
-                    self.toast_error(error);
+                    self.toast_error(crate::blocking::localize_error(self.locale, error));
                 } else if live && self.dialog == Some(Dialog::CreatePoll(chat)) {
                     self.dialog = None;
                     self.poll_draft = Default::default();
@@ -3613,7 +3636,7 @@ impl App {
             } => {
                 self.poll_voting.remove(&(chat, message));
                 if let Some(error) = error {
-                    self.toast_error(error);
+                    self.toast_error(crate::blocking::localize_error(self.locale, error));
                 }
             }
             Event::MessageUpdated(message) => {
@@ -4288,7 +4311,7 @@ impl App {
                         "ZapFast can't join group calls yet: open the link on your phone.",
                     )
                     .into_owned(),
-                    _ => message,
+                    _ => crate::blocking::localize_error(self.locale, message),
                 };
                 self.toast_error(shown);
             }
@@ -4433,6 +4456,7 @@ impl App {
                 self.pins.clear();
                 self.chat_pins.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
+                self.blocklist = Default::default();
                 self.account_receipts_off = false;
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
@@ -5014,6 +5038,9 @@ impl App {
             Unsent::Sticker | Unsent::Gif => {}
         }
         let message = match reason {
+            Refusal::Blocked => {
+                crate::i18n::gettext(self.locale, "Unblock this contact to send messages.")
+            }
             Refusal::Offline => crate::i18n::gettext(
                 self.locale,
                 "Not sent: ZapFast is not connected to WhatsApp.",
@@ -6405,7 +6432,36 @@ impl App {
             self.send_refused(chat, Some(target), unsent, Refusal::QuoteUnavailable);
             return;
         }
+        let destination = match &action {
+            Action::SendText { chat, .. }
+            | Action::SendLocation { chat, .. }
+            | Action::ReplyInteractive { chat, .. }
+            | Action::CreatePoll { chat, .. }
+            | Action::VotePoll { chat, .. }
+            | Action::React { chat, .. } => Some(chat.as_str()),
+            Action::SendPending { account, chat, .. } if account == &self.account().id => {
+                Some(chat.as_str())
+            }
+            Action::SendGif(_)
+            | Action::SendSticker(_)
+            | Action::StartRecording
+            | Action::MakeSticker { send: true } => self.open_chat.as_deref(),
+            _ => None,
+        };
+        if destination.is_some_and(|chat| self.blocklist.contains(chat)) {
+            self.toast_error(crate::i18n::gettext(
+                self.locale,
+                "Unblock this contact to send messages.",
+            ));
+            return;
+        }
         match action {
+            Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
+            Action::SetBlocked { chat, blocked } => {
+                if self.is_connected() && self.blocklist.editable() {
+                    self.backend.send(Command::SetBlocked { chat, blocked });
+                }
+            }
             Action::Open(page) => {
                 let opens_chats = page == Page::Chats;
                 // Privacy can change on the phone at any time, and nothing
@@ -7141,6 +7197,7 @@ impl App {
             Action::ToggleForwardRecipient(id) => {
                 if !matches!(self.dialog, Some(Dialog::Forward { .. }))
                     || self.forward_reviewing
+                    || self.blocklist.contains(&id)
                     || !self.chat(&id).is_some_and(Chat::can_send)
                 {
                     return;
@@ -7185,7 +7242,9 @@ impl App {
                 let writable: std::collections::HashSet<_> = self
                     .chats
                     .iter()
-                    .filter(|chat| crate::ui::dialogs::forwardable(chat))
+                    .filter(|chat| {
+                        crate::ui::dialogs::forwardable(chat) && !self.blocklist.contains(&chat.id)
+                    })
                     .map(|chat| chat.id.clone())
                     .collect();
                 let count = self.forward_recipients.len();
@@ -7997,6 +8056,9 @@ impl App {
             Action::ShowDialog(dialog) => {
                 self.cancel_contact_dialog_request();
                 self.clear_chat_lock_entry();
+                if dialog == Dialog::BlockedContacts {
+                    self.backend.send(Command::FetchBlocklist);
+                }
                 if dialog == Dialog::NewChat {
                     self.new_chat_search.clear();
                     self.new_group = None;
@@ -8049,7 +8111,17 @@ impl App {
             Action::CloseDialog => {
                 self.cancel_contact_dialog_request();
                 self.clear_chat_lock_entry();
-                self.dialog = None;
+                self.dialog = if matches!(
+                    self.dialog,
+                    Some(Dialog::ConfirmBlock {
+                        from_list: true,
+                        ..
+                    })
+                ) {
+                    Some(Dialog::BlockedContacts)
+                } else {
+                    None
+                };
                 self.invite = None;
                 self.forward_search.clear();
                 self.forward_recipients.clear();
@@ -12444,6 +12516,122 @@ mod tests {
         let roster = AccountRoster::load(&app.dirs.accounts_file()).unwrap();
         assert_eq!(roster.order, ["1".to_string(), "2".to_string()]);
         assert_eq!(roster.active, "1");
+    }
+
+    #[test]
+    fn blocking_preserves_drafts_and_returns_to_the_list_after_confirmation() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        let chat = "15550002222@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat = Some(chat.into());
+        app.composer = "Unsent fixture".into();
+        app.stage(Pending::File("fixture.png".into()));
+        app.recording = Some(Recorder::simulated(app.waker.clone()));
+        app.blocklist.ids = Some([chat.into()].into());
+        app.apply(
+            Action::SendText {
+                chat: chat.into(),
+                text: app.composer.clone(),
+                quoting: None,
+            },
+            &ctx,
+        );
+        assert_eq!(app.composer, "Unsent fixture");
+        assert_eq!(app.pending.len(), 1);
+        assert!(commands.try_recv().is_err());
+        assert!(
+            app.recording.is_some(),
+            "blocking does not discard an ongoing recording"
+        );
+        app.apply(Action::CancelRecording, &ctx);
+        app.apply(Action::StartRecording, &ctx);
+        assert!(
+            app.recording.is_none(),
+            "a blocked chat cannot start a recording"
+        );
+        for blocked in [false, true] {
+            app.dialog = Some(Dialog::ConfirmBlock {
+                chat: chat.into(),
+                blocked,
+                from_list: true,
+            });
+            app.apply(
+                Action::SetBlocked {
+                    chat: chat.into(),
+                    blocked,
+                },
+                &ctx,
+            );
+            assert!(
+                matches!(commands.try_recv(), Ok(Command::SetBlocked { blocked: value, .. }) if value == blocked)
+            );
+            assert!(
+                app.blocklist.contains(chat),
+                "the server has not confirmed a change"
+            );
+            app.apply(Action::CloseDialog, &ctx);
+            assert_eq!(app.dialog, Some(Dialog::BlockedContacts));
+        }
+        app.dialog = Some(Dialog::ConfirmBlock {
+            chat: chat.into(),
+            blocked: false,
+            from_list: true,
+        });
+        app.apply(Action::CloseDialog, &ctx);
+        assert_eq!(app.dialog, Some(Dialog::BlockedContacts));
+        assert!(commands.try_recv().is_err(), "cancel sends nothing");
+    }
+
+    #[test]
+    fn blocking_events_stay_with_their_account_and_logout_forgets_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        let chat = "15550002222@s.whatsapp.net";
+        app.composer = "Visible draft".into();
+        let dialog = Some(Dialog::ConfirmBlock {
+            chat: "200000000000001@lid".into(),
+            blocked: false,
+            from_list: true,
+        });
+        app.dialog = dialog.clone();
+        let state = crate::blocking::Blocklist {
+            ids: Some([chat.into()].into()),
+            ..Default::default()
+        };
+        app.active = 1;
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::Blocklist {
+                state,
+                error: Some(crate::blocking::Failure::Refused),
+            },
+            false,
+        );
+        let mut mapped = Chat::new(chat.into(), "Hidden fixture".into());
+        mapped.locked = true;
+        app.apply_backend_event(
+            Event::BlocklistMapped {
+                from: "200000000000001@lid".into(),
+                to: chat.into(),
+                chats: vec![mapped],
+                state: app.blocklist.clone(),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        app.active = 0;
+        assert!(!app.blocklist.contains(chat));
+        assert!(app.accounts[1].blocklist.contains(chat));
+        assert_eq!(app.composer, "Visible draft");
+        assert_eq!(app.dialog, dialog);
+        assert!(app.toasts.is_empty());
+        app.switch_account(&AccountId::parse("2").unwrap());
+        app.handle_link(LinkStatus::LoggedOut, true);
+        assert!(app.blocklist.ids.is_none());
     }
 
     /// Two accounts, the second with a recording backend; the first on screen.

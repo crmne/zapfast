@@ -591,6 +591,23 @@ fn sections(app: &App) -> Vec<Section> {
         |settings| &mut settings.send_typing,
     );
     app_lock_rows(app, &mut privacy);
+    privacy.row(
+        translated(locale, "Blocked contacts"),
+        "",
+        move |ui, app| {
+            if theme::pill_button(
+                ui,
+                &app.palette,
+                &crate::i18n::gettext(locale, "Manage"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions
+                    .push(Action::ShowDialog(Dialog::BlockedContacts));
+            }
+        },
+    );
     // The account values live on the phone: they are shown once fetched and
     // edited only while connected with a fresh snapshot.
     let editable = app.is_connected() && app.account_privacy.editable();

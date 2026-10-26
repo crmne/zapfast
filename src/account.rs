@@ -111,6 +111,7 @@ pub struct Account {
     /// has not arrived yet.
     pub reply_when_loaded: Option<(ChatId, String)>,
     pub account_privacy: crate::privacy::Snapshot,
+    pub blocklist: crate::blocking::Blocklist,
     pub interactive_sending: HashSet<(ChatId, String)>,
     pub group_saving: HashSet<ChatId>,
     pub(crate) reported_online: Option<bool>,
@@ -219,6 +220,7 @@ impl Account {
             chat_pins: HashMap::new(),
             reply_when_loaded: None,
             account_privacy: crate::privacy::Snapshot::default(),
+            blocklist: Default::default(),
             interactive_sending: HashSet::new(),
             group_saving: HashSet::new(),
             reported_online: None,

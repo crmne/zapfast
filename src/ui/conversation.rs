@@ -438,7 +438,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 // More and Search, and Back in a narrow window, and the call
                 // buttons in a person's or a group's chat, each on its own
                 // glass with room around it on a vibrant window.
-                let call_buttons = if callable(chat, app.me.as_deref()) {
+                let call_buttons = if callable(chat, app.me.as_deref())
+                    && (call_here || !app.blocklist.contains(&chat.id))
+                {
                     if call_here { 1.0 } else { 2.0 }
                 } else {
                     0.0
@@ -649,6 +651,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             leave_label.as_ref(),
                             copy_number_label.as_ref(),
                             close_label.as_ref(),
+                            &super::blocking::label(app, &chat.id),
                         ],
                         true,
                     );
@@ -695,6 +698,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
                             }
+                            super::blocking::menu(app, ui, &chat.id);
                             // Clearing reaches the phone, so it waits for a
                             // connection, as deleting does in the chat list.
                             if widgets::menu_item_enabled(
@@ -1362,6 +1366,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 && selected_chat == chat.id
             {
                 selection_bar(app, ui, &chat.id, &selected);
+                return;
+            }
+            if app.blocklist.contains(&chat.id) {
+                if app.recording.is_some() {
+                    widgets::raised(ui, &palette, composer_pill(&palette), |ui| recording_strip(app, ui));
+                }
+                ui.vertical_centered(|ui| {
+                    theme::text(ui, crate::i18n::gettext(app.locale, "You blocked this contact"), theme::regular(13.5), palette.secondary);
+                    super::blocking::button(app, ui, &chat.id, Stop::Composer);
+                });
                 return;
             }
             if !chat.can_send() {
