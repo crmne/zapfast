@@ -1257,6 +1257,11 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
                     app.actions.push(Action::CloseStickerPreview);
                 }
                 ui.add_space(16.0);
+                // Favorites sync still assumes WebP media. Never advertise
+                // it for native .was stickers until that protocol path exists.
+                if preview.path().extension().is_some_and(|extension| extension == "was") {
+                    return;
+                }
                 let (icon, label, action) = match favorite {
                     Some(saved) => (
                         Icon::StarOff,

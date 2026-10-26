@@ -340,9 +340,12 @@ impl StickerPreview {
     /// Whether it moves comes from the file: phones often leave the
     /// message's `is_animated` flag out.
     pub fn new(path: PathBuf) -> Self {
-        let bytes = std::fs::read(&path).ok();
+        let lottie = path.extension().is_some_and(|extension| extension == "was");
+        // Native Lottie is receive-only, so don't read/hash a potentially
+        // large ZIP on the UI thread just to check unsupported favorites.
+        let bytes = if lottie { None } else { std::fs::read(&path).ok() };
         Self {
-            animated: bytes.as_deref().is_some_and(crate::animation::webp_moves),
+            animated: lottie || bytes.as_deref().is_some_and(crate::animation::webp_moves),
             hash: bytes
                 .as_deref()
                 .map(crate::backend::sticker_store::content_hash),
