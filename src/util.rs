@@ -606,7 +606,7 @@ pub fn phone(digits: &str) -> String {
     if digits.is_empty() {
         return String::new();
     }
-    if let Some(formatted) = brazilian_phone(&digits) {
+    if let Some(formatted) = brazilian_phone(&digits).or_else(|| french_phone(&digits)) {
         return formatted;
     }
     let (country, national) = digits.split_at(country_code_len(&digits).min(digits.len()));
@@ -664,6 +664,34 @@ fn brazilian_phone(digits: &str) -> Option<String> {
         &subscriber[..split],
         &subscriber[split..]
     ))
+}
+
+/// Formats France's `+33` numbers as `+33 6 12 34 56 78`, and the overseas
+/// departments that share its nine-digit plan (`+262` Réunion and Mayotte,
+/// `+590` Guadeloupe, `+594` French Guiana, `+596` Martinique) as
+/// `+262 692 12 34 56`.
+///
+/// French numbers are written in pairs. A metropolitan number leads with
+/// one digit, except the `8` service numbers, which lead with three like the
+/// overseas ones; these are libphonenumber's international formats.
+fn french_phone(digits: &str) -> Option<String> {
+    let (country, national) = ["33", "262", "590", "594", "596"]
+        .into_iter()
+        .find_map(|code| Some((code, digits.strip_prefix(code)?)))?;
+    if national.len() != 9 {
+        return None;
+    }
+    let lead = if country == "33" && !national.starts_with('8') {
+        1
+    } else {
+        3
+    };
+    let mut out = format!("+{country} {}", &national[..lead]);
+    for start in (lead..national.len()).step_by(2) {
+        out.push(' ');
+        out.push_str(&national[start..start + 2]);
+    }
+    Some(out)
 }
 
 /// The machine's hostname, or an empty string if it cannot be read.
@@ -954,6 +982,16 @@ mod tests {
         assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
         assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");
         assert_eq!(phone("+55 (11) 99999-9999"), "+55 (11) 99999-9999");
+        assert_eq!(phone("33612345678"), "+33 6 12 34 56 78");
+        assert_eq!(phone("33142685300"), "+33 1 42 68 53 00");
+        assert_eq!(phone("33899123456"), "+33 899 12 34 56");
+        assert_eq!(phone("+33 6 12 34 56 78"), "+33 6 12 34 56 78");
+        assert_eq!(phone("262692123456"), "+262 692 12 34 56");
+        assert_eq!(phone("590690123456"), "+590 690 12 34 56");
+        assert_eq!(phone("594694123456"), "+594 694 12 34 56");
+        assert_eq!(phone("596696123456"), "+596 696 12 34 56");
+        // A French number of the wrong length keeps the general grouping.
+        assert_eq!(phone("3361234567"), "+33 612 345 67");
         assert_eq!(phone(""), "");
     }
 
