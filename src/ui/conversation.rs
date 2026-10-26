@@ -6008,6 +6008,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
         let chat_width = ui.clip_rect().width();
         egui::Popup::menu(&response)
             .align_alternatives(&[egui::RectAlign::TOP_START])
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .frame(widgets::menu_frame(&palette))
             .show(|ui| {
                 reaction_details(
