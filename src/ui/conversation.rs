@@ -1358,14 +1358,15 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }),
         )
         .show(ui, |ui| {
+            // An upload already under way stays cancellable while messages are
+            // selected or if the chat turns read-only.
+            upload_strips(app, ui, &chat.id);
             if let Some((selected_chat, selected)) = app.selection.clone()
                 && selected_chat == chat.id
             {
                 selection_bar(app, ui, &chat.id, &selected);
                 return;
             }
-            // An upload already under way stays cancellable if the chat turns read-only.
-            upload_strips(app, ui, &chat.id);
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     // A channel we left says so; the rest are only read-only.

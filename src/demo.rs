@@ -9951,6 +9951,14 @@ mod tests {
         ctx.data_mut(|data| data.remove::<egui::Rect>(egui::Id::new(("upload-strip", 1_u64))));
         render(&mut app, &ctx);
         assert!(strip(&ctx).is_some(), "a read-only chat still shows it");
+        // Selecting messages swaps the composer for the selection bar, but
+        // the strip and its X stay.
+        app.selection = Some((SAMPLES[0].id.into(), Vec::new()));
+        ctx.data_mut(|data| data.remove::<egui::Rect>(egui::Id::new(("upload-strip", 1_u64))));
+        render(&mut app, &ctx);
+        assert!(app.selection.is_some(), "the selection bar is up");
+        assert!(strip(&ctx).is_some(), "selecting messages still shows it");
+        app.selection = None;
         let pos = ctx
             .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-cancel", 1_u64))))
             .expect("a cancel button")
