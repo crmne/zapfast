@@ -6005,9 +6005,21 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(names.join(", "));
         // A click lists who reacted with what, as in WhatsApp.
+        let chat_width = ui.clip_rect().width();
         egui::Popup::menu(&response)
+            .align_alternatives(&[egui::RectAlign::TOP_START])
             .frame(widgets::menu_frame(&palette))
-            .show(|ui| reaction_details(ui, view, message, &groups, actions));
+            .show(|ui| {
+                reaction_details(
+                    ui,
+                    view,
+                    message,
+                    &groups,
+                    response.rect,
+                    chat_width,
+                    actions,
+                )
+            });
     }
 }
 
@@ -6057,6 +6069,8 @@ fn reaction_details(
     view: &View<'_>,
     message: &Message,
     groups: &[(&str, Vec<&Reaction>)],
+    chip: Rect,
+    chat_width: f32,
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
@@ -6066,25 +6080,69 @@ fn reaction_details(
         message: message.id.clone(),
         emoji: reaction_choice(mine, emoji),
     };
-    ui.set_min_width(200.0);
-    ui.horizontal(|ui| {
-        ui.add_space(6.0);
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (emoji, people) in groups {
-            let label = format!("{emoji} {}", people.len());
-            if reaction_summary_chip(ui, view, &label, mine == Some(*emoji)).clicked() {
-                actions.push(react(emoji));
-                ui.close();
+    // Should be just about as wide as the widest name
+    let longest_name = reactors(groups)
+        .iter()
+        .map(|reaction| {
+            let name = reactor(view, reaction).1;
+            widgets::line(ui, &name, theme::regular(13.5), palette.text, f32::MAX, 1)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+
+    ui.set_width((longest_name + 90.0).clamp(chat_width / 3.0, chat_width));
+    widgets::chip_scroll_row(ui, "reaction-summary", |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (emoji, people) in groups {
+                let chosen = mine == Some(*emoji);
+                if reaction_summary_chip(ui, view, emoji, people.len(), chosen).clicked() {
+                    actions.push(react(emoji));
+                    ui.close();
+                }
             }
-        }
+        });
+        // Room for the floating scroll bar below the chips
+        ui.add_space(8.0);
     });
     widgets::menu_separator(ui, &palette);
-    for reaction in reactors(groups) {
-        if reactor_row(ui, view, reaction).clicked() {
-            actions.push(react(&reaction.emoji));
-            ui.close();
-        }
-    }
+    egui::ScrollArea::vertical()
+        .id_salt(("reactors", &view.chat.id, &message.id))
+        .max_height(reactor_list_height(ui, chip))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for reaction in reactors(groups) {
+                if reactor_row(ui, view, reaction).clicked() {
+                    actions.push(react(&reaction.emoji));
+                    ui.close();
+                }
+            }
+        });
+}
+
+/// Height of one person's row in the reaction popup.
+const REACTOR_ROW_HEIGHT: f32 = 40.0;
+
+const MIN_REACTOR_LIST_HEIGHT: f32 = 2.0 * REACTOR_ROW_HEIGHT;
+
+const MAX_REACTOR_LIST_HEIGHT: f32 = 7.5 * REACTOR_ROW_HEIGHT;
+/// How tall the popup's list of people may grow: the room below the chip,
+/// or above it when not even two rows fit below (egui then opens the popup
+/// above), and at most seven and a half rows, the half row hinting that the
+/// list scrolls.
+fn reactor_list_height(ui: &egui::Ui, chip: Rect) -> f32 {
+    let window = ui.ctx().content_rect();
+    let summary = ui.cursor().top() - ui.min_rect().top();
+    let below = window.bottom() - chip.bottom() - summary;
+    let above = chip.top() - window.top() - summary;
+    let room = if below >= MIN_REACTOR_LIST_HEIGHT {
+        below
+    } else {
+        above
+    };
+    room.clamp(MIN_REACTOR_LIST_HEIGHT, MAX_REACTOR_LIST_HEIGHT)
 }
 
 /// One emoji and its count at the top of the reaction popup, ringed when it
@@ -6092,11 +6150,13 @@ fn reaction_details(
 fn reaction_summary_chip(
     ui: &mut egui::Ui,
     view: &View<'_>,
-    label: &str,
+    emoji: &str,
+    count: usize,
     chosen: bool,
 ) -> egui::Response {
     let palette = view.palette;
-    let line = widgets::line(ui, label, theme::regular(13.5), palette.text, 180.0, 1);
+    let label = format!("{emoji} {count}");
+    let line = widgets::line(ui, &label, theme::regular(13.5), palette.text, 180.0, 1);
     let (rect, response) = ui.allocate_exact_size(line.size() + vec2(14.0, 8.0), Sense::click());
     if ui.is_rect_visible(rect) {
         let radius = rect.height() / 2.0;
@@ -6112,12 +6172,22 @@ fn reaction_summary_chip(
             .rect_stroke(rect, radius, border, egui::StrokeKind::Inside);
         line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
     }
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if chosen {
-        response.on_hover_text(crate::i18n::gettext(view.locale, "Remove your reaction"))
+    let action = if chosen {
+        crate::i18n::gettext(view.locale, "Remove your reaction").into_owned()
     } else {
-        response
-    }
+        crate::i18n::gettext(view.locale, "React with {emoji}").replace("{emoji}", emoji)
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            chosen,
+            format!("{action}, {label}"),
+        )
+    });
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(action)
 }
 
 /// One person in the reaction popup: avatar, name, and their emoji on the
@@ -6129,7 +6199,8 @@ fn reactor_row(ui: &mut egui::Ui, view: &View<'_>, reaction: &Reaction) -> egui:
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), sense);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), REACTOR_ROW_HEIGHT), sense);
     if ui.is_rect_visible(rect) {
         if reaction.from_me && response.hovered() {
             ui.painter()
@@ -6160,6 +6231,14 @@ fn reactor_row(ui: &mut egui::Ui, view: &View<'_>, reaction: &Reaction) -> egui:
         label.paint(ui, pos2(left, label_top), palette.text);
     }
     if reaction.from_me {
+        let remove = crate::i18n::gettext(view.locale, "Remove your reaction");
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                ui.is_enabled(),
+                format!("{remove}: {}", reaction.emoji),
+            )
+        });
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
         response
