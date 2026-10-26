@@ -656,6 +656,11 @@ pub enum Command {
         source: std::path::PathBuf,
         name: String,
     },
+    /// Resolves a drag's saved file off the window thread, without reading its contents.
+    PrepareAttachmentDrag {
+        request: u64,
+        path: PathBuf,
+    },
     /// Opens the log, or shows it in its folder, off the interface thread;
     /// only a failure reports back.
     OpenLog(PathBuf),
@@ -1047,6 +1052,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// The account-local file preparation result for a still-held attachment drag.
+    PreparedAttachmentDrag {
+        request: u64,
+        result: Result<PathBuf, String>,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,

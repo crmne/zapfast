@@ -100,6 +100,7 @@ qrcode = { version = "0.14", default-features = false }
 # and TLS stack.
 ureq = { version = "3", default-features = false, features = ["rustls", "socks-proxy"] }
 jiff = "0.2"
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
 # Unicode bidi properties; already included through URL/IDNA handling.
@@ -272,8 +273,12 @@ raw-window-handle = "0.6"
 # plain, square grey frame there (#397). The feature applies to eframe's
 # winit, the fork in [patch.crates-io].
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+x11rb = "0.13"
+x11-dl = "2.21"
+percent-encoding = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+drag = "2.1.1"
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menu bar, built with tray-icon's muda at the version
 # fastframe-tray uses.
@@ -298,7 +303,7 @@ raw-window-handle = "0.6"
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
 # Pauses other apps' media through the system media transport controls while
 # recording or playing voice messages. The same version cpal already uses.
-windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Com", "Win32_System_Ole", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]

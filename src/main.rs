@@ -781,6 +781,18 @@ impl Shell {
         }
         app.background_frame(ctx);
         app.window_logic(ctx);
+        if let Some(error) = zapfast::file_drag::take_failure(ctx) {
+            app.finish_attachment_drag(ctx, Err(error));
+        }
+        if let Some(path) =
+            app.take_attachment_drag(ctx.input(|input| input.pointer.primary_down()))
+        {
+            let result = frame
+                .winit_window()
+                .ok_or(zapfast::file_drag::Failure::Unsupported)
+                .and_then(|window| zapfast::file_drag::start(window, &path, ctx));
+            app.finish_attachment_drag(ctx, result);
+        }
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
             && let Some(at) = self.taskbar.show(

@@ -87,6 +87,10 @@ details.
 
 The complete guide lives at **[zapfast.rocks](https://zapfast.rocks/)**.
 
+Drag a downloaded photo, video, sticker, or document out of its message to copy
+it into another application or folder. The saved attachment stays in place.
+Download it first if it is not available locally; **Save as** remains available.
+
 | You want to… | Read |
 |---|---|
 | Know what ZapFast does and does not do yet | [What is ZapFast?](https://zapfast.rocks/what-is-zapfast/) |

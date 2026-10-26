@@ -2719,6 +2719,8 @@ pub enum Action {
     PreviewSticker(PathBuf),
     CloseStickerPreview,
     OpenFile(PathBuf),
+    /// Copies a saved attachment through the native desktop drag protocol.
+    DragAttachment(PathBuf),
     /// Opens ZapFast's log, or shows it in its folder when no application
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
