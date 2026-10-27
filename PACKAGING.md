@@ -109,14 +109,32 @@ verify desktop and theme assets. Run the same check locally with
 from the same configuration with `--defer-recipes`, leaving Linux inputs and AUR
 recipe generation to the Linux packaging job after release assets exist.
 
+## Windows installer
+
+Windows releases ship the portable zip and a per-user Windows Installer
+package, `zapfast-vX.Y.Z-<target>.msi`, built by native-packages from
+`packaging/windows/zapfast.wxs` (`packaging/windows/msi.rb`). Releases up to
+0.20.1 also shipped an Inno Setup program (`-setup.exe`); it is gone, because
+the package is the one winget's manifests install, and the one signed and tested.
+
+The package takes over a copy the Inno Setup program installed: it installs
+into that folder, removes Inno's uninstaller and its Settings > Apps entry, and
+leaves the user's data (session, archive, settings) alone, as they live
+outside the program folder. ZapFast 0.20.0 and later update to the package by
+themselves (the updater prefers the `.msi`). Older versions look for a
+`-setup.exe` that new releases no longer have, so they stop finding updates;
+their users download the `.msi` once (`docs/_guide/download.md` says so).
+`packaging/windows/zapfast.iss` stays only so `test-installer.ps1` can make an
+Inno install for the package to take over.
+
 ## Windows signing
 
-Tag releases sign `zapfast.exe`, the setup program and the MSI with Azure
-Artifact Signing, as **PlentyLabs UG (haftungsbeschränkt) & Co. KG**, through
-native-packages: `windows.signing` in `native-packages.yaml` turns it on,
-`native-packages sign-windows` signs `zapfast.exe` before the zip, the setup
-program and the MSI pack it, and the setup program once Inno has built it, and
-`native-packages build` signs the MSI before recording its checksum. Each
+Tag releases sign `zapfast.exe` and the MSI with Azure Artifact Signing, as
+**PlentyLabs UG (haftungsbeschränkt) & Co. KG**, through native-packages:
+`windows.signing` in `native-packages.yaml` turns it on,
+`native-packages sign-windows` signs `zapfast.exe` before the zip and the MSI
+pack it, and `native-packages build` signs the MSI before recording its
+checksum. Each
 signature is SHA-256 Authenticode with Microsoft's RFC 3161 timestamp, checked
 to be `Valid` and PlentyLabs' before anything is attested or uploaded (see
 native-packages'

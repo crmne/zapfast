@@ -86,11 +86,17 @@ after installing ZapFast.
 
 ## Windows
 
-The installer adds {{ app }} to the Start menu and needs no administrator
-rights. Choose x86_64 for most PCs or aarch64 for Windows on ARM:
+The installer is a Windows Installer package (`.msi`). It adds {{ app }} to
+the Start menu and needs no administrator rights. Choose x86_64 for most PCs
+or aarch64 for Windows on ARM:
 
-- [{{ name }}-v{{ v }}-x86_64-pc-windows-msvc-setup.exe]({{ base }}/{{ name }}-v{{ v }}-x86_64-pc-windows-msvc-setup.exe)
-- [{{ name }}-v{{ v }}-aarch64-pc-windows-msvc-setup.exe]({{ base }}/{{ name }}-v{{ v }}-aarch64-pc-windows-msvc-setup.exe)
+- [{{ name }}-v{{ v }}-x86_64-pc-windows-msvc.msi]({{ base }}/{{ name }}-v{{ v }}-x86_64-pc-windows-msvc.msi)
+- [{{ name }}-v{{ v }}-aarch64-pc-windows-msvc.msi]({{ base }}/{{ name }}-v{{ v }}-aarch64-pc-windows-msvc.msi)
+
+If you installed {{ app }} with the older setup program (`-setup.exe`, 0.20.1
+and earlier), run the `.msi`: it installs into the same folder and replaces
+the old installer's entry in Settings > Apps. Your session, chats and settings
+stay. Versions from 0.20.0 on update to the package by themselves.
 
 To run {{ app }} without installing it, download a zip, extract it, and run
 `{{ name }}.exe`.

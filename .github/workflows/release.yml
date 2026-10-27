@@ -115,8 +115,8 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      # Signed before anything packs them, so the zip, the setup program and
-      # the MSI all carry signed binaries.
+      # Signed before anything packs them, so the zip and the MSI both carry
+      # signed binaries.
       - name: Sign the binaries
         if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         shell: pwsh
@@ -144,26 +144,10 @@ jobs:
             tar czf "$name.tar.gz" "$name"
           fi
 
-      # Inno Setup ships with the runner image. PowerShell, because bash on
-      # Windows rewrites /D... arguments as paths.
-      - name: Installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          $arch = "${{ matrix.target }}".Split("-")[0]
-          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          $numericVersion = $version.Split("-")[0]
-          & $iscc "/DVersion=$version" "/DNumericVersion=$numericVersion" "/DArch=$arch" `
-            "/DBinary=$PWD\target\${{ matrix.target }}\release\zapfast.exe" `
-            "/DOutputDir=$PWD\dist" packaging\windows\zapfast.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # The Windows Installer package, which replaces the setup program
-      # above once every install has updated through one release carrying
-      # both.
-      # native-packages signs the MSI before recording its checksum.
+      # The Windows installer: a per-user Windows Installer package, which also
+      # takes over a copy the Inno Setup program of 0.20.1 and earlier
+      # installed (PACKAGING.md, "Windows installer"). native-packages signs
+      # it before recording its checksum.
       - name: Windows Installer package
         if: runner.os == 'Windows'
         shell: pwsh
@@ -184,18 +168,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\$packageTarget\msi\*.msi" dist\
           Remove-Item -Recurse $payload
-      - name: Sign the setup program
-        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
-        shell: pwsh
-        run: native-packages sign-windows (Get-ChildItem dist\*-setup.exe).FullName
-
       - name: Attest release packages
         uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*-setup.exe
             dist/*.msi
       - uses: actions/upload-artifact@v7
         with:
@@ -203,7 +181,6 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*-setup.exe
             dist/*.msi
           if-no-files-found: error
 

@@ -48,9 +48,10 @@ jobs:
       publish: ${{ inputs.publish == true && inputs.version != '' }}
     secrets: inherit
 
-  # The Windows packages, installed for real with stand-in program files: the
-  # Inno Setup installer, the MSI taking it over, an update, and uninstalling
-  # with ZapFast running and without. Releases build both from these files.
+  # The Windows package, installed for real with stand-in program files: an
+  # Inno Setup install as 0.20.1 and earlier made, the MSI taking it over, an
+  # update, and uninstalling with ZapFast running and without. Releases ship
+  # only the MSI; the Inno script stays to make the old install to take over.
   windows-installer:
     name: Windows installer
     runs-on: windows-latest
