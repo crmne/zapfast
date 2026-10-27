@@ -39,7 +39,7 @@ log = "0.4"
 directories = "6"
 # UI framework. glow avoids the larger wgpu dependency.
 eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
-egui = "0.36.2"
+egui = "0.37.0"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg", "webp", "gif"] }
 # Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures. Keep
 # skrifa aligned with epaint to avoid compiling two versions.
