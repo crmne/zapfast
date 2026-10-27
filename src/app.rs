@@ -641,6 +641,8 @@ pub struct App {
     voices_resend: bool,
     /// When `voices_wanted` last changed, for the debounce.
     voices_changed: Instant,
+    /// Public model progress shared by the process, not account content.
+    pub transcription_state: Option<(crate::transcribe::Model, crate::transcribe::State)>,
     /// Previous message-list rect used by the selection hook.
     pub selection_view: std::sync::Arc<std::sync::Mutex<Option<egui::Rect>>>,
     pub gif_query: String,
@@ -1514,6 +1516,7 @@ impl App {
             voices_sent: None,
             voices_resend: false,
             voices_changed: Instant::now(),
+            transcription_state: None,
             selection_view: Default::default(),
             gif_query: String::new(),
             gif_results: Vec::new(),
@@ -3421,6 +3424,14 @@ impl App {
                         .find(|candidate| candidate.id == message)
                 {
                     found.transcript = Some(text);
+                }
+            }
+            Event::TranscriptionModel { model, state } => {
+                if live && model == self.settings.transcription_model {
+                    if state == crate::transcribe::State::Ready {
+                        self.voices_resend = true;
+                    }
+                    self.transcription_state = Some((model, state));
                 }
             }
             Event::Pins { chat, items } => {
@@ -7408,6 +7419,50 @@ impl App {
             Action::VoicesOnScreen { chat, ids } => {
                 self.voices_on_screen = Some((chat, ids));
             }
+            Action::SetTranscriptionModel(model) => {
+                if self.settings.transcription_model != model {
+                    self.cancel_transcriptions();
+                    self.settings.transcription_model = model;
+                    self.transcription_state = Some((model, crate::transcribe::State::Queued));
+                    for account in &self.accounts {
+                        account.backend.send(Command::SetTranscriptionModel(model));
+                    }
+                    self.backend.send(Command::PrepareTranscriptionModel(model));
+                    self.mark_settings_dirty();
+                }
+            }
+            Action::PrepareTranscriptionModel => {
+                let model = self.settings.transcription_model;
+                self.settings.transcribe_voice_notes = true;
+                self.transcription_state = Some((model, crate::transcribe::State::Queued));
+                self.backend.send(Command::PrepareTranscriptionModel(model));
+                self.mark_settings_dirty();
+            }
+            Action::CancelTranscriptionDownload => {
+                self.settings.transcribe_voice_notes = false;
+                self.cancel_transcriptions();
+                let model = self.settings.transcription_model;
+                for account in &self.accounts {
+                    account.backend.send(Command::SetTranscriptionModel(model));
+                }
+                self.transcription_state = Some((model, crate::transcribe::State::Paused));
+                self.mark_settings_dirty();
+            }
+            Action::TranscribeAgain { chat, message } => {
+                let accessible = self
+                    .chat(&chat)
+                    .is_some_and(|known| !known.locked || self.locked_folder_open());
+                if accessible {
+                    self.settings.transcribe_voice_notes = true;
+                    self.transcribing.insert((chat.clone(), message.clone()));
+                    self.backend.send(Command::TranscribeAgain {
+                        chat,
+                        message,
+                        model: self.settings.transcription_model,
+                    });
+                    self.mark_settings_dirty();
+                }
+            }
             Action::SweepMessages { anchor, to } => {
                 let Some(chat) = self.open_chat.clone() else {
                     return;
@@ -8767,7 +8822,25 @@ impl App {
                 self.search_hits.clear();
                 self.mark_settings_dirty();
             }
-            Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SettingsChanged => {
+                if !self.settings.transcribe_voice_notes
+                    && self
+                        .transcription_state
+                        .as_ref()
+                        .is_some_and(|(_, state)| state.busy())
+                {
+                    for account in &self.accounts {
+                        account.backend.send(Command::SetTranscriptionModel(
+                            self.settings.transcription_model,
+                        ));
+                    }
+                    self.transcription_state = Some((
+                        self.settings.transcription_model,
+                        crate::transcribe::State::Paused,
+                    ));
+                }
+                self.mark_settings_dirty();
+            }
             Action::SetAccountPrivacy { kind, choice } => {
                 // The value lives on the phone: nothing is written without a
                 // connection and a snapshot to write against.
@@ -10438,25 +10511,20 @@ impl App {
         }
     }
 
-    /// Asks the backend to transcribe the voice messages on screen, once the
-    /// reader has stopped moving through them for a moment. A quick scroll
-    /// through a long chat therefore transcribes nothing it only passed by.
     /// Drops the transcription queue of the account on screen and forgets the
-    /// voice list this window asked for. The clip already being transcribed
-    /// may still finish; its text waits in that account's archive.
+    /// voice list this window asked for. An in-flight inference chunk may
+    /// finish, but its cancelled result is not stored.
     fn cancel_transcriptions(&mut self) {
-        if let Some((chat, _)) = self.voices_sent.take() {
-            self.backend.send(Command::Transcribe {
-                chat,
-                ids: Vec::new(),
-                locale: self.locale.tag().to_owned(),
-            });
+        if self.voices_sent.take().is_some() || !self.transcribing.is_empty() {
+            self.backend.send(Command::CancelTranscription);
         }
         self.voices_wanted = None;
         self.voices_resend = false;
         self.voices_on_screen = None;
     }
 
+    /// Wait for a settled viewport instead of transcribing every row that a
+    /// quick scroll only passed by.
     fn queue_transcriptions(&mut self, ctx: &egui::Context) {
         if !crate::transcribe::available() || !self.settings.transcribe_voice_notes {
             self.cancel_transcriptions();
@@ -10513,7 +10581,7 @@ impl App {
         self.backend.send(Command::Transcribe {
             chat,
             ids,
-            locale: self.locale.tag().to_owned(),
+            model: self.settings.transcription_model,
         });
         self.voices_sent = self.voices_wanted.clone();
         self.voices_resend = false;
@@ -11538,6 +11606,47 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn changing_the_transcription_model_preserves_saved_words_and_routes_the_choice() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.accounts[0].backend = backend;
+        let chat = "synthetic@s.whatsapp.net";
+        let mut row = message(chat, "voice", 10);
+        row.transcript = Some("Saved words".into());
+        app.conversations.insert(
+            chat.into(),
+            Conversation {
+                messages: vec![row],
+                ..Conversation::default()
+            },
+        );
+        app.apply(
+            Action::SetTranscriptionModel(crate::transcribe::Model::ParakeetUltra),
+            &egui::Context::default(),
+        );
+        assert_eq!(
+            app.settings.transcription_model,
+            crate::transcribe::Model::ParakeetUltra
+        );
+        assert_eq!(
+            app.conversations[chat].messages[0].transcript.as_deref(),
+            Some("Saved words")
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SetTranscriptionModel(
+                crate::transcribe::Model::ParakeetUltra
+            ))
+        ));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::PrepareTranscriptionModel(
+                crate::transcribe::Model::ParakeetUltra
+            ))
+        ));
     }
 
     /// While recording, the light, the timer and the waveform ask for a

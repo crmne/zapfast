@@ -151,10 +151,6 @@
               ]
             );
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
-            # The sandbox has no macOS 26 SDK or swiftc, so the speech helper
-            # is not built here and the packaged app offers no voice
-            # transcription. The release DMG and source builds do.
-            ZAPFAST_ASR = "off";
 
             # The vendored OpenSSL (through rusqlite's bundled SQLCipher) embeds
             # its build line, compiler path included, in the binary. The app

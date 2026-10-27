@@ -2781,6 +2781,13 @@ pub enum Action {
         chat: ChatId,
         ids: Vec<String>,
     },
+    SetTranscriptionModel(crate::transcribe::Model),
+    PrepareTranscriptionModel,
+    CancelTranscriptionDownload,
+    TranscribeAgain {
+        chat: ChatId,
+        message: String,
+    },
     /// The mouse button that swept messages was released.
     EndSweep,
     /// Leaves selection mode.

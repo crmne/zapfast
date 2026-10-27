@@ -1,5 +1,51 @@
 # Third-party notices
 
+## Optional local speech models
+
+Parakeet models download on demand, rather than shipping inside the app.
+NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The FP32 and INT8 ONNX exports are by
+[istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx);
+conversion and INT8 quantization modify the format/precision of the original.
+[Moondream Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra),
+a post-trained version of NVIDIA's v3, is also CC BY 4.0. Its ONNX export and
+graph optimizations are by
+[Olicorne](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-onnx).
+ZapFast downloads the pinned exports without further modifying the weights.
+Neither NVIDIA, Moondream nor the exporters endorse this application.
+
+Inference uses [parakeet-rs](https://crates.io/crates/parakeet-rs)
+(MIT OR Apache-2.0) and [ONNX Runtime](https://github.com/microsoft/onnxruntime)
+(MIT). Model licenses are separate from the runtime licenses.
+
+The following MIT notice applies to parakeet-rs and ONNX Runtime:
+
+```text
+MIT License
+
+parakeet-rs: Copyright (c) 2025 Enes Altun
+ONNX Runtime: Copyright (c) Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Pidgin notification sounds
 
 `assets/sounds/receive.wav` and `assets/sounds/alert.wav`, built into ZapFast,

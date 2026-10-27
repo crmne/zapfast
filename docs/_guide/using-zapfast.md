@@ -477,14 +477,36 @@ Starting a reply before recording includes the quoted message.
 
 ### Transcripts
 
-On macOS 26 and later, a voice message that comes into view is transcribed on
-this computer, and the text appears under its player, selectable and copyable
-like any other message. The speech model is the one macOS ships, so ZapFast
-downloads nothing for it and the audio never leaves the Mac; the first message
-in a language may make the system install that language's model. Transcribing
-is on by default and can be turned off in Settings, under **Chats**. The text
-is kept in the encrypted archive and disappears with the message. A message
-still being transcribed says **Transcribing…**.
+A voice message that comes into view is transcribed on this computer, and the
+text appears under its player, selectable and copyable like any other message.
+The recognizer is Parakeet, running natively on the CPU; audio stays in memory
+and is never uploaded. Automatic transcription is on by default and can be
+turned off in Settings, under **Chats**.
+
+**Transcription model**, in the same section, selects Parakeet v3 FP32 (the
+default, about 2.55 GB), Parakeet v3 INT8 (about 670 MB, less memory but potentially
+less accurate), or Parakeet Ultra FP32 (about 2.51 GB, a refined v3 whose results
+vary with the recording). A model downloads directly from its publisher's
+Hugging Face repository on first use, when selected, or through **Prepare model**.
+The download shows progress, uses a fixed revision and checks every file's size
+and SHA-256. Completed files are reused after an interrupted download, and
+subsequent transcription works offline. **Pause transcription** stops the
+download and turns off automatic transcription; **Resume** prepares it again.
+
+The model detects the spoken language automatically, independently of the
+interface language. It supports 25 languages, including Portuguese, English,
+Spanish, French and German, but not every language of ZapFast's interface.
+One model is shared across accounts, and is unloaded after a minute without
+work. The text remains isolated in each account's encrypted archive and
+disappears with its message.
+
+Changing models preserves existing transcripts. To compare a saved voice note
+with the selected model, download its audio if needed, then right-click it and
+choose **Transcribe again**. Its previous text stays until a new transcript is
+successfully saved. A message being transcribed says **Transcribing…**.
+
+This custom build's native recognizer has been run on macOS only. Linux and
+Windows use the same native engine, but have not been tested or packaged here.
 
 ## Calls
 

@@ -1,178 +1,246 @@
-//! What a voice message says, transcribed on this computer.
+//! Local speech recognition shared by every platform and every account.
 //!
-//! The speech model is the system's own, reached through a small Swift helper
-//! (`zapfast-asr`, built beside the app and shipped in its bundle): the
-//! `SpeechAnalyzer` API exists only in Swift, so `objc2` cannot reach it. The
-//! audio never leaves the machine, nothing is downloaded from us, and the only
-//! thing written to disk is a temporary WAV that is removed as soon as the
-//! helper answers.
-//!
-//! On a Mac older than macOS 26, or when the helper is missing, the feature is
-//! simply absent: [`available`] is false and the interface offers nothing.
+//! Only model weights are downloaded from pinned Hugging Face revisions.
+//! Audio stays in memory, never goes into an HTTP request or a temporary WAV,
+//! and the encrypted account archive owns the resulting text.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
+use std::time::Duration;
 
-/// Stored with every transcript, so a future engine can be told apart.
-pub const ENGINE: &str = "speech-analyzer";
-/// How long the helper may take before it is stopped. The first run on a Mac
-/// may install the locale's model from Apple, which is a download; the rest
-/// take a fraction of the clip's duration.
-const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
+use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber, ort};
 
-/// Whether this build and this Mac can transcribe.
+mod catalog;
+mod download;
+pub use catalog::Model;
+
+/// Public, non-sensitive model progress. It contains no account or audio data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum State {
+    Queued,
+    Checking,
+    Downloading { received: u64, total: u64 },
+    Loading,
+    Ready,
+    Paused,
+    Failed(String),
+}
+
+impl State {
+    pub fn busy(&self) -> bool {
+        matches!(
+            self,
+            Self::Queued | Self::Checking | Self::Downloading { .. } | Self::Loading
+        )
+    }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Cancelled,
+    Model(String),
+    Audio,
+}
+
+pub type Progress = Box<dyn Fn(State) + Send>;
+
+/// The recognizer runs on all three desktop platforms, without a system
+/// speech package, a GPU driver, Python or a helper executable.
 pub fn available() -> bool {
-    supported() && helper().is_some()
+    true
 }
 
-fn supported() -> bool {
-    static SUPPORTED: OnceLock<bool> = OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        #[cfg(target_os = "macos")]
-        {
-            use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
-            NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(NSOperatingSystemVersion {
-                majorVersion: 26,
-                minorVersion: 0,
-                patchVersion: 0,
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            false
-        }
-    })
+/// The common cache contains public weights only, never account data.
+pub fn models_directory() -> PathBuf {
+    crate::paths::AppDirs::discover()
+        .cache
+        .join("speech-models")
 }
 
-/// The helper beside the running binary, as the bundle and the build leave it.
-fn helper() -> Option<PathBuf> {
-    static HELPER: OnceLock<Option<PathBuf>> = OnceLock::new();
-    HELPER
-        .get_or_init(|| {
-            let exe = std::env::current_exe().ok()?;
-            let dir = exe.parent()?;
-            // `deps/` in a test build holds the binary; the helper sits one
-            // level up.
-            let mut candidates = vec![dir.join("zapfast-asr")];
-            if let Some(up) = dir.parent() {
-                candidates.push(up.join("zapfast-asr"));
-            }
-            candidates.into_iter().find(|path| path.is_file())
+/// Downloads and prepares a model without reading an account or a recording.
+pub fn prepare(model: Model, cancel: Arc<AtomicBool>, progress: Progress) -> Result<(), Error> {
+    submit(model, None, models_directory(), cancel, progress).map(|_| ())
+}
+
+/// Transcribes a downloaded voice message. The caller keeps its account,
+/// session and model generation, and rejects late results itself.
+pub fn transcribe(
+    model: Model,
+    ogg: &Path,
+    cancel: Arc<AtomicBool>,
+    progress: Progress,
+) -> Result<String, Error> {
+    submit(
+        model,
+        Some(ogg.to_owned()),
+        models_directory(),
+        cancel,
+        progress,
+    )
+}
+
+struct Job {
+    model: Model,
+    audio: Option<PathBuf>,
+    root: PathBuf,
+    cancel: Arc<AtomicBool>,
+    progress: Progress,
+    reply: mpsc::SyncSender<Result<String, Error>>,
+}
+
+fn submit(
+    model: Model,
+    audio: Option<PathBuf>,
+    root: PathBuf,
+    cancel: Arc<AtomicBool>,
+    progress: Progress,
+) -> Result<String, Error> {
+    static WORKER: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+    let sender = WORKER.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("zapfast-speech".to_owned())
+            .spawn(move || worker(receiver))
+            .expect("could not start the speech thread");
+        sender
+    });
+    let (reply, answer) = mpsc::sync_channel(1);
+    progress(State::Queued);
+    sender
+        .send(Job {
+            model,
+            audio,
+            root,
+            cancel,
+            progress,
+            reply,
         })
-        .clone()
-}
-
-/// Transcribes one WhatsApp OGG/Opus clip into text, in `locale`.
-///
-/// `scratch` receives the temporary WAV and must be private to the account.
-pub fn transcribe(ogg: &Path, locale: &str, scratch: &Path) -> Result<String, String> {
-    let helper = helper().ok_or("the speech helper is not installed")?;
-    let bytes = std::fs::read(ogg).map_err(|error| format!("could not read the audio: {error}"))?;
-    let samples = crate::voice::decode(&bytes)
-        .map_err(|error| format!("could not decode the audio: {error}"))?;
-    if samples.is_empty() {
-        return Err("the audio is empty".to_owned());
-    }
-    std::fs::create_dir_all(scratch)
-        .map_err(|error| format!("could not prepare the scratch folder: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(scratch, std::fs::Permissions::from_mode(0o700));
-    }
-    static SERIAL: AtomicU64 = AtomicU64::new(0);
-    let wav = scratch.join(format!(
-        "{}-{}.wav",
-        std::process::id(),
-        SERIAL.fetch_add(1, Ordering::Relaxed)
-    ));
-    if let Err(error) = write_wav(&wav, &samples) {
-        // A partial file must not outlive the failure that made it.
-        let _ = std::fs::remove_file(&wav);
-        return Err(error);
-    }
-    let answer = run_helper(&helper, locale, &wav);
-    let _ = std::fs::remove_file(&wav);
+        .map_err(|_| Error::Model("The speech worker stopped. Restart ZapFast.".to_owned()))?;
     answer
+        .recv()
+        .map_err(|_| Error::Model("The speech worker stopped. Restart ZapFast.".to_owned()))?
 }
 
-fn run_helper(helper: &Path, locale: &str, wav: &Path) -> Result<String, String> {
-    let mut child = Command::new(helper)
-        .arg("--locale")
-        .arg(locale)
-        .arg(wav)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("could not start the speech helper: {error}"))?;
-    let started = Instant::now();
+struct Loaded {
+    model: Model,
+    root: PathBuf,
+    engine: ParakeetTDT,
+}
+
+/// One model across the whole process, not one multi-gigabyte copy per
+/// account. An idle worker releases its sessions and all model memory.
+fn worker(receiver: mpsc::Receiver<Job>) {
+    let mut loaded = None;
     loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < HELPER_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(20));
+        match receiver.recv_timeout(Duration::from_secs(60)) {
+            Ok(job) => {
+                let result = run(&job, &mut loaded);
+                match &result {
+                    Err(Error::Cancelled) => (job.progress)(State::Paused),
+                    Err(Error::Model(message)) => (job.progress)(State::Failed(message.clone())),
+                    _ => {}
+                }
+                let _ = job.reply.send(result);
             }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("the speech helper took too long".to_owned());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("could not wait for the speech helper: {error}"));
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => loaded = None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("could not read the speech helper's answer: {error}"))?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        let error = error.trim();
-        return Err(if error.is_empty() {
-            "the speech helper failed".to_owned()
-        } else {
-            error.to_owned()
+}
+
+fn check_cancel(cancel: &AtomicBool) -> Result<(), Error> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
+    check_cancel(&job.cancel)?;
+    if loaded
+        .as_ref()
+        .is_none_or(|current| current.model != job.model || current.root != job.root)
+    {
+        // Return the old model's memory before allocating its replacement.
+        *loaded = None;
+        let directory = download::ensure(job.model, &job.root, &job.cancel, job.progress.as_ref())?;
+        check_cancel(&job.cancel)?;
+        (job.progress)(State::Loading);
+        let environment = ort::init()
+            .with_name("ZapFast speech")
+            .with_telemetry(false)
+            .build()
+            .map_err(|_| Error::Model("Could not start ONNX Runtime.".to_owned()))?;
+        let config = ExecutionConfig::new()
+            .with_environment(environment)
+            .with_intra_threads(4)
+            .with_inter_threads(1);
+        let engine = ParakeetTDT::from_pretrained(directory, Some(config))
+            .map_err(|_| Error::Model("Could not load the speech model. Try again.".to_owned()))?;
+        check_cancel(&job.cancel)?;
+        *loaded = Some(Loaded {
+            model: job.model,
+            root: job.root.clone(),
+            engine,
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    (job.progress)(State::Ready);
+    let Some(path) = &job.audio else {
+        return Ok(String::new());
+    };
+    let bytes = std::fs::read(path).map_err(|_| Error::Audio)?;
+    let samples = crate::voice::decode_at_rate(&bytes, 16_000).map_err(|_| Error::Audio)?;
+    if samples.is_empty() {
+        return Err(Error::Audio);
+    }
+    let mut text = String::new();
+    let engine = &mut loaded.as_mut().expect("the speech model was loaded").engine;
+    for part in chunks(&samples, 16_000) {
+        check_cancel(&job.cancel)?;
+        let result = engine
+            .transcribe_samples(part.to_vec(), 16_000, 1, None)
+            .map_err(|_| Error::Audio)?;
+        let piece = result.text.trim();
+        if !text.is_empty() && !piece.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(piece);
+    }
+    check_cancel(&job.cancel)?;
+    Ok(text)
 }
 
-/// Writes mono 48 kHz PCM as a WAV the system's speech model reads.
-fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
-    let mut file = std::fs::File::create(path)
-        .map_err(|error| format!("could not write the audio: {error}"))?;
-    let data = (samples.len() * 2) as u32;
-    let rate = crate::voice::RATE;
-    let mut header = Vec::with_capacity(44);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&(36 + data).to_le_bytes());
-    header.extend_from_slice(b"WAVEfmt ");
-    header.extend_from_slice(&16u32.to_le_bytes());
-    header.extend_from_slice(&1u16.to_le_bytes());
-    header.extend_from_slice(&1u16.to_le_bytes());
-    header.extend_from_slice(&rate.to_le_bytes());
-    header.extend_from_slice(&(rate * 2).to_le_bytes());
-    header.extend_from_slice(&2u16.to_le_bytes());
-    header.extend_from_slice(&16u16.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&data.to_le_bytes());
-    file.write_all(&header)
-        .map_err(|error| format!("could not write the audio: {error}"))?;
-    let mut body = Vec::with_capacity(data as usize);
-    for sample in samples {
-        let value = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
-        body.extend_from_slice(&value.to_le_bytes());
+/// Bound memory and cancellation latency on long voice notes. Prefer a quiet
+/// 200 ms interval between 12 and 25 seconds instead of cutting through a word.
+fn chunks(samples: &[f32], rate: u32) -> Vec<&[f32]> {
+    let rate = rate as usize;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while samples.len() - start > 25 * rate {
+        let quiet = rate / 5;
+        let step = rate / 50;
+        let low = start + 12 * rate;
+        let high = start + 25 * rate;
+        let end = (low..high - quiet)
+            .step_by(step)
+            .rfind(|&at| {
+                samples[at..at + quiet]
+                    .iter()
+                    .map(|value| value * value)
+                    .sum::<f32>()
+                    / (quiet as f32)
+                    < 0.000_04
+            })
+            .map_or(high, |at| at + quiet / 2);
+        parts.push(&samples[start..end]);
+        start = end;
     }
-    file.write_all(&body)
-        .map_err(|error| format!("could not write the audio: {error}"))?;
-    Ok(())
+    if start < samples.len() {
+        parts.push(&samples[start..]);
+    }
+    parts
 }
 
 #[cfg(test)]
@@ -180,30 +248,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_wav_header_names_pcm_mono_at_the_voice_rate() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("clip.wav");
-        write_wav(&path, &[0.0, 0.5, -0.5]).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(&bytes[0..4], b"RIFF");
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 42);
-        assert_eq!(&bytes[8..12], b"WAVE");
-        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
-        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+    fn chunking_preserves_every_sample_and_bounds_the_work() {
+        let samples = vec![0.5; crate::voice::RATE as usize * 68];
+        let pieces = chunks(&samples, crate::voice::RATE);
         assert_eq!(
-            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
-            crate::voice::RATE
+            pieces.iter().map(|part| part.len()).sum::<usize>(),
+            samples.len()
         );
-        assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 6);
-        assert_eq!(bytes.len(), 44 + 6);
+        assert!(
+            pieces
+                .iter()
+                .all(|part| part.len() <= 25 * crate::voice::RATE as usize)
+        );
+        assert_eq!(pieces.concat(), samples);
     }
 
     #[test]
-    fn a_clip_without_a_helper_is_reported_rather_than_guessed() {
-        if available() {
-            return;
+    fn cancellation_stops_before_loading_or_reading_audio() {
+        let root = tempfile::tempdir().unwrap();
+        let job = Job {
+            model: Model::default(),
+            root: root.path().to_owned(),
+            audio: Some(PathBuf::from("must-not-be-read.ogg")),
+            cancel: Arc::new(AtomicBool::new(true)),
+            progress: Box::new(|_| {}),
+            reply: mpsc::sync_channel(1).0,
+        };
+        assert!(matches!(run(&job, &mut None), Err(Error::Cancelled)));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    /// Optional, explicitly supplied fixture, never the user's archive. Use a
+    /// synthetic OGG and pre-downloaded models to validate a packaged engine.
+    #[test]
+    #[ignore = "loads a real model; requires ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    fn native_model_transcribes_an_explicit_fixture() {
+        let audio = std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture");
+        let root = std::env::var_os("ZAPFAST_ASR_MODELS").expect("pinned model cache root");
+        let selected = std::env::var("ZAPFAST_ASR_MODEL")
+            .unwrap_or_else(|_| Model::default().key().to_owned());
+        let model = Model::ALL
+            .into_iter()
+            .find(|model| model.key() == selected)
+            .expect("known model");
+        let text = submit(
+            model,
+            Some(PathBuf::from(audio)),
+            PathBuf::from(root),
+            Arc::new(AtomicBool::new(false)),
+            Box::new(|_| {}),
+        )
+        .expect("native speech recognition");
+        assert!(!text.trim().is_empty());
+        if let Ok(expected) = std::env::var("ZAPFAST_ASR_EXPECTED") {
+            assert!(text.to_lowercase().contains(&expected.to_lowercase()));
         }
-        let error = transcribe(Path::new("/nonexistent.ogg"), "pt-BR", Path::new(".")).unwrap_err();
-        assert!(!error.is_empty());
+        // Explicit offline probe only, never a production log.
+        println!("{text}");
     }
 }

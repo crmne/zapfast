@@ -1599,15 +1599,69 @@ msgstr "Transcrever mensagens de voz"
 
 #: src/ui/settings.rs:449
 msgid ""
-"Writes what they say under each one as it comes into view. The audio never "
-"leaves this Mac."
+"Writes what they say under each one as it comes into view. Audio never "
+"leaves this computer."
 msgstr ""
 "Escreve o que elas dizem embaixo de cada uma conforme aparecem. O áudio "
-"nunca sai deste Mac."
+"nunca sai deste computador."
 
 #: src/ui/conversation.rs:9625
 msgid "Transcribing…"
 msgstr "Transcrevendo…"
+
+msgid "Transcription model"
+msgstr "Modelo de transcrição"
+
+msgid "Full precision. Recommended for transcription quality."
+msgstr "Precisão completa. Recomendado para a qualidade da transcrição."
+
+msgid "Uses less memory, but can omit words and be less accurate."
+msgstr "Usa menos memória, mas pode omitir palavras e ser menos preciso."
+
+msgid "A refined version of v3. Results vary with the recording."
+msgstr "Uma versão refinada do v3. Os resultados variam conforme a gravação."
+
+msgid "Download from Hugging Face: {size}"
+msgstr "Download do Hugging Face: {size}"
+
+msgid "Saved transcripts are preserved. Use Transcribe again on a voice message to replace its text."
+msgstr "As transcrições salvas são preservadas. Use Transcrever novamente em um áudio para substituir o texto."
+
+msgid "Waiting for the speech worker…"
+msgstr "Aguardando o motor de transcrição…"
+
+msgid "Verifying model files…"
+msgstr "Verificando os arquivos do modelo…"
+
+msgid "Loading speech model…"
+msgstr "Carregando o modelo de transcrição…"
+
+msgid "Ready"
+msgstr "Pronto"
+
+msgid "Paused"
+msgstr "Pausado"
+
+msgid "Could not prepare the speech model. Try again."
+msgstr "Não foi possível preparar o modelo. Tente novamente."
+
+msgid "Downloads automatically on first use."
+msgstr "Baixado automaticamente no primeiro uso."
+
+msgid "Pause transcription"
+msgstr "Pausar transcrição"
+
+msgid "Resume"
+msgstr "Continuar"
+
+msgid "Prepare model"
+msgstr "Preparar modelo"
+
+msgid "Transcribe again"
+msgstr "Transcrever novamente"
+
+msgid "Transcribe"
+msgstr "Transcrever"
 
 #: src/ui/settings.rs:448
 msgid ""

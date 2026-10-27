@@ -457,8 +457,9 @@ pub struct Settings {
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
     /// Transcribe voice messages as they come into view, on this computer.
-    /// The speech model is the system's and the audio never leaves the Mac.
+    /// The model runs locally and audio never leaves the computer.
     pub transcribe_voice_notes: bool,
+    pub transcription_model: crate::transcribe::Model,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Colour selected in the wallpaper picker.
@@ -572,6 +573,7 @@ impl Default for Settings {
             send_typing: true,
             auto_download: true,
             transcribe_voice_notes: true,
+            transcription_model: crate::transcribe::Model::default(),
             show_wallpaper: true,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
@@ -974,6 +976,25 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcription_defaults_to_v3_and_remembers_the_selected_model() {
+        let previous: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            previous.transcription_model,
+            crate::transcribe::Model::ParakeetV3
+        );
+        assert!(previous.transcribe_voice_notes);
+        for model in crate::transcribe::Model::ALL {
+            let settings = Settings {
+                transcription_model: model,
+                ..Settings::default()
+            };
+            let stored = serde_json::to_string(&settings).unwrap();
+            let restored: Settings = serde_json::from_str(&stored).unwrap();
+            assert_eq!(restored.transcription_model, model);
+        }
+    }
 
     #[test]
     fn theme_defaults_to_follow_system_for_new_and_missing_settings() {

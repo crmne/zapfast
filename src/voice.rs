@@ -17,6 +17,15 @@ const BITRATE: i32 = 32_000;
 
 /// Mono samples at `RATE` from an OGG/Opus file.
 pub fn decode(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    decode_at_rate(bytes, RATE)
+}
+
+/// Let libopus produce the recognizer's 16 kHz PCM directly, with its own
+/// filtering, rather than decimating the 48 kHz playback samples.
+pub(crate) fn decode_at_rate(bytes: &[u8], rate: u32) -> Result<Vec<f32>, String> {
+    if !matches!(rate, 8_000 | 12_000 | 16_000 | 24_000 | 48_000) {
+        return Err("unsupported Opus sample rate".to_owned());
+    }
     let bytes = without_stray_first_pages(bytes);
     let mut reader = ogg::PacketReader::new(Cursor::new(&bytes[..]));
     let mut stream: Option<Stream> = None;
@@ -29,7 +38,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<f32>, String> {
             Err(error) => return Err(format!("bad OGG stream: {error}")),
         };
         let Some(current) = stream.as_mut() else {
-            stream = Some(Stream::open(&packet.data)?);
+            stream = Some(Stream::open(&packet.data, rate)?);
             continue;
         };
         if !current.tagged {
@@ -111,7 +120,7 @@ struct Stream {
 
 impl Stream {
     /// Reads the Opus identification header.
-    fn open(head: &[u8]) -> Result<Self, String> {
+    fn open(head: &[u8], rate: u32) -> Result<Self, String> {
         let head = head
             .strip_prefix(b"OpusHead")
             .ok_or_else(|| "not an Opus stream".to_owned())?;
@@ -119,13 +128,15 @@ impl Stream {
             return Err("truncated Opus header".to_owned());
         }
         let channels = usize::from(head[1]);
-        let skip = usize::from(u16::from_le_bytes([head[2], head[3]]));
+        // OpusHead's pre-skip is always expressed in 48 kHz units.
+        let skip =
+            usize::from(u16::from_le_bytes([head[2], head[3]])) * rate as usize / RATE as usize;
         let layout = match channels {
             1 => opus::Channels::Mono,
             2 => opus::Channels::Stereo,
             other => return Err(format!("{other} channels")),
         };
-        let decoder = opus::Decoder::new(RATE, layout).map_err(|error| error.to_string())?;
+        let decoder = opus::Decoder::new(rate, layout).map_err(|error| error.to_string())?;
         Ok(Self {
             decoder,
             channels,
@@ -289,6 +300,22 @@ mod tests {
 
     fn rms(samples: &[f32]) -> f32 {
         (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn speech_decoding_uses_16khz_and_scales_the_encoder_preskip() {
+        let encoded = encode(&tone(1.0)).unwrap();
+        let playback = decode(&encoded).unwrap();
+        let speech = decode_at_rate(&encoded, 16_000).unwrap();
+        assert!((speech.len() as i64 - 16_000).abs() < 400);
+        assert!((speech.len() as i64 * 3 - playback.len() as i64).abs() <= 2);
+        assert!(rms(&speech) > 0.1);
+        let crossings = speech
+            .windows(2)
+            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+            .count();
+        assert!((400..480).contains(&crossings));
+        assert!(decode_at_rate(&encoded, 44_100).is_err());
     }
 
     #[test]

@@ -277,13 +277,21 @@ pub enum Command {
         chat: ChatId,
         message: String,
     },
-    /// Transcribes the voice messages on screen, in `ids` order, in `locale`.
+    /// Transcribes the voice messages on screen, in `ids` order.
     /// Replaces whatever was queued for another chat; an id that leaves the
     /// screen before its turn is dropped without being transcribed.
     Transcribe {
         chat: ChatId,
         ids: Vec<String>,
-        locale: String,
+        model: crate::transcribe::Model,
+    },
+    CancelTranscription,
+    SetTranscriptionModel(crate::transcribe::Model),
+    PrepareTranscriptionModel(crate::transcribe::Model),
+    TranscribeAgain {
+        chat: ChatId,
+        message: String,
+        model: crate::transcribe::Model,
     },
     /// Requests a profile picture; `full` selects the info-dialog size.
     FetchAvatar {
@@ -1117,6 +1125,11 @@ pub enum Event {
         chat: ChatId,
         message: String,
         text: Option<String>,
+    },
+    /// Public model state only, never a recording or transcript.
+    TranscriptionModel {
+        model: crate::transcribe::Model,
+        state: crate::transcribe::State,
     },
     /// Messages in one chat matching a search, newest first, echoing the
     /// query and range asked for so a stale answer can be told apart.

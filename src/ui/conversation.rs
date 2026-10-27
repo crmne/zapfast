@@ -6855,6 +6855,44 @@ fn context_menu(
     {
         speed_menu_row(ui, view, message, actions);
     }
+    if matches!(
+        message.content,
+        Content::Audio {
+            voice_note: true,
+            ..
+        }
+    ) && message
+        .content
+        .media()
+        .is_some_and(|media| media.path.is_some())
+        && widgets::menu_item_enabled(
+            ui,
+            &palette,
+            Some(Icon::Refresh),
+            &crate::i18n::gettext(
+                view.locale,
+                if message.transcript.is_some() {
+                    "Transcribe again"
+                } else {
+                    "Transcribe"
+                },
+            ),
+            !view
+                .transcribing
+                .contains(&(chat.clone(), message.id.clone())),
+        )
+    {
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+        actions.push(Action::TranscribeAgain {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
+    }
     widgets::menu_separator(ui, &palette);
     // The menu holds actions only. Sent, delivery, and read times, per member
     // in a group, live in "Message info".
@@ -10754,15 +10792,16 @@ fn voice_player(
     }
     // What the clip says, under the player. The time keeps the player's line.
     if view.transcribe_voices {
-        if let Some(text) = &message.transcript {
-            transcript_block(ui, view, message, text, width);
-        } else if view
+        if view
             .transcribing
             .contains(&(view.chat.id.clone(), message.id.clone()))
         {
             ui.add_space(6.0);
             let label = crate::i18n::gettext(view.locale, "Transcribing…");
             widgets::rich_text(ui, &label, theme::regular(12.5), palette.secondary);
+        }
+        if let Some(text) = &message.transcript {
+            transcript_block(ui, view, message, text, width);
         }
     }
     // The time and ticks share the duration's line, as on the phone. A long

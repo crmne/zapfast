@@ -2504,6 +2504,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "transcription-settings" => {
+                app.page = Page::Settings;
+                app.settings_search = "transcr".into();
+            }
+            "transcription-downloading" => {
+                app.page = Page::Settings;
+                app.settings_search = "transcr".into();
+                let model = crate::transcribe::Model::default();
+                app.transcription_state = Some((
+                    model,
+                    crate::transcribe::State::Downloading {
+                        received: model.total_bytes() / 3,
+                        total: model.total_bytes(),
+                    },
+                ));
+            }
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
@@ -22823,6 +22839,28 @@ mod bubble_detail_tests {
             footer.top() >= picture.bottom(),
             "with a caption the time stays below the picture ({footer:?}, {picture:?})"
         );
+    }
+
+    #[test]
+    fn transcription_settings_show_the_model_and_download_progress() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.locale = crate::i18n::Locale::English;
+        apply_flags(&mut app, Some("transcription-downloading"));
+        let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 900.0));
+        let text = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Parakeet v3"));
+        assert!(text.contains("Pause transcription"));
+        assert!(text.contains("Hugging Face"));
+        assert!(text.contains("Saved transcripts"));
     }
 
     /// A transcribed voice message draws what it says under its player,

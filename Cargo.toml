@@ -153,6 +153,8 @@ sonora-aec3 = "0.2"
 symphonia = { version = "0.5.5", default-features = false, features = ["aac"] }
 opus = "0.4"
 ogg = "0.9"
+# Native, offline Parakeet TDT inference through ONNX Runtime on the CPU.
+parakeet-rs = "=0.4.3"
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"
 # Encodes stickers made from pictures as still lossy WebP. Already included
@@ -284,7 +286,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # Reaches the window behind eframe's view, for the Messages theme's vibrancy.
 raw-window-handle = "0.6"
 # Reads the locale's clock format.
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString", "NSProcessInfo"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
 # The camera for video calls, through AVFoundation.
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
 
