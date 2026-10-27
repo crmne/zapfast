@@ -804,6 +804,13 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    Archived {
+        chat: ChatId,
+        archived: bool,
+        at: i64,
+        request: u64,
+        result: Result<(), ()>,
+    },
     /// Leaves a group or channel. `archive` also hides the chat in Archived.
     LeaveGroup {
         chat: ChatId,
@@ -1395,6 +1402,10 @@ pub enum Event {
     },
     /// The account folders were deleted after RemoveAccount.
     AccountRemoved,
+    ArchiveFailed {
+        archived: bool,
+        failure: ArchiveFailure,
+    },
     Error(String),
     /// A change to a group's name or photo went to WhatsApp (`saving`), or
     /// WhatsApp answered it.
@@ -1474,6 +1485,14 @@ pub struct ChannelPicture {
     pub full: Option<String>,
     /// The small preview's direct path.
     pub preview: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveFailure {
+    Offline,
+    Read,
+    Sync,
+    Write,
 }
 
 /// Why the worker refused a send.

@@ -686,6 +686,10 @@ the same menu also needs a connection and confirmation. Groups and channels
 can be left from the same menu, keeping their history here. `Ctrl+E`
 (Command+E on macOS) archives the open chat, or unarchives it from
 **Archived**, as in WhatsApp.
+Archiving and unarchiving need a connection. The chat moves only after
+WhatsApp accepts the change. If syncing fails, ZapFast shows an error and
+keeps the last confirmed archive state so you can try again. Failed changes
+are not queued.
 
 ZapFast follows your phone's **Keep chats archived** (in WhatsApp's chat
 settings): with it off, a new message, received or sent, brings an archived

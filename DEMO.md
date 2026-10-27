@@ -71,6 +71,8 @@ dialog with a spot pasted in. `typing`, `mention`, and
 `mention-everyone` shows the group's synthetic `@all` message with the
 everyone suggestion at the top of the composer list.
 Use `--demo-page chat-menu` to preview the compact chat context menu,
+`--demo-page archive-failed` to simulate a failed archive request while
+keeping the chat open and showing the retry error,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 `--demo-page motion` shows a motion photo, `motion-playing` plays its clip in

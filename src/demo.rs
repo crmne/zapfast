@@ -2016,6 +2016,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "phone-menu" => phone_menu_sample(app),
             "short-chat" => short_chat_sample(app),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
+            "archive-failed" => {
+                let (backend, events) = crate::backend::Backend::detached();
+                app.backend = backend;
+                app.page = Page::Chats;
+                app.show_archived = false;
+                app.show_starred = false;
+                let chat = SAMPLES[0].id.to_owned();
+                app.open_chat = Some(chat.clone());
+                app.actions
+                    .push(crate::model::Action::SetArchived(chat, true));
+                app.background_frame(&egui::Context::default());
+                app.backend.record_demo_commands();
+                let _ = events.send(crate::backend::Event::ArchiveFailed {
+                    archived: true,
+                    failure: crate::backend::ArchiveFailure::Sync,
+                });
+            }
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
             "interactive-list" => interactive_list_sample(app),
@@ -7433,6 +7450,50 @@ mod tests {
     }
 
     #[test]
+    fn the_archive_failure_demo_keeps_the_chat_and_shows_the_error() {
+        for flags in ["archive-failed", "archive-failed,light"] {
+            let mut app = app();
+            apply_flags(&mut app, Some(flags));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            assert_eq!(app.open_chat.as_deref(), Some(SAMPLES[0].id));
+            assert!(
+                !app.chats
+                    .iter()
+                    .find(|chat| chat.id == SAMPLES[0].id)
+                    .unwrap()
+                    .archived
+            );
+            assert!(
+                app.toasts
+                    .iter()
+                    .any(|toast| toast.message
+                        == "Could not confirm archiving on WhatsApp. Try again")
+            );
+            press_key(&mut app, &ctx, egui::Key::E, egui::Modifiers::COMMAND);
+            assert_eq!(app.open_chat.as_deref(), Some(SAMPLES[0].id));
+            assert!(
+                !app.chats
+                    .iter()
+                    .find(|chat| chat.id == SAMPLES[0].id)
+                    .unwrap()
+                    .archived
+            );
+            crate::demo::tour::respond(&mut app);
+            render(&mut app, &ctx);
+            assert!(
+                app.chats
+                    .iter()
+                    .find(|chat| chat.id == SAMPLES[0].id)
+                    .unwrap()
+                    .archived
+            );
+            assert!(app.open_chat.is_none());
+        }
+    }
+
+    #[test]
     /// Checks all synthetic demo surfaces fit their tested window sizes and themes.
     fn every_surface_lays_out() {
         let mut app = app();
@@ -7445,6 +7506,8 @@ mod tests {
         }
         for page in [
             "chat-menu",
+            "archive-failed",
+            "archive-failed,light",
             "chat-header-menu",
             "channel",
             "meta-ai",
