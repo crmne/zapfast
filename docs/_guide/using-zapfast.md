@@ -214,6 +214,8 @@ The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
 
 Paste a picture or copied files, drop files on the window, or select them with
 the paperclip.
+On Wayland, attachment paste uses the window's native clipboard, including
+inside Flatpak without an X11 connection.
 A pasted or dropped attachment is ready at once, so the send key sends it even
 when pressed straight after pasting, and a quick Ctrl+V tap pastes a picture
 just as a held one does. Other text fields, such as search, paste only text,

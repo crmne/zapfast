@@ -384,6 +384,8 @@ pub struct App {
     /// Writes settings and the account roster on a thread of its own, so
     /// a save never stalls the window; flushed at exit and before a suspend.
     pub files: fastframe_file::Writer,
+    /// Reads through the current window's native clipboard when available.
+    clipboard_reader: ClipboardReader,
     /// Resolved interface language, from the setting or the system locale.
     pub locale: Locale,
     settings_dirty: bool,
@@ -1356,6 +1358,7 @@ impl App {
             settings_dirty: false,
             last_settings_save: Instant::now(),
             files: fastframe_file::Writer::new(),
+            clipboard_reader: ClipboardReader::default(),
             roster,
             accounts,
             active,
@@ -2245,6 +2248,17 @@ impl App {
                 .quoted
                 .as_ref()
                 .is_some_and(|quoted| is_us(&quoted.sender))
+    }
+
+    /// Binds attachment paste to the new window's existing Wayland data device.
+    #[cfg(target_os = "linux")]
+    pub fn attach_clipboard(&mut self, display: Option<raw_window_handle::RawDisplayHandle>) {
+        self.clipboard_reader.wayland = match display {
+            Some(raw_window_handle::RawDisplayHandle::Wayland(display)) => {
+                winit::platform::wayland::Clipboard::for_display(display.display)
+            }
+            _ => None,
+        };
     }
 
     /// Initializes a newly created window.
@@ -10220,6 +10234,7 @@ impl App {
                 .any(|event| matches!(event, egui::Event::Paste(_)))
         });
         // Tests inject fixtures and must never read the system clipboard.
+        let clipboard = self.clipboard_reader.clone();
         self.take_clipboard_paste(ctx, || {
             let contents = if cfg!(test) {
                 clipboard_contents(
@@ -10241,7 +10256,7 @@ impl App {
                     },
                 )
             } else {
-                clipboard_contents(clipboard_files, clipboard_image)
+                clipboard_contents(|| clipboard.files(), || clipboard.image())
             };
             contents
                 .inspect_err(|why| {
@@ -10589,6 +10604,103 @@ enum ClipboardPaste {
         height: usize,
         rgba: Vec<u8>,
     },
+}
+
+#[derive(Clone, Default)]
+struct ClipboardReader {
+    #[cfg(target_os = "linux")]
+    wayland: Option<winit::platform::wayland::Clipboard>,
+}
+
+impl ClipboardReader {
+    fn files(&self) -> Result<Vec<PathBuf>, String> {
+        #[cfg(target_os = "linux")]
+        if let Some(clipboard) = &self.wayland {
+            let bytes = clipboard
+                .load_bytes("text/uri-list")
+                .map_err(|error| error.to_string())?;
+            return native_clipboard_files(&bytes);
+        }
+        clipboard_files()
+    }
+
+    fn image(&self) -> Result<(usize, usize, Vec<u8>), String> {
+        #[cfg(target_os = "linux")]
+        if let Some(clipboard) = &self.wayland {
+            let bytes = clipboard
+                .load_bytes("image/png")
+                .map_err(|error| error.to_string())?;
+            return native_clipboard_image(&bytes);
+        }
+        clipboard_image()
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn native_clipboard_files(bytes: &[u8]) -> Result<Vec<PathBuf>, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| "the clipboard's file list is not UTF-8".to_owned())?;
+    Ok(text
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let url = reqwest::Url::parse(line).ok()?;
+            if url.host_str().is_some_and(|host| host != "localhost") {
+                return None;
+            }
+            url.to_file_path().ok()
+        })
+        .collect())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn native_clipboard_image(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
+    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .map_err(|error| error.to_string())?
+        .to_rgba8();
+    Ok((
+        image.width() as usize,
+        image.height() as usize,
+        image.into_raw(),
+    ))
+}
+
+#[cfg(test)]
+mod native_clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn a_native_png_keeps_dimensions_alpha_and_pixels() {
+        let pixels = vec![17, 34, 51, 255, 90, 80, 70, 64];
+        let image = image::RgbaImage::from_raw(2, 1, pixels.clone()).unwrap();
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(
+            native_clipboard_image(encoded.get_ref()).unwrap(),
+            (2, 1, pixels)
+        );
+        assert!(native_clipboard_image(b"not a PNG").is_err());
+    }
+
+    #[test]
+    fn native_file_uris_decode_escaped_names_and_keep_file_precedence() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("clipboard photo ✓.png");
+        std::fs::write(&path, b"fixture").unwrap();
+        let uri = reqwest::Url::from_file_path(&path).unwrap();
+        let bytes = format!(
+            "# copied files\r\n{uri}\r\n\r\nhttps://example.com/image.png\r\nfile://remote/share/image.png\r\n"
+        );
+        let contents = clipboard_contents(
+            || native_clipboard_files(bytes.as_bytes()),
+            || panic!("a copied file must win over its offered icon"),
+        )
+        .unwrap();
+        assert!(matches!(contents, ClipboardPaste::Files(paths) if paths == [path]));
+        assert!(native_clipboard_files(b"\xff").is_err());
+    }
 }
 
 /// Prefers the clipboard's file list over its picture: Finder, Explorer and
