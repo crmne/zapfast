@@ -105,7 +105,14 @@ impl Worker {
             let active = self
                 .transcribing
                 .as_ref()
-                .is_some_and(|key| key == &(chat.clone(), id.clone()));
+                .is_some_and(|key| key == &(chat.clone(), id.clone()))
+                && self
+                    .transcription_cancel
+                    .as_ref()
+                    .is_none_or(|cancel| !cancel.load(Ordering::Relaxed));
+            // An old job can still be finishing its current inference chunk
+            // after a cancellation or model switch. It will not save a
+            // result, so a new viewport request must queue its replacement.
             let queued = self
                 .transcription_queue
                 .iter()
@@ -327,6 +334,35 @@ impl Worker {
 mod tests {
     use super::super::receipt_tests::{PEER, worker};
     use super::*;
+
+    #[test]
+    fn a_visible_voice_is_requeued_while_its_cancelled_job_is_still_finishing() {
+        let (mut worker, _, _, _) = worker();
+        worker.transcribing = Some((PEER.into(), "voice".into()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        worker.transcription_cancel = Some(Arc::clone(&cancel));
+        worker.cancel_transcription();
+        assert!(cancel.load(Ordering::Relaxed));
+        // Reopening the chat can happen before an inference chunk notices
+        // cancellation. The new viewport is already the list the app sent;
+        // it must not need another frame or a restart to ask for this voice.
+        worker.transcribe_on_screen(PEER.into(), vec!["voice".into()], Model::default());
+        assert!(
+            worker
+                .transcription_queue
+                .iter()
+                .any(|request| request.id == "voice")
+        );
+    }
+
+    #[test]
+    fn the_same_live_job_is_not_queued_twice() {
+        let (mut worker, _, _, _) = worker();
+        worker.transcribing = Some((PEER.into(), "voice".into()));
+        worker.transcription_cancel = Some(Arc::new(AtomicBool::new(false)));
+        worker.transcribe_on_screen(PEER.into(), vec!["voice".into()], Model::default());
+        assert!(worker.transcription_queue.is_empty());
+    }
 
     #[test]
     fn changing_models_cancels_old_jobs_and_preparations() {

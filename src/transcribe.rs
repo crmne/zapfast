@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber, ort};
@@ -128,6 +128,27 @@ struct Loaded {
     engine: ParakeetTDT,
 }
 
+/// ONNX Runtime allows only one environment to be built per process, even
+/// after its last session was dropped. Keep the small runtime context alive
+/// independently of the multi-gigabyte model sessions evicted on idle or a
+/// model switch. Failed initialization is not cached, so it remains retryable.
+fn environment() -> Result<ort::environment::Environment, Error> {
+    static ENVIRONMENT: Mutex<Option<ort::environment::Environment>> = Mutex::new(None);
+    let mut current = ENVIRONMENT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(environment) = &*current {
+        return Ok(environment.clone());
+    }
+    let environment = ort::init()
+        .with_name("ZapFast speech")
+        .with_telemetry(false)
+        .build()
+        .map_err(|_| Error::Model("Could not start ONNX Runtime.".to_owned()))?;
+    *current = Some(environment.clone());
+    Ok(environment)
+}
+
 /// One model across the whole process, not one multi-gigabyte copy per
 /// account. An idle worker releases its sessions and all model memory.
 fn worker(receiver: mpsc::Receiver<Job>) {
@@ -168,13 +189,8 @@ fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
         let directory = download::ensure(job.model, &job.root, &job.cancel, job.progress.as_ref())?;
         check_cancel(&job.cancel)?;
         (job.progress)(State::Loading);
-        let environment = ort::init()
-            .with_name("ZapFast speech")
-            .with_telemetry(false)
-            .build()
-            .map_err(|_| Error::Model("Could not start ONNX Runtime.".to_owned()))?;
         let config = ExecutionConfig::new()
-            .with_environment(environment)
+            .with_environment(environment()?)
             .with_intra_threads(4)
             .with_inter_threads(1);
         let engine = ParakeetTDT::from_pretrained(directory, Some(config))
@@ -248,6 +264,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_runtime_environment_outlives_its_model_sessions() {
+        use ort::AsPointer;
+
+        let first = environment().expect("first runtime context");
+        let pointer = first.ptr();
+        let also_live = environment().expect("another model can share the runtime");
+        assert_eq!(pointer, also_live.ptr());
+        drop(first);
+        drop(also_live);
+        let after_idle = environment().expect("runtime remains available after idle eviction");
+        assert_eq!(pointer, after_idle.ptr());
+    }
+
+    #[test]
     fn chunking_preserves_every_sample_and_bounds_the_work() {
         let samples = vec![0.5; crate::voice::RATE as usize * 68];
         let pieces = chunks(&samples, crate::voice::RATE);
@@ -305,5 +335,54 @@ mod tests {
         }
         // Explicit offline probe only, never a production log.
         println!("{text}");
+    }
+
+    /// Simulates idle eviction without a real-time minute-long sleep. The
+    /// model is dropped between jobs, just as the speech thread does on idle.
+    #[test]
+    #[ignore = "loads a real model; requires synthetic ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    fn native_model_reloads_after_idle_without_restarting_the_process() {
+        let audio = std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture");
+        let root = std::env::var_os("ZAPFAST_ASR_MODELS").expect("pinned model cache root");
+        let job = Job {
+            model: Model::default(),
+            root: PathBuf::from(root),
+            audio: Some(PathBuf::from(audio)),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Box::new(|_| {}),
+            reply: mpsc::sync_channel(1).0,
+        };
+        let mut loaded = None;
+        let first = run(&job, &mut loaded).expect("first recognition");
+        assert!(!first.is_empty());
+        drop(loaded.take());
+        let second = run(&job, &mut loaded).expect("recognition after idle eviction");
+        assert_eq!(first, second);
+        // Switching a model uses this same eviction/load path too.
+        drop(loaded.take());
+        assert_eq!(first, run(&job, &mut loaded).expect("another model reload"));
+        if let Ok(selected) = std::env::var("ZAPFAST_ASR_SWITCH_MODEL") {
+            let alternate = Job {
+                model: Model::ALL
+                    .into_iter()
+                    .find(|model| model.key() == selected)
+                    .expect("alternate model"),
+                root: job.root.clone(),
+                audio: job.audio.clone(),
+                cancel: Arc::clone(&job.cancel),
+                progress: Box::new(|_| {}),
+                reply: mpsc::sync_channel(1).0,
+            };
+            assert_ne!(alternate.model, job.model);
+            assert!(
+                !run(&alternate, &mut loaded)
+                    .expect("alternate model")
+                    .is_empty()
+            );
+            assert_eq!(
+                first,
+                run(&job, &mut loaded).expect("switch back to the original model")
+            );
+        }
     }
 }

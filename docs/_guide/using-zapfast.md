@@ -497,8 +497,10 @@ The model detects the spoken language automatically, independently of the
 interface language. It supports 25 languages, including Portuguese, English,
 Spanish, French and German, but not every language of ZapFast's interface.
 One model is shared across accounts, and is unloaded after a minute without
-work. The text remains isolated in each account's encrypted archive and
-disappears with its message.
+work. Its runtime context stays initialized, so transcription can resume
+after that pause or a model change without restarting ZapFast. The text
+remains isolated in each account's encrypted archive and disappears with its
+message.
 
 Changing models preserves existing transcripts. To compare a saved voice note
 with the selected model, download its audio if needed, then right-click it and
