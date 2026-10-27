@@ -208,7 +208,7 @@ fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # follows the default device and reopens after failures. On Linux it plays to
 # PipeWire or PulseAudio itself, so Linux builds need libpipewire's headers and
 # clang.
-fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
 # Self-update from GitHub releases with signed checksums, a helper and rollback.
 fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1", features = ["reqwest"] }
 
