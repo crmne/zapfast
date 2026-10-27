@@ -196,7 +196,7 @@ fastframe-desktop = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1
 fastframe-dock = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Starting in the tray at login: XDG autostart or the background portal,
 # SMAppService with the bundled agent, the Windows Run key.
-fastframe-autostart = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+fastframe-autostart = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
 # One native notification API for delivery, permissions, clicks and withdrawal.
 fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Sleep and wake as the system reports them, so the link reconnects after a
