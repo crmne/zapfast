@@ -45,6 +45,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     380.0
                 }
                 Dialog::ConfirmClearChat(_) => 380.0,
+                Dialog::ExportChat { .. } => {
+                    380.0_f32.min((ui.ctx().content_rect().width() - 48.0).max(180.0))
+                }
                 Dialog::ConfirmDeleteMessage { .. } | Dialog::ConfirmDeleteSelection { .. } => {
                     380.0
                 }
@@ -94,6 +97,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmLockChat(id) => confirm_lock_chat(app, ui, &id),
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::ConfirmClearChat(id) => confirm_clear_chat(app, ui, &id),
+                Dialog::ExportChat {
+                    chat,
+                    include_media,
+                } => super::chat_export::show(app, ui, &chat, include_media),
                 Dialog::ConfirmDeleteMessage {
                     chat,
                     message,

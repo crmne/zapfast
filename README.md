@@ -52,7 +52,7 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 |---|---|
 | **Messages** | Send formatted text, replies, edits, reactions, forwards, pictures, files, stickers, GIFs, polls, and voice messages. |
 | **Media in the chat** | Play voice messages, videos, round video messages, GIFs, and animated stickers in place. |
-| **Your history** | Keep your chats in an encrypted archive on this computer, and fetch older messages from your phone as you scroll. |
+| **Your history** | Keep your chats in an encrypted archive on this computer, fetch older messages from your phone as you scroll, and export locally saved chat history as text or a ZIP with downloaded attachments. |
 | **Several numbers** | Link more than one WhatsApp number and switch between them in one window. |
 | **Desktop controls** | Use keyboard shortcuts, select and copy text across messages, and stay linked in the tray with notifications. |
 | **Themes** | Choose light, dark, system appearance, or custom colours. On Omarchy, follow your desktop theme. |

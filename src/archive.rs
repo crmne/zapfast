@@ -12,6 +12,7 @@ use crate::model::{
 };
 
 mod calls;
+pub mod chat_export;
 pub use calls::CALL_LOG_LIMIT;
 mod drafts;
 mod encryption;

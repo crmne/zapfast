@@ -239,7 +239,19 @@ fn key_literal(key: &[u8; 32]) -> Zeroizing<String> {
 }
 
 fn keyed(path: &Path, key: &[u8; 32]) -> Result<Connection> {
-    let connection = Connection::open(path)?;
+    unlock(Connection::open(path)?, key)
+}
+
+/// Opens an existing archive for an export without migrating or creating any data.
+pub(super) fn read_only(path: &Path, key: &[u8; 32]) -> Result<Connection> {
+    unlock(
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?,
+        key,
+    )
+}
+
+/// Applies the supplied SQLCipher key and verifies a page before allowing archive access.
+fn unlock(connection: Connection, key: &[u8; 32]) -> Result<Connection> {
     connection.pragma_update(None, "key", &*key_literal(key))?;
     let version: String = connection
         .query_row("PRAGMA cipher_version", [], |row| row.get(0))
