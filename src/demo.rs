@@ -10903,6 +10903,58 @@ mod tests {
         );
     }
 
+    /// A later copy can supply the missing quoted text without moving its
+    /// target behind another reply. All-empty copies still keep one preview.
+    #[test]
+    fn album_replies_prefer_available_quote_content() {
+        for missing in ["", "   "] {
+            for available in [true, false] {
+                let mut app = app();
+                apply_flags(&mut app, Some("media-album-replies"));
+                let chat = app.open_chat.clone().unwrap();
+                let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+                for message in &mut *messages {
+                    message.quoted.as_mut().unwrap().summary = missing.into();
+                }
+                let other = messages[1].quoted.as_mut().unwrap();
+                other.id = "another-quoted-message".into();
+                other.summary = "Another reply target".into();
+                if available {
+                    messages[2].quoted.as_mut().unwrap().summary = "Available quoted text".into();
+                }
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                render(&mut app, &ctx);
+                let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+                assert_eq!(
+                    shapes
+                        .iter()
+                        .filter(|shape| matches!(&shape.shape,
+                            egui::Shape::Text(text) if text.galley.text() == "Available quoted text"
+                        ))
+                        .count(),
+                    usize::from(available),
+                );
+                let rects: Vec<_> = (0..4)
+                    .map(|index| {
+                        ctx.data(|data| {
+                            data.get_temp::<egui::Rect>(
+                                crate::ui::conversation::bubble_id(
+                                    &chat,
+                                    &format!("album-{index}"),
+                                )
+                                .with("quote"),
+                            )
+                        })
+                    })
+                    .collect();
+                let source = if available { 2 } else { 0 };
+                assert_eq!(rects.iter().flatten().count(), 2);
+                assert!(rects[source].unwrap().top() < rects[1].unwrap().top());
+            }
+        }
+    }
+
     /// Quotes on later album members remain visible alongside partial-download actions.
     #[test]
     fn partially_downloaded_albums_keep_member_quotes() {
