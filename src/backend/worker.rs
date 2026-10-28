@@ -718,6 +718,26 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Sorts what was queued behind a running scan: the newest search replaces
+/// the older ones, the other commands keep their order, and a shutdown is
+/// reported last so running them cannot be skipped by it.
+fn behind_a_search(queued: Vec<Command>) -> (Option<String>, Vec<Command>, bool) {
+    let mut search = None;
+    let mut waiting = Vec::new();
+    let mut shutdown = false;
+    for command in queued {
+        match command {
+            Command::SearchMessages { query } => search = Some(query),
+            Command::Shutdown => {
+                shutdown = true;
+                break;
+            }
+            other => waiting.push(other),
+        }
+    }
+    (search, waiting, shutdown)
+}
+
 /// Runs the protocol worker, receiving commands and waking the interface for emitted events.
 pub async fn run(
     dirs: AccountDirs,
@@ -969,24 +989,17 @@ pub async fn run(
             command = inbox.recv() => {
                 match command {
                     Some(Command::Shutdown) | None => break,
-                    Some(Command::SearchMessages { mut query }) => {
+                    Some(Command::SearchMessages { query }) => {
                         // Scanning the archive takes seconds, and everything
                         // else the worker does waits behind it: keep only the
                         // newest query the reader typed, so one scan replaces
                         // the queue. Commands that are not searches run first,
                         // in the order they arrived.
-                        let mut waiting = Vec::new();
-                        let mut shutdown = false;
+                        let mut queued = vec![Command::SearchMessages { query }];
                         while let Ok(next) = inbox.try_recv() {
-                            match next {
-                                Command::SearchMessages { query: newer } => query = newer,
-                                Command::Shutdown => {
-                                    shutdown = true;
-                                    break;
-                                }
-                                other => waiting.push(other),
-                            }
+                            queued.push(next);
                         }
+                        let (search, waiting, shutdown) = behind_a_search(queued);
                         // A shutdown behind the search still runs the commands
                         // queued before it: quitting must not lose a draft.
                         for next in waiting {
@@ -995,7 +1008,9 @@ pub async fn run(
                         if shutdown {
                             break;
                         }
-                        worker.handle_command(Command::SearchMessages { query }).await;
+                        if let Some(query) = search {
+                            worker.handle_command(Command::SearchMessages { query }).await;
+                        }
                     }
                     Some(command) => worker.handle_command(command).await,
                 }
@@ -13138,6 +13153,31 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// A shutdown queued behind a search keeps the commands before it, which
+    /// is how an unsent draft survives quitting while the search was scanning.
+    #[test]
+    fn a_shutdown_behind_a_search_keeps_the_commands_queued_before_it() {
+        let queued = vec![
+            Command::SearchMessages { query: "a".into() },
+            Command::SearchMessages { query: "ab".into() },
+            Command::SaveDraft {
+                chat: "1@s.whatsapp.net".into(),
+                text: "unsent".into(),
+            },
+            Command::Shutdown,
+        ];
+        let (search, waiting, shutdown) = behind_a_search(queued);
+        assert_eq!(search.as_deref(), Some("ab"), "the newest search is kept");
+        assert!(shutdown, "the shutdown is reported after the rest");
+        assert!(
+            matches!(
+                waiting.as_slice(),
+                [Command::SaveDraft { text, .. }] if text == "unsent"
+            ),
+            "the draft queued before the shutdown still runs: {waiting:?}"
+        );
+    }
 
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]
