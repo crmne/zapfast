@@ -532,7 +532,13 @@ pub fn search_key(text: &str) -> String {
             .chars()
             .filter(|c| marks.get(*c) != GeneralCategory::NonspacingMark),
     );
-    stripped.to_lowercase()
+    // A word-final Σ lowercases to ς, which would never match a query typed
+    // with Σ: both forms become σ so one sigma matches the other.
+    stripped
+        .to_lowercase()
+        .chars()
+        .map(|c| if c == 'ς' { 'σ' } else { c })
+        .collect()
 }
 
 /// Duration such as "0:12".
@@ -764,6 +770,15 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    /// A title ending in Σ and a query typed with Σ compare as the same letter.
+    #[test]
+    fn one_sigma_matches_the_other() {
+        let key = super::search_key;
+        assert_eq!(key("ΟΣ"), key("Οσ"));
+        assert_eq!(key("ΜΆΙΟΣ"), "μαιοσ");
+        assert!(key("ΜΆΙΟΣ").contains(&key("Σ")));
+    }
+
     #[test]
     fn a_call_length_reads_the_way_the_phone_shows_it() {
         assert_eq!(super::call_duration(0), "0:00");
