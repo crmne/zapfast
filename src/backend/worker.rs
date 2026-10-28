@@ -727,6 +727,8 @@ struct BehindASearch {
     run: Vec<Command>,
     /// A shutdown is waiting behind them.
     shutdown: bool,
+    /// The account is being removed behind them.
+    removed: bool,
 }
 
 /// Sorts what was queued behind a running scan: the newest search replaces
@@ -739,8 +741,8 @@ fn behind_a_search(queued: Vec<Command>) -> BehindASearch {
         pending: None,
         run: Vec::new(),
         shutdown: false,
+        removed: false,
     };
-    let mut removed = false;
     for command in queued {
         match command {
             Command::SearchMessages { query } => sorted.pending = Some(query),
@@ -749,13 +751,13 @@ fn behind_a_search(queued: Vec<Command>) -> BehindASearch {
                 break;
             }
             Command::RemoveAccount => {
-                removed = true;
+                sorted.removed = true;
                 sorted.run.push(Command::RemoveAccount);
             }
             other => sorted.run.push(other),
         }
     }
-    if sorted.shutdown || removed {
+    if sorted.shutdown || sorted.removed {
         sorted.pending = None;
     }
     sorted
@@ -1017,18 +1019,27 @@ pub async fn run(
                         // else the worker does waits behind it: keep only the
                         // newest query the reader typed, so one scan replaces
                         // the queue. Commands that are not searches run first,
-                        // in the order they arrived.
+                        // in the order they arrived, and the inbox is read
+                        // again afterwards, since a retained command can wait
+                        // on the network while the reader types.
                         let mut queued = vec![Command::SearchMessages { query }];
-                        let scan = loop {
-                            // A retained command may wait on the network, so
-                            // what arrived meanwhile is read once more before
-                            // the scan starts.
+                        let mut pending = None;
+                        loop {
                             queued.extend(std::iter::from_fn(|| inbox.try_recv().ok()));
+                            if queued.is_empty() {
+                                break;
+                            }
                             let BehindASearch {
-                                pending,
+                                pending: newest,
                                 run,
                                 shutdown,
+                                removed,
                             } = behind_a_search(std::mem::take(&mut queued));
+                            if removed {
+                                // The scan kept so far goes with the account.
+                                pending = None;
+                            }
+                            pending = newest.or(pending);
                             // A shutdown behind the search still runs the
                             // commands queued before it: quitting must not
                             // lose a draft.
@@ -1038,11 +1049,8 @@ pub async fn run(
                             if shutdown {
                                 break 'commands;
                             }
-                            if queued.is_empty() {
-                                break pending;
-                            }
-                        };
-                        if let Some(query) = scan {
+                        }
+                        if let Some(query) = pending {
                             worker.handle_command(Command::SearchMessages { query }).await;
                         }
                     }
@@ -13221,6 +13229,7 @@ mod tests {
             Command::SearchMessages { query: "a".into() },
             Command::RemoveAccount,
         ]);
+        assert!(behind.removed, "the removal is reported");
         assert!(behind.pending.is_none(), "the removal drops the scan");
         assert!(
             matches!(behind.run.as_slice(), [Command::RemoveAccount]),
