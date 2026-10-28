@@ -999,7 +999,7 @@ pub async fn run(
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
-    loop {
+    'commands: loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
@@ -1019,23 +1019,32 @@ pub async fn run(
                         // the queue. Commands that are not searches run first,
                         // in the order they arrived.
                         let mut queued = vec![Command::SearchMessages { query }];
-                        while let Ok(next) = inbox.try_recv() {
-                            queued.push(next);
+                        let mut scan = None;
+                        loop {
+                            // A retained command may wait on the network, so
+                            // what arrived meanwhile is read once more before
+                            // the scan starts.
+                            queued.extend(std::iter::from_fn(|| inbox.try_recv().ok()));
+                            let BehindASearch {
+                                pending,
+                                run,
+                                shutdown,
+                            } = behind_a_search(std::mem::take(&mut queued));
+                            // A shutdown behind the search still runs the
+                            // commands queued before it: quitting must not
+                            // lose a draft.
+                            for next in run {
+                                worker.handle_command(next).await;
+                            }
+                            if shutdown {
+                                break 'commands;
+                            }
+                            if queued.is_empty() {
+                                scan = pending;
+                                break;
+                            }
                         }
-                        let BehindASearch {
-                            pending,
-                            run,
-                            shutdown,
-                        } = behind_a_search(queued);
-                        // A shutdown behind the search still runs the commands
-                        // queued before it: quitting must not lose a draft.
-                        for next in run {
-                            worker.handle_command(next).await;
-                        }
-                        if shutdown {
-                            break;
-                        }
-                        if let Some(query) = pending {
+                        if let Some(query) = scan {
                             worker.handle_command(Command::SearchMessages { query }).await;
                         }
                     }
