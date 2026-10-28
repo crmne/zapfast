@@ -1210,7 +1210,23 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                     // nothing else. The row reached with the arrows is always
                     // laid out, so it can ask to be scrolled to.
                     if !reveal && offscreen(ui, theme::ROW_HEIGHT) {
-                        ui.add_space(theme::ROW_HEIGHT);
+                        // Out of the layout, like the virtualized chat list,
+                        // but still announced: a screen reader keeps reading
+                        // the results as it does everywhere else.
+                        let title = app.chat_title(chat);
+                        ui.push_id(("chat", &chat.id), |ui| {
+                            let (_, placed) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), theme::ROW_HEIGHT),
+                                Sense::click(),
+                            );
+                            placed.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::SelectableLabel,
+                                    ui.is_enabled(),
+                                    unread_announcement(&title, chat),
+                                )
+                            });
+                        });
                         continue;
                     }
                     let response = ui
