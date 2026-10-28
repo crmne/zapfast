@@ -22191,6 +22191,32 @@ mod long_chat_tests {
         measured.values().filter(|row| row.pass == pass).count()
     }
 
+    /// Drag through actual text cursors, whose heights and wrapping vary by font.
+    fn selection_points(
+        shapes: &[egui::epaint::ClippedShape],
+        view: egui::Rect,
+    ) -> Vec<(i64, egui::Pos2, egui::Pos2)> {
+        let mut points: Vec<_> = shapes
+            .iter()
+            .filter_map(|clipped| {
+                let egui::Shape::Text(text) = &clipped.shape else {
+                    return None;
+                };
+                let number = text.galley.text().strip_prefix("Row ")?;
+                let number = number.split_whitespace().next()?.parse().ok()?;
+                let rect = text.galley.mesh_bounds.translate(text.pos.to_vec2());
+                if !view.shrink2(egui::vec2(2.0, 60.0)).contains_rect(rect) {
+                    return None;
+                }
+                let start = text.galley.pos_from_cursor(text.galley.begin()).center();
+                let end = text.galley.pos_from_cursor(text.galley.end()).center();
+                Some((number, text.pos + start.to_vec2(), text.pos + end.to_vec2()))
+            })
+            .collect();
+        points.sort_by_key(|(number, ..)| *number);
+        points
+    }
+
     fn scrolled_selection_chat() -> (App, egui::Context, String, crate::util::fixed_clock::Guard) {
         let (mut app, ctx, chat, clock) = long_chat();
         for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
@@ -22234,23 +22260,12 @@ mod long_chat_tests {
         for reverse in [false, true] {
             let (mut app, ctx, chat, _clock) = scrolled_selection_chat();
             let view = app.selection_view.lock().unwrap().unwrap();
-            let before = painted_rows(&frame(&mut app, &ctx, Vec::new()));
-            let mut candidates: Vec<_> = before
-                .keys()
-                .filter_map(|number| {
-                    let id = crate::ui::conversation::bubble_id(&chat, &format!("long-{number}"))
-                        .with("body");
-                    ctx.data(|data| data.get_temp::<egui::Rect>(id))
-                        .filter(|rect| view.shrink2(egui::vec2(2.0, 45.0)).contains_rect(*rect))
-                        .map(|rect| (*number, rect))
-                })
-                .collect();
-            candidates.sort_by_key(|(number, _)| *number);
+            let shapes = frame(&mut app, &ctx, Vec::new());
+            let before = painted_rows(&shapes);
+            let candidates = selection_points(&shapes, view);
             assert!(candidates.len() >= 2, "two complete bodies are visible");
-            let (first, first_rect) = candidates[0];
-            let (last, last_rect) = *candidates.last().unwrap();
-            let start = first_rect.left_top() + egui::vec2(1.0, 5.0);
-            let end = last_rect.right_bottom() - egui::vec2(1.0, 5.0);
+            let (first, start, _) = candidates[0];
+            let (last, _, end) = *candidates.last().unwrap();
             let (from, to) = if reverse { (end, start) } else { (start, end) };
             let mut events = vec![
                 vec![
@@ -22299,21 +22314,25 @@ mod long_chat_tests {
     /// outside the text then releases its pinned rows without closing the chat.
     #[test]
     fn edge_selection_in_a_long_chat_releases_without_blank_overscroll() {
+        for down in [false, true] {
+            assert_edge_selection_survives_pointer_loss(down);
+        }
+    }
+
+    fn assert_edge_selection_survives_pointer_loss(down: bool) {
         let (mut app, ctx, chat, _clock) = scrolled_selection_chat();
         let view = app.selection_view.lock().unwrap().unwrap();
-        let rows = painted_rows(&frame(&mut app, &ctx, Vec::new()));
-        let (anchor, body) = rows
-            .keys()
-            .find_map(|number| {
-                let id = crate::ui::conversation::bubble_id(&chat, &format!("long-{number}"))
-                    .with("body");
-                ctx.data(|data| data.get_temp::<egui::Rect>(id))
-                    .filter(|rect| view.shrink2(egui::vec2(2.0, 60.0)).contains_rect(*rect))
-                    .map(|rect| (*number, rect))
-            })
-            .expect("a complete body away from the edges");
-        let from = body.right_bottom() - egui::vec2(1.0, 5.0);
-        let above = egui::pos2(view.center().x, view.top() - 200.0);
+        let shapes = frame(&mut app, &ctx, Vec::new());
+        let (anchor, start, end) = selection_points(&shapes, view)[0];
+        let from = if down { start } else { end };
+        let edge = egui::pos2(
+            view.center().x,
+            if down {
+                view.bottom() + 200.0
+            } else {
+                view.top() - 200.0
+            },
+        );
         let offset = |ctx: &egui::Context| {
             ctx.data(|data| {
                 data.get_temp::<(f32, f32)>(crate::ui::conversation::scroll_metrics_id(&chat))
@@ -22330,20 +22349,29 @@ mod long_chat_tests {
                 selection_button(from, true),
             ],
         );
-        for _ in 0..80 {
+        for _ in 0..300 {
             let rows = painted_rows(&frame(
                 &mut app,
                 &ctx,
-                vec![egui::Event::PointerMoved(above), egui::Event::PointerGone],
+                vec![egui::Event::PointerMoved(edge), egui::Event::PointerGone],
             ));
             assert!(!rows.is_empty(), "edge selection leaves messages on screen");
             assert_scroll_inside_content(&ctx, &chat);
         }
         assert!(
-            offset(&ctx) < before - 100.0,
-            "the held drag scrolls upwards"
+            if down {
+                offset(&ctx) > before + 100.0
+            } else {
+                offset(&ctx) < before - 100.0
+            },
+            "the held drag scrolls towards its edge"
         );
-        frame(&mut app, &ctx, vec![selection_button(above, false)]);
+        frame(
+            &mut app,
+            &ctx,
+            vec![selection_button(edge, false), egui::Event::PointerGone],
+        );
+        assert!(ctx.input(|input| input.pointer.latest_pos().is_none()));
         let output = frame_output(&mut app, &ctx, vec![egui::Event::Copy]);
         let copied = output
             .platform_output
@@ -22374,14 +22402,24 @@ mod long_chat_tests {
             selected.len() >= 5,
             "the selection crosses several messages"
         );
-        assert_eq!(selected.last(), Some(&anchor));
+        assert_eq!(
+            if down {
+                selected.first()
+            } else {
+                selected.last()
+            },
+            Some(&anchor)
+        );
         assert!(
             selected.windows(2).all(|pair| pair[1] == pair[0] + 1),
             "no virtualized middle message is omitted: {selected:?}"
         );
         assert!(
-            !copied.contains(&format!("Row {} ", anchor + 1)),
-            "the message after the anchor is not selected"
+            !copied.contains(&format!(
+                "Row {} ",
+                if down { anchor - 1 } else { anchor + 1 }
+            )),
+            "the message beyond the anchor is not selected"
         );
         assert!(
             selected[1..selected.len() - 1].iter().any(|number| {

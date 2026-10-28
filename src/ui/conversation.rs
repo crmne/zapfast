@@ -3648,6 +3648,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         });
                     }
                     if drag_frame
+                        && sweep_pointer.is_some()
                         && let Some(span) = &mut text_selection
                         && let Some(row) = swept_to.or(first_row)
                     {
