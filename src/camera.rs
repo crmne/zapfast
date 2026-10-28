@@ -2,7 +2,7 @@
 //! linuxvideo on Linux, AVFoundation on macOS and Media Foundation on Windows
 //! through nokhwa.
 //!
-//! A camera hands over frames in its own format (YUYV, NV12, MJPEG, RGB or
+//! A camera hands over frames in its own format (YU12/I420, YUYV, NV12, MJPEG, RGB or
 //! grey) and at its own size. [`Source`] asks for the mode that best fits the
 //! call and turns each frame into tightly packed YUV 4:2:0 at a size within
 //! the call's budget, which is what the H.264 encoder and the corner preview
@@ -12,6 +12,7 @@
 /// A pixel layout this module converts from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pixel {
+    I420,
     Nv12,
     Yuyv,
     Mjpeg,
@@ -114,9 +115,13 @@ impl Source {
     /// a call sends a smaller picture when its path carries less.
     pub fn read(&mut self, out: &mut [u8], size: (usize, usize)) -> Read {
         let mut taken = None;
-        let converted = self.camera.read(|pixel, data, width, height| {
+        let converted = self.camera.read(|pixel, data, width, height, stride| {
             taken = Some(std::time::Instant::now());
-            let Some(picture) = to_i420(pixel, data, width, height) else {
+            let picture = match pixel {
+                Pixel::I420 => planar_to_i420(data, width, height, stride),
+                _ => to_i420(pixel, data, width, height),
+            };
+            let Some(picture) = picture else {
                 return false;
             };
             picture.scale_into(size, out);
@@ -138,7 +143,7 @@ impl Source {
         let mut taken = None;
         match self
             .camera
-            .read(|_, _, _, _| taken = Some(std::time::Instant::now()))
+            .read(|_, _, _, _, _| taken = Some(std::time::Instant::now()))
         {
             Ok(()) => Read::Frame(taken.unwrap_or_else(std::time::Instant::now)),
             Err(error) => {
@@ -164,7 +169,7 @@ pub fn choose_mode(modes: &[Mode], budget: (usize, usize), fps: u32) -> Option<M
         width.max(height) <= long && width.min(height) <= short
     };
     let preference = |pixel: Pixel| match pixel {
-        Pixel::Nv12 => 3,
+        Pixel::I420 | Pixel::Nv12 => 3,
         Pixel::Yuyv => 2,
         Pixel::Mjpeg => 1,
         _ => 0,
@@ -262,9 +267,10 @@ fn sample(from: &[u8], from_size: (usize, usize), to: &mut [u8], to_size: (usize
 }
 
 /// Converts one camera frame to YUV 4:2:0, dropping an odd last row or
-/// column. `None` when the data does not hold a whole frame.
+/// column. YU12 requires even dimensions. `None` when the data does not hold a whole frame.
 pub fn to_i420(pixel: Pixel, data: &[u8], width: usize, height: usize) -> Option<I420> {
     match pixel {
+        Pixel::I420 => planar_to_i420(data, width, height, width),
         Pixel::Yuyv => yuyv_to_i420(data, width, height),
         Pixel::Nv12 => nv12_to_i420(data, width, height),
         Pixel::Mjpeg => {
@@ -295,6 +301,39 @@ pub fn to_i420(pixel: Pixel, data: &[u8], width: usize, height: usize) -> Option
             })
         }
     }
+}
+
+/// V4L2 YU12 stores Y, U, V in one buffer; chroma rows have half the luma stride.
+fn planar_to_i420(data: &[u8], width: usize, height: usize, stride: usize) -> Option<I420> {
+    if width < 2
+        || height < 2
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || stride < width
+        || !stride.is_multiple_of(2)
+    {
+        return None;
+    }
+    let y_len = stride.checked_mul(height)?;
+    let chroma_stride = stride / 2;
+    let chroma_len = chroma_stride.checked_mul(height / 2)?;
+    let total = y_len.checked_add(chroma_len.checked_mul(2)?)?;
+    let data = data.get(..total)?;
+    let plane = |offset: usize, row_stride: usize, columns: usize, rows: usize| {
+        let mut out = Vec::with_capacity(columns * rows);
+        for row in 0..rows {
+            let start = offset + row * row_stride;
+            out.extend_from_slice(&data[start..start + columns]);
+        }
+        out
+    };
+    Some(I420 {
+        width,
+        height,
+        y: plane(0, stride, width, height),
+        u: plane(y_len, chroma_stride, width / 2, height / 2),
+        v: plane(y_len + chroma_len, chroma_stride, width / 2, height / 2),
+    })
 }
 
 fn yuyv_to_i420(data: &[u8], width: usize, height: usize) -> Option<I420> {
@@ -410,6 +449,7 @@ mod backend {
 
     fn pixel(format: PixelFormat) -> Option<Pixel> {
         match &format.as_fourcc() {
+            b"YU12" => Some(Pixel::I420),
             b"NV12" => Some(Pixel::Nv12),
             b"YUYV" => Some(Pixel::Yuyv),
             b"MJPG" | b"JPEG" => Some(Pixel::Mjpeg),
@@ -422,6 +462,7 @@ mod backend {
 
     fn fourcc(pixel: Pixel) -> PixelFormat {
         PixelFormat::from_fourcc(*match pixel {
+            Pixel::I420 => b"YU12",
             Pixel::Nv12 => b"NV12",
             Pixel::Yuyv => b"YUYV",
             Pixel::Mjpeg => b"MJPG",
@@ -514,6 +555,7 @@ mod backend {
 
     pub struct Camera {
         stream: linuxvideo::stream::ReadStream,
+        stride: usize,
         mode: Mode,
     }
 
@@ -532,6 +574,7 @@ mod backend {
                 .map_err(|error| format!("the camera refused the format: {error}"))?;
             // The driver may have adjusted what was asked for.
             let granted = capture.format();
+            let stride = granted.bytes_per_line() as usize;
             let mode = Mode {
                 width: granted.width(),
                 height: granted.height(),
@@ -548,6 +591,7 @@ mod backend {
                 .map_err(|error| format!("the camera could not start: {error}"))?;
             Ok(Self {
                 stream,
+                stride,
                 mode: Mode { fps, ..mode },
             })
         }
@@ -559,7 +603,7 @@ mod backend {
         /// Waits for a frame and hands it to `convert`.
         pub fn read<R>(
             &mut self,
-            convert: impl FnOnce(Pixel, &[u8], usize, usize) -> R,
+            convert: impl FnOnce(Pixel, &[u8], usize, usize, usize) -> R,
         ) -> Result<R, String> {
             let mode = self.mode;
             let mut convert = Some(convert);
@@ -576,6 +620,7 @@ mod backend {
                             &view,
                             mode.width as usize,
                             mode.height as usize,
+                            self.stride,
                         )))
                     })
                     .map_err(|error| error.to_string())?;
@@ -587,6 +632,17 @@ mod backend {
 
         /// Linux stops the stream when the source is dropped.
         pub fn stop(&mut self) {}
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn yu12_is_a_readable_capture_format() {
+            let format = PixelFormat::from_fourcc(*b"YU12");
+            assert_eq!(pixel(format), Some(Pixel::I420));
+            assert_eq!(fourcc(Pixel::I420), format);
+        }
     }
 }
 
@@ -626,6 +682,7 @@ mod backend {
 
     fn frame_format(pixel: Pixel) -> &'static FrameFormat {
         let at = match pixel {
+            Pixel::I420 => unreachable!("YU12 is only enumerated by the Linux backend"),
             Pixel::Nv12 => 0,
             Pixel::Yuyv => 1,
             Pixel::Mjpeg => 2,
@@ -736,7 +793,7 @@ mod backend {
         /// Waits for a frame and hands it to `convert`.
         pub fn read<R>(
             &mut self,
-            convert: impl FnOnce(Pixel, &[u8], usize, usize) -> R,
+            convert: impl FnOnce(Pixel, &[u8], usize, usize, usize) -> R,
         ) -> Result<R, String> {
             let frame = self.camera.frame().map_err(|error| error.to_string())?;
             let resolution = frame.resolution();
@@ -745,6 +802,7 @@ mod backend {
                 frame.buffer(),
                 resolution.width() as usize,
                 resolution.height() as usize,
+                resolution.width() as usize,
             ))
         }
 
@@ -759,6 +817,113 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn yu12_keeps_luma_and_separate_chroma_planes() {
+        let data = [1, 2, 3, 4, 5, 6, 7, 8, 40, 50, 180, 200];
+        let picture = to_i420(Pixel::I420, &data, 4, 2).unwrap();
+        assert_eq!(picture.y, data[..8]);
+        assert_eq!(picture.u, [40, 50]);
+        assert_eq!(picture.v, [180, 200]);
+        let mut out = [0; 12];
+        picture.scale_into((4, 2), &mut out);
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn yu12_skips_padding_in_each_plane() {
+        let data = [1, 2, 99, 99, 3, 4, 99, 99, 50, 99, 200, 99];
+        let picture = planar_to_i420(&data, 2, 2, 4).unwrap();
+        assert_eq!(picture.y, [1, 2, 3, 4]);
+        assert_eq!(picture.u, [50]);
+        assert_eq!(picture.v, [200]);
+    }
+
+    #[test]
+    fn yu12_preserves_multiple_chroma_rows_with_padding() {
+        let mut data = Vec::new();
+        for row in 0..4u8 {
+            data.extend([row; 4]);
+            data.extend([99; 4]);
+        }
+        for row in [[40, 41], [42, 43], [180, 181], [182, 183]] {
+            data.extend(row);
+            data.extend([99; 2]);
+        }
+        let picture = planar_to_i420(&data, 4, 4, 8).unwrap();
+        assert_eq!(picture.y, [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3]);
+        assert_eq!(picture.u, [40, 41, 42, 43]);
+        assert_eq!(picture.v, [180, 181, 182, 183]);
+    }
+
+    #[test]
+    fn yu12_refuses_short_frames_and_invalid_layouts() {
+        for length in 0..12 {
+            assert!(planar_to_i420(&[0; 12][..length], 2, 2, 4).is_none());
+        }
+        for (width, height, stride) in [
+            (0, 2, 2),
+            (2, 0, 2),
+            (3, 2, 4),
+            (2, 3, 2),
+            (4, 2, 2),
+            (2, 2, 3),
+            (2, 2, usize::MAX - 1),
+        ] {
+            assert!(planar_to_i420(&[0; 32], width, height, stride).is_none());
+        }
+    }
+
+    #[test]
+    fn an_iriun_only_mode_is_usable_without_a_format_fallback() {
+        let mode = Mode {
+            width: 1280,
+            height: 720,
+            fps: 30,
+            pixel: Pixel::I420,
+        };
+        assert_eq!(choose_mode(&[mode], (1280, 720), 25), Some(mode));
+    }
+
+    #[test]
+    #[ignore = "opens the real camera; run manually with Iriun connected"]
+    fn hardware_yu12_capture_encodes_and_decodes() {
+        use openh264::formats::YUVSource as _;
+        let mut source = Source::open(None, (1280, 720), 25).expect("camera opens");
+        assert_eq!(
+            source.camera.mode().pixel,
+            Pixel::I420,
+            "select a YU12 camera"
+        );
+        let (width, height) = source.size();
+        let mut frame = vec![0; width * height * 3 / 2];
+        let mut encoder = openh264::encoder::Encoder::new().unwrap();
+        let mut decoder = openh264::decoder::Decoder::new().unwrap();
+        for _ in 0..3 {
+            assert!(matches!(
+                source.read(&mut frame, (width, height)),
+                Read::Frame(_)
+            ));
+            let (y, chroma) = frame.split_at(width * height);
+            let (u, v) = chroma.split_at(width * height / 4);
+            let picture = openh264::formats::YUVSlices::new(
+                (y, u, v),
+                (width, height),
+                (width, width / 2, width / 2),
+            );
+            let unit = encoder.encode(&picture).expect("frame encodes").to_vec();
+            assert!(!unit.is_empty());
+            let decoded = decoder
+                .decode(&unit)
+                .expect("frame decodes")
+                .expect("whole picture");
+            assert_eq!(decoded.dimensions(), (width, height));
+        }
+        source.stop();
+        eprintln!(
+            "Captured, encoded and decoded 3 YU12 frames at {width}x{height}; no images saved"
+        );
+    }
 
     #[test]
     fn yuyv_keeps_every_luma_sample_and_averages_chroma_down() {
