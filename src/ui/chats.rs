@@ -1226,6 +1226,11 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                                     unread_announcement(&title, chat),
                                 )
                             });
+                            // A screen reader can activate the node: open the
+                            // chat as a click on a drawn row does.
+                            if placed.clicked() {
+                                app.actions.push(Action::OpenChat(chat.id.clone()));
+                            }
                         });
                         continue;
                     }
