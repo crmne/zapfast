@@ -273,7 +273,9 @@ without a second pass over the picture.
 
 Pictures and videos sent as a WhatsApp album appear together in a grid. Only
 items with the same protocol album identity, sender and local calendar date
-are grouped. **Download all** downloads every item that is not on this
+are grouped. A reply shared by several items appears once above the grid;
+different reply targets keep their own previews.
+**Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
 without replacing existing files. Open an item to view it individually, and

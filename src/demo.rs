@@ -2086,6 +2086,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "media-album" => media_album_sample(app, true),
+            "media-album-replies" => {
+                app.settings.theme = ThemeChoice::Dark;
+                media_album_sample(app, true);
+                let messages = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages;
+                for message in messages {
+                    message.quoted = Some(crate::model::Quoted {
+                        labelled: Some(false),
+                        id: "synthetic-quoted-message".into(),
+                        sender: SAMPLES[0].id.into(),
+                        sender_name: Some("Alex".into()),
+                        summary: "A reference for the album".into(),
+                        mentions: Vec::new(),
+                        chat: None,
+                    });
+                }
+            }
             "media-album-failed" => {
                 media_album_sample(app, true);
                 let messages = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages;
@@ -7465,6 +7481,8 @@ mod tests {
             "carousel-viewer",
             "media-album",
             "media-album-before",
+            "media-album-replies",
+            "media-album-replies,light",
             "media-album-oversized",
             "media-album-oversized,light",
             "media-album-midnight",
@@ -10816,6 +10834,73 @@ mod tests {
                     .any(|(label, _, _)| label.contains("will not retry it"))
             );
         }
+    }
+
+    /// A reply repeated on every photo belongs to the grouped album once.
+    #[test]
+    fn album_replies_show_a_shared_quote_once() {
+        for light in [false, true] {
+            for own in [false, true] {
+                let mut app = app();
+                apply_flags(
+                    &mut app,
+                    Some(if light {
+                        "media-album-replies,light"
+                    } else {
+                        "media-album-replies"
+                    }),
+                );
+                let chat = app.open_chat.clone().unwrap();
+                for (index, message) in app
+                    .conversations
+                    .get_mut(&chat)
+                    .unwrap()
+                    .messages
+                    .iter_mut()
+                    .enumerate()
+                {
+                    message.from_me = own;
+                    if index % 2 == 1 {
+                        message.quoted.as_mut().unwrap().chat = Some(chat.clone());
+                    }
+                }
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                render(&mut app, &ctx);
+                let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+                assert_eq!(app.palette.dark, !light, "light={light}, own={own}");
+                let quotes = shapes.iter().filter(|shape| matches!(&shape.shape,
+                    egui::Shape::Text(text) if text.galley.text() == "A reference for the album"
+                )).count();
+                assert_eq!(quotes, 1, "light={light}, own={own}");
+            }
+        }
+    }
+
+    /// Identical-looking quotes can name different messages, chats or
+    /// participants; none of those distinct targets may be hidden.
+    #[test]
+    fn album_replies_keep_distinct_quote_targets() {
+        let mut app = app();
+        apply_flags(&mut app, Some("media-album-replies"));
+        let chat = app.open_chat.clone().unwrap();
+        let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+        messages[1].quoted.as_mut().unwrap().id = "another-message".into();
+        messages[2].quoted.as_mut().unwrap().chat = Some(SAMPLES[1].id.into());
+        messages[3].quoted.as_mut().unwrap().sender = ME.into();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert_eq!(
+            shapes
+                .iter()
+                .filter(|shape| matches!(&shape.shape,
+                    egui::Shape::Text(text) if text.galley.text() == "A reference for the album"
+                ))
+                .count(),
+            4,
+        );
     }
 
     /// Quotes on later album members remain visible alongside partial-download actions.
