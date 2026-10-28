@@ -3559,7 +3559,6 @@ impl App {
             }
             Event::SearchHits { query, messages } => {
                 if query == self.search.trim() {
-                    self.search_due = None;
                     // Locked chats' messages stay out of plain search.
                     self.search_hits = messages
                         .into_iter()
@@ -20051,6 +20050,44 @@ mod tests {
             .collect();
         assert_eq!(queries, ["eng"]);
         assert!(app.search_due.is_none());
+    }
+
+    /// An answer to an earlier scan cannot end the wait a later keystroke
+    /// started: typing "a", "ab" and back to "a" keeps its scan.
+    #[test]
+    fn an_older_hit_list_keeps_the_scan_a_later_keystroke_asked_for() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        for text in ["a", "ab", "a"] {
+            app.apply(Action::Search(text.into()), &ctx);
+        }
+        let due = app
+            .search_due
+            .expect("the last keystroke waits its turn before scanning");
+        events_for(
+            &mut app,
+            Event::SearchHits {
+                query: "a".into(),
+                messages: Vec::new(),
+            },
+        );
+        assert_eq!(
+            app.search_due,
+            Some(due),
+            "the answer to the first scan keeps the waiting one"
+        );
+        app.search_due = Some(Instant::now());
+        app.tick(&ctx);
+        let queries: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SearchMessages { query } => Some(query),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queries, ["a"], "the waiting scan still runs");
     }
 
     #[test]
