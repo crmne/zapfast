@@ -587,8 +587,11 @@ under their group, named by who called; they are started on the phone.
 ## Copying
 
 Select and copy any message text. You can begin dragging in the padding around
-the text instead of landing precisely on a letter. A selection across messages
-uses WhatsApp's sharing format:
+the text instead of landing precisely on a letter. In long chats, the view
+stays in place while you select text. Hold the pointer near the top or bottom
+edge to scroll and extend the selection; messages that leave the screen remain
+included when you copy. A selection across messages uses WhatsApp's sharing
+format:
 
 ```
 [18:21, 8/30/2026] Ada Lovelace: Hello from France!
