@@ -1019,8 +1019,7 @@ pub async fn run(
                         // the queue. Commands that are not searches run first,
                         // in the order they arrived.
                         let mut queued = vec![Command::SearchMessages { query }];
-                        let mut scan = None;
-                        loop {
+                        let scan = loop {
                             // A retained command may wait on the network, so
                             // what arrived meanwhile is read once more before
                             // the scan starts.
@@ -1040,10 +1039,9 @@ pub async fn run(
                                 break 'commands;
                             }
                             if queued.is_empty() {
-                                scan = pending;
-                                break;
+                                break pending;
                             }
-                        }
+                        };
                         if let Some(query) = scan {
                             worker.handle_command(Command::SearchMessages { query }).await;
                         }
