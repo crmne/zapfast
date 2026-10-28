@@ -29,6 +29,9 @@ pub(crate) fn modal_id() -> egui::Id {
     egui::Id::new("image-preview")
 }
 
+/// Draws the open viewer for this frame: the header, the stage with the
+/// picture or clip, the album strip along the bottom, and the clicks that
+/// move between items or close it.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     // The album carries every thumbnail of the chat, so it is moved out for
     // the frame and put back at the end instead of being copied: a copy per
