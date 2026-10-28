@@ -300,16 +300,37 @@ pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
 /// saying so would be a guess.
 pub fn disappearing_line(locale: Locale, seconds: Option<u32>) -> Option<String> {
     let seconds = seconds?;
+    let label = crate::i18n::gettext(locale, "Disappearing messages");
+    Some(format!("{label}: {}", disappearing_value(locale, seconds)))
+}
+
+/// The duration alone, as WhatsApp words it: "Off", "24 hours", "7 days",
+/// "90 days", or the raw seconds for a value WhatsApp never offers.
+pub fn disappearing_value(locale: Locale, seconds: u32) -> String {
     use crate::i18n::gettext;
-    let value = match seconds {
+    match seconds {
         0 => gettext(locale, "Off").into_owned(),
         86_400 => gettext(locale, "24 hours").into_owned(),
         604_800 => gettext(locale, "7 days").into_owned(),
         7_776_000 => gettext(locale, "90 days").into_owned(),
         _ => format!("{seconds}s"),
-    };
-    let label = gettext(locale, "Disappearing messages");
-    Some(format!("{label}: {value}"))
+    }
+}
+
+/// The conversation notice for a timer change, as WhatsApp words it. `name`
+/// is the actor: the reader's own name is passed in as a translated "You".
+pub fn disappearing_change(locale: Locale, name: &str, seconds: u32) -> String {
+    use crate::i18n::gettext;
+    if seconds == 0 {
+        gettext(locale, "{name} turned off disappearing messages").replace("{name}", name)
+    } else {
+        gettext(
+            locale,
+            "{name} changed the disappearing messages setting to {duration}",
+        )
+        .replace("{name}", name)
+        .replace("{duration}", &disappearing_value(locale, seconds))
+    }
 }
 
 /// A contact's last-seen line as WhatsApp words it: "last seen today at
@@ -1165,6 +1186,23 @@ mod tests {
             crate::util::disappearing_line(Locale::English, None),
             None,
             "an unknown timer says nothing"
+        );
+    }
+
+    #[test]
+    fn a_timer_change_notice_names_who_and_to_what() {
+        let notice = crate::util::disappearing_change;
+        assert_eq!(
+            notice(Locale::English, "You", 604_800),
+            "You changed the disappearing messages setting to 7 days"
+        );
+        assert_eq!(
+            notice(Locale::English, "Ada", 7_776_000),
+            "Ada changed the disappearing messages setting to 90 days"
+        );
+        assert_eq!(
+            notice(Locale::English, "You", 0),
+            "You turned off disappearing messages"
         );
     }
 

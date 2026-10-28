@@ -113,6 +113,9 @@ pub struct Account {
     pub account_privacy: crate::privacy::Snapshot,
     pub interactive_sending: HashSet<(ChatId, String)>,
     pub group_saving: HashSet<ChatId>,
+    /// Chats whose disappearing-timer change is on its way to WhatsApp. The
+    /// control stays disabled and the old timer stays visible until it lands.
+    pub timer_saving: HashSet<ChatId>,
     pub(crate) reported_online: Option<bool>,
     /// Chats this account may pin; WhatsApp Plus raises it once known.
     pub pin_limit: usize,
@@ -221,6 +224,7 @@ impl Account {
             account_privacy: crate::privacy::Snapshot::default(),
             interactive_sending: HashSet::new(),
             group_saving: HashSet::new(),
+            timer_saving: HashSet::new(),
             reported_online: None,
             pin_limit: crate::backend::PINNED_CHATS,
             call_log: Vec::new(),

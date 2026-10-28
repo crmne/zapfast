@@ -43,6 +43,7 @@ mod calls;
 mod channel_pictures;
 mod contact_names;
 mod device_store;
+mod disappearing;
 mod download_folders;
 mod early_events;
 use early_events::WaitingReaction;
@@ -845,6 +846,8 @@ pub async fn run(
         privacy_retry: Instant::now(),
         star_generation: HashMap::new(),
         star_session: 0,
+        account_session: 0,
+        early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
         withheld_pages: Vec::new(),
         dirs,
@@ -973,7 +976,9 @@ pub async fn run(
                 }
             }
             Some(event) = wa_events.recv() => match event {
-                RuntimeEvent::WhatsApp(event) => worker.handle_wa_event(event).await,
+                RuntimeEvent::WhatsApp { session, event } => {
+                    worker.whatsapp_event(session, event).await;
+                }
                 RuntimeEvent::MessageRemoval { generation, event } => {
                     worker.handle_session_deletion(generation, event).await;
                 }
@@ -1030,6 +1035,7 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
             }
@@ -1040,7 +1046,12 @@ pub async fn run(
 }
 
 enum RuntimeEvent {
-    WhatsApp(Arc<wa_events::Event>),
+    /// A callback from a connection's event handler, under the session that
+    /// started it.
+    WhatsApp {
+        session: u64,
+        event: Arc<wa_events::Event>,
+    },
     MessageRemoval {
         generation: u64,
         event: Arc<wa_events::Event>,
@@ -1056,10 +1067,7 @@ enum RuntimeEvent {
         complete: bool,
     },
     /// The one-time read of the phone's favorite chats finished.
-    FavoriteChatsRead {
-        generation: u64,
-        complete: bool,
-    },
+    FavoriteChatsRead { generation: u64, complete: bool },
 }
 
 /// Renames an archive whose key is gone, with its SQLite side files, and
@@ -1145,6 +1153,9 @@ fn privacy_backoff(attempts: u32) -> Duration {
 struct UiEvents {
     sender: mpsc::UnboundedSender<RuntimeEvent>,
     generation: u64,
+    /// The account session this connection belongs to: its events reach the
+    /// worker only while that session is still the worker's.
+    session: u64,
 }
 
 impl wa_events::EventHandler for UiEvents {
@@ -1158,7 +1169,10 @@ impl wa_events::EventHandler for UiEvents {
                 event,
             }
         } else {
-            RuntimeEvent::WhatsApp(event)
+            RuntimeEvent::WhatsApp {
+                session: self.session,
+                event,
+            }
         };
         let _ = self.sender.send(event);
     }
@@ -1197,6 +1211,15 @@ struct EditGenerations {
 struct FileSendOptions {
     documents: bool,
     view_once: bool,
+}
+
+/// What a server ack settles.
+#[derive(Clone)]
+enum AwaitingAck {
+    /// One of our sent messages, not yet placed at the server's time.
+    Message(ChatId),
+    /// A direct disappearing-timer change, not yet accepted.
+    Timer(disappearing::TimerAck),
 }
 
 struct Worker {
@@ -1238,9 +1261,10 @@ struct Worker {
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
-    /// Messages we sent that WhatsApp has not acknowledged yet, by id, with
-    /// their chat: the first ack's server time replaces their local stamp.
-    awaiting_ack: HashMap<String, ChatId>,
+    /// Everything WhatsApp has not acknowledged yet, by id: our sent messages,
+    /// whose first ack's server time replaces their local stamp, and direct
+    /// disappearing-timer changes, which are written only once accepted.
+    awaiting_ack: HashMap<String, AwaitingAck>,
     /// The group message whose "Message info" is open.
     receipts_watch: Option<(ChatId, String)>,
     /// When receipts that never found their message were last dropped.
@@ -1304,6 +1328,13 @@ struct Worker {
     /// accepted one shows at once rather than after a lookup the server may
     /// still answer with the old picture.
     group_pictures_sent: HashMap<ChatId, Vec<u8>>,
+    /// Message acks seen before their `TimerSet`, by message id and bounded in
+    /// time and count.
+    early_acks: HashMap<String, disappearing::EarlyAck>,
+    /// Bumped when the account unlinks, so a late completion (a timer's or a
+    /// group edit's) or ack from the old session is ignored rather than
+    /// written to the next one.
+    account_session: u64,
     /// Description notices must outlive metadata requested before they arrived.
     description_generation: HashMap<String, u64>,
     /// Superseded metadata operations cannot update the archive or retry queue.
@@ -1652,9 +1683,10 @@ const PHONE_RANGE_LOOKBACK: usize = 20;
 
 /// The range WhatsApp checks before it archives or unarchives a chat on the
 /// phone: the chat's newest message. A phone left the chat in place when
-/// the change came without one. Local call entries were never sent, so they
-/// give their time but name no message, and a message without a time is
-/// treated as none.
+/// the change came without one. A row ZapFast invented (a local call entry,
+/// a disappearing-timer notice) was never sent under that id, so it gives its
+/// time but names no message, and a message without a time is treated as
+/// none.
 fn archive_range(jid: &Jid, last: Option<&Message>) -> whatsapp_rust::SyncActionMessageRange {
     let Some(last) = last.filter(|last| last.timestamp > 0) else {
         return whatsapp_rust::message_range(crate::util::now(), None, Vec::new());
@@ -1662,7 +1694,7 @@ fn archive_range(jid: &Jid, last: Option<&Message>) -> whatsapp_rust::SyncAction
     let participant = (jid.is_group() && !last.from_me)
         .then(|| Worker::jid_of(&last.sender))
         .flatten();
-    let key = (!last.id.starts_with(crate::model::CALL_ENTRY_PREFIX))
+    let key = (!crate::model::local_message_id(&last.id))
         .then(|| whatsapp_rust::MessageId::new(&last.id).ok())
         .flatten()
         .and_then(|id| {
@@ -1750,16 +1782,16 @@ impl Worker {
     }
 
     /// The chat's newest message the phone has: a send still pending or
-    /// failed here may never have reached it.
+    /// failed here may never have reached it, and a disappearing-timer notice
+    /// was filed under an id the phone never issued. Either is no boundary
+    /// there, though the notice keeps its place in the transcript.
     fn newest_on_phone(&self, chat: &str) -> Result<Option<Message>, rusqlite::Error> {
         Ok(self
             .archive
             .messages(chat, None, PHONE_RANGE_LOOKBACK)?
             .into_iter()
             .rev()
-            .find(|message| {
-                !(message.from_me && matches!(message.status, Delivery::Pending | Delivery::Failed))
-            }))
+            .find(Message::known_to_phone))
     }
 
     /// Archives or unarchives a chat on the phone, naming its newest message.
@@ -2095,18 +2127,28 @@ impl Worker {
         }
     }
 
-    /// Moves a message we sent to the time WhatsApp's server acknowledged it.
-    /// Only the first ack with a time counts: a resend after a retry receipt
-    /// is acked again, later, and must not move the message down the chat.
-    /// An ack without a usable time leaves the message waiting for one.
+    /// Settles what a server ack is for: a message of ours waiting for its
+    /// server time, a direct disappearing-timer change waiting for acceptance,
+    /// or neither yet, held briefly in case the timer change names it.
     fn server_ack(&mut self, ack: &wa_events::ServerAck) {
         if ack.class.as_deref() != Some("message") {
             return;
         }
+        match self.awaiting_ack.get(&ack.id).cloned() {
+            Some(AwaitingAck::Message(chat)) => self.place_sent_message(chat, ack),
+            Some(AwaitingAck::Timer(_)) => self.settle_timer_ack(ack),
+            // An ack can outrun the completion that names the timer change it
+            // belongs to; hold it briefly, bounded in time and count.
+            None => self.hold_early_ack(ack),
+        }
+    }
+
+    /// Moves a message we sent to the time WhatsApp's server acknowledged it.
+    /// Only the first ack with a time counts: a resend after a retry receipt
+    /// is acked again, later, and must not move the message down the chat.
+    /// An ack without a usable time leaves the message waiting for one.
+    fn place_sent_message(&mut self, chat: ChatId, ack: &wa_events::ServerAck) {
         let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
-            return;
-        };
-        let Some(chat) = self.awaiting_ack.get(&ack.id).cloned() else {
             return;
         };
         match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
@@ -2739,6 +2781,7 @@ impl Worker {
             .with_event_handler(UiEvents {
                 sender,
                 generation: self.privacy_generation,
+                session: self.account_session,
             })
             .build()
             .await;
@@ -3026,7 +3069,9 @@ impl Worker {
         // can never match a job queued after the stop.
         self.abandon_forwards();
         // Acks belong to the session that sent; the next one never answers.
+        self.clear_timer_saving();
         self.awaiting_ack.clear();
+        self.early_acks.clear();
         if let Some(handle) = self.handle.take()
             && tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
                 .await
@@ -3495,6 +3540,16 @@ impl Worker {
         }
     }
 
+    /// Takes an event only from the connection that is still this account's.
+    /// A callback from a stopped connection can be queued while the account
+    /// unlinks; settling it afterwards would file its chats, notices or
+    /// receipts into the archive of the account that replaced it.
+    async fn whatsapp_event(&mut self, session: u64, event: Arc<wa_events::Event>) {
+        if session == self.account_session {
+            self.handle_wa_event(event).await;
+        }
+    }
+
     async fn handle_wa_event(&mut self, event: Arc<wa_events::Event>) {
         use wa_events::Event as E;
         match &*event {
@@ -3771,18 +3826,78 @@ impl Worker {
                     }
                 }
                 if let GroupNotificationAction::Ephemeral { expiration, .. } = &*update.action {
-                    self.ensure_chat(&chat, None);
                     let timestamp = update.timestamp.timestamp();
-                    let accepted = self
-                        .archive
-                        .set_ephemeral(&chat, *expiration, timestamp)
-                        .unwrap_or(false);
-                    log::debug!(
-                        target: "zapfast::disappearing",
-                        "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
-                    );
-                    if accepted {
-                        self.emit_chat(&chat);
+                    // Message removal does not order a timer setting, so a
+                    // newer setting that predates a clear still applies. Only
+                    // a chat removed outright is not brought back by one.
+                    let deleted = self.archive.chat(&chat).ok().flatten().is_none()
+                        && self.predates_removal(&chat, timestamp);
+                    if !deleted {
+                        self.ensure_chat(&chat, None);
+                        let accepted = self
+                            .archive
+                            .set_ephemeral(&chat, *expiration, timestamp)
+                            .unwrap_or(false);
+                        log::debug!(
+                            target: "zapfast::disappearing",
+                            "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
+                        );
+                        if accepted {
+                            // The actor may arrive as a LID or a phone number.
+                            // With neither, the notice names nobody rather than
+                            // claiming we made a change we did not.
+                            // A notice may name the actor only by a privacy
+                            // id. The notification carries the phone number
+                            // beside it, so learn the pair and name the
+                            // contact rather than "Unknown".
+                            if let (Some(lid), Some(pn)) =
+                                (&update.participant, &update.participant_pn)
+                            {
+                                self.learn_pair(lid, pn);
+                            }
+                            let raw_actor = update
+                                .participant_pn
+                                .as_ref()
+                                .or(update.participant.as_ref());
+                            let actor =
+                                raw_actor.map(|jid| self.canonical(jid)).unwrap_or_default();
+                            let from_me = !actor.is_empty() && actor == self.me();
+                            // Two notifications without an id must not share a
+                            // key: the fallback carries the timestamp, action,
+                            // actor and duration that tell them apart. The key
+                            // uses the server's own actor id, not the resolved
+                            // name, so learning a privacy-id mapping cannot
+                            // change it and duplicate the notice on redelivery.
+                            let key_actor = raw_actor
+                                .map(|jid| jid.to_string())
+                                .unwrap_or_else(|| "unknown".to_owned());
+                            let id = match update.notification_id.as_deref() {
+                                Some(notification) => format!(
+                                    "{}{}-{}",
+                                    crate::model::TIMER_NOTICE_PREFIX,
+                                    notification,
+                                    update.action_index
+                                ),
+                                None => format!(
+                                    "{}{}-{}-{}-{}",
+                                    crate::model::TIMER_NOTICE_PREFIX,
+                                    timestamp,
+                                    update.action_index,
+                                    key_actor,
+                                    expiration
+                                ),
+                            };
+                            self.file_timer_notice(
+                                &chat,
+                                &id,
+                                actor,
+                                from_me,
+                                timestamp,
+                                *expiration,
+                                update.notify.as_deref(),
+                            );
+                            self.emit_chat(&chat);
+                        }
                     }
                 }
                 // Who may edit the group's info changes at once; the refresh
@@ -4081,6 +4196,14 @@ impl Worker {
         self.pin_generation.clear();
         // Pin answers carry the same session as star answers.
         self.star_session = self.star_session.wrapping_add(1);
+        // A change or ack sent under the old account belongs to that account:
+        // the next one must not inherit it, and a completion it discarded
+        // cannot clear the saving state itself, so the interface drops that
+        // with the rest of the account's state on logout.
+        self.awaiting_ack.clear();
+        self.early_acks.clear();
+        self.account_session = self.account_session.wrapping_add(1);
+        self.group_pictures_sent.clear();
         self.me_pn = None;
         self.me_lid = None;
         self.me_name = None;
@@ -4464,6 +4587,14 @@ impl Worker {
                         .ephemeral_setting_timestamp
                         .unwrap_or_else(|| info.timestamp.timestamp());
                     let used_fallback = protocol.ephemeral_setting_timestamp.is_none();
+                    // Message removal does not order a timer setting, so a
+                    // newer setting that predates a clear still applies. Only
+                    // a chat removed outright is not brought back by one.
+                    if self.archive.chat(&chat).ok().flatten().is_none()
+                        && self.predates_removal(&chat, timestamp)
+                    {
+                        return;
+                    }
                     self.ensure_chat(&chat, push_name.as_deref());
                     let accepted = self
                         .archive
@@ -4474,6 +4605,15 @@ impl Worker {
                         "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
                     );
                     if accepted {
+                        self.file_timer_notice(
+                            &chat,
+                            &format!("{}{}", crate::model::TIMER_NOTICE_PREFIX, info.id),
+                            sender.clone(),
+                            from_me,
+                            timestamp,
+                            expiration,
+                            push_name.as_deref(),
+                        );
                         self.emit_chat(&chat);
                     }
                 } else {
@@ -5271,8 +5411,10 @@ impl Worker {
         }
         // Only a stored message can be moved to the server's time.
         if message.from_me && message.status == Delivery::Pending {
-            self.awaiting_ack
-                .insert(message.id.clone(), message.chat.clone());
+            self.awaiting_ack.insert(
+                message.id.clone(),
+                AwaitingAck::Message(message.chat.clone()),
+            );
         }
         self.retire_local_call_twins(&message);
         if existing
@@ -5970,7 +6112,9 @@ impl Worker {
                 && let Some(snapshot_unread) = chat.unread
             {
                 if snapshot_unread == 0 {
-                    let _ = self.archive.mark_read_through(&id, chat.last_activity);
+                    let _ = self
+                        .archive
+                        .mark_history_read_through(&id, chat.last_activity);
                 } else {
                     let unread = self
                         .archive
@@ -7042,7 +7186,27 @@ impl Worker {
                 result,
                 picture,
             } => self.group_created(request, result, picture),
-            Command::GroupEdited { chat, edit, result } => self.group_edited(chat, edit, result),
+            Command::GroupEdited {
+                chat,
+                edit,
+                session,
+                result,
+            } => {
+                // A completion from a departed session belongs to the account
+                // that left; it must not clear the next one's state.
+                if session == self.account_session {
+                    self.group_edited(chat, edit, result);
+                }
+            }
+            Command::SetDisappearingTimer { chat, seconds } => {
+                self.set_disappearing_timer(chat, seconds)
+            }
+            Command::TimerSet {
+                chat,
+                session,
+                seconds,
+                result,
+            } => self.timer_set(chat, session, seconds, result),
             Command::ProfileSaved {
                 name,
                 about,
@@ -7696,11 +7860,7 @@ impl Worker {
                     ));
                     return;
                 };
-                let through = self
-                    .archive
-                    .messages(&chat, None, 1)
-                    .ok()
-                    .and_then(|page| page.last().map(|message| message.timestamp))
+                let through = clear_boundary(self.archive.messages(&chat, None, 1))
                     .unwrap_or_else(crate::util::now);
                 let commands = self.commands.clone();
                 tokio::spawn(async move {
@@ -8244,6 +8404,7 @@ impl Worker {
             chat: chat.clone(),
             saving: true,
         });
+        let session = self.account_session;
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         tokio::spawn(async move {
@@ -8255,6 +8416,7 @@ impl Worker {
             let _ = commands.send(Command::GroupEdited {
                 chat,
                 edit: GroupEdit::Name(name),
+                session,
                 result,
             });
             waker.wake();
@@ -8280,6 +8442,7 @@ impl Worker {
             Some(jpeg) => self.group_pictures_sent.insert(chat.clone(), jpeg.clone()),
             None => self.group_pictures_sent.remove(&chat),
         };
+        let session = self.account_session;
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         tokio::spawn(async move {
@@ -8293,21 +8456,27 @@ impl Worker {
             let _ = commands.send(Command::GroupEdited {
                 chat,
                 edit: GroupEdit::Picture { removed },
+                session,
                 result,
             });
             waker.wake();
         });
     }
 
-    /// Applies WhatsApp's answer to a group name or photo change.
+    /// Applies WhatsApp's answer to a group name, photo or timer change.
     fn group_edited(&mut self, chat: ChatId, edit: GroupEdit, result: Result<(), String>) {
-        self.emit(Event::GroupSaving {
-            chat: chat.clone(),
-            saving: false,
-        });
+        // A timer has its own saving state, so a rename in flight and a timer
+        // change no longer clear each other.
+        match &edit {
+            GroupEdit::Timer(_) => self.timer_saving(&chat, false),
+            GroupEdit::Name(_) | GroupEdit::Picture { .. } => self.emit(Event::GroupSaving {
+                chat: chat.clone(),
+                saving: false,
+            }),
+        }
         let sent_picture = match edit {
             GroupEdit::Picture { .. } => self.group_pictures_sent.remove(&chat),
-            GroupEdit::Name(_) => None,
+            GroupEdit::Name(_) | GroupEdit::Timer(_) => None,
         };
         match (result, edit) {
             (Ok(()), GroupEdit::Name(name)) => {
@@ -8320,14 +8489,28 @@ impl Worker {
                 self.show_sent_picture(chat, sent_picture.unwrap_or_default());
             }
             (Ok(()), GroupEdit::Picture { removed }) => self.refresh_avatar(chat, removed),
+            // A group's timer is applied from the server's own group
+            // notification, which carries the change's timestamp and actor,
+            // and files the notice. The accepted IQ only refreshes the
+            // metadata, so a newer change is never overwritten and no notice
+            // is invented here.
+            (Ok(()), GroupEdit::Timer(_)) => self.request_group_info(&chat, true),
             (Err(error), edit) => {
                 let refused = group_edit_refused(&error);
                 log::warn!(
                     "could not change group info ({})",
                     if refused { "refused" } else { "failed" }
                 );
+                let timer = matches!(&edit, GroupEdit::Timer(_));
                 self.emit(Event::Error(if refused {
-                    GROUP_EDIT_REFUSED.to_owned()
+                    // The refusal names what was being changed: a timer has
+                    // nothing to do with the group's name and photo.
+                    if timer {
+                        "Only admins can change disappearing messages."
+                    } else {
+                        GROUP_EDIT_REFUSED
+                    }
+                    .to_owned()
                 } else {
                     match edit {
                         GroupEdit::Name(_) => "Could not rename the group.",
@@ -8337,6 +8520,7 @@ impl Worker {
                         GroupEdit::Picture { removed: true } => {
                             "Could not remove the group's photo."
                         }
+                        GroupEdit::Timer(_) => "Could not change disappearing messages.",
                     }
                     .to_owned()
                 }));
@@ -8897,6 +9081,7 @@ impl Worker {
                 | Content::PhoneOnly { .. }
                 | Content::Poll { .. }
                 | Content::Interactive { .. }
+                | Content::DisappearingTimer { .. }
         ) {
             self.emit(Event::Error("This message cannot be forwarded".to_owned()));
             return None;
@@ -13095,10 +13280,12 @@ fn ensure_message_secret(raw: Vec<u8>, secret: Option<&[u8]>) -> Vec<u8> {
     message.encode_to_vec()
 }
 
-/// The newest message the archive holds for a chat: the boundary the phone is
-/// asked to clear through. An archive that cannot be read yields no boundary at
-/// all, because a guessed one would clear the phone past messages this device
-/// never saw, and the dialog would say both sides matched.
+/// The newest row the archive holds for a chat: the point the phone is asked to
+/// clear or delete through. Its range carries that time and no message id, so a
+/// timer notice's own time is as good as a message's, and running to it keeps
+/// nothing ZapFast filed for itself behind. An archive that cannot be read
+/// yields no boundary at all, because a guessed one would clear the phone past
+/// messages this device never saw, and the dialog would say both sides matched.
 fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
     read.ok().map(|page| {
         page.last()
@@ -17337,7 +17524,7 @@ mod receipt_tests {
             .try_iter()
             .filter_map(|event| match event {
                 Event::Error(message) => Some(message),
-                Event::GroupSaving { .. } => Some("saving".into()),
+                Event::GroupSaving { .. } | Event::TimerSaving { .. } => Some("saving".into()),
                 _ => None,
             })
             .collect()
@@ -17426,6 +17613,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Name("Trip".into()),
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -17459,6 +17647,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Name("Trip".into()),
+                session: 0,
                 result: Err("received a server error response: code=403, text='forbidden'".into()),
             })
             .await;
@@ -17469,6 +17658,30 @@ mod receipt_tests {
         assert_eq!(
             worker.archive.chat(chat).unwrap().unwrap().name,
             "Weekend plans"
+        );
+        assert_eq!(
+            worker.group_info_queue.front().map(String::as_str),
+            Some(chat)
+        );
+
+        // A refused timer names the timer, not the group's name and photo,
+        // and relearns the rights the same way.
+        worker.group_info_queue.clear();
+        worker.group_info_requested.clear();
+        worker
+            .handle_command(Command::GroupEdited {
+                chat: chat.into(),
+                edit: GroupEdit::Timer(604_800),
+                session: 0,
+                result: Err("received a server error response: code=403, text='forbidden'".into()),
+            })
+            .await;
+        assert_eq!(
+            errors(&events),
+            vec![
+                "saving".to_owned(),
+                "Only admins can change disappearing messages.".to_owned()
+            ]
         );
         assert_eq!(
             worker.group_info_queue.front().map(String::as_str),
@@ -17490,11 +17703,16 @@ mod receipt_tests {
                 GroupEdit::Picture { removed: true },
                 "Could not remove the group's photo.",
             ),
+            (
+                GroupEdit::Timer(604_800),
+                "Could not change disappearing messages.",
+            ),
         ] {
             worker
                 .handle_command(Command::GroupEdited {
                     chat: chat.into(),
                     edit,
+                    session: 0,
                     result: Err("IQ request timed out".into()),
                 })
                 .await;
@@ -17515,6 +17733,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: true },
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -17545,6 +17764,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: false },
+                session: 0,
                 result: Ok(()),
             })
             .await;
@@ -17573,6 +17793,7 @@ mod receipt_tests {
             .handle_command(Command::GroupEdited {
                 chat: chat.into(),
                 edit: GroupEdit::Picture { removed: false },
+                session: 0,
                 result: Err("IQ request timed out".into()),
             })
             .await;
@@ -17992,6 +18213,8 @@ mod receipt_tests {
             privacy_retry: Instant::now(),
             star_generation: HashMap::new(),
             star_session: 0,
+            account_session: 0,
+            early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
@@ -20823,6 +21046,45 @@ mod receipt_tests {
         assert_eq!(newest.id, "theirs");
     }
 
+    /// The archive range names no id ZapFast invented: a timer notice gives
+    /// its time, like a local call entry, but no message key.
+    #[test]
+    fn archive_range_leaves_timer_notices_out() {
+        let jid: Jid = PEER.parse().unwrap();
+        let mut notice = incoming(&format!("{}1", crate::model::TIMER_NOTICE_PREFIX), 400);
+        notice.content = Content::DisappearingTimer { seconds: 86_400 };
+        let range = archive_range(&jid, Some(&notice));
+        assert_eq!(range.last_message_timestamp, Some(400));
+        assert!(
+            range.messages.is_empty(),
+            "the phone never had a message with this id"
+        );
+    }
+
+    /// The timer notice is in the transcript but never answers what the phone's
+    /// newest message is, so archiving a chat names the real message before it.
+    #[test]
+    fn the_archive_range_skips_a_timer_notice_at_the_end() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("theirs", 100), None, None);
+        let mut notice = incoming("zapfast-timer-setting", 400);
+        notice.content = Content::DisappearingTimer { seconds: 86_400 };
+        worker
+            .archive
+            .insert_message(&notice, None)
+            .expect("timer notice");
+        assert!(
+            worker
+                .archive
+                .message(PEER, "zapfast-timer-setting")
+                .expect("reads")
+                .is_some(),
+            "the notice stays in the transcript"
+        );
+        let newest = worker.newest_on_phone(PEER).unwrap().expect("a message");
+        assert_eq!(newest.id, "theirs");
+    }
+
     #[test]
     fn the_archive_range_names_the_sender_in_a_group() {
         let group: Jid = "123-456@g.us".parse().unwrap();
@@ -21418,6 +21680,54 @@ mod receipt_tests {
         );
         worker.on_receipt(&receipt(PEER, &["third"], ReceiptType::ReadSelf));
         assert_eq!(unread(&worker), 0);
+    }
+
+    #[test]
+    fn a_timer_protocol_timestamp_does_not_hide_a_later_delivered_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("before-timer", 100), None, None);
+        let mut notice = incoming("zapfast-timer-setting", 400);
+        notice.content = Content::DisappearingTimer { seconds: 86_400 };
+        worker
+            .archive
+            .insert_message(&notice, None)
+            .expect("timer notice");
+
+        // A phone snapshot can carry the timestamp of a protocol-only timer
+        // setting even though it reports no unread real messages.
+        let mut snapshot = history(0);
+        snapshot.chats[0].last_activity = 400;
+        worker.apply_history(snapshot, true);
+        assert_eq!(worker.archive.read_through(PEER).unwrap(), Some(100));
+
+        worker.store_message(incoming("late-delivery", 300), None, None);
+        assert_eq!(
+            unread(&worker),
+            1,
+            "the real message is newer than the read position"
+        );
+    }
+
+    #[test]
+    fn a_chat_read_does_not_use_a_timer_notice_as_its_read_position() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("before-timer", 100), None, None);
+        let mut notice = incoming("zapfast-timer-setting", 400);
+        notice.content = Content::DisappearingTimer { seconds: 86_400 };
+        worker
+            .archive
+            .insert_message(&notice, None)
+            .expect("timer notice");
+
+        worker.mark_read(PEER.into(), false);
+        assert_eq!(worker.archive.read_through(PEER).unwrap(), Some(100));
+
+        worker.store_message(incoming("late-delivery", 300), None, None);
+        assert_eq!(
+            unread(&worker),
+            1,
+            "the real message is newer than the read position"
+        );
     }
 
     #[test]
@@ -22454,6 +22764,7 @@ mod chat_removal_tests {
         let old = UiEvents {
             sender: sender.clone(),
             generation: 0,
+            session: worker.account_session,
         };
         worker.privacy_generation = 1;
         worker.archive.clear().unwrap();
@@ -22485,6 +22796,7 @@ mod chat_removal_tests {
         let current = UiEvents {
             sender,
             generation: 1,
+            session: worker.account_session,
         };
         wa_events::EventHandler::handle_event(&current, deletion("m200"));
         let RuntimeEvent::MessageRemoval { generation, event } = inbox.try_recv().unwrap() else {

@@ -260,6 +260,10 @@ pub fn content_description(locale: Locale, content: &Content, text: &str) -> Str
             ],
         ),
         Content::LiveLocation { .. } => gettext(locale, "Live location ended").into_owned(),
+        Content::DisappearingTimer { seconds } => {
+            crate::util::disappearing_line(locale, Some(*seconds))
+                .unwrap_or_else(|| gettext(locale, "Disappearing messages").into_owned())
+        }
         Content::Revoked => gettext(locale, "This message was deleted").into_owned(),
         Content::Unsupported { what } => fill(
             &gettext(locale, "Unsupported message ({what})"),

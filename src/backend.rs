@@ -556,6 +556,21 @@ pub enum Command {
         chat: ChatId,
         speed: Option<f32>,
     },
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
+    /// message's id and setting time, whose server ack decides whether the
+    /// timer is written. `session` identifies the account this completion
+    /// belongs to.
+    TimerSet {
+        chat: ChatId,
+        session: u64,
+        seconds: u32,
+        result: Result<(String, i64), String>,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Asks for a wallpaper image and copies it into the state directory.
@@ -631,10 +646,13 @@ pub enum Command {
         chat: ChatId,
         answer: GroupAnswer,
     },
-    /// Internal: WhatsApp answered a change to a group's name or photo.
+    /// Internal: WhatsApp answered a change to a group's name, photo or
+    /// timer. `session` is the account session the change was sent under; a
+    /// completion from a departed session is discarded.
     GroupEdited {
         chat: ChatId,
         edit: GroupEdit,
+        session: u64,
         result: Result<(), String>,
     },
     /// Internal: the server accepted a profile change.
@@ -1402,6 +1420,13 @@ pub enum Event {
         chat: ChatId,
         saving: bool,
     },
+    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
+    /// answered it, for a direct chat or a group. The chat keeps its current
+    /// timer until the answer.
+    TimerSaving {
+        chat: ChatId,
+        saving: bool,
+    },
 }
 
 /// A change to a group's info, as sent to WhatsApp.
@@ -1411,6 +1436,8 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+    /// The new disappearing-message duration in seconds; zero turns it off.
+    Timer(u32),
 }
 
 /// WhatsApp's answer to a group management command, read on the runtime and

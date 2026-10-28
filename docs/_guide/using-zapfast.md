@@ -654,8 +654,13 @@ your phone's contacts if you chose that for the last contact you added. A card w
 
 The contact or group details, opened from the chat header or by right-clicking
 a chat in the list, show a chat's disappearing-messages timer, or **Off** once
-it has been turned off. Change the timer on your phone; messages you send from
-ZapFast follow it. Messages you receive stay in ZapFast's archive after they
+it has been turned off. Click the timer to choose **Off**, **24 hours**,
+**7 days** or **90 days**. Group timers follow the group's settings: when the
+group lets members edit its info, any member can change the timer; when only
+admins may, only admins can. Members who cannot change it can still see a known
+timer. While a timer change is pending, the row is disabled and shows
+**Saving…** for both direct chats and groups. Messages you send from ZapFast
+follow the timer; messages you receive stay in ZapFast's archive after they
 disappear on your other devices.
 
 The chips under the search bar narrow the list to **Unread**, **Private**
