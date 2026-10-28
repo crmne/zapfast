@@ -4045,6 +4045,7 @@ fn reaction_affordance(
     view: &View<'_>,
     message: &Message,
     bubble: &egui::Response,
+    tiles: &[(Rect, String)],
     actions: &mut Vec<Action>,
 ) {
     let bounds = ui.clip_rect().shrink(2.0);
@@ -4111,6 +4112,17 @@ fn reaction_affordance(
         data.insert_temp(bubble.id.with("forward-rect"), forward_rect);
     });
     let revealed = reaction_affordance_visible(pointer, shown, reach);
+    // In an album the control acts on the item under the pointer, as the
+    // context menu does. Remember that item: by the time the click lands, the
+    // pointer has already left it for the control.
+    let album_target = bubble.id.with("album-hover-target");
+    if revealed
+        && let Some(pos) = pointer
+        && let Some((_, id)) = tiles.iter().find(|(rect, _)| rect.contains(pos))
+    {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(album_target, id.clone()));
+    }
     if ui.is_rect_visible(rect) && uncovered && revealed {
         floating_circle(ui, &view.palette, rect, response.hovered());
         theme::paint_icon(
@@ -4178,12 +4190,18 @@ fn reaction_affordance(
         }
         if forward
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text("Forward")
+            .on_hover_text(crate::i18n::gettext(view.locale, "Forward").as_ref())
             .clicked()
         {
+            // An album forwards the item the control is beside, not always
+            // its first member.
+            let target = ui
+                .ctx()
+                .data(|data| data.get_temp::<String>(album_target))
+                .unwrap_or_else(|| message.id.clone());
             actions.push(Action::ShowDialog(Dialog::Forward {
                 chat: view.chat.id.clone(),
-                messages: vec![message.id.clone()],
+                messages: vec![target],
             }));
         }
     }
@@ -5078,7 +5096,7 @@ fn bubble_frame(
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
 
-    reaction_affordance(ui, view, message, &bubble, actions);
+    reaction_affordance(ui, view, message, &bubble, &tiles, actions);
     // Read right-click from input because inner widgets own their responses.
     // The whole row counts, the empty strip beside the bubble included, as in
     // other messaging apps (#240). Count only the part inside the transcript's
