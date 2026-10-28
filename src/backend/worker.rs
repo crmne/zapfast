@@ -956,7 +956,7 @@ pub async fn run(
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
-    'commands: loop {
+    loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
@@ -976,15 +976,24 @@ pub async fn run(
                         // the queue. Commands that are not searches run first,
                         // in the order they arrived.
                         let mut waiting = Vec::new();
+                        let mut shutdown = false;
                         while let Ok(next) = inbox.try_recv() {
                             match next {
                                 Command::SearchMessages { query: newer } => query = newer,
-                                Command::Shutdown => break 'commands,
+                                Command::Shutdown => {
+                                    shutdown = true;
+                                    break;
+                                }
                                 other => waiting.push(other),
                             }
                         }
+                        // A shutdown behind the search still runs the commands
+                        // queued before it: quitting must not lose a draft.
                         for next in waiting {
                             worker.handle_command(next).await;
+                        }
+                        if shutdown {
+                            break;
                         }
                         worker.handle_command(Command::SearchMessages { query }).await;
                     }
