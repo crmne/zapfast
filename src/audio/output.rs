@@ -423,6 +423,56 @@ mod tests {
         assert!(mix.idle());
     }
 
+    #[test]
+    fn pausing_a_clip_releases_the_mix_and_keeps_its_position() {
+        use crate::audio::{Loaded, Player, State};
+
+        let (mut mix, slot) = Mix::new(None);
+        mix.configure(48_000, 2);
+        let mixer = slot.take().expect("a mixer");
+        let sink = rodio::Player::connect_new(&mixer);
+        sink.append(tone(960_000));
+        let samples = Arc::new(vec![0.5; 480_000]);
+        let mut player = Player::new(crate::backend::Waker::default());
+        player.loaded = Some(Loaded {
+            message: "clip".to_owned(),
+            buffer: Arc::clone(&samples),
+            samples,
+            factor: 2.0,
+            base: Duration::from_secs(1),
+            paused: false,
+            done: false,
+        });
+        player.output = Some((
+            Output {
+                mixer,
+                generation: 0,
+                current: Arc::new(AtomicU64::new(0)),
+                _wake: None,
+            },
+            sink,
+        ));
+        let mut out = [0.0_f32; 9_600];
+        mix.render(&mut out);
+        let position = player.status("clip").position;
+        assert!(position > Duration::from_secs(1), "playback advanced");
+        player
+            .toggle("clip", std::path::Path::new("unused"))
+            .unwrap();
+        assert!(player.output.is_none(), "a paused clip releases its player");
+        assert_eq!(player.status("clip").state, State::Paused);
+        assert_eq!(player.status("clip").position, position);
+        mix.render(&mut out);
+        mix.render(&mut out);
+        assert!(mix.idle(), "the device can pause while the clip is paused");
+        player.set_speed(1.0);
+        player.poll().unwrap();
+        assert!(player.output.is_none(), "changing speed keeps it released");
+        assert!(!player.preparing_speed("clip"));
+        assert_eq!(player.status("clip").position, position);
+        assert!(player.take_finished().is_none(), "pausing is not finishing");
+    }
+
     /// What a monitor was told: the format, and every sample.
     type Told = (Option<(u32, u16)>, Vec<f32>);
 

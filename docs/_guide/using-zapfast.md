@@ -452,7 +452,8 @@ yet.
 ## Voice messages
 
 Voice messages play in the chat with a seekable waveform; audio files show a
-music icon and a seek bar instead. The chip beside the waveform or seek bar
+music icon and a seek bar instead. Pausing releases the sound output so it can
+sleep; playing again resumes from the same position. The chip beside the waveform or seek bar
 cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered
 for later messages. To give one chat its own speed, right-click the chat in the
