@@ -18205,7 +18205,9 @@ mod tests {
         let last = body("m399").expect("m399 on screen");
         assert!(screen.contains_rect(first) && screen.contains_rect(last));
         let from = egui::pos2(first.left() + 2.0, first.center().y);
-        let to = last.center();
+        // Reach the last line's end so the assertion identifies message 399,
+        // instead of relying on a prefix shared with messages 397 and 398.
+        let to = last.right_bottom() - egui::vec2(1.0, 5.0);
         let press = |pos, pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -18239,7 +18241,7 @@ mod tests {
             }
         }
         let copied = copied.expect("the sweep put text on the clipboard");
-        for number in ["number 397", "number 398", "number 39"] {
+        for number in ["number 397", "number 398", "number 399"] {
             assert!(copied.contains(number), "{number}: {copied:?}");
         }
         assert_eq!(copied.matches("] ").count(), 3, "{copied:?}");
@@ -22090,11 +22092,11 @@ mod long_chat_tests {
         (app, ctx, chat, clock)
     }
 
-    fn frame(
+    fn frame_output(
         app: &mut App,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
-    ) -> Vec<egui::epaint::ClippedShape> {
+    ) -> egui::FullOutput {
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -22111,7 +22113,15 @@ mod long_chat_tests {
             },
         );
         output.textures_delta.clear();
-        output.shapes
+        output
+    }
+
+    fn frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        frame_output(app, ctx, events).shapes
     }
 
     /// A trackpad scroll by `delta` points. Steps under 8 points apply at
@@ -22150,6 +22160,86 @@ mod long_chat_tests {
         ctx.data(|data| data.get_temp::<egui::Rect>(id)).is_some()
     }
 
+    fn selection_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn assert_scroll_inside_content(ctx: &egui::Context, chat: &crate::model::ChatId) {
+        let (id, maximum) = ctx
+            .data(|data| {
+                data.get_temp::<(egui::Id, f32)>(
+                    crate::ui::conversation::scroll_metrics_id(chat).with("bounds"),
+                )
+            })
+            .expect("the transcript exposes its measured scroll bounds");
+        let state = egui::scroll_area::State::load(ctx, id).unwrap();
+        assert!(
+            state.offset.y >= 0.0 && state.offset.y <= maximum + 0.5,
+            "selection offset {} must stay inside 0..{maximum}",
+            state.offset.y
+        );
+    }
+
+    fn last_layout_count(app: &App, chat: &str) -> usize {
+        let measured = &app.conversations[chat].rows;
+        let pass = measured.values().filter_map(|row| row.pass).max();
+        measured.values().filter(|row| row.pass == pass).count()
+    }
+
+    /// Drag through actual text cursors, whose heights and wrapping vary by font.
+    fn selection_points(
+        shapes: &[egui::epaint::ClippedShape],
+        view: egui::Rect,
+    ) -> Vec<(i64, egui::Pos2, egui::Pos2)> {
+        let mut points: Vec<_> = shapes
+            .iter()
+            .filter_map(|clipped| {
+                let egui::Shape::Text(text) = &clipped.shape else {
+                    return None;
+                };
+                let number = text.galley.text().strip_prefix("Row ")?;
+                let number = number.split_whitespace().next()?.parse().ok()?;
+                let rect = text.galley.mesh_bounds.translate(text.pos.to_vec2());
+                if !view.shrink2(egui::vec2(2.0, 60.0)).contains_rect(rect) {
+                    return None;
+                }
+                let start = text.galley.pos_from_cursor(text.galley.begin()).center();
+                let end = text.galley.pos_from_cursor(text.galley.end()).center();
+                Some((number, text.pos + start.to_vec2(), text.pos + end.to_vec2()))
+            })
+            .collect();
+        points.sort_by_key(|(number, ..)| *number);
+        points
+    }
+
+    fn scrolled_selection_chat() -> (App, egui::Context, String, crate::util::fixed_clock::Guard) {
+        let (mut app, ctx, chat, clock) = long_chat();
+        for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+            if let Content::Text { text, .. } = &mut row.content {
+                text.push_str("\nSecond line 🦊 café");
+            }
+        }
+        for _ in 0..4 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        for _ in 0..12 {
+            frame(&mut app, &ctx, wheel(300.0));
+        }
+        // These tests start from stationary text. End the positioning gesture
+        // before choosing cursors: Linux adds a delayed touchpad glide, so a
+        // fixed number of idle frames can otherwise capture moving targets.
+        app.scrolling.stop();
+        for _ in 0..15 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        (app, ctx, chat, clock)
+    }
+
     #[test]
     fn only_rows_near_the_screen_are_laid_out() {
         let (mut app, ctx, chat, _clock) = long_chat();
@@ -22165,6 +22255,222 @@ mod long_chat_tests {
         // The first frame starts at the top, so the oldest rows were laid
         // out once; the middle of the history never was.
         assert!(!laid_out(&ctx, &chat, ROWS / 2), "a far row is skipped");
+    }
+
+    /// Dragging visible text must not relayout the entire archive or move the
+    /// rows under the pointer. Both drag directions copy the same messages.
+    #[test]
+    fn selecting_text_in_a_long_chat_keeps_the_view_stable_and_virtualized() {
+        for reverse in [false, true] {
+            let (mut app, ctx, chat, _clock) = scrolled_selection_chat();
+            let view = app.selection_view.lock().unwrap().unwrap();
+            let shapes = frame(&mut app, &ctx, Vec::new());
+            let before = painted_rows(&shapes);
+            let candidates = selection_points(&shapes, view);
+            assert!(candidates.len() >= 2, "two complete bodies are visible");
+            let (first, start, _) = candidates[0];
+            let (last, _, end) = *candidates.last().unwrap();
+            let (from, to) = if reverse { (end, start) } else { (start, end) };
+            let mut events = vec![
+                vec![
+                    egui::Event::PointerMoved(from),
+                    selection_button(from, true),
+                ],
+                vec![egui::Event::PointerMoved(to)],
+            ];
+            events.extend((0..5).map(|_| vec![egui::Event::PointerMoved(to)]));
+            events.push(vec![selection_button(to, false)]);
+            for events in events {
+                let rows = painted_rows(&frame(&mut app, &ctx, events));
+                assert_scroll_inside_content(&ctx, &chat);
+                assert!(!rows.is_empty(), "selection never scrolls into blank space");
+                assert!(
+                    (rows[&first] - before[&first]).abs() < 2.0,
+                    "a drag inside the view must not move its anchor row"
+                );
+                let drawn = last_layout_count(&app, &chat);
+                assert!(
+                    drawn < ROWS as usize / 3,
+                    "only the selection and nearby rows need layout, not all {drawn} messages"
+                );
+            }
+            let output = frame_output(&mut app, &ctx, vec![egui::Event::Copy]);
+            let copied = output
+                .platform_output
+                .commands
+                .iter()
+                .find_map(|command| {
+                    if let egui::OutputCommand::CopyText(text) = command {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                })
+                .expect("the selected messages copy");
+            assert!(copied.contains(&format!("Row {first} ")), "{copied:?}");
+            assert!(copied.contains(&format!("Row {last} ")), "{copied:?}");
+            assert!(copied.contains("Second line 🦊 café"), "{copied:?}");
+            assert_eq!(copied.matches("Row ").count(), (last - first + 1) as usize);
+        }
+    }
+
+    /// An off-screen anchor stays copyable while edge scrolling. Clicking
+    /// outside the text then releases its pinned rows without closing the chat.
+    #[test]
+    fn edge_selection_in_a_long_chat_releases_without_blank_overscroll() {
+        for down in [false, true] {
+            assert_edge_selection_survives_pointer_loss(down);
+        }
+    }
+
+    fn assert_edge_selection_survives_pointer_loss(down: bool) {
+        let (mut app, ctx, chat, _clock) = scrolled_selection_chat();
+        let view = app.selection_view.lock().unwrap().unwrap();
+        let shapes = frame(&mut app, &ctx, Vec::new());
+        let (anchor, start, end) = selection_points(&shapes, view)[0];
+        let from = if down { start } else { end };
+        let edge = egui::pos2(
+            view.center().x,
+            if down {
+                view.bottom() + 200.0
+            } else {
+                view.top() - 200.0
+            },
+        );
+        let offset = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<(f32, f32)>(crate::ui::conversation::scroll_metrics_id(&chat))
+            })
+            .unwrap()
+            .0
+        };
+        let before = offset(&ctx);
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(from),
+                selection_button(from, true),
+            ],
+        );
+        for _ in 0..300 {
+            let rows = painted_rows(&frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(edge), egui::Event::PointerGone],
+            ));
+            assert!(!rows.is_empty(), "edge selection leaves messages on screen");
+            assert_scroll_inside_content(&ctx, &chat);
+        }
+        assert!(
+            if down {
+                offset(&ctx) > before + 100.0
+            } else {
+                offset(&ctx) < before - 100.0
+            },
+            "the held drag scrolls towards its edge"
+        );
+        frame(
+            &mut app,
+            &ctx,
+            vec![selection_button(edge, false), egui::Event::PointerGone],
+        );
+        assert!(ctx.input(|input| input.pointer.latest_pos().is_none()));
+        let output = frame_output(&mut app, &ctx, vec![egui::Event::Copy]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .expect("the off-screen selection anchor remains copyable");
+        assert!(copied.contains(&format!("Row {anchor} ")), "{copied:?}");
+        assert!(copied.contains("Second line 🦊 café"), "{copied:?}");
+        let selected: Vec<i64> = copied
+            .lines()
+            .filter_map(|line| {
+                line.split_once("Row ")?
+                    .1
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        assert!(
+            selected.len() >= 5,
+            "the selection crosses several messages"
+        );
+        assert_eq!(
+            if down {
+                selected.first()
+            } else {
+                selected.last()
+            },
+            Some(&anchor)
+        );
+        assert!(
+            selected.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "no virtualized middle message is omitted: {selected:?}"
+        );
+        assert!(
+            !copied.contains(&format!(
+                "Row {} ",
+                if down { anchor - 1 } else { anchor + 1 }
+            )),
+            "the message beyond the anchor is not selected"
+        );
+        assert!(
+            selected[1..selected.len() - 1].iter().any(|number| {
+                let id = crate::ui::conversation::bubble_id(&chat, &format!("long-{number}"))
+                    .with("body");
+                ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                    .is_some_and(|rect| !view.intersects(rect))
+            }),
+            "the copied middle includes text kept outside the viewport"
+        );
+        let visible = painted_rows(&frame(&mut app, &ctx, Vec::new()));
+        let gutter = visible
+            .keys()
+            .filter(|number| *number % 3 != 0)
+            .find_map(|number| {
+                let id = crate::ui::conversation::bubble_id(&chat, &format!("long-{number}"))
+                    .with("rect");
+                ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                    .filter(|rect| view.shrink2(egui::vec2(2.0, 20.0)).contains_rect(*rect))
+                    .map(|rect| {
+                        egui::pos2(
+                            (rect.right() + 45.0).min(view.right() - 25.0),
+                            rect.center().y,
+                        )
+                    })
+            })
+            .expect("an incoming row has an empty gutter beside its text");
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(gutter),
+                selection_button(gutter, true),
+            ],
+        );
+        frame(&mut app, &ctx, vec![selection_button(gutter, false)]);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        assert!(
+            !ctx.plugin::<egui::text_selection::LabelSelectionState>()
+                .lock()
+                .has_selection()
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(chat.as_str()));
+        assert!(last_layout_count(&app, &chat) < ROWS as usize / 3);
+        assert_scroll_inside_content(&ctx, &chat);
     }
 
     /// Rows scrolled past are measured for the first time, and their real

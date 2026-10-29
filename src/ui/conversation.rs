@@ -2507,6 +2507,14 @@ fn sticky_date<R>(
     );
 }
 
+/// Message endpoints whose text must remain registered while it is selected.
+/// Stable message ids survive older-page insertion and row-height changes.
+#[derive(Clone)]
+struct TextSelectionRows {
+    anchor: String,
+    extent: String,
+}
+
 /// The conversation's messages. `under` is how much of the list's top lies
 /// beneath the header, which a vibrant window lays over it.
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
@@ -2715,21 +2723,67 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     // later request to reach the end. Keyboard page, Home, and End scrolls
     // ease by applying small instant steps each frame instead (`KeyScroll`).
     let mut edge_scrolled_up = false;
-    // Rows far from the viewport are skipped rather than laid out, keeping the
-    // height they last took (or an estimate), so a long history costs the rows
-    // near the screen instead of every loaded one. A jump to a message, the
-    // unread divider's first placement, and a text selection lay out every
-    // row: a jump needs exact positions, and egui drops a selection whose
-    // ends it does not see in a frame. Rows near the viewport are measured
-    // again each frame, so a width change or an image that loads corrects
-    // them before they come into view.
-    let layout_width = ui.available_width();
-    let selecting = ui
+    // egui must see both selection endpoints and the text between them, not
+    // the entire history. Keep that span plus nearby rows laid out, so a
+    // selection does not remeasure distant rows and move the view.
+    let text_selection_id =
+        ui.make_persistent_id(("message-text-selection", &app.account().id, &chat.id));
+    let has_text_selection = ui
         .ctx()
         .plugin_opt::<egui::text_selection::LabelSelectionState>()
         .is_some_and(|plugin| plugin.lock().has_selection());
-    let lay_out_all =
-        view.anchor.is_some() || divider.as_ref().is_some_and(|(.., placed)| !placed) || selecting;
+    let (pressed, extending, drag_frame, origin) = ui.input(|input| {
+        (
+            input.pointer.primary_pressed(),
+            input.modifiers.shift,
+            (input.pointer.primary_down() || input.pointer.primary_released()),
+            input.pointer.press_origin(),
+        )
+    });
+    let mut text_selection = ui
+        .ctx()
+        .data(|data| data.get_temp::<TextSelectionRows>(text_selection_id));
+    if !has_text_selection || (pressed && !extending) {
+        text_selection = None;
+    }
+    if pressed
+        && let Some(origin) =
+            origin.filter(|origin| ui.available_rect_before_wrap().contains(*origin))
+        && let Some(row) = conversation.messages.iter().find(|row| {
+            ui.ctx().data(|data| {
+                data.get_temp::<Rect>(text_selection_id.with(&row.id))
+                    .is_some_and(|rect| rect.contains(origin))
+            })
+        })
+    {
+        match &mut text_selection {
+            Some(span) if extending => span.extent.clone_from(&row.id),
+            _ => {
+                text_selection = Some(TextSelectionRows {
+                    anchor: row.id.clone(),
+                    extent: row.id.clone(),
+                })
+            }
+        }
+    }
+    let selected_rows = text_selection.as_ref().and_then(|span| {
+        let anchor = conversation
+            .messages
+            .iter()
+            .position(|row| row.id == span.anchor)?;
+        let extent = conversation
+            .messages
+            .iter()
+            .position(|row| row.id == span.extent)?;
+        Some((anchor, anchor.min(extent)..=anchor.max(extent)))
+    });
+    if selected_rows.is_none() {
+        text_selection = None;
+    }
+    // Jumps and first unread-divider placement need exact absolute positions.
+    // Normal reading and text selection retain virtualization.
+    let layout_width = ui.available_width();
+    let lay_out_all = view.anchor.is_some() || divider.as_ref().is_some_and(|(.., placed)| !placed);
     let pass = ui.ctx().cumulative_pass_nr();
     let redo = ui.ctx().current_pass_index() > 0;
     let mut rows = std::mem::take(&mut conversation.rows);
@@ -2823,10 +2877,25 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let key_start = time - f64::from(ui.input(|input| input.stable_dt.min(0.1)));
     let mut pinned = false;
     let mut visible_day = None;
-    let output = egui::ScrollArea::vertical()
+    // A pending stick-to-bottom adjustment may already have changed the stored
+    // offset since the last paint. Start a text drag at the offset the user saw,
+    // and let edge scrolling move it instead of snapping away from the pointer.
+    let selection_offset = (pressed && text_selection.is_some())
+        .then(|| {
+            ui.ctx()
+                .data(|data| data.get_temp::<f32>(text_selection_id.with("painted-offset")))
+        })
+        .flatten();
+    let scroll = egui::ScrollArea::vertical();
+    let scroll = if let Some(offset) = selection_offset {
+        scroll.vertical_scroll_offset(offset)
+    } else {
+        scroll
+    };
+    let output = scroll
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
-        .stick_to_bottom(view.reaction.is_none())
+        .stick_to_bottom(view.reaction.is_none() && !(text_selection.is_some() && drag_frame))
         .scroll_source(if view.reaction.is_some() {
             egui::scroll_area::ScrollSource::NONE
         } else {
@@ -2837,6 +2906,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             // Scroll while selecting near an edge. `scroll_with_delta` also
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    text_selection_id.with("painted-offset"),
+                    (viewport.top() - ui.max_rect().top()).max(0.0),
+                );
+            });
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
             if carried != 0.0 {
                 ui.scroll_with_delta_animation(
@@ -2982,14 +3057,26 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         };
                         let near = before + height >= viewport.top() - reach
                             && before <= viewport.bottom() + reach;
-                        if !lay_out_all && !near {
+                        let selected = selected_rows.as_ref().is_some_and(|(anchor, span)| {
+                            span.contains(&index)
+                                || (drag_frame
+                                    && if index < *anchor {
+                                        before + height >= viewport.top() - margin
+                                    } else {
+                                        before <= viewport.bottom() + margin
+                                    })
+                        });
+                        if !lay_out_all && !near && !selected {
                             // The body rect of a row that just left the
                             // layout marks where it last was, not where it is.
                             if known
                                 .is_some_and(|row| row.pass.is_some_and(|last| last + 1 == pass))
                             {
                                 let id = bubble_id(&chat.id, &message.id).with("body");
-                                ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                                ui.ctx().data_mut(|data| {
+                                    data.remove::<Rect>(id);
+                                    data.remove::<Rect>(text_selection_id.with(&message.id));
+                                });
                             }
                             ui.add_space(height);
                             if known.is_none() {
@@ -3006,7 +3093,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             let id = bubble_id(&chat.id, &message.id).with("rect");
                             ui.ctx().data_mut(|data| data.remove::<Rect>(id));
                         }
-                        if sweep.is_some() {
+                        if sweep.is_some() || (text_selection.is_some() && drag_frame) {
                             first_row.get_or_insert(message.id.as_str());
                             if sweep_pointer.is_some_and(|pointer| pointer.y >= before) {
                                 swept_to = Some(message.id.as_str());
@@ -3028,11 +3115,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         // thousands in a long chat, would only slow this
                         // frame and the screen reader taking it in. The row
                         // jumped to, the divider's and the current one stay
-                        // shown, so the list can name the current one. A text
-                        // selection keeps every row: egui drops a selection
-                        // whose ends it does not see.
+                        // shown, so the list can name the current one. Selected
+                        // rows stay visible to egui so it retains off-screen
+                        // endpoints and the text between them.
                         let hidden = !near
-                            && !selecting
+                            && !selected
                             && !current
                             && !row_is_anchor
                             && divider.as_ref().is_none_or(|(id, ..)| !row_contains(id));
@@ -3523,6 +3610,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             cursor_drawn = true;
                         }
                         let measured = ui.cursor().top() - before;
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(
+                                text_selection_id.with(&message.id),
+                                Rect::from_min_max(
+                                    pos2(viewport.left(), before),
+                                    pos2(viewport.right(), before + measured),
+                                ),
+                            );
+                        });
                         if visible_day.is_none()
                             && before + measured > viewport.top()
                             && before < viewport.bottom()
@@ -3550,6 +3646,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             anchor: anchor.clone(),
                             to: row.to_owned(),
                         });
+                    }
+                    if drag_frame
+                        && sweep_pointer.is_some()
+                        && let Some(span) = &mut text_selection
+                        && let Some(row) = swept_to.or(first_row)
+                    {
+                        span.extent = row.to_owned();
                     }
                     // A pin made after the newest message keeps its notice at
                     // the end of the transcript.
@@ -3634,6 +3737,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         });
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
+    ui.ctx().data_mut(|data| match text_selection {
+        Some(span) => {
+            data.insert_temp(text_selection_id, span);
+        }
+        None => {
+            data.remove::<TextSelectionRows>(text_selection_id);
+        }
+    });
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
@@ -3641,6 +3752,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         data.insert_temp(
             scroll_metrics_id(&chat.id),
             (output.state.offset.y, output.inner_rect.height()),
+        );
+        #[cfg(test)]
+        data.insert_temp(
+            scroll_metrics_id(&chat.id).with("bounds"),
+            (
+                output.id,
+                (output.content_size.y - output.inner_rect.height()).max(0.0),
+            ),
         );
     });
     // Keep the view at the end while initial content expands, until the user
@@ -3682,7 +3801,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         && key_scroll.is_none_or(|scroll| scroll.kind != Scroll::Top)
     {
         let mut state = output.state;
-        state.offset.y = (state.offset.y + grew_above).max(0.0);
+        let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        state.offset.y = (state.offset.y + grew_above).clamp(0.0, max_offset);
         state.store(ui.ctx(), output.id);
         ui.ctx()
             .request_discard("transcript rows above the viewport changed height");
