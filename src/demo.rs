@@ -11579,6 +11579,45 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_paste_keeps_table_text_in_the_composer() {
+        for modifiers in [
+            egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Modifiers::MAC_CMD
+                | egui::Modifiers::COMMAND
+                | egui::Modifiers::SHIFT
+                | egui::Modifiers::ALT,
+        ] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("fixture-clipboard-image"),
+                    (2_usize, 2_usize, vec![200_u8; 16]),
+                );
+            });
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::ModifiersChanged(modifiers),
+                    egui::Event::Paste("Name\tCount\nñandú\t2".into()),
+                ],
+            );
+            assert_eq!(app.composer, "Name\tCount\nñandú\t2");
+            assert!(app.pending.is_empty());
+            assert!(
+                ctx.data(|data| data
+                    .get_temp::<(usize, usize, Vec<u8>)>(egui::Id::new("fixture-clipboard-image"))
+                    .is_some()),
+                "plain paste never reads the picture"
+            );
+        }
+    }
+
+    #[test]
     fn clicking_empty_conversation_space_returns_focus_to_the_composer() {
         let mut app = app();
         let ctx = egui::Context::default();

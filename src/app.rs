@@ -10785,16 +10785,23 @@ struct PasteKeys {
     command: bool,
     /// When Ctrl/Cmd was last seen down.
     command_at: Option<f64>,
+    /// Shift is down, as of the last modifier event.
+    shift: bool,
+    /// When Ctrl/Cmd+Shift was last held, for an image-only clipboard's
+    /// swallowed press whose modifiers may be released before V.
+    plain_at: Option<f64>,
     /// A V press reached us since the last V release: typing, not a paste.
     typed_v: bool,
-    /// This shortcut's `Paste` event already took the clipboard, so its
-    /// release must not read it again.
+    /// This shortcut's `Paste` event was handled, so its release must not
+    /// read the clipboard again, including after a plain-text paste.
     handled: bool,
 }
 
 impl PasteKeys {
-    /// Reads one frame's events, in order, and says whether they ask for a
-    /// paste: a `Paste` event, or the release of a swallowed Ctrl/Cmd+V.
+    /// Reads one frame's events, in order, and says whether they ask for an
+    /// attachment paste: an unshifted `Paste` event, or the release of a
+    /// swallowed Ctrl/Cmd+V. Ctrl/Cmd+Shift+V leaves text for its field,
+    /// including the native macOS Option+Shift+Cmd+V combination.
     fn read(&mut self, input: &egui::InputState) -> bool {
         let now = input.time;
         if !input.focused {
@@ -10804,17 +10811,20 @@ impl PasteKeys {
         if self.command {
             // Still held when this frame's events arrived.
             self.command_at = Some(now);
+            if self.shift {
+                self.plain_at = Some(now);
+            }
         }
         let recent = |at: Option<f64>| at.is_some_and(|at| now - at <= PASTE_RELEASE_GRACE);
         let mut requested = false;
         for event in &input.events {
             match event {
                 egui::Event::WindowFocused(_) => *self = Self::default(),
-                egui::Event::ModifiersChanged(modifiers) => {
-                    self.set_command(modifiers.command, now)
-                }
+                egui::Event::ModifiersChanged(modifiers) => self.set_modifiers(*modifiers, now),
                 egui::Event::Paste(_) => {
-                    requested = true;
+                    // egui-winit supplies text for Ctrl/Cmd+Shift+V too.
+                    // Leave it for the text field instead of staging pixels.
+                    requested |= !(self.command && self.shift);
                     // A menu paste has no key release to wait for. The Edit
                     // menu's Cmd+V may arrive after Cmd is already up.
                     self.handled = recent(self.command_at);
@@ -10825,7 +10835,7 @@ impl PasteKeys {
                     modifiers,
                     ..
                 } => {
-                    self.set_command(modifiers.command, now);
+                    self.set_modifiers(*modifiers, now);
                     if *key != egui::Key::V {
                         continue;
                     }
@@ -10833,9 +10843,13 @@ impl PasteKeys {
                         self.typed_v = true;
                         continue;
                     }
-                    requested |= !self.typed_v && !self.handled && recent(self.command_at);
+                    requested |= !self.typed_v
+                        && !self.handled
+                        && recent(self.command_at)
+                        && !recent(self.plain_at);
                     self.typed_v = false;
                     self.handled = false;
+                    self.plain_at = None;
                     if !self.command {
                         // The next release needs a Ctrl/Cmd of its own.
                         self.command_at = None;
@@ -10847,16 +10861,22 @@ impl PasteKeys {
         requested
     }
 
-    fn set_command(&mut self, down: bool, now: f64) {
+    fn set_modifiers(&mut self, modifiers: egui::Modifiers, now: f64) {
+        let down = modifiers.command;
         if down {
             if !self.command {
                 // A new press starts another shortcut, including after a
                 // menu paste that had no V release.
                 self.handled = false;
+                self.plain_at = None;
             }
             self.command_at = Some(now);
+            if modifiers.shift {
+                self.plain_at = Some(now);
+            }
         }
         self.command = down;
+        self.shift = modifiers.shift;
     }
 }
 
@@ -14178,6 +14198,111 @@ mod tests {
             1
         );
         assert_eq!(app.pending.len(), 2, "a later image-only paste still works");
+    }
+
+    #[test]
+    fn plain_text_paste_does_not_read_attachments() {
+        for modifiers in [
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                shift: true,
+                ..egui::Modifiers::NONE
+            },
+            egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                ..egui::Modifiers::NONE
+            },
+            egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                alt: true,
+                ..egui::Modifiers::NONE
+            },
+        ] {
+            let (mut app, ctx) = clipboard_app();
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::Paste("plain ✓".into()),
+                    ],
+                    true
+                ),
+                0
+            );
+            assert_eq!(app.composer, "captionplain ✓");
+            assert!(app.pending.is_empty());
+            let mut release = paste_release();
+            if let egui::Event::Key { modifiers, .. } = &mut release {
+                *modifiers = egui::Modifiers::NONE;
+            }
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                        release,
+                    ],
+                    true
+                ),
+                0
+            );
+            assert!(app.pending.is_empty());
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::Paste("image URL".into()),],
+                    true
+                ),
+                1
+            );
+            assert_eq!(
+                app.pending.len(),
+                1,
+                "a subsequent ordinary paste still stages images"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_paste_without_text_does_not_attach_on_release() {
+        let (mut app, ctx) = clipboard_app();
+        let modifiers = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::ModifiersChanged(modifiers),],
+                true
+            ),
+            0
+        );
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                    release,
+                ],
+                true
+            ),
+            0
+        );
+        assert_eq!(app.composer, "caption");
+        assert!(app.pending.is_empty());
     }
 
     #[test]
