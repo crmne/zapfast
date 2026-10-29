@@ -11,6 +11,7 @@ use crate::privacy::{PrivacyChoice, PrivacyKind};
 use crate::settings::{Settings, ThemeChoice, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
+use fastframe_autostart::Start;
 
 use super::widgets;
 
@@ -659,11 +660,12 @@ fn sections(app: &App) -> Vec<Section> {
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
-            translated(locale, "Starts in the tray, without a window."),
+            translated(locale, "Starts ZapFast when you log in."),
             move |ui, app| {
-                let Some(mut enabled) = app.start_with_system else {
+                let Some(start) = app.start_with_system else {
                     return;
                 };
+                let mut enabled = start.is_some();
                 let response = widgets::switch(ui, &palette, &mut enabled);
                 theme::reveal_focus(&response);
                 let label = crate::i18n::gettext(app.locale, "Start at login");
@@ -676,10 +678,40 @@ fn sections(app: &App) -> Vec<Section> {
                     )
                 });
                 if response.changed() {
-                    app.actions.push(Action::SetStartWithSystem(enabled));
+                    // Turning the switch on starts in the tray, as before;
+                    // the row below opens the window.
+                    app.actions
+                        .push(Action::SetStart(enabled.then_some(Start::Hidden)));
                 }
             },
         );
+        if matches!(app.start_with_system, Some(Some(_))) {
+            system.row(
+                translated(locale, "Start with the window open"),
+                translated(locale, "Otherwise, ZapFast starts in the tray."),
+                move |ui, app| {
+                    let Some(Some(start)) = app.start_with_system else {
+                        return;
+                    };
+                    let mut window = start == Start::Window;
+                    let response = widgets::switch(ui, &palette, &mut window);
+                    theme::reveal_focus(&response);
+                    let label = crate::i18n::gettext(app.locale, "Start with the window open");
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Checkbox,
+                            ui.is_enabled(),
+                            window,
+                            label.as_ref(),
+                        )
+                    });
+                    if response.changed() {
+                        let start = if window { Start::Window } else { Start::Hidden };
+                        app.actions.push(Action::SetStart(Some(start)));
+                    }
+                },
+            );
+        }
     }
     system.toggle(
         translated(locale, "Check for updates"),

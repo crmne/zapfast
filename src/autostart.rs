@@ -46,13 +46,12 @@ impl LoginItem {
         );
     }
 
-    /// Starts ZapFast in the tray at login, or not at all.
-    pub fn set(&mut self, enabled: bool, wake: impl Fn() + Send + 'static) {
+    /// Starts ZapFast at login, with its window or in the tray, or not at
+    /// all.
+    pub fn set(&mut self, start: Option<Start>, wake: impl Fn() + Send + 'static) {
         self.spawn(
             move || Outcome {
-                state: autostart()
-                    .set(enabled.then_some(Start::Hidden))
-                    .map_err(|error| error.to_string()),
+                state: autostart().set(start).map_err(|error| error.to_string()),
                 changed: true,
             },
             wake,
@@ -94,12 +93,13 @@ impl LoginItem {
 }
 
 /// Whether Settings offers the switch, and where it stands: `None` where this
-/// installation cannot start at login.
-pub fn switch(state: State) -> Option<bool> {
+/// installation cannot start at login, `Some(None)` where it does not start,
+/// and the start it makes where it does.
+pub fn switch(state: State) -> Option<Option<Start>> {
     match state {
         State::Unsupported => None,
-        State::Off => Some(false),
-        State::On(_) | State::NeedsApproval(_) => Some(true),
+        State::Off => Some(None),
+        State::On(start) | State::NeedsApproval(start) => Some(Some(start)),
     }
 }
 
@@ -132,9 +132,20 @@ mod tests {
     #[test]
     fn the_switch_shows_only_where_zapfast_can_start_at_login() {
         assert_eq!(switch(State::Unsupported), None);
-        assert_eq!(switch(State::Off), Some(false));
-        assert_eq!(switch(State::On(Start::Hidden)), Some(true));
-        assert_eq!(switch(State::NeedsApproval(Start::Hidden)), Some(true));
-        assert_eq!(switch(State::On(Start::Window)), Some(true));
+        assert_eq!(switch(State::Off), Some(None));
+        assert_eq!(switch(State::On(Start::Hidden)), Some(Some(Start::Hidden)));
+        assert_eq!(
+            switch(State::NeedsApproval(Start::Hidden)),
+            Some(Some(Start::Hidden))
+        );
+        assert_eq!(switch(State::On(Start::Window)), Some(Some(Start::Window)));
+    }
+
+    #[test]
+    fn an_off_switch_hides_how_zapfast_starts() {
+        // The start mode rides the login item itself: once the item is off,
+        // no mode is left to show, and Settings offers the tray start again
+        // when the switch comes back on.
+        assert_eq!(switch(State::Off), Some(None));
     }
 }

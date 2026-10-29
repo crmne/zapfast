@@ -1735,6 +1735,15 @@ msgstr "Iniciar ao entrar"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Inicia na bandeja do sistema, sem janela."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Inicia o ZapFast quando você entra."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Iniciar com a janela aberta"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Caso contrário, o ZapFast inicia na bandeja do sistema."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

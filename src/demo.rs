@@ -2503,6 +2503,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            // The login item on and starting with its window: the System
+            // section's start rows.
+            "start-at-login" => {
+                app.start_with_system = Some(Some(fastframe_autostart::Start::Window));
+                app.page = Page::Settings;
+                app.settings_search = "start".into();
+            }
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
@@ -9418,6 +9425,7 @@ mod tests {
             ("calls-link", wide),
             ("settings", wide),
             ("settings", narrow),
+            ("start-at-login", wide),
             ("calls", wide),
             ("calls-info", wide),
             ("calls-info", narrow),

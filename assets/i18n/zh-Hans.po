@@ -1675,6 +1675,15 @@ msgstr "登录时启动"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "在托盘中启动，不打开窗口。"
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "登录时启动 ZapFast。"
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "启动时打开窗口"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "否则，ZapFast 在托盘中启动。"
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

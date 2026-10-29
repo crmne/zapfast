@@ -1735,6 +1735,15 @@ msgstr "Avvia all’accesso"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Si avvia nell’area di notifica, senza finestra."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Avvia ZapFast all’accesso."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Avvia con la finestra aperta"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Altrimenti, ZapFast si avvia nell’area di notifica."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

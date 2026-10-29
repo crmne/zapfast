@@ -1746,6 +1746,15 @@ msgstr "Lancer à l’ouverture de session"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Démarre dans la zone de notification, sans fenêtre."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Démarre ZapFast à l’ouverture de session."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Démarrer avec la fenêtre ouverte"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Sinon, ZapFast démarre dans la zone de notification."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

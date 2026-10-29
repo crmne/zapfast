@@ -220,9 +220,10 @@ name or description, in the interface language or in English.
 **System**
 
 - **Keep running when the window closes**: keep ZapFast linked in the tray.
-- **Start at login**: start in the tray without a window, where the platform
-  supports it. If the desktop's tray is not up yet, ZapFast waits up to 30
-  seconds for it, then opens the window, since a desktop without a tray could
+- **Start at login**: start ZapFast at login, where the platform supports
+  it, in the tray or, with **Start with the window open**, with its window.
+  A tray start without a window waits up to 30 seconds for the desktop's
+  tray, then opens the window, since a desktop without a tray could
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a
   Flatpak the desktop's background portal asks first.

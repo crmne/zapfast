@@ -830,8 +830,9 @@ pub struct App {
     /// texture each is drawn through.
     pub call_member_frames: HashMap<String, std::sync::Arc<egui::ColorImage>>,
     pub call_member_textures: HashMap<String, CallTexture>,
-    /// Whether ZapFast starts at login, when this installation supports it.
-    pub start_with_system: Option<bool>,
+    /// Whether ZapFast starts at login, when this installation supports
+    /// it, and how it starts while the login item is on.
+    pub start_with_system: Option<Option<fastframe_autostart::Start>>,
     /// The read or change of the login item running on its thread.
     login_item: crate::autostart::LoginItem,
     /// Cross-thread window repaint handle.
@@ -8902,9 +8903,9 @@ impl App {
                     account.backend.send(Command::SetProxy(value.clone()));
                 }
             }
-            Action::SetStartWithSystem(enabled) => {
+            Action::SetStart(start) => {
                 let waker = self.waker.clone();
-                self.login_item.set(enabled, move || waker.wake());
+                self.login_item.set(start, move || waker.wake());
             }
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);

@@ -1732,6 +1732,15 @@ msgstr "Mulai saat login"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Mulai di baki sistem (tray), tanpa membuka jendela."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Menjalankan ZapFast saat login."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Mulai dengan jendela terbuka"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Jika tidak, ZapFast mulai di baki sistem (tray)."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

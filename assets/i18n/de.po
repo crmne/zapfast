@@ -1745,6 +1745,15 @@ msgstr "Bei der Anmeldung starten"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Startet im Tray, ohne Fenster."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Startet ZapFast, wenn du dich anmeldest."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Mit geöffnetem Fenster starten"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Andernfalls startet ZapFast im Tray."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"

@@ -1748,6 +1748,15 @@ msgstr "Запускать при входе в систему"
 #: src/ui/settings.rs:662
 msgid "Starts in the tray, without a window."
 msgstr "Запускается в трее, без окна."
+#: src/ui/settings.rs:663
+msgid "Starts ZapFast when you log in."
+msgstr "Запускает ZapFast при входе в систему."
+#: src/ui/settings.rs:690
+msgid "Start with the window open"
+msgstr "Запускать с открытым окном"
+#: src/ui/settings.rs:691
+msgid "Otherwise, ZapFast starts in the tray."
+msgstr "Иначе ZapFast запускается в трее."
 
 #: src/ui/settings.rs:685
 msgid "Check for updates"
