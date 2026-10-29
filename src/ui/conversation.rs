@@ -4947,10 +4947,32 @@ fn bubble_frame(
                 .map(|_| CARD_WIDTH.min(cap))
                 .or_else(|| settled_width(ui, view, message, cap));
             let slot = if let Some(messages) = album {
+                let mut quoted_targets = HashMap::new();
+                let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
                 for member in messages {
                     if let Some(quoted) = &member.quoted {
-                        quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
+                        // WhatsApp can repeat the same reply on every album
+                        // item. Show each target once, keeping distinct replies.
+                        let target = (
+                            quoted.chat.as_deref().unwrap_or(&view.chat.id),
+                            quoted.id.as_str(),
+                            quoted.sender.as_str(),
+                        );
+                        let index = *quoted_targets.entry(target).or_insert_with(|| {
+                            quotes.push((member, quoted));
+                            quotes.len() - 1
+                        });
+                        // Keep targets in their first-seen order, but let a
+                        // later copy supply text missing from the first one.
+                        if quotes[index].1.summary.trim().is_empty()
+                            && !quoted.summary.trim().is_empty()
+                        {
+                            quotes[index] = (member, quoted);
+                        }
                     }
+                }
+                for (member, quoted) in quotes {
+                    quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
                 }
                 tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
                 None
