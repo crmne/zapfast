@@ -3220,14 +3220,16 @@ impl App {
         })
     }
 
-    /// Active typers in a chat as id and display name.
-    pub fn typing_in(&self, chat: &str) -> Vec<(String, String)> {
+    /// Active typers and voice recorders in a chat, with their display names.
+    pub fn typing_in(&self, chat: &str) -> Vec<(String, String, crate::model::ChatActivity)> {
         self.typing
             .get(chat)
             .map(|typers| {
                 typers
                     .iter()
-                    .map(|(sender, _)| (sender.clone(), self.display_name(sender)))
+                    .map(|(sender, activity, _)| {
+                        (sender.clone(), self.display_name(sender), *activity)
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -3760,12 +3762,12 @@ impl App {
             Event::Typing {
                 chat,
                 sender,
-                composing,
+                activity,
             } => {
                 let typers = self.typing.entry(chat).or_default();
-                typers.retain(|(who, _)| *who != sender);
-                if composing {
-                    typers.push((sender, Instant::now()));
+                typers.retain(|(who, _, _)| *who != sender);
+                if let Some(activity) = activity {
+                    typers.push((sender, activity, Instant::now()));
                 }
             }
             Event::Presence {
@@ -6095,7 +6097,7 @@ impl App {
             self.stop_composing(&chat);
         }
         for typers in self.typing.values_mut() {
-            typers.retain(|(_, since)| now.duration_since(*since) < TYPING_TIMEOUT);
+            typers.retain(|(_, _, since)| now.duration_since(*since) < TYPING_TIMEOUT);
         }
         self.typing.retain(|_, typers| !typers.is_empty());
         self.toasts.retain(|toast| {

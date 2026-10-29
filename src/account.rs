@@ -11,7 +11,8 @@ use std::time::Instant;
 use crate::app::{AttachmentDraft, ComposerMention, Conversation};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
-    AccountId, Chat, ChatFilter, ChatId, Contact, Label, Message, PollDraft, StickerPack,
+    AccountId, Chat, ChatActivity, ChatFilter, ChatId, Contact, Label, Message, PollDraft,
+    StickerPack,
 };
 use crate::paths::{AccountDirs, AppDirs};
 use crate::settings::AccountSettings;
@@ -55,7 +56,7 @@ pub struct Account {
     pub search: String,
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
-    pub typing: HashMap<ChatId, Vec<(String, Instant)>>,
+    pub typing: HashMap<ChatId, Vec<(String, ChatActivity, Instant)>>,
     pub presence: HashMap<String, crate::app::Presence>,
     pub account_receipts_off: bool,
     pub(crate) avatars: HashMap<String, Option<PathBuf>>,

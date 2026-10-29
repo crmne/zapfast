@@ -474,6 +474,7 @@ wake, and anything said before then is not recorded. Press Enter or the send
 button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
+When someone else records a voice message, a microphone replaces the typing dots.
 
 ## Calls
 

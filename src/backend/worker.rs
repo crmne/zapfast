@@ -3729,11 +3729,13 @@ impl Worker {
                 self.emit(Event::Typing {
                     chat: self.canonical(&presence.source.chat),
                     sender: self.canonical(&presence.source.sender),
-                    // Recording a voice note also shows as typing, as before.
-                    composing: matches!(
-                        presence.state,
-                        ChatActivity::Typing | ChatActivity::RecordingAudio
-                    ),
+                    activity: match presence.state {
+                        ChatActivity::Typing => Some(crate::model::ChatActivity::Typing),
+                        ChatActivity::RecordingAudio => {
+                            Some(crate::model::ChatActivity::RecordingAudio)
+                        }
+                        _ => None,
+                    },
                 });
             }
             E::Presence(presence) => {
@@ -20070,6 +20072,43 @@ mod receipt_tests {
             })
             .collect();
         assert_eq!(senders, [PEER, PEER, PEER]);
+    }
+
+    #[tokio::test]
+    async fn recording_audio_stays_distinct_from_typing() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        for state in [
+            ChatActivity::Typing,
+            ChatActivity::RecordingAudio,
+            ChatActivity::Idle,
+        ] {
+            let presence = wa_events::ChatPresenceUpdate::builder()
+                .source(MessageSource {
+                    chat: PEER.parse().unwrap(),
+                    sender: PEER.parse().unwrap(),
+                    ..Default::default()
+                })
+                .state(state)
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::ChatPresence(presence)))
+                .await;
+        }
+        let activities: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::Typing { activity, .. } => Some(activity),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            activities,
+            [
+                Some(crate::model::ChatActivity::Typing),
+                Some(crate::model::ChatActivity::RecordingAudio),
+                None,
+            ]
+        );
     }
 
     #[test]

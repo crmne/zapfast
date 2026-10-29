@@ -3,7 +3,7 @@
 use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
-use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
+use crate::model::{Action, Chat, ChatActivity, ChatFilter, Contact, Dialog, Message, Page};
 use crate::theme::{self, Icon, Palette};
 
 use super::conversation;
@@ -1567,8 +1567,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             palette.dim
         };
         let preview = if !typing.is_empty() {
-            let who = if chat.is_group() {
+            let recording = typing[0].2 == ChatActivity::RecordingAudio;
+            let who = if chat.is_group() && recording {
+                crate::i18n::gettext(app.locale, "{name} is recording audio…")
+                    .replace("{name}", typing[0].1.trim_start_matches('~'))
+            } else if chat.is_group() {
                 format!("{} is typing…", typing[0].1.trim_start_matches('~'))
+            } else if recording {
+                crate::i18n::gettext(app.locale, "recording audio…").into_owned()
             } else {
                 "typing…".to_owned()
             };
