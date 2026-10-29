@@ -3433,7 +3433,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     vec![(
                         chat.to_owned(),
                         crate::model::ChatActivity::RecordingAudio,
-                        std::time::Instant::now(),
+                        std::time::Instant::now() + std::time::Duration::from_secs(3600),
                     )],
                 );
             }
