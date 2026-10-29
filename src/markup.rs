@@ -257,10 +257,7 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
         }
         let mut quote = false;
         let mut content = line;
-        if let Some(rest) = content
-            .strip_prefix("> ")
-            .or_else(|| content.strip_prefix(">"))
-        {
+        if let Some(rest) = content.strip_prefix("> ") {
             quote = true;
             content = rest;
             spans.push(Span {
@@ -825,6 +822,30 @@ mod tests {
                 .iter()
                 .any(|span| span.mono && span.text == "let x = 1;")
         );
+    }
+
+    #[test]
+    fn greater_than_without_a_space_stays_literal() {
+        for text in [">.<", ">", ">quoted", ">= 3", ">\ttext", "hello\n>.<"] {
+            assert_eq!(plain(text, &[]), text);
+            assert!(parse(text, &[]).iter().all(|span| !span.quote));
+        }
+    }
+
+    #[test]
+    fn a_quote_requires_a_greater_than_and_space_at_line_start() {
+        let spans = parse("> *quoted*\n> >.<\n> ", &[]);
+        assert_eq!(plain("> *quoted*\n> >.<\n> ", &[]), "▎ quoted\n▎ >.<\n▎ ");
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.quote && span.bold && span.text == "quoted")
+        );
+        assert!(spans.iter().any(|span| span.quote && span.text == ">.<"));
+        for text in ["text > quoted", " > quoted"] {
+            assert_eq!(plain(text, &[]), text);
+            assert!(parse(text, &[]).iter().all(|span| !span.quote));
+        }
     }
 
     #[test]
