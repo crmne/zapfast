@@ -109,6 +109,22 @@
             libxi
             libxrandr
           ];
+          # These are the same versioned archives and hashes ort-sys rc.15
+          # selects. Fetch them before the network-isolated Cargo build.
+          onnxSource =
+            if isDarwin then
+              {
+                url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.31.0/aarch64-apple-darwin+coreml.tar.lzma2";
+                sha256 = "4033efca0e6c1606bd2ec3870d4cb19d0dba0ad0160dbfb616e66cae969ed68c";
+              }
+            else
+              pkgs.lib.findFirst
+                (source: builtins.elem pkgs.stdenv.hostPlatform.parsed.cpu.name source."only-arches")
+                (throw "No pinned ONNX Runtime for ${pkgs.stdenv.hostPlatform.system}")
+                (builtins.fromJSON (builtins.readFile ./packaging/flatpak/onnxruntime-sources.json));
+          onnxArchive = pkgs.fetchurl {
+            inherit (onnxSource) url sha256;
+          };
           zapfast = rustPlatform.buildRustPackage rec {
             pname = "zapfast";
             version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
@@ -151,6 +167,14 @@
               ]
             );
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
+            ORT_SKIP_DOWNLOAD = "1";
+            preBuild = ''
+              export ORT_LIB_LOCATION="$NIX_BUILD_TOP/onnxruntime"
+              mkdir -p "$ORT_LIB_LOCATION"
+              ${pkgs.xz}/bin/xz --decompress --stdout --format=raw --lzma2=dict=64MiB \
+                ${onnxArchive} > "$NIX_BUILD_TOP/onnxruntime.tar"
+              tar -xf "$NIX_BUILD_TOP/onnxruntime.tar" -C "$ORT_LIB_LOCATION"
+            '';
 
             # The vendored OpenSSL (through rusqlite's bundled SQLCipher) embeds
             # its build line, compiler path included, in the binary. The app

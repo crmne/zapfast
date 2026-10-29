@@ -17,9 +17,9 @@ The current version is **v{{ v }}**. SHA-256 checksums are in
 [checksums.txt]({{ base }}/checksums.txt). Older versions are on the
 [releases page](https://github.com/crmne/zapfast/releases).
 
-Voice message transcription runs locally with Parakeet. It has been tested on
-macOS only; transcription and its packaging on Linux, Windows and Nix have not
-been tested yet.
+Voice message transcription runs locally with Parakeet. Recognition has been
+tested locally on macOS only; Linux, Windows and Nix packaging require separate
+validation.
 
 ## Linux
 

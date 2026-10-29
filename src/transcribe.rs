@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
-use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber, ort};
+use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber};
 
 mod catalog;
 mod download;

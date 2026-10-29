@@ -23,6 +23,7 @@ python3 "$generator" "$work/Cargo.lock" -o "$out/cargo-sources.json"
 python3 - "$here" "$out" "$commit" "$work/Cargo.toml" <<'PY'
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tomllib
 import xml.etree.ElementTree as ET
@@ -35,6 +36,7 @@ manifest["modules"][0]["sources"][0] = {
     "type": "git", "url": "https://github.com/crmne/zapfast.git", "commit": commit
 }
 (out / "rocks.zapfast.ZapFast.yml").write_text(yaml.safe_dump(manifest, sort_keys=False))
+shutil.copyfile(here / "onnxruntime-sources.json", out / "onnxruntime-sources.json")
 meta = ET.parse(here / "rocks.zapfast.ZapFast.metainfo.xml")
 releases = meta.getroot().find("releases")
 releases.clear()

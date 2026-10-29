@@ -154,7 +154,12 @@ symphonia = { version = "0.5.5", default-features = false, features = ["aac"] }
 opus = "0.4"
 ogg = "0.9"
 # Native, offline Parakeet TDT inference through ONNX Runtime on the CPU.
-parakeet-rs = "=0.4.3"
+parakeet-rs = { version = "=0.4.3", default-features = false, features = ["cpu", "api-28"] }
+# Keep the same runtime/API as Parakeet's defaults, but use Rustls for the
+# build-time downloader. Native TLS would require a second, non-vendored
+# OpenSSL in Linux build environments. Sandboxed packages prefetch this exact
+# runtime instead of letting a Cargo build script access the network.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "tracing", "download-binaries", "tls-rustls", "copy-dylibs", "api-31"] }
 # Converts animated Signal APNG stickers to the animated WebP used by WhatsApp.
 webp-animation = "0.10"
 # Encodes stickers made from pictures as still lossy WebP. Already included

@@ -44,10 +44,16 @@ build-options:
   env:
     CARGO_HOME: /run/build/zapfast/cargo
     LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
+    ORT_LIB_LOCATION: /run/build/zapfast/onnxruntime
+    ORT_SKIP_DOWNLOAD: '1'
 modules:
   - name: zapfast
     buildsystem: simple
     build-commands:
+      # The source stage fetches and verifies the runtime. Cargo's build
+      # sandbox has no network, including for native-library build scripts.
+      - xz --decompress --stdout --format=raw --lzma2=dict=64MiB onnxruntime/onnxruntime.tar.lzma2 > onnxruntime/onnxruntime.tar
+      - tar -xf onnxruntime/onnxruntime.tar -C onnxruntime
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --locked
       - install -Dm755 target/release/zapfast /app/bin/zapfast
@@ -66,3 +72,6 @@ modules:
       # Every crate the lockfile names, for the offline build; flathub.sh
       # writes it with flatpak-cargo-generator.
       - cargo-sources.json
+      # The exact CPU runtime archives and SHA-256 hashes from ort-sys rc.15.
+      # Nix consumes the same Linux pins. No model weights are bundled.
+      - onnxruntime-sources.json

@@ -162,6 +162,24 @@ A signature doesn't silence SmartScreen at once: reputation builds as people
 download releases signed by the same publisher, so keep signing every release
 with this identity.
 
+## ONNX Runtime in sandboxed builds
+
+Parakeet links ONNX Runtime 1.31.0 at build time. Normal Cargo builds use the
+`ort` downloader with Rustls, not a system OpenSSL dependency. No native runtime
+binary is downloaded when the reader enables transcription, only model weights.
+
+Flatpak and Nix prefetch the same immutable CPU archives and SHA-256 hashes that
+`ort-sys` 2.0.0-rc.15 selects, before entering their network-isolated builds.
+The Linux pins are shared in `packaging/flatpak/onnxruntime-sources.json`; the
+flake also pins the matching macOS archive. Both unpack the raw LZMA2 archive
+with a 64 MiB dictionary, set `ORT_LIB_LOCATION` and disable build-script
+downloads. Model weights are not bundled.
+
+An `ort`/`ort-sys` update must recheck those archive pins against the new crate's
+distribution table. `packaging/flatpak/test-packaging.py` checks the pinned
+crate, TLS features, both Linux architectures, offline extraction and generated
+manifest completeness without downloading dependencies.
+
 ## Flatpak
 
 `packaging/flatpak/rocks.zapfast.ZapFast.yml` builds from source, with offline Cargo

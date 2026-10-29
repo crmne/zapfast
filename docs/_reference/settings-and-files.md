@@ -176,8 +176,8 @@ name or description, in the interface language or in English.
   connection/read timeouts and cancellation still bound stalls.
   **Transcribe again** in a downloaded voice message's menu requests only that
   message without changing the automatic setting, and replaces its text only
-  after the new transcription succeeds. Transcription and its packaging have
-  been tested on macOS only.
+  after the new transcription succeeds. Recognition has been tested locally
+  on macOS only; that does not validate Linux, Windows or their packaging.
 - **Fetch older history**: off by default, and set for
   each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently
