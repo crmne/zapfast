@@ -2012,6 +2012,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     for part in page.split(',').map(str::trim) {
         match part {
             "history-date" => history_date_sample(app),
+            "history-import" => {
+                app.page = Page::Settings;
+                app.settings_search = "Import history since a date".into();
+                app.history_import_date = "2026-01-01".into();
+                app.history_import = crate::model::HistoryImportProgress {
+                    since: Some(1_767_225_600),
+                    total: 28,
+                    completed: 12,
+                    stopped: 2,
+                    excluded: 3,
+                    paused: true,
+                    ..Default::default()
+                };
+            }
             "chat" | "" => {}
             "phone-menu" => phone_menu_sample(app),
             "short-chat" => short_chat_sample(app),
@@ -5937,6 +5951,42 @@ mod tests {
         assert!(!labels.contains(&"admins"));
     }
 
+    /// Error guidance names only actions actually available in each saved-job state.
+    #[test]
+    fn history_import_failure_guidance_matches_available_recovery_actions() {
+        for light in [false, true] {
+            for saved in [false, true] {
+                let mut app = app();
+                apply_flags(
+                    &mut app,
+                    Some(if light {
+                        "history-import,light"
+                    } else {
+                        "history-import"
+                    }),
+                );
+                app.history_import.failed = true;
+                if !saved {
+                    app.history_import.since = None;
+                }
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                let labels = accessible_labels(&mut app, &ctx);
+                let message = if saved {
+                    "Import stopped. Progress could not be read or saved. Check disk space, then retry or start a new pass."
+                } else {
+                    "Import stopped. Progress could not be read or saved. Check disk space, then start a new pass."
+                };
+                assert!(labels.iter().any(|label| label == message), "{labels:?}");
+                assert_eq!(
+                    labels.iter().any(|label| label == "Retry unfinished chats"),
+                    saved
+                );
+                assert!(labels.iter().any(|label| label == "Start import"));
+            }
+        }
+    }
+
     /// Every label and value in the accessibility tree of one frame.
     fn accessible_labels(app: &mut App, ctx: &egui::Context) -> Vec<String> {
         render(app, ctx);
@@ -9104,6 +9154,8 @@ mod tests {
             "settings-search=Notifications",
             "settings-search=System",
             "settings-search=Storage",
+            "history-import",
+            "history-import,light",
             "clear-media",
             "wallpaper",
             "wallpaper,light",

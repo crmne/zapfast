@@ -22,6 +22,7 @@ mod labels;
 pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
 mod pins;
 pub use pins::{Pinned, Pinner};
+pub(crate) mod history_import;
 mod polls;
 mod receipts;
 mod reconcile;

@@ -449,6 +449,10 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.history_prefetch,
     );
+    chats.block(
+        vec![translated(locale, "Import history since a date")],
+        super::history_import::show,
+    );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
         chats.toggle(

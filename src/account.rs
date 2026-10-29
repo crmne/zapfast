@@ -37,6 +37,9 @@ pub struct Account {
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
+    pub history_import: crate::model::HistoryImportProgress,
+    pub history_import_date: String,
+    pub(crate) history_import_allowed_sent: Option<bool>,
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
     /// Whether the open chat had a draft when opened. Keep its list priority
@@ -166,6 +169,9 @@ impl Account {
             conversations: HashMap::new(),
             open_chat,
             prefetch_sent: None,
+            history_import: Default::default(),
+            history_import_date: String::new(),
+            history_import_allowed_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             open_draft_priority: false,
