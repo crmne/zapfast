@@ -5816,6 +5816,9 @@ impl App {
         if text.is_empty() {
             return;
         }
+        if self.picker == Some(PickerTab::Emoji) {
+            self.picker = None;
+        }
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
         let mention_everyone = self.chat(&chat).is_some_and(Chat::can_mention_everyone)
             && crate::mentions::has_everyone_token(&text);

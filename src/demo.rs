@@ -21378,6 +21378,64 @@ mod tests {
         assert_eq!(app.dialog, Some(crate::model::Dialog::Shortcuts));
     }
 
+    #[test]
+    fn sending_text_closes_the_emoji_picker() {
+        for enter_sends in [true, false] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.settings.enter_sends = enter_sends;
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            apply_flags(&mut app, Some("picker"));
+            render(&mut app, &ctx);
+            app.actions
+                .push(crate::model::Action::InsertEmoji("😀".into()));
+            render(&mut app, &ctx);
+            render(&mut app, &ctx);
+            assert_eq!(app.picker, Some(crate::model::PickerTab::Emoji));
+            assert_eq!(app.composer, "😀");
+
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(
+                    egui::Key::Enter,
+                    if enter_sends {
+                        egui::Modifiers::SHIFT
+                    } else {
+                        egui::Modifiers::NONE
+                    },
+                )],
+            );
+            assert_eq!(app.composer, "😀\n");
+            assert_eq!(app.picker, Some(crate::model::PickerTab::Emoji));
+            assert!(
+                !app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| { matches!(command, crate::backend::Command::SendText { .. }) })
+            );
+
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(
+                    egui::Key::Enter,
+                    if enter_sends {
+                        egui::Modifiers::NONE
+                    } else {
+                        egui::Modifiers::COMMAND
+                    },
+                )],
+            );
+            assert!(app.composer.is_empty(), "the message was dispatched");
+            assert!(app.backend.take_demo_commands().iter().any(|command| {
+                matches!(command, crate::backend::Command::SendText { text, .. } if text == "😀")
+            }));
+            assert!(app.picker.is_none(), "sending closes the emoji picker");
+        }
+    }
+
     /// Sending from the emoji picker's Recent row leaves the row in its
     /// order until the picker opens again, so the same emoji can be sent
     /// twice from where it was (#294).
