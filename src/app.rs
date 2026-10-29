@@ -4493,6 +4493,8 @@ impl App {
                 self.new_contact_request = None;
                 self.new_contact_dialog_request = None;
                 self.new_contact_pending = false;
+                self.history_import = Default::default();
+                self.history_import_date.clear();
                 let account = self.account().id.clone();
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
@@ -12947,6 +12949,36 @@ mod tests {
                 .is_some_and(|pending| pending.answered)
         );
         assert!(ctx.has_requested_repaint(), "the next frame says it");
+    }
+
+    #[test]
+    fn history_import_logout_clears_only_the_unlinked_account() {
+        for active in [0, 1] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, events) =
+                two_accounts_on_settings(directory.path(), "15550007777@s.whatsapp.net");
+            app.active = active;
+            for account in &mut app.accounts {
+                account.history_import = crate::model::HistoryImportProgress {
+                    since: Some(123),
+                    total: 3,
+                    failed: true,
+                    ..Default::default()
+                };
+                account.history_import_date = "2026-03-01".into();
+            }
+            events.send(Event::Link(LinkStatus::LoggedOut)).unwrap();
+            app.handle_events();
+            events.send(Event::Link(LinkStatus::Connected)).unwrap();
+            app.handle_events();
+            let cleared = &app.accounts[1];
+            assert!(cleared.history_import.since.is_none());
+            assert_eq!(cleared.history_import.total, 0);
+            assert!(!cleared.history_import.failed);
+            assert!(cleared.history_import_date.is_empty());
+            assert_eq!(app.accounts[0].history_import.since, Some(123));
+            assert_eq!(app.accounts[0].history_import_date, "2026-03-01");
+        }
     }
 
     /// Both positions of the saved background-history switch survive a manual import.

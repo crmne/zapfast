@@ -5690,11 +5690,11 @@ impl Worker {
             }
             let mut import_page = crate::archive::history_import::Page {
                 exhausted: chat.import_exhausted,
+                // Body-less notices and ciphertext stubs are skipped by the
+                // parser; they do not invalidate the page's saved messages.
                 malformed: chat.diagnostics.missing_envelope
                     + chat.diagnostics.missing_key
-                    + chat.diagnostics.missing_body
                     + chat.diagnostics.invalid_edits
-                    + chat.diagnostics.ciphertext_stubs
                     > 0,
                 ..Default::default()
             };

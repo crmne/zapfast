@@ -450,6 +450,42 @@ mod tests {
         worker.answer_older(filed, session);
     }
 
+    #[test]
+    fn history_import_accepts_pages_with_bodyless_stubs() {
+        for stub_type in [None, Some(wa::web_message_info::StubType::CIPHERTEXT)] {
+            let (mut worker, _, _, _) = receipt_tests::worker();
+            reserve(&mut worker, Some("with-stub"), 1);
+            let mut stub = wa::WebMessageInfo::default();
+            let mut key = wa::MessageKey::default();
+            key.remote_jid = Some(CHAT.into());
+            key.id = Some("stub".into());
+            stub.key = MessageField::some(key);
+            stub.message_stub_type = stub_type;
+            let mut entry = wa::HistorySyncMsg::default();
+            entry.message = MessageField::some(stub);
+            let mut conversation = wa::Conversation::default();
+            conversation.id = CHAT.into();
+            conversation.messages.push(entry);
+            let parsed = parse_conversation(conversation);
+            assert_eq!(parsed.diagnostics.missing_body, 1);
+            let mut history = chat_removal_tests::history(CHAT, &[crate::util::now() - 3 * 86_400]);
+            history.chats[0].diagnostics = parsed.diagnostics;
+            let filed = worker.apply_history(history, false);
+            worker.answer_older(filed, Some("with-stub"));
+            assert!(worker.pending_older.is_empty());
+            assert!(
+                worker
+                    .archive
+                    .history_import()
+                    .unwrap()
+                    .unwrap()
+                    .progress()
+                    .finished,
+                "a saved page crossing the date finishes despite skipped history stubs"
+            );
+        }
+    }
+
     /// Rejects missing or unrelated session IDs before advancing the saved job.
     #[test]
     fn date_import_requires_exact_session_even_before_other_ids_have_matched() {

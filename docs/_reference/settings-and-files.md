@@ -188,6 +188,8 @@ name or description, in the interface language or in English.
   continue. A request pass finishes after each eligible chat crosses the date or
   the phone explicitly reports no older messages. This is not a completeness
   guarantee: WhatsApp may return less history, or leave requests unanswered.
+  Each returned page is saved whole, so it can include messages older than the
+  selected date, even when **Fetch older history** is off.
   The import pauses while the app is locked. It does not download attachments
   or add media recovery; normal download settings still apply when viewing them.
 - **Keep chats archived**: on by default. When off, a new message, received or
