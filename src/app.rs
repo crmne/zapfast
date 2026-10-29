@@ -398,6 +398,9 @@ struct PendingFollow {
 }
 
 pub struct App {
+    attachment_drag_request: Option<(AccountId, u64, PathBuf)>,
+    attachment_drag_ready: Option<PathBuf>,
+    attachment_drag_sequence: u64,
     pub dirs: AppDirs,
     pub settings: Settings,
     /// Writes settings and the account roster on a thread of its own, so
@@ -1383,6 +1386,9 @@ impl App {
         let app_lock = crate::app_lock::AppLock::new(settings.app_lock_hash.is_some());
         let tray_lockable = settings.app_lock_hash.is_some();
         let mut app = Self {
+            attachment_drag_request: None,
+            attachment_drag_ready: None,
+            attachment_drag_sequence: 0,
             dirs,
             settings,
             locale,
@@ -3265,6 +3271,12 @@ impl App {
         }
     }
 
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn apply_demo_event(&mut self, event: Event) {
+        self.apply_backend_event(event, true);
+        self.waker.wake();
+    }
+
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
             Event::StorageStats {
@@ -4184,6 +4196,30 @@ impl App {
                         name,
                         dismiss_dialog: false,
                     });
+                }
+            }
+            Event::PreparedAttachmentDrag { request, result } => {
+                if live
+                    && self
+                        .attachment_drag_request
+                        .as_ref()
+                        .is_some_and(|(account, pending, _)| {
+                            *pending == request && *account == self.account().id
+                        })
+                {
+                    match result {
+                        Ok(path) => self.attachment_drag_ready = Some(path),
+                        Err(error) => {
+                            self.attachment_drag_request = None;
+                            self.attachment_drag_ready = None;
+                            if !self.app_lock.is_locked() {
+                                self.toast_error(crate::file_drag::failure_message(
+                                    self.locale,
+                                    &crate::file_drag::Failure::Native(error),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             Event::Info(message) => self.toast(message),
@@ -6404,7 +6440,68 @@ impl App {
         self.record_location();
     }
 
-    /// Applies one model action after drawing the views, respecting the app lock and account state.
+    fn attachment_is_visible(&self, path: &std::path::Path) -> bool {
+        self.conversations
+            .values()
+            .flat_map(|conversation| &conversation.messages)
+            .chain(self.starred.iter().map(|entry| &entry.message))
+            .filter(|message| {
+                self.chat(&message.chat)
+                    .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+            })
+            .any(|message| {
+                message
+                    .content
+                    .media()
+                    .and_then(|media| media.path.as_deref())
+                    == Some(path)
+                    || match &message.content {
+                        Content::Image {
+                            motion: Some(motion),
+                            ..
+                        } => motion.path.as_deref() == Some(path),
+                        Content::Interactive {
+                            card: Some(card), ..
+                        } => card.carousel.iter().any(|card| {
+                            card.image.as_ref().and_then(|image| image.path.as_deref())
+                                == Some(path)
+                        }),
+                        _ => false,
+                    }
+            })
+    }
+
+    /// The shell supplies the native window after this frame's actions are applied.
+    pub fn take_attachment_drag(&mut self, primary_down: bool) -> Option<PathBuf> {
+        if !primary_down {
+            self.attachment_drag_request = None;
+            self.attachment_drag_ready = None;
+            return None;
+        }
+        let path = self.attachment_drag_ready.take()?;
+        let (account, _, source) = self.attachment_drag_request.take()?;
+        (!self.app_lock.is_locked()
+            && self.account().id == account
+            && self.selection.is_none()
+            && self.attachment_is_visible(&source))
+        .then_some(path)
+    }
+
+    pub fn finish_attachment_drag(
+        &mut self,
+        ctx: &egui::Context,
+        result: Result<(), crate::file_drag::Failure>,
+    ) {
+        match result {
+            Ok(()) => {
+                ctx.stop_dragging();
+                ctx.input_mut(|input| input.pointer = Default::default());
+            }
+            Err(error) => self.toast_error(crate::file_drag::failure_message(self.locale, &error)),
+        }
+        ctx.request_repaint();
+    }
+
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked, and a
@@ -7083,6 +7180,17 @@ impl App {
                 let path = item.path.clone();
                 if let Some(preview) = &mut self.image_preview {
                     preview.show_album_item(path, item.id.clone(), item.card);
+                }
+            }
+            Action::DragAttachment(path) => {
+                if self.selection.is_none() && self.attachment_is_visible(&path) {
+                    self.attachment_drag_sequence = self.attachment_drag_sequence.wrapping_add(1);
+                    let request = self.attachment_drag_sequence;
+                    self.attachment_drag_request =
+                        Some((self.account().id.clone(), request, path.clone()));
+                    self.attachment_drag_ready = None;
+                    self.backend
+                        .send(Command::PrepareAttachmentDrag { request, path });
                 }
             }
             Action::OpenFile(path) => {
@@ -11381,6 +11489,77 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn attachment_drags_recheck_the_account_and_privacy_before_the_native_handoff() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        let path = PathBuf::from("fixture.ogg");
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![voice(chat, "saved", 1, Some("fixture.ogg"))], false);
+        app.apply(Action::DragAttachment(PathBuf::from("unknown.ogg")), &ctx);
+        assert!(commands.try_recv().is_err());
+        assert!(app.take_attachment_drag(true).is_none());
+        let mut prepare = |app: &mut App| {
+            app.apply(Action::DragAttachment(path.clone()), &ctx);
+            let Command::PrepareAttachmentDrag {
+                request,
+                path: source,
+            } = commands.try_recv().unwrap()
+            else {
+                panic!("expected an asynchronous file lookup");
+            };
+            assert_eq!(source, path);
+            assert!(
+                app.take_attachment_drag(true).is_none(),
+                "wait for the worker"
+            );
+            app.apply_backend_event(
+                Event::PreparedAttachmentDrag {
+                    request: request.wrapping_sub(1),
+                    result: Ok(path.clone()),
+                },
+                true,
+            );
+            assert!(
+                app.take_attachment_drag(true).is_none(),
+                "ignore stale callbacks"
+            );
+            app.apply_backend_event(
+                Event::PreparedAttachmentDrag {
+                    request,
+                    result: Ok(path.clone()),
+                },
+                true,
+            );
+        };
+        prepare(&mut app);
+        assert_eq!(app.take_attachment_drag(true), Some(path.clone()));
+        assert!(app.take_attachment_drag(true).is_none());
+        prepare(&mut app);
+        assert!(
+            app.take_attachment_drag(false).is_none(),
+            "released before preparation finished"
+        );
+        prepare(&mut app);
+        app.chats[0].locked = true;
+        assert!(app.take_attachment_drag(true).is_none());
+        app.chats[0].locked = false;
+        prepare(&mut app);
+        app.app_lock.lock();
+        assert!(app.take_attachment_drag(true).is_none());
+        app.app_lock.release();
+        prepare(&mut app);
+        app.active = 1;
+        assert!(app.take_attachment_drag(true).is_none());
     }
 
     /// While recording, the light, the timer and the waveform ask for a

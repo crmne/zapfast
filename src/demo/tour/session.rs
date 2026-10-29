@@ -9,6 +9,25 @@ use crate::{
 pub fn respond(app: &mut App) {
     for command in app.backend.take_demo_commands() {
         match command {
+            Command::PrepareAttachmentDrag { request, path } => {
+                // Offline demos inspect their synthetic files, never a user's account.
+                let result = path
+                    .canonicalize()
+                    .and_then(|path| {
+                        if path.metadata()?.is_file() {
+                            Ok(path)
+                        } else {
+                            Err(std::io::Error::other(
+                                "The attachment is not a regular file",
+                            ))
+                        }
+                    })
+                    .map_err(|error| error.to_string());
+                app.apply_demo_event(crate::backend::Event::PreparedAttachmentDrag {
+                    request,
+                    result,
+                });
+            }
             Command::CreatePoll { chat, draft } => {
                 let state = crate::model::PollState {
                     selectable: draft.selectable(),

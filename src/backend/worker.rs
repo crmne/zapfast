@@ -7079,6 +7079,24 @@ impl Worker {
                     }
                 });
             }
+            Command::PrepareAttachmentDrag { request, path } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = (|| -> std::io::Result<PathBuf> {
+                        let path = path.canonicalize()?;
+                        if !path.metadata()?.is_file() {
+                            return Err(std::io::Error::other(
+                                "The attachment is not a regular file",
+                            ));
+                        }
+                        Ok(path)
+                    })()
+                    .map_err(|error| error.to_string());
+                    let _ = events.send(Event::PreparedAttachmentDrag { request, result });
+                    waker.wake();
+                });
+            }
             Command::SaveAttachmentAs { source, name } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();

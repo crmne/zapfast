@@ -31,6 +31,15 @@ Expired attachments may still be available through the phone.
 A download is reported as complete only after its local path is recorded in
 the archive. If that write fails, the attachment shows a failure instead;
 the downloaded file is kept in its destination.
+
+Downloaded photos, videos, stickers, and documents can be dragged from their
+message into another application or folder on Windows, macOS, and Linux
+(X11 and Wayland). A drag offers a copy of the saved file, never a move or a
+new download. The receiving application decides whether it accepts files.
+Cancel with Escape, or use **Save as** if the destination does not accept a
+drop. Attachments hidden behind the app lock or a closed locked-chat folder
+cannot start a drag.
+
 **Settings > Files > Storage used** shows how much space the account on screen
 has in its media cache, split into images, videos and GIFs, stickers, and other
 files. **Clear…** there deletes that account's cached attachments after asking:
