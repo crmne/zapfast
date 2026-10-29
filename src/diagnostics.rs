@@ -16,6 +16,8 @@ pub fn protocol_summary(message: &str) -> Cow<'static, str> {
         summary
     } else if let Some(summary) = app_state_summary(message) {
         summary
+    } else if let Some(summary) = receive_summary(message) {
+        summary
     } else {
         "protocol diagnostic (private details omitted)".into()
     }
@@ -62,6 +64,119 @@ fn app_state_summary(message: &str) -> Option<Cow<'static, str>> {
         return Some(format!("app-state {wire} {stage}").into());
     }
     None
+}
+
+/// Names a stage of the receive pipeline (offline resume, the inbound
+/// queues, the transport), keeping only the counts the library put in it.
+///
+/// These are what show why a link that connected stops delivering: a backlog
+/// that overflows a chat's queue, is redelivered and overflows again, or a
+/// reader left waiting on a stalled worker.
+fn receive_summary(message: &str) -> Option<Cow<'static, str>> {
+    if let Some(rest) = message.strip_prefix("Resume armed: total=") {
+        let (total, rest) = leading_number(rest)?;
+        let batch = rest.strip_prefix(", requesting first batch of ")?;
+        let (batch, rest) = leading_number(batch)?;
+        return rest.is_empty().then(|| {
+            format!("offline resume armed: {total} item(s), first batch of {batch}").into()
+        });
+    }
+    if let Some(rest) = message.strip_prefix("Offline resume interrupted at ") {
+        let (delivered, rest) = leading_number(rest)?;
+        let (total, rest) = leading_number(rest.strip_prefix(" of ")?)?;
+        return rest.starts_with(" item(s);").then(|| {
+            format!("offline resume interrupted at {delivered} of {total} item(s)").into()
+        });
+    }
+    if let Some(rest) = message.strip_prefix("Offline sync timed out after ") {
+        let rest = &rest[rest.find(" (processed ")? + " (processed ".len()..];
+        let (processed, rest) = leading_number(rest)?;
+        let (total, rest) = leading_number(rest.strip_prefix(" of ")?)?;
+        return rest.starts_with(" items)").then(|| {
+            format!("offline sync timed out (processed {processed} of {total} items)").into()
+        });
+    }
+    if let Some(rest) = message.strip_prefix("Failed to enqueue message for processing: ") {
+        return Some(match rest {
+            "sending into a full channel" => "could not queue a message (lane full)".into(),
+            "sending into a closed channel" => "could not queue a message (lane closed)".into(),
+            _ => "could not queue a message".into(),
+        });
+    }
+    if let Some(rest) = message.strip_prefix("Message-processing permit not acquired after ") {
+        let (seconds, rest) = leading_number(rest)?;
+        let active = match rest.strip_prefix("s (drain_active=")? {
+            rest if rest.starts_with("true)") => "true",
+            rest if rest.starts_with("false)") => "false",
+            _ => return None,
+        };
+        return Some(
+            format!(
+                "message-processing permit still waiting after {seconds} s (drain active: {active})"
+            )
+            .into(),
+        );
+    }
+    if let Some(rest) = message.strip_prefix("Transport disconnected: ") {
+        // Only the reason's kind: a close frame's text and a read error's
+        // message are the server's and the system's words, not ours.
+        let kind = if rest.starts_with("server close frame") {
+            "server close frame"
+        } else if rest.starts_with("stream ended") {
+            "stream ended"
+        } else if rest.starts_with("read error") {
+            "read error"
+        } else {
+            "unknown"
+        };
+        return Some(format!("transport disconnected ({kind}); reconnecting").into());
+    }
+    if let Some(rest) = message.strip_prefix("Message processing took ") {
+        // `{:.1}s (MAX_MESSAGE_DELAY is {}s)`, matched to its end.
+        let (whole, rest) = leading_number(rest)?;
+        let tenth = rest.strip_prefix('.')?.chars().next()?.to_digit(10)?;
+        let rest = rest[2..].strip_prefix("s (MAX_MESSAGE_DELAY is ")?;
+        let (_, rest) = leading_number(rest)?;
+        return (rest == "s)").then(|| format!("message processing took {whole}.{tenth} s").into());
+    }
+    [
+        (
+            "Inbound queue overloaded; draining before reconnect",
+            "inbound queue overloaded; draining before reconnect",
+        ),
+        (
+            "Transport event channel closed; reconnecting",
+            "transport event channel closed; reconnecting",
+        ),
+        (
+            "Transport ACK queue exhausted; recycling connection",
+            "transport ACK queue exhausted; recycling connection",
+        ),
+        (
+            "Transport ACK byte budget exhausted; recycling connection",
+            "transport ACK byte budget exhausted; recycling connection",
+        ),
+        (
+            "Offline sync wait ended with its connection",
+            "offline sync wait ended with its connection",
+        ),
+        (
+            "Drain finisher still running ",
+            "drain finisher still running after the offline sync timeout",
+        ),
+    ]
+    .into_iter()
+    .find(|(prefix, _)| message.starts_with(prefix))
+    .map(|(_, summary)| summary.into())
+}
+
+/// The decimal number `text` starts with, rebuilt from its digits, and what
+/// follows it.
+fn leading_number(text: &str) -> Option<(u64, &str)> {
+    let end = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    Some((text[..end].parse().ok()?, &text[end..]))
 }
 
 /// Names why a connection attempt failed, from the phrases whatsapp-rust and
@@ -379,6 +494,97 @@ mod tests {
             protocol_summary("Snapshot 12345@s.whatsapp.net v253 MAC mismatch over 31 records"),
             "protocol diagnostic (private details omitted)",
         );
+    }
+
+    #[test]
+    fn receive_pipeline_lines_keep_only_their_counts() {
+        let cases = [
+            (
+                "Resume armed: total=412, requesting first batch of 100",
+                "offline resume armed: 412 item(s), first batch of 100",
+            ),
+            (
+                "Offline resume interrupted at 64 of 412 item(s); the undelivered backlog was never acked and the server redelivers it",
+                "offline resume interrupted at 64 of 412 item(s)",
+            ),
+            (
+                "Offline sync timed out after 60s (processed 10 of 412 items); marking sync complete",
+                "offline sync timed out (processed 10 of 412 items)",
+            ),
+            (
+                "Inbound queue overloaded; draining before reconnect (chat bytes available: 1024, ACK bytes available: 2048)",
+                "inbound queue overloaded; draining before reconnect",
+            ),
+            (
+                "Failed to enqueue message for processing: sending into a full channel",
+                "could not queue a message (lane full)",
+            ),
+            (
+                "Failed to enqueue message for processing: sending into a closed channel",
+                "could not queue a message (lane closed)",
+            ),
+            (
+                "Message-processing permit not acquired after 10s (drain_active=true); a stanza worker or drain flush may be stalled",
+                "message-processing permit still waiting after 10 s (drain active: true)",
+            ),
+            (
+                "Transport disconnected: server close frame (code 1000: secret 12345@s.whatsapp.net); reconnecting.",
+                "transport disconnected (server close frame); reconnecting",
+            ),
+            (
+                "Transport disconnected: read error: 12345@s.whatsapp.net; reconnecting.",
+                "transport disconnected (read error); reconnecting",
+            ),
+            (
+                "Transport disconnected: stream ended (EOF); reconnecting.",
+                "transport disconnected (stream ended); reconnecting",
+            ),
+            (
+                "Transport event channel closed; reconnecting.",
+                "transport event channel closed; reconnecting",
+            ),
+            (
+                "Transport ACK queue exhausted; recycling connection",
+                "transport ACK queue exhausted; recycling connection",
+            ),
+            (
+                "Transport ACK byte budget exhausted; recycling connection",
+                "transport ACK byte budget exhausted; recycling connection",
+            ),
+            (
+                "Message processing took 31.5s (MAX_MESSAGE_DELAY is 30s)",
+                "message processing took 31.5 s",
+            ),
+        ];
+        for (message, expected) in cases {
+            assert_eq!(protocol_summary(message), expected, "{message}");
+        }
+        // A count that is not a plain number gives no summary of its own.
+        assert_eq!(
+            protocol_summary(
+                "Resume armed: total=12345@s.whatsapp.net, requesting first batch of 1"
+            ),
+            "protocol diagnostic (private details omitted)",
+        );
+        assert_eq!(
+            protocol_summary("Failed to enqueue message for processing: 12345@s.whatsapp.net"),
+            "could not queue a message",
+        );
+        // A duration is copied only when the whole line is the library's.
+        for message in [
+            "Message processing took 5491134567890@s.whatsapp.net",
+            "Message processing took 31.5s junk",
+            "Message processing took 31.5s (MAX_MESSAGE_DELAY is 30s) 12345@s.whatsapp.net",
+            "Message processing took 31s (MAX_MESSAGE_DELAY is 30s)",
+            "Message processing took 31.55s (MAX_MESSAGE_DELAY is 30s)",
+            "Message processing took 31.5s (MAX_MESSAGE_DELAY is 12345@s.whatsapp.net)",
+        ] {
+            assert_eq!(
+                protocol_summary(message),
+                "protocol diagnostic (private details omitted)",
+                "{message}",
+            );
+        }
     }
 
     #[test]
