@@ -63,6 +63,13 @@ On macOS, settings, state, and the logs are in
 `%LOCALAPPDATA%\paolino\zapfast\data`, and the caches in
 `%LOCALAPPDATA%\paolino\zapfast\cache`.
 
+If a downloaded attachment in the account cache has been deleted, trying to
+open it restores its Download control without restarting. The file check runs
+in the background. Leaving the chat, switching accounts or locking the app
+while it checks cancels opening the attachment. Files outside the cache and
+files that cannot
+be checked safely are left unchanged.
+
 On first start, ZapFast moves the corresponding `fastsapp` directories (or
 `fastwhatsapp` from earlier versions), including the session, archive, saved
 stickers, and window state. Existing ZapFast directories are never overwritten.

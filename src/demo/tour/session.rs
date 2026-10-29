@@ -9,6 +9,32 @@ use crate::{
 pub fn respond(app: &mut App) {
     for command in app.backend.take_demo_commands() {
         match command {
+            Command::RecoverCachedAttachment {
+                request,
+                chat,
+                message,
+                path,
+            } => {
+                // Only the demo's synthetic files are inspected here; no archive is opened.
+                let result = match path.metadata() {
+                    Ok(metadata) if metadata.is_file() => Ok(()),
+                    Ok(_) => Err("The attachment is not a regular file".into()),
+                    Err(error) => {
+                        if error.kind() == std::io::ErrorKind::NotFound {
+                            app.apply_demo_event(crate::backend::Event::CachedMediaMissing {
+                                chat,
+                                message,
+                                paths: vec![path],
+                            });
+                        }
+                        Err(error.to_string())
+                    }
+                };
+                app.apply_demo_event(crate::backend::Event::CachedAttachmentChecked {
+                    request,
+                    result,
+                });
+            }
             Command::CreatePoll { chat, draft } => {
                 let state = crate::model::PollState {
                     selectable: draft.selectable(),

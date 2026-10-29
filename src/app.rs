@@ -3,7 +3,7 @@
 //! Views queue [`Action`]s while drawing. The app applies them after the frame
 //! and processes backend events.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -397,7 +397,20 @@ struct PendingFollow {
     answered: bool,
 }
 
+/// Explicit opens retain click order; neighboring actions for one file share a check.
+/// Successful replies become ready, while failed or hidden replies remove their entry.
+struct CachedOpen {
+    account: AccountId,
+    context: Option<ChatId>,
+    request: u64,
+    path: PathBuf,
+    actions: Vec<Action>,
+    checked: bool,
+}
+
 pub struct App {
+    cached_opens: VecDeque<CachedOpen>,
+    cached_open_sequence: u64,
     pub dirs: AppDirs,
     pub settings: Settings,
     /// Writes settings and the account roster on a thread of its own, so
@@ -1383,6 +1396,8 @@ impl App {
         let app_lock = crate::app_lock::AppLock::new(settings.app_lock_hash.is_some());
         let tray_lockable = settings.app_lock_hash.is_some();
         let mut app = Self {
+            cached_opens: VecDeque::new(),
+            cached_open_sequence: 0,
             dirs,
             settings,
             locale,
@@ -3265,6 +3280,13 @@ impl App {
         }
     }
 
+    /// Delivers a synthetic worker result through the normal live-account event path.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn apply_demo_event(&mut self, event: Event) {
+        self.apply_backend_event(event, true);
+        self.waker.wake();
+    }
+
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
             Event::StorageStats {
@@ -3665,6 +3687,95 @@ impl App {
                 self.poll_voting.remove(&(chat, message));
                 if let Some(error) = error {
                     self.toast_error(error);
+                }
+            }
+            Event::CachedAttachmentChecked { request, result } => {
+                let account = self.account().id.clone();
+                if let Some(index) = self.cached_opens.iter().position(|open| {
+                    !open.checked && open.account == account && open.request == request
+                }) {
+                    match result {
+                        Ok(()) if live && !self.app_lock.is_locked() => {
+                            self.cached_opens[index].checked = true;
+                        }
+                        result => {
+                            self.cached_opens.remove(index);
+                            if live
+                                && !self.app_lock.is_locked()
+                                && let Err(error) = result
+                            {
+                                self.toast_error(format!(
+                                    "{}: {error}",
+                                    crate::i18n::gettext(self.locale, "Open file")
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            Event::CachedMediaMissing {
+                chat,
+                message,
+                paths,
+            } => {
+                if let Some(row) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|conversation| conversation.message_mut(&message))
+                {
+                    for path in &paths {
+                        row.content.forget_file(path);
+                    }
+                }
+                if live
+                    && let Some(listing) = self
+                        .info_media
+                        .as_mut()
+                        .filter(|listing| listing.chat == chat)
+                {
+                    for row in listing
+                        .media
+                        .iter_mut()
+                        .chain(&mut listing.docs)
+                        .filter(|row| row.id == message)
+                    {
+                        for path in &paths {
+                            row.content.forget_file(path);
+                        }
+                    }
+                }
+                for entry in self
+                    .starred
+                    .iter_mut()
+                    .filter(|entry| entry.message.chat == chat && entry.message.id == message)
+                {
+                    for path in &paths {
+                        entry.message.content.forget_file(path);
+                    }
+                }
+                self.stale_images
+                    .extend(paths.iter().map(|path| crate::util::image_uri(path)));
+                if live && self.viewer_media_chat.as_deref() == Some(chat.as_str()) {
+                    for item in self
+                        .viewer_media
+                        .iter_mut()
+                        .filter(|item| item.id == message)
+                    {
+                        if item.path.as_ref().is_some_and(|path| paths.contains(path)) {
+                            item.path = None;
+                            self.viewer_media_state.remove(&message);
+                        }
+                    }
+                    if let Some(preview) = self.image_preview.as_mut().filter(|preview| {
+                        preview.chat() == chat
+                            && preview.message() == message
+                            && preview
+                                .path()
+                                .is_some_and(|path| paths.iter().any(|saved| saved == path))
+                    }) {
+                        let card = preview.card();
+                        preview.show_album_item(None, message, card);
+                    }
                 }
             }
             Event::MessageUpdated(message) => {
@@ -6392,20 +6503,75 @@ impl App {
             self.active = previous;
         }
         let mut actions = std::mem::take(&mut self.actions);
-        while !actions.is_empty() {
+        loop {
             for action in actions.drain(..) {
                 self.apply(action, ctx);
                 self.record_location();
             }
             actions = std::mem::take(&mut self.actions);
+            if actions.is_empty() {
+                let account = self.account().id.clone();
+                let context = self.open_chat.clone();
+                let unlocked = !self.app_lock.is_locked();
+                self.cached_opens
+                    .retain(|open| unlocked && open.account == account && open.context == context);
+                if self.cached_opens.front().is_none_or(|open| !open.checked) {
+                    break;
+                }
+                let open = self.cached_opens.pop_front().unwrap();
+                for action in open.actions {
+                    self.apply_checked_attachment(action, ctx, true);
+                }
+                actions = std::mem::take(&mut self.actions);
+            }
         }
         // A frame with no queued action still fixes the opening place, so the
         // first navigation has somewhere to return to.
         self.record_location();
     }
 
-    /// Applies one model action after drawing the views, respecting the app lock and account state.
+    /// Locate only already-displayed account-local rows. The worker probes the file.
+    fn cached_attachment_owner(&self, path: &std::path::Path) -> Option<(ChatId, String)> {
+        if !path.starts_with(self.account().dirs.media_cache_dir()) {
+            return None;
+        }
+        let loaded = self
+            .conversations
+            .values()
+            .flat_map(|conversation| &conversation.messages)
+            .chain(self.starred.iter().map(|entry| &entry.message))
+            .chain(
+                self.info_media
+                    .iter()
+                    .flat_map(|listing| listing.media.iter().chain(&listing.docs)),
+            );
+        loaded
+            .filter(|row| {
+                self.chat(&row.chat)
+                    .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+            })
+            .filter(|row| row.content.local_files().contains(&path))
+            .map(|row| (row.chat.clone(), row.id.clone()))
+            .next()
+            .or_else(|| {
+                self.viewer_media
+                    .iter()
+                    .find(|item| item.path.as_deref() == Some(path))
+                    .and_then(|item| Some((self.viewer_media_chat.clone()?, item.id.clone())))
+            })
+            .filter(|(chat, _)| {
+                self.chat(chat)
+                    .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+            })
+    }
+
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        self.apply_checked_attachment(action, ctx, false);
+    }
+
+    /// Applies an action with normal privacy checks. Cached opens wait for a worker check
+    /// unless this action is being replayed from a matching successful result.
+    fn apply_checked_attachment(&mut self, action: Action, ctx: &egui::Context, checked: bool) {
         if self.app_lock.is_locked() && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked, and a
             // link opens the chat it named; the rest would show or change
@@ -6447,6 +6613,51 @@ impl App {
                 _ => {}
             }
             return;
+        }
+        let opening = match &action {
+            Action::OpenFile(path)
+            | Action::PreviewSticker(path)
+            | Action::PreviewImage { path, .. }
+            | Action::PlayVoice { path, .. }
+            | Action::PlayVideo { path, .. }
+            | Action::ExpandVideo { path, .. } => Some(path),
+            _ => None,
+        };
+        if let Some(path) = opening {
+            let owner = self.cached_attachment_owner(path);
+            if checked && owner.is_none() {
+                return;
+            }
+            if !checked && let Some((chat, message)) = owner {
+                let account = self.account().id.clone();
+                let context = self.open_chat.clone();
+                let path = path.to_owned();
+                if let Some(pending) = self.cached_opens.back_mut()
+                    && pending.account == account
+                    && pending.context == context
+                    && pending.path == path
+                {
+                    pending.actions.push(action);
+                    return;
+                }
+                self.cached_open_sequence = self.cached_open_sequence.wrapping_add(1);
+                let request = self.cached_open_sequence;
+                self.backend.send(Command::RecoverCachedAttachment {
+                    request,
+                    chat,
+                    message,
+                    path: path.clone(),
+                });
+                self.cached_opens.push_back(CachedOpen {
+                    account,
+                    context,
+                    request,
+                    path,
+                    actions: vec![action],
+                    checked: false,
+                });
+                return;
+            }
         }
         let Some(action) = self.apply_call_action(action, ctx) else {
             return;
@@ -6939,7 +7150,7 @@ impl App {
                 message,
                 card,
             } => {
-                if crate::image_preview::can_view(&path) && path.is_file() {
+                if crate::image_preview::can_view(&path) && (checked || path.is_file()) {
                     self.open_viewer(
                         PreviewState::new(Some(path), chat, message).with_card(card),
                         ctx,
@@ -6986,7 +7197,7 @@ impl App {
                 self.refocus_composer(ctx);
             }
             Action::PreviewSticker(path) => {
-                if path.is_file() {
+                if checked || path.is_file() {
                     self.sticker_view = Some(crate::image_preview::StickerPreview::new(path));
                     self.dialog = None;
                     self.picker = None;
@@ -7086,7 +7297,7 @@ impl App {
                 }
             }
             Action::OpenFile(path) => {
-                if crate::safety::can_open_attachment(&path) && path.is_file() {
+                if crate::safety::can_open_attachment(&path) && (checked || path.is_file()) {
                     if let Err(error) = open::that_detached(&path) {
                         self.toast_error(format!("Could not open the attachment: {error}"));
                     }
@@ -11381,6 +11592,341 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    const CACHED_CHAT: &str = "fixture@s.whatsapp.net";
+    type CachedCommands = tokio::sync::mpsc::UnboundedReceiver<Command>;
+
+    /// Supplies recording backends and a second account for cached-open isolation tests.
+    fn cached_attachment_app(root: &std::path::Path) -> (App, CachedCommands) {
+        let mut app = two_accounts(root).0;
+        let (backend, commands) = Backend::recording();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(CACHED_CHAT.into(), "Fixture".into()));
+        (app, commands)
+    }
+
+    /// Common synthetic metadata; each test still chooses the file and message kind.
+    fn cached_media(path: PathBuf, mime: &str) -> Media {
+        Media {
+            mime: mime.into(),
+            size: 1,
+            width: None,
+            height: None,
+            album: None,
+            path: Some(path),
+            state: MediaState::Idle,
+        }
+    }
+
+    /// Adds a synthetic cached image to the fixture's conversation.
+    fn cached_image(app: &mut App, id: &str) -> PathBuf {
+        let path = app
+            .account()
+            .dirs
+            .media_cache_dir()
+            .join(format!("{id}.png"));
+        let mut row = message(CACHED_CHAT, id, 1);
+        row.content = Content::Image {
+            caption: None,
+            motion: None,
+            media: cached_media(path.clone(), "image/png"),
+        };
+        app.conversations
+            .entry(CACHED_CHAT.into())
+            .or_default()
+            .merge(vec![row], false);
+        path
+    }
+
+    /// Extracts the token while rejecting any unexpected command at the opening boundary.
+    fn cached_check_request(commands: &mut CachedCommands) -> u64 {
+        let Command::RecoverCachedAttachment { request, .. } = commands.try_recv().unwrap() else {
+            panic!("expected a worker file check");
+        };
+        request
+    }
+
+    /// Opens a fixture image through the normal action boundary and returns its check token.
+    fn preview_cached_image(
+        app: &mut App,
+        commands: &mut CachedCommands,
+        id: &str,
+        ctx: &egui::Context,
+    ) -> u64 {
+        app.apply(
+            Action::PreviewImage {
+                path: app
+                    .account()
+                    .dirs
+                    .media_cache_dir()
+                    .join(format!("{id}.png")),
+                chat: CACHED_CHAT.into(),
+                message: id.into(),
+                card: None,
+            },
+            ctx,
+        );
+        cached_check_request(commands)
+    }
+
+    /// An explicit open requests one check, and a stale result cannot remove a replacement.
+    #[test]
+    fn missing_attachment_open_requests_recovery_and_keeps_replacements() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = cached_attachment_app(directory.path());
+        let chat = CACHED_CHAT;
+        let missing = app.account().dirs.media_cache_dir().join("missing.pdf");
+        let replacement = app.account().dirs.media_cache_dir().join("new.pdf");
+        let mut row = message(chat, "file", 1);
+        row.content = Content::Document {
+            media: Media {
+                size: 4,
+                ..cached_media(missing.clone(), "application/pdf")
+            },
+            file_name: "fixture.pdf".into(),
+            caption: None,
+            pages: None,
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .messages
+            .push(row);
+        app.apply(Action::OpenFile(missing.clone()), &egui::Context::default());
+        assert!(
+            app.toasts.is_empty(),
+            "opening waits for the worker's result"
+        );
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::RecoverCachedAttachment { message, path, .. } if message == "file" && path == missing)
+        );
+        app.conversations
+            .get_mut(chat)
+            .unwrap()
+            .message_mut("file")
+            .unwrap()
+            .content
+            .media_mut()
+            .unwrap()
+            .path = Some(replacement.clone());
+        app.apply_backend_event(
+            Event::CachedMediaMissing {
+                chat: chat.into(),
+                message: "file".into(),
+                paths: vec![missing],
+            },
+            true,
+        );
+        assert_eq!(
+            app.conversations[chat].messages[0]
+                .content
+                .media()
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&replacement)
+        );
+    }
+
+    /// A failed cached open uses an existing translated label and preserves its error detail.
+    #[test]
+    fn cached_attachment_errors_use_the_translated_open_file_label() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = cached_attachment_app(directory.path());
+        app.locale = crate::i18n::Locale::PortugueseBrazil;
+        cached_image(&mut app, "error");
+        let ctx = egui::Context::default();
+        let request = preview_cached_image(&mut app, &mut commands, "error", &ctx);
+        app.apply_backend_event(
+            Event::CachedAttachmentChecked {
+                request,
+                result: Err("synthetic storage failure".into()),
+            },
+            true,
+        );
+        assert_eq!(app.toasts[0].kind, ToastKind::Error);
+        assert_eq!(
+            app.toasts[0].message,
+            "Abrir arquivo: synthetic storage failure"
+        );
+        app.apply_actions(&egui::Context::default());
+        assert!(app.cached_opens.is_empty());
+    }
+
+    /// Distinct files retain click order, including reversed replies and a failed first check.
+    #[test]
+    fn distinct_cached_opens_keep_each_request_and_replay_in_click_order() {
+        for mode in ["ordered", "reversed", "failed", "interleaved"] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, mut commands) = cached_attachment_app(directory.path());
+            for id in ["a", "b"] {
+                cached_image(&mut app, id);
+            }
+            let ids = if mode == "interleaved" {
+                vec!["a", "b", "a"]
+            } else {
+                vec!["a", "b"]
+            };
+            let ctx = egui::Context::default();
+            let mut requests = Vec::new();
+            for id in &ids {
+                requests.push(preview_cached_image(&mut app, &mut commands, id, &ctx));
+            }
+            let mut order: Vec<_> = (0..requests.len()).collect();
+            if matches!(mode, "reversed" | "interleaved") {
+                order.reverse();
+            }
+            for index in order {
+                app.apply_backend_event(
+                    Event::CachedAttachmentChecked {
+                        request: requests[index],
+                        result: if mode == "failed" && index == 0 {
+                            Err("synthetic failure".into())
+                        } else {
+                            Ok(())
+                        },
+                    },
+                    true,
+                );
+                app.apply_actions(&ctx);
+                if matches!(mode, "reversed" | "interleaved") && index > 0 {
+                    assert!(app.image_preview.is_none(), "wait for the earlier click");
+                }
+            }
+            let mut opened = Vec::new();
+            while let Ok(command) = commands.try_recv() {
+                if let Command::LoadChatMedia {
+                    around: Some(id), ..
+                } = command
+                {
+                    opened.push(id);
+                }
+            }
+            let expected = if mode == "failed" { vec!["b"] } else { ids };
+            assert_eq!(opened, expected, "{mode}");
+            assert!(app.cached_opens.is_empty());
+        }
+    }
+
+    /// Deferred opens must still belong to the visible, unlocked account and original file.
+    #[test]
+    fn checked_cached_opens_recheck_privacy_account_and_the_saved_reference() {
+        for outcome in [
+            "open",
+            "locked",
+            "hidden",
+            "replacement",
+            "account",
+            "stale",
+            "chat",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, mut commands) = cached_attachment_app(directory.path());
+            let chat = CACHED_CHAT;
+            let path = cached_image(&mut app, "picture");
+            let ctx = egui::Context::default();
+            let request = preview_cached_image(&mut app, &mut commands, "picture", &ctx);
+            assert!(app.image_preview.is_none());
+            app.apply_backend_event(
+                Event::CachedAttachmentChecked {
+                    request: if outcome == "stale" {
+                        request.wrapping_sub(1)
+                    } else {
+                        request
+                    },
+                    result: Ok(()),
+                },
+                outcome != "hidden",
+            );
+            match outcome {
+                "locked" => app.app_lock.lock(),
+                "replacement" => {
+                    app.conversations.get_mut(chat).unwrap().messages[0]
+                        .content
+                        .media_mut()
+                        .unwrap()
+                        .path = Some(path.with_file_name("new.png"))
+                }
+                "account" => app.active = 1,
+                "chat" => app.open_chat = Some("other-fixture@s.whatsapp.net".into()),
+                _ => {}
+            }
+            app.apply_actions(&ctx);
+            assert_eq!(app.image_preview.is_some(), outcome == "open", "{outcome}");
+        }
+    }
+
+    /// Two clicks replay as two toggles, whether the second arrives before or after the check.
+    #[test]
+    fn two_cached_video_toggles_share_a_check_and_finish_paused() {
+        for second_after_reply in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, mut commands) = cached_attachment_app(directory.path());
+            let chat = CACHED_CHAT;
+            app.video.silence();
+            app.open_chat = Some(chat.into());
+            let path = app.account().dirs.media_cache_dir().join("fixture.mp4");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::copy(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/video/sample.mp4"
+                ),
+                &path,
+            )
+            .unwrap();
+            let mut row = message(chat, "clip", 1);
+            row.content = Content::Video {
+                caption: None,
+                seconds: Some(3),
+                gif: false,
+                note: false,
+                media: cached_media(path.clone(), "video/mp4"),
+            };
+            app.conversations
+                .entry(chat.into())
+                .or_default()
+                .merge(vec![row], false);
+            let ctx = egui::Context::default();
+            let toggle = || Action::PlayVideo {
+                message: "clip".into(),
+                path: path.clone(),
+            };
+            app.apply(toggle(), &ctx);
+            let request = cached_check_request(&mut commands);
+            if !second_after_reply {
+                app.apply(toggle(), &ctx);
+            }
+            app.apply_backend_event(
+                Event::CachedAttachmentChecked {
+                    request,
+                    result: Ok(()),
+                },
+                true,
+            );
+            if second_after_reply {
+                app.apply(toggle(), &ctx);
+            }
+            assert!(commands.try_recv().is_err(), "one check covers both clicks");
+            app.apply_actions(&ctx);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while app
+                .video
+                .status("clip")
+                .is_some_and(|status| status.state == crate::video::State::Loading)
+            {
+                assert!(Instant::now() < deadline, "synthetic video did not load");
+                app.video.saw("clip");
+                let _ = app.video.poll(&ctx);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                app.video.status("clip").unwrap().state,
+                crate::video::State::Paused
+            );
+        }
     }
 
     /// While recording, the light, the timer and the waveform ask for a
