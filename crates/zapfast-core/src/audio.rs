@@ -705,8 +705,8 @@ impl Recorder {
     }
 
     /// Creates a completed synthetic recording without opening an audio device.
-    #[cfg(test)]
-    pub(crate) fn recorded_fixture(samples: Vec<f32>) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn recorded_fixture(samples: Vec<f32>) -> Self {
         let recorder = Self::rehearsal();
         *recorder.outcome.lock().unwrap_or_else(|p| p.into_inner()) = Some(Ok(samples));
         recorder
@@ -732,8 +732,8 @@ impl Recorder {
         self.stepped.store(stepped, Ordering::Relaxed);
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_stepped(&self) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_stepped(&self) -> bool {
         self.stepped.load(Ordering::Relaxed)
     }
 

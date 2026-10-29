@@ -266,7 +266,7 @@ impl Notifications {
         } else {
             Box::new(|| {})
         };
-        if cfg!(test) {
+        if cfg!(any(test, feature = "test-support")) {
             self.shown.push(Shown {
                 title,
                 body,
@@ -311,8 +311,8 @@ impl Notifications {
 }
 
 /// Pidgin's message and alert sounds (GPL-2.0, see `assets/sounds/README.md`).
-const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
-const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
+const RECEIVE: &[u8] = include_bytes!("../../../assets/sounds/receive.wav");
+const ALERT: &[u8] = include_bytes!("../../../assets/sounds/alert.wav");
 
 /// Whether the notification itself plays the sound, instead of ZapFast. On
 /// macOS a sound the notification plays is silenced along with the banner by
@@ -455,7 +455,7 @@ fn deliver(
                 // ZapFast's green, the theme's accent, behind the logo on
                 // Windows toasts, so Windows 11's dark theme leaves it as drawn.
                 .logo(
-                    include_bytes!("../packaging/macos/icon-1024.png"),
+                    include_bytes!("../../../packaging/macos/icon-1024.png"),
                     [0x00, 0xa8, 0x84],
                 ),
         )
@@ -525,7 +525,7 @@ mod tests {
     /// system never asks for permission.
     #[test]
     fn the_macos_notification_identity_is_the_bundle_identifier() {
-        let plist = include_str!("../packaging/macos/Info.plist");
+        let plist = include_str!("../../../packaging/macos/Info.plist");
         let key = "<key>CFBundleIdentifier</key>";
         let after = &plist[plist.find(key).expect("Info.plist names the bundle") + key.len()..];
         let value = after
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn the_bundle_script_ships_every_built_in_sound() {
-        let script = include_str!("../packaging/macos/bundle.sh");
+        let script = include_str!("../../../packaging/macos/bundle.sh");
         for sound in [NotificationSound::Receive, NotificationSound::Alert] {
             assert!(script.contains(sound_file(&sound).expect("bundled sound")));
         }
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn the_windows_shortcut_uses_the_notification_identity() {
-        let installer = include_str!("../packaging/windows/zapfast.iss");
+        let installer = include_str!("../../../packaging/windows/zapfast.iss");
         let shortcuts: Vec<_> = installer
             .lines()
             .filter(|line| {

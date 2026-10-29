@@ -41,7 +41,7 @@ pub enum ThemeChoice {
 impl ThemeChoice {
     /// The choices Settings offers, on every platform. Messages shows the
     /// desktop through its window where the platform can, and is opaque in
-    /// its own colours elsewhere (see [`crate::backdrop`]).
+    /// its own colours elsewhere (see the backdrop module).
     pub const ALL: &[ThemeChoice] = &[Self::System, Self::Light, Self::Dark, Self::Messages];
 
     pub fn label(self) -> &'static str {
@@ -415,7 +415,7 @@ pub struct Settings {
     /// `"system"` for Messages, which releases before it read as Follow
     /// system instead of rejecting the whole file; this marks the rest.
     #[serde(skip_serializing)]
-    pub(crate) messages_theme: bool,
+    pub messages_theme: bool,
     /// The interface's typeface.
     pub font: FontChoice,
     /// Windows and Linux: draw ZapFast's own title bar and window buttons
@@ -635,7 +635,7 @@ impl Settings {
         self.wallpaper_color_for(palette.dark).color32(palette)
     }
 
-    pub(crate) fn cached_palette(&self) -> Option<crate::theme::Palette> {
+    pub fn cached_palette(&self) -> Option<crate::theme::Palette> {
         let theme = if self.custom_theme.is_some() {
             self.custom_theme_cache.as_ref()
         } else if self.theme == ThemeChoice::System {

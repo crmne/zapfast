@@ -87,8 +87,37 @@ pub fn egui_spinner(ui: &mut egui::Ui) -> egui::Response {
     response
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures {
+    use std::time::Duration;
+
+    /// A context with AccessKit on or off, past the passes egui asks for
+    /// by itself after starting.
+    pub fn reading(reader: bool) -> egui::Context {
+        let ctx = egui::Context::default();
+        if reader {
+            ctx.enable_accesskit();
+        }
+        settle(&ctx);
+        ctx
+    }
+
+    /// Runs empty passes until egui asks for no further frame.
+    pub fn settle(ctx: &egui::Context) {
+        for _ in 0..10 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| ());
+            output.textures_delta.clear();
+            if output.viewport_output[&egui::ViewportId::ROOT].repaint_delay == Duration::MAX {
+                return;
+            }
+        }
+        panic!("egui kept asking for frames");
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) use super::fixtures::{reading, settle};
     use super::*;
 
     /// Runs one pass at `time` and returns how long egui asks the window to
@@ -110,29 +139,6 @@ pub(crate) mod tests {
             output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
             output.shapes,
         )
-    }
-
-    /// A context with AccessKit on or off, past the passes egui asks for
-    /// by itself after starting.
-    pub(crate) fn reading(reader: bool) -> egui::Context {
-        let ctx = egui::Context::default();
-        if reader {
-            ctx.enable_accesskit();
-        }
-        settle(&ctx);
-        ctx
-    }
-
-    /// Runs empty passes until egui asks for no further frame.
-    pub(crate) fn settle(ctx: &egui::Context) {
-        for _ in 0..10 {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |_| ());
-            output.textures_delta.clear();
-            if output.viewport_output[&egui::ViewportId::ROOT].repaint_delay == Duration::MAX {
-                return;
-            }
-        }
-        panic!("egui kept asking for frames");
     }
 
     /// egui subtracts its predicted frame time, 1/60 s by default, from

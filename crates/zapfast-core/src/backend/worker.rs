@@ -62,8 +62,8 @@ use super::{
     Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, Unsent, Waker,
     read_sync::ReadSync,
 };
-use crate::app::PAGE;
 use crate::archive::Archive;
+use crate::model::PAGE;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
     LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
@@ -10315,7 +10315,7 @@ impl Worker {
                 || paths.len() != 1
                 || !paths
                     .first()
-                    .is_some_and(|path| crate::app::Pending::is_view_once_photo_file(path)))
+                    .is_some_and(|path| crate::util::is_view_once_photo_file(path)))
         {
             self.refuse(
                 chat,

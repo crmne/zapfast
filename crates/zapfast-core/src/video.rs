@@ -823,7 +823,7 @@ impl Player {
     }
 
     /// Longest side frames are decoded to.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn side(&self) -> u32 {
         self.side
     }
@@ -1463,7 +1463,7 @@ mod tests {
 
     const SAMPLE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/video/sample.mp4"
+        "/../../tests/fixtures/video/sample.mp4"
     );
 
     fn collect(path: &Path, from: Duration) -> Vec<Delivery> {

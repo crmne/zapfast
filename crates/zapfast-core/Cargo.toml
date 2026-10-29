@@ -1,0 +1,168 @@
+[package]
+name = "zapfast-core"
+# Keep in step with the root package, whose version the updater and linked device report.
+version = "0.20.1"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "ZapFast below its interface: the model, archive, WhatsApp backend, calls and media"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+# Hashes saved stickers by content. Already included through wacore.
+sha2 = "0.11"
+# Already in the tree through rustls; verifies lock codes.
+ring = "0.17"
+# Decrypts Signal sticker packs. All four crates are already included through
+# wacore at these versions.
+aes = "0.9"
+cbc = { version = "0.2", features = ["alloc", "block-padding"] }
+hkdf = "0.13"
+hmac = "0.13"
+# Reads .wastickers zip archives.
+zip = { version = "9", default-features = false, features = ["deflate"] }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+directories = "6"
+eframe.workspace = true
+egui.workspace = true
+egui_extras = { version = "0.36.2", features = ["file", "image", "svg", "webp", "gif"] }
+image.workspace = true
+whatsapp-rust.workspace = true
+tokio.workspace = true
+# Queue between the call's audio streams and the engine.
+async-channel = "2.5"
+# Opens the WhatsApp WebSocket through a proxy. Both crates are already
+# included through the Tokio transport at these versions.
+tokio-websockets = { version = "0.13.3", default-features = false, features = ["client"] }
+http = "1"
+# Encodes HTTP proxy credentials. Already included through several crates.
+base64 = "0.23"
+# SQLCipher encrypts the archive; the device store shares the same library.
+# Bundle OpenSSL so all release platforms use the same encryption provider.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring-core = "1"
+getrandom = "0.4"
+zeroize = "1"
+rand = "0.10"
+reqwest.workspace = true
+qrcode = { version = "0.14", default-features = false }
+# Downloads profile pictures. The protocol library already includes this crate
+# and TLS stack.
+ureq = { version = "3", default-features = false, features = ["rustls", "socks-proxy"] }
+jiff.workspace = true
+# Treats joined emoji as one grapheme. Already included through egui.
+unicode-segmentation = "1"
+# Unicode bidi properties; already included through URL/IDNA handling.
+icu_properties = "2.3"
+# Unicode Bidirectional Algorithm for mixed Hebrew, Arabic, and Latin text.
+unicode-bidi = "0.3.18"
+# Canonical decomposition for accent-insensitive chat/contact search.
+icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+open.workspace = true
+# File picker for attachments.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
+mime_guess2.workspace = true
+emojis.workspace = true
+# Appends the hostname to the device name shown in WhatsApp's Linked Devices.
+gethostname = "1"
+
+# Rasterizes the SVG logo for windows, the tray, and notifications. Already
+# included through egui_extras.
+resvg = { version = "0.45", default-features = false }
+
+openh264 = "0.9"
+# The encoder option a call's camera uses to change its bitrate mid-stream,
+# which openh264 does not wrap. Already included through openh264.
+openh264-sys2 = { version = "0.9", default-features = false }
+mp4 = "0.14"
+# rodio decodes and mixes; fastframe-audio plays and records, so neither of
+# rodio's own device features is on. The crmne/rodio fork (branch `zapfast`)
+# is upstream's master, which carries what no release has yet:
+# RustAudio/rodio#833 (https://github.com/RustAudio/rodio/pull/833), without
+# which an MP4 with a picture and a sound track plays a tenth of a second of
+# its sound (0.23.0 was cut from the 0.22 branch without it). Drop the pin at
+# the first release with it.
+rodio = { git = "https://github.com/crmne/rodio", rev = "742090d57a4c83b23bd990ba0dcf939d09dbeb94", default-features = false, features = ["mp3", "mp4", "wav", "vorbis"] }
+# The ring a microphone's samples cross from the audio thread to the reader,
+# which never waits or allocates on the audio thread. Already in the tree.
+rtrb = "0.3"
+sonora.workspace = true
+# AEC3 itself, driven directly with a configuration for speakers in a room,
+# which sonora's pipeline does not take. Already included through sonora.
+sonora-aec3 = "0.2"
+# rodio's own copy, named to decode a video's AAC track that `mp4` reads:
+# symphonia 0.5's MP4 reader refuses the sound of WhatsApp's videos (#265).
+symphonia = { version = "0.5.5", default-features = false, features = ["aac"] }
+opus = "0.4"
+ogg = "0.9"
+webp-animation.workspace = true
+# Encodes stickers made from pictures as still lossy WebP. Already included
+# through webp-animation, whose animation encoder always writes an animation.
+libwebp-sys2 = { version = "0.2", features = ["1_2"] }
+fastframe-i18n.workspace = true
+# The icons! table, a loader that survives reduce_texture_memory, and the Lucide
+# icons shared with Spotifast.
+fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
+fastframe-fonts.workspace = true
+# Colour emoji in the platform's own style, with the bundled Noto behind
+# them, drawn off the interface thread.
+fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
+fastframe-text.workspace = true
+fastframe-theme.workspace = true
+fastframe-log.workspace = true
+fastframe-shell.workspace = true
+fastframe-titlebar.workspace = true
+# One running copy per user: the lock, and the channel a second launch uses.
+fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
+fastframe-desktop.workspace = true
+fastframe-dock.workspace = true
+fastframe-autostart.workspace = true
+# One native notification API for delivery, permissions, clicks and withdrawal.
+fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2" }
+fastframe-file.workspace = true
+fastframe-audio.workspace = true
+fastframe-update.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
+# Pauses MPRIS media players while recording or playing voice messages.
+# Already in the tree through fastframe-notifications and fastframe-tray.
+zbus = { version = "5.19", default-features = false, features = ["blocking-api", "tokio"] }
+# Reads the time locale's clock format.
+libc = "0.2"
+# The camera for video calls, through Video4Linux, in Rust: no build-time
+# bindings, so building on Linux needs nothing new.
+linuxvideo = "0.3.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+# Reads the locale's clock format.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
+# The camera for video calls, through AVFoundation.
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1.1", default-features = false }
+# Locale calls.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization"] }
+# The camera for video calls, through Media Foundation.
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-msmf"] }
+windows.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+png.workspace = true
+
+[features]
+# Helpers the demo drives: simulated recordings, the macOS preview, synchronous emoji.
+demo = []
+# The test doubles the interface's tests need; never enable it in a build that runs.
+test-support = ["demo"]
+
+[build-dependencies]
+# Compiles the PO catalogs to Rust, leaving out unfinished entries. Ordinary
+# builds do not need gettext tools.
+fastframe-i18n = { workspace = true, features = ["build"] }

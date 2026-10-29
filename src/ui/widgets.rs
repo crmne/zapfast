@@ -2295,7 +2295,7 @@ mod tests {
         // Wide text in a narrow room, drawn in the middle of its first
         // crossing (after the 3 s rest), when it asks for every frame.
         let delay = |reader: bool| {
-            let ctx = crate::motion::tests::reading(reader);
+            let ctx = crate::motion::fixtures::reading(reader);
             let draw = |ctx: &egui::Context, time: f64| {
                 let mut output = ctx.run_ui(
                     egui::RawInput {

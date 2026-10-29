@@ -44,7 +44,7 @@ impl SystemAppearance {
     }
 
     /// A desktop that always prefers `dark`, for tests elsewhere.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fixed(dark: bool) -> Self {
         Self {
             scheme: Arc::new(AtomicU8::new(if dark { DARK } else { LIGHT })),

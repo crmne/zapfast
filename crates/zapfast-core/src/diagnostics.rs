@@ -219,6 +219,7 @@ mod tests {
         assert!(is_protocol_target("wacore_noise::handshake"));
         assert!(is_protocol_target("whatsapp_rust_sqlite_storage::store"));
         assert!(!is_protocol_target("zapfast::backend::worker"));
+        assert!(!is_protocol_target("zapfast_core::backend::worker"));
     }
 
     #[test]

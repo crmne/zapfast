@@ -569,7 +569,7 @@ pub(crate) fn poster(bytes: &[u8]) -> Option<Poster> {
 
 /// Frame `index` of a video (or its last, if shorter), for demo posters.
 #[cfg(any(test, feature = "demo"))]
-pub(crate) fn video_frame(path: &Path, index: usize) -> Option<ColorImage> {
+pub fn video_frame(path: &Path, index: usize) -> Option<ColorImage> {
     decode_video(path, index + 1)?
         .frames
         .pop()
@@ -783,7 +783,7 @@ mod tests {
     /// A video being sent gets its picture, size, and length from its bytes.
     #[test]
     fn a_video_says_its_size_and_length_and_shows_a_frame() {
-        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let bytes = include_bytes!("../../../tests/fixtures/video/sample.mp4");
         let poster = poster(bytes).expect("an MP4");
         assert_eq!((poster.width, poster.height, poster.seconds), (320, 180, 3));
         let picture = poster.picture.expect("H.264 decodes in-process");

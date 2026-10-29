@@ -442,7 +442,7 @@ impl AppLock {
     }
 
     /// Waits for the running check; for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn wait(&mut self) -> Option<Outcome> {
         let outcome = self
             .job

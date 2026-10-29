@@ -133,7 +133,7 @@ impl fastframe_i18n::Locale for Locale {
 /// system would otherwise see failures that the continuous integration, running
 /// in English, does not.
 pub fn detect() -> Locale {
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         return Locale::English;
     }
     fastframe_i18n::detect(Locale::from_tag).unwrap_or_default()

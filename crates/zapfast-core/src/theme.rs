@@ -3,7 +3,23 @@
 //! The UI uses Inter's font weights and Lucide icons. [`Palette`] holds all
 //! light and dark theme colors.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use egui::{Color32, CornerRadius, Response, Sense, Stroke, Vec2};
+
+static BACKDROP: AtomicBool = AtomicBool::new(false);
+
+/// Whether the desktop shows through the window this frame: the Messages
+/// theme is on and the platform gave the window its material.
+pub fn backdrop_active() -> bool {
+    BACKDROP.load(Ordering::Relaxed)
+}
+
+/// Records what the platform gave the window this frame; only the backdrop
+/// sets it.
+pub fn set_backdrop_active(active: bool) {
+    BACKDROP.store(active, Ordering::Relaxed);
+}
 
 /// A local JSON palette, known by its filename in the themes directory.
 pub type CustomTheme = fastframe_theme::CustomTheme<Palette>;
@@ -16,11 +32,11 @@ pub type Catalog = fastframe_theme::Catalog<Palette>;
 /// and stay isolated from the desktop and its files.
 pub const DESKTOP_THEMES: fastframe_theme::DesktopThemes = fastframe_theme::DesktopThemes {
     slug: "zapfast",
-    omarchy_template: include_str!("../contrib/omarchy/zapfast.json.tpl"),
+    omarchy_template: include_str!("../../../contrib/omarchy/zapfast.json.tpl"),
     // Every template ZapFast shipped before, so an untouched copy installed
     // by an older release is replaced with the current one.
     omarchy_previous_templates: &[include_str!(
-        "../contrib/omarchy/previous/zapfast-1.json.tpl"
+        "../../../contrib/omarchy/previous/zapfast-1.json.tpl"
     )],
     presets: true,
 };
@@ -252,7 +268,7 @@ impl Palette {
 
     /// Whether this is the Messages theme's glass: a frosted header, glass
     /// pills and tints, on every platform. Whether the desktop also shows
-    /// through the window is [`crate::backdrop::active`].
+    /// through the window is [`backdrop_active`].
     pub fn vibrant(&self) -> bool {
         self.bubbles == BubbleStyle::Messages
     }
@@ -260,7 +276,7 @@ impl Palette {
     /// The chat list's background. Over a window's material it only darkens
     /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
-        if self.vibrant() && crate::backdrop::active() {
+        if self.vibrant() && backdrop_active() {
             self.panel.gamma_multiply(SIDEBAR_TINT)
         } else {
             self.panel
@@ -778,7 +794,7 @@ pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
 }
 
 /// Whether Inter is the chosen typeface.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn inter_chosen() -> bool {
     INTER.load(std::sync::atomic::Ordering::Acquire)
 }
@@ -786,7 +802,8 @@ pub fn inter_chosen() -> bool {
 /// The typeface the interface is asked to draw with: the setting's, and
 /// always Inter in tests, so layouts do not depend on the machine.
 fn primary_font() -> fastframe_fonts::Primary {
-    if cfg!(test) || INTER.load(std::sync::atomic::Ordering::Acquire) {
+    if cfg!(any(test, feature = "test-support")) || INTER.load(std::sync::atomic::Ordering::Acquire)
+    {
         fastframe_fonts::Primary::Inter
     } else {
         fastframe_fonts::Primary::System
@@ -844,7 +861,7 @@ pub fn text_rendering() -> fastframe_text::TextRendering {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get_or_insert_with(|| {
-            if cfg!(test) {
+            if cfg!(any(test, feature = "test-support")) {
                 fastframe_text::TextRendering::platform_default()
             } else {
                 fastframe_text::detect()
@@ -885,7 +902,7 @@ fastframe_icons::icons! {
     /// fastframe-icons (`lucide`); the rest are ZapFast's own files.
     pub enum Icon {
         prefix: "zapfast-icon-",
-        directory: "../assets/icons/",
+        directory: "../../../assets/icons/",
         Archive => "archive",
         ArrowDown => "arrow-down",
         ArrowLeft => lucide "arrow-left",
@@ -1929,15 +1946,15 @@ mod tests {
     /// renders as Omarchy's own renderer does.
     #[test]
     fn the_omarchy_template_renders_like_omarchy_in_light_and_dark_themes() {
-        const TEMPLATE: &str = include_str!("../contrib/omarchy/zapfast.json.tpl");
+        const TEMPLATE: &str = include_str!("../../../contrib/omarchy/zapfast.json.tpl");
         for (colors, expected) in [
             (
-                include_str!("../tests/fixtures/omarchy/catppuccin.tsv"),
-                include_str!("../tests/fixtures/omarchy/catppuccin.json"),
+                include_str!("../../../tests/fixtures/omarchy/catppuccin.tsv"),
+                include_str!("../../../tests/fixtures/omarchy/catppuccin.json"),
             ),
             (
-                include_str!("../tests/fixtures/omarchy/catppuccin-latte.tsv"),
-                include_str!("../tests/fixtures/omarchy/catppuccin-latte.json"),
+                include_str!("../../../tests/fixtures/omarchy/catppuccin-latte.tsv"),
+                include_str!("../../../tests/fixtures/omarchy/catppuccin-latte.json"),
             ),
         ] {
             let actual =
@@ -1961,7 +1978,7 @@ mod tests {
     #[test]
     fn the_shipped_omarchy_hook_has_not_drifted() {
         assert_eq!(
-            include_str!("../contrib/omarchy/zapfast-theme").replace("\r\n", "\n"),
+            include_str!("../../../contrib/omarchy/zapfast-theme").replace("\r\n", "\n"),
             fastframe_theme::omarchy::hook_script("zapfast")
         );
     }

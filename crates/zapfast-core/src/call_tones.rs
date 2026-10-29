@@ -78,7 +78,7 @@ impl Tones {
     /// `audible` is ignored in tests, which never open a sound device.
     pub fn new(audible: bool) -> Self {
         Self {
-            audible: audible && !cfg!(test),
+            audible: audible && !cfg!(any(test, feature = "test-support")),
             current: None,
             playing: None,
         }

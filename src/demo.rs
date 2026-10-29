@@ -247,16 +247,7 @@ fn demo_waveform() -> Vec<u8> {
         .collect()
 }
 
-/// Synthetic mixed-direction lines for the `rtl-self` page, one message each.
-///
-/// They cover neutrals, numbers, brackets, embedded Latin, a repeated-letter
-/// word pair, bold, a link, emoji inside Hebrew and Arabic paragraphs, and
-/// Arabic lam ligatures in a line long enough to wrap.
-pub const RTL_SELF_CHAT: [&str; 3] = [
-    "בדיקת RTL בלבד\nסער + מירון = ❤️\nשלום ❤️ עולם\nשלום (test 123) עולם!\nשלום 12:34, מחיר 50₪.\nHello שלום עולם world ❤️\nمرحبا بالعالم ❤️ (123)\nשלום 👨‍👩‍👧‍👦 עולם",
-    "שלום!\nשלום 123\nHello שלום עולם end\nאב גד בא\nשלום (עולם)\nשלום *עולם* !\nשלום https://example.com עולם",
-    "إلى السطر التالي\nالله أكبر، لا بأس 🌙\nهذا نص عربي طويل يختبر ترتيب الأسطر عندما تلتف الكلمات داخل فقاعة رسالة ضيقة إلى السطر التالي",
-];
+pub use crate::bidi::RTL_SELF_CHAT;
 
 /// Numbers inside right-to-left text on the `rtl` page: Arabic-Indic and
 /// European digits, a time, and a phone number, each reading left to right.

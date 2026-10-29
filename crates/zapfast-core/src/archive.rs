@@ -2577,8 +2577,42 @@ impl Archive {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures {
+    use crate::model::{Content, Delivery, Message};
+
+    /// A plain text message in `chat`, pending if it is ours.
+    pub fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
+        Message {
+            id: id.into(),
+            chat: chat.into(),
+            sender: if from_me { "me@s.whatsapp.net" } else { chat }.into(),
+            sender_name: None,
+            from_me,
+            timestamp,
+            content: Content::text(format!("message {id}")),
+            status: if from_me {
+                Delivery::Pending
+            } else {
+                Delivery::None
+            },
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            history_order: None,
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) use super::fixtures::message;
+
     pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
@@ -2852,32 +2886,6 @@ pub(crate) mod tests {
                     .as_deref(),
                 Some(expected)
             );
-        }
-    }
-
-    pub(crate) fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
-        Message {
-            id: id.into(),
-            chat: chat.into(),
-            sender: if from_me { "me@s.whatsapp.net" } else { chat }.into(),
-            sender_name: None,
-            from_me,
-            timestamp,
-            content: Content::text(format!("message {id}")),
-            status: if from_me {
-                Delivery::Pending
-            } else {
-                Delivery::None
-            },
-            delivered_at: None,
-            read_at: None,
-            quoted: None,
-            reactions: Vec::new(),
-            history_order: None,
-            edited: false,
-            mentions: Vec::new(),
-            forwarded: false,
-            thumbnail: None,
         }
     }
 

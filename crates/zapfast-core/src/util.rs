@@ -24,6 +24,13 @@ pub fn international_phone(input: &str) -> Option<String> {
     (!bracket && (7..=15).contains(&digits.len()) && !digits.starts_with('0')).then_some(digits)
 }
 
+/// Whether this file can be decoded and sent as a WhatsApp view-once photo.
+pub fn is_view_once_photo_file(path: &std::path::Path) -> bool {
+    mime_guess2::from_path(path)
+        .first_raw()
+        .is_some_and(|mime| matches!(mime, "image/jpeg" | "image/png" | "image/webp"))
+}
+
 /// File-loader identifier for a native path. egui requires a slash after
 /// `file://` on Windows or it interprets a drive path as a UNC hostname.
 /// Keep native characters: egui's loader does not percent-decode URLs.
@@ -37,7 +44,7 @@ fn image_uri_for_platform(path: &str, windows: bool) -> String {
 
 /// The local time zone.
 fn zone() -> jiff::tz::TimeZone {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(clock) = fixed_clock::get() {
         return clock.zone;
     }
@@ -52,7 +59,7 @@ fn zoned(unix_seconds: i64) -> Option<Zoned> {
 
 /// Today's local date.
 pub fn today() -> Date {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(when) = fixed_clock::get().and_then(|clock| zoned(clock.now)) {
         return when.date();
     }
@@ -61,7 +68,7 @@ pub fn today() -> Date {
 
 /// Whether the system shows times on a 12-hour clock. Read once per run.
 pub fn twelve_hour_clock() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(clock) = fixed_clock::get() {
         return clock.twelve_hour;
     }
@@ -467,7 +474,7 @@ pub fn long_date(locale: Locale, date: Date) -> String {
 
 /// The current time as a Unix timestamp.
 pub fn now() -> i64 {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(clock) = fixed_clock::get() {
         return clock.now;
     }
@@ -478,7 +485,7 @@ pub fn now() -> i64 {
 /// time zone, and the clock format, fixed for the calling thread until the
 /// returned guard drops. Otherwise a sample built relative to now gains a day
 /// separator or wider times depending on when and where the test runs.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod fixed_clock {
     use std::cell::RefCell;
 
@@ -710,9 +717,9 @@ pub fn hue(seed: &str) -> f32 {
 }
 
 /// Embedded SVG app logo used across platform surfaces.
-const MARK: &[u8] = include_bytes!("../packaging/icons/zapfast.svg");
+const MARK: &[u8] = include_bytes!("../../../packaging/icons/zapfast.svg");
 /// The same mark without its rim and shading, which blur below this size.
-const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zapfast-small.svg");
+const SMALL_MARK: &[u8] = include_bytes!("../../../packaging/icons/zapfast-small.svg");
 const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.

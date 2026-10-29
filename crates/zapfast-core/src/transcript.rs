@@ -48,7 +48,7 @@ pub struct Row {
 
 impl Row {
     /// Formats one transcript line from its available parts.
-    pub(crate) fn line(&self, body: &str) -> String {
+    pub fn line(&self, body: &str) -> String {
         let mut line = self.header.clone();
         if let Some(quote) = &self.quote {
             line.push_str(quote);

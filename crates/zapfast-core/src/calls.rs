@@ -1515,7 +1515,7 @@ impl std::error::Error for Cancelled {}
 /// Read it through [`group_calls_enabled`], which tests can override on their own thread.
 pub const GROUP_CALLS_ENABLED: bool = true;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// A test's own setting of [`GROUP_CALLS_ENABLED`], for this thread only.
     static GROUP_CALLS_OVERRIDE: std::cell::Cell<Option<bool>> =
@@ -1525,7 +1525,7 @@ thread_local! {
 /// Whether group calls are on: [`GROUP_CALLS_ENABLED`], or in a test what
 /// `override_group_calls` set.
 pub fn group_calls_enabled() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(enabled) = GROUP_CALLS_OVERRIDE.with(std::cell::Cell::get) {
         return enabled;
     }
@@ -1535,17 +1535,17 @@ pub fn group_calls_enabled() -> bool {
 /// Sets group calls on or off on this thread, whatever [`GROUP_CALLS_ENABLED`] says, until the
 /// guard it returns is dropped, so the tests of either behaviour keep running with the switch in
 /// either position.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[must_use]
 pub fn override_group_calls(enabled: bool) -> GroupCallsOverride {
     GroupCallsOverride(GROUP_CALLS_OVERRIDE.with(|cell| cell.replace(Some(enabled))))
 }
 
 /// Puts back the setting [`override_group_calls`] replaced.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct GroupCallsOverride(Option<bool>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for GroupCallsOverride {
     fn drop(&mut self) {
         GROUP_CALLS_OVERRIDE.with(|cell| cell.set(self.0));

@@ -16,7 +16,7 @@ use egui::{Pos2, Rect, TextFormat};
 pub use fastframe_emoji::{PLACEHOLDER, only_emoji};
 
 /// Noto Color Emoji, behind the platform's font.
-const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+const BUNDLED: &[u8] = include_bytes!("../../../assets/fonts/NotoColorEmoji.ttf");
 
 fn setup() {
     static ONCE: std::sync::Once = std::sync::Once::new();

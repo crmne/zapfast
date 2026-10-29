@@ -7,18 +7,7 @@
 
 use egui::accesskit::{Rect as AkRect, Role};
 
-/// A move of the cursor in a list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Step {
-    Previous,
-    Next,
-    First,
-    Last,
-    /// Up by about a page of rows.
-    PageUp(usize),
-    /// Down by about a page of rows.
-    PageDown(usize),
-}
+pub use crate::model::ListStep as Step;
 
 /// New index for `step` in a list of `len` items from `current`; None for an
 /// empty list. Without a cursor the list starts on its last (newest) item.

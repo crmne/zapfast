@@ -10,12 +10,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-static ACTIVE: AtomicBool = AtomicBool::new(false);
-
 /// Whether the desktop shows through the window this frame: the Messages
 /// theme is on and the platform gave the window its material.
 pub fn active() -> bool {
-    ACTIVE.load(Ordering::Relaxed)
+    crate::theme::backdrop_active()
 }
 
 /// Whether to make the window transparent when it is created. macOS always
@@ -57,7 +55,7 @@ pub fn clear_color(window: egui::Color32) -> egui::Color32 {
 /// otherwise, and records which for [`active`]. Cheap to call every frame.
 pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, transparent: bool) {
     let wanted = palette.vibrant() && transparent;
-    ACTIVE.store(platform::apply(frame, palette, wanted), Ordering::Relaxed);
+    crate::theme::set_backdrop_active(platform::apply(frame, palette, wanted));
 }
 
 #[cfg(target_os = "macos")]

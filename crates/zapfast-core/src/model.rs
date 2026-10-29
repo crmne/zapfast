@@ -564,6 +564,13 @@ pub enum Delivery {
     Failed,
 }
 
+impl Delivery {
+    /// Whether an outgoing message is still pending.
+    pub fn in_flight(self) -> bool {
+        matches!(self, Delivery::Pending)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// WhatsApp message id, unique within a chat.
@@ -1537,7 +1544,7 @@ impl Content {
 }
 
 /// The viewer kind of a file on disk, from its name alone.
-pub(crate) fn gallery_kind_for_path(path: &Path) -> Option<GalleryKind> {
+pub fn gallery_kind_for_path(path: &Path) -> Option<GalleryKind> {
     gallery_file(&path.file_name()?.to_string_lossy())
 }
 
@@ -1673,7 +1680,7 @@ fn with_caption(label: &str, caption: &Option<String>) -> String {
 }
 
 /// Maximum size of an attachment downloaded without the reader asking.
-pub(crate) const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
+pub const ATTACHMENT_DOWNLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Attachment metadata, download state, and optional local file. Download keys
 /// remain in the archive's raw message.
@@ -2098,12 +2105,41 @@ pub enum PictureSource {
     Pasted(Arc<Vec<u8>>),
 }
 
+/// A move of the cursor in a list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListStep {
+    Previous,
+    Next,
+    First,
+    Last,
+    /// Up by about a page of rows.
+    PageUp(usize),
+    /// Down by about a page of rows.
+    PageDown(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// A display-name mention selected in the composer and captured with a send.
+pub struct ComposerMention {
+    pub id: String,
+    pub name: String,
+}
+
+/// Initial and incremental message-page size.
+pub const PAGE: usize = 60;
+
+/// What names a staged attachment. It is handed out when the attachment is
+/// staged and never changes afterwards, so work that finishes later can say
+/// which attachment it belongs to instead of which place in the strip it sat
+/// in when the work started.
+pub type AttachmentId = u64;
+
 /// A staged picture on its way to being cropped and sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PictureEdit {
     /// The staged attachment it replaces, named rather than numbered, so that
     /// removing another attachment cannot point it at a different picture.
-    pub target: crate::app::AttachmentId,
+    pub target: AttachmentId,
     pub source: PictureSource,
     /// The source picture's own size, before any turn.
     pub width: u32,
@@ -2115,12 +2151,7 @@ pub struct PictureEdit {
 
 impl PictureEdit {
     /// A whole, unturned picture from a staged attachment.
-    pub fn new(
-        target: crate::app::AttachmentId,
-        source: PictureSource,
-        width: u32,
-        height: u32,
-    ) -> Self {
+    pub fn new(target: AttachmentId, source: PictureSource, width: u32, height: u32) -> Self {
         Self {
             target,
             source,
@@ -3013,7 +3044,7 @@ pub enum Action {
     /// Scrolls the open chat by about a page, or to the top of its history.
     ScrollPage(Scroll),
     /// Moves the open chat's current message, from its focused message list.
-    MessageCursor(crate::ui::list_nav::Step),
+    MessageCursor(ListStep),
     /// Gives the open chat's message list keyboard focus.
     FocusMessages,
     /// Opens a message's context menu in the open chat, from the keyboard.
@@ -3164,14 +3195,14 @@ pub enum Action {
         account: AccountId,
         chat: ChatId,
         caption: String,
-        mentions: Vec<crate::app::ComposerMention>,
+        mentions: Vec<ComposerMention>,
     },
     /// Removes one pending attachment.
     RemovePending(usize),
     /// Sends the one eligible staged photo as a WhatsApp view-once message.
     SetPendingViewOnce(bool),
     /// Opens the cropper on a staged picture.
-    EditPicture(crate::app::AttachmentId),
+    EditPicture(AttachmentId),
     /// Keeps the crop and the turn, replacing the staged picture.
     ApplyPictureEdit,
     /// Closes the cropper, leaving the staged picture as it was.

@@ -2,61 +2,34 @@
 
 pub mod a11y;
 pub mod account;
-pub mod animation;
 pub mod announcer;
 pub mod app;
-pub mod app_lock;
-#[cfg(target_os = "linux")]
-pub mod appearance;
-pub mod archive;
-pub mod audio;
-pub mod autostart;
 pub mod backdrop;
-pub mod backend;
-pub mod bidi;
-pub mod call_audio;
-pub mod call_diag;
-pub mod call_tones;
-pub mod calls;
-pub mod camera;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
-pub mod diagnostics;
-pub mod emoji;
-pub mod geo;
-pub mod group_admin;
-pub mod i18n;
-pub mod image_cache;
 pub mod image_preview;
 #[cfg(target_os = "macos")]
 pub mod macos;
-pub mod markup;
-pub mod media_pause;
-pub mod mentions;
-pub mod model;
-pub mod motion;
 pub mod nav;
-pub mod new_group;
-pub mod notify;
-pub mod opener;
-pub mod paths;
-pub mod privacy;
-pub mod proxy;
-pub mod qr;
-pub mod safety;
-pub mod settings;
-pub mod single_instance;
-pub mod sticker_meta;
-pub mod sticker_search;
-pub mod target;
-pub mod theme;
-pub mod timestretch;
-pub mod transcript;
-pub mod transport;
 pub mod ui;
-pub mod updates;
-pub mod util;
-pub mod video;
-pub mod video_rate;
-pub mod voice;
-pub mod wallpaper;
+
+#[cfg(target_os = "linux")]
+pub use zapfast_core::appearance;
+pub use zapfast_core::{
+    animation, app_lock, archive, audio, autostart, backend, bidi, call_audio, call_diag,
+    call_tones, calls, camera, diagnostics, emoji, geo, group_admin, i18n, image_cache, markup,
+    media_pause, mentions, model, motion, new_group, notify, opener, paths, privacy, proxy, qr,
+    safety, settings, single_instance, sticker_meta, sticker_search, target, theme, timestretch,
+    transcript, transport, updates, util, video, video_rate, voice, wallpaper,
+};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_core_crate_carries_the_app_version() {
+        assert_eq!(
+            crate::updates::CONFIG.current_version,
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+}

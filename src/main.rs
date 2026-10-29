@@ -1151,6 +1151,19 @@ mod log_filter_tests {
         ));
     }
 
+    /// The core crate logs under `zapfast_core`, which the `zapfast` directive covers by prefix.
+    #[test]
+    fn the_default_log_keeps_the_core_crates_lines_at_the_apps_levels() {
+        let target = "zapfast_core::backend::worker";
+        assert!(matches(default_log_filter(false), log::Level::Info, target));
+        assert!(!matches(
+            default_log_filter(false),
+            log::Level::Debug,
+            target
+        ));
+        assert!(matches(default_log_filter(true), log::Level::Debug, target));
+    }
+
     #[test]
     fn default_log_records_protocol_recovery_lifecycle_and_redacts_other_client_info() {
         let filter = default_log_filter(false);

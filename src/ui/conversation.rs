@@ -11681,7 +11681,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                let message = crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, false);
                 clock = clock_width(ui, &message);
                 plain = footer_width(ui, &message, false, false);
                 pinned = footer_width(ui, &message, false, true);
@@ -11711,7 +11711,7 @@ mod tests {
         let ctx = egui::Context::default();
         with_still_view(|view| {
             let shapes = |pinned: bool| {
-                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                let message = crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, false);
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(
@@ -11765,8 +11765,9 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                let from_them = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
-                let from_me = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, true);
+                let from_them =
+                    crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, false);
+                let from_me = crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, true);
                 clock = clock_width(ui, &from_them);
                 incoming = footer_width(ui, &from_them, false, false);
                 starred = footer_width(ui, &from_them, true, false);
@@ -11845,7 +11846,7 @@ mod tests {
         crate::theme::install(&ctx);
         with_still_view(|view| {
             let shapes = |starred: bool| {
-                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                let message = crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, false);
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(
@@ -11871,7 +11872,7 @@ mod tests {
         crate::theme::install(&ctx);
         with_still_view(|view| {
             let shapes = |starred: bool, pinned: bool| {
-                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                let message = crate::archive::fixtures::message("1@s.whatsapp.net", "m1", 0, false);
                 let picture = Rect::from_min_size(egui::Pos2::ZERO, vec2(240.0, 180.0));
                 let mut output = ctx.run_ui(
                     egui::RawInput {
@@ -12013,7 +12014,7 @@ mod tests {
     fn typing_dots_step_with_a_screen_reader_and_keep_their_phase() {
         let palette = crate::theme::Palette::dark();
         let draw = |reader: bool, time: f64| {
-            let ctx = crate::motion::tests::reading(reader);
+            let ctx = crate::motion::fixtures::reading(reader);
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     time: Some(time),

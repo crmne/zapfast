@@ -68,11 +68,21 @@ protocol. These notes are for coding agents and new contributors.
 
 ## Architecture
 
+- The code is two crates. `crates/zapfast-core` holds everything below the
+  interface: the model, settings and theme, the archive, the backend and
+  worker, calls, and media. The root `zapfast` crate holds the interface
+  (`src/app.rs`, `src/ui/`, `src/account.rs`, the demo) and `main`. Core never
+  depends on the interface, so an interface edit leaves it compiled; the root
+  re-exports core's modules, so `crate::backend` and `zapfast::model` paths
+  work as before. Core's `cfg(test)` code exists only for core's own tests: a
+  helper or test double the interface's tests also use is gated
+  `cfg(any(test, feature = "test-support"))`, and core's `demo` feature
+  follows the root's.
 - `src/ui/` draws views and pushes `model::Action`s; `src/app.rs` applies
   them after the frame. Never mutate application state from inside a view
   beyond the view's own fields (composer text, search text, flags).
-- `src/backend.rs` is the interface's handle to a tokio runtime on its own
-  thread; `src/backend/worker.rs` runs there. Each account owns one
+- `crates/zapfast-core/src/backend.rs` is the interface's handle to a tokio runtime on its own
+  thread; `crates/zapfast-core/src/backend/worker.rs` runs there. Each account owns one
   `Backend`. It owns the whatsapp-rust `Bot`, the message archive,
   downloads, and profile pictures. The two sides talk only through
   `Command` (interface to runtime) and `Event` (runtime to interface);
@@ -109,16 +119,16 @@ protocol. These notes are for coding agents and new contributors.
   keyring key before moving it, and moves SQLite side files before their
   database. Removing an account deletes its folders after its backend has
   stopped, then its keyring entry.
-- `src/archive.rs` is the SQLite store of chats, messages, contacts, and
+- `crates/zapfast-core/src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. The phone sends recent history at link time and can
   supply older history on request, but recovery is not guaranteed. Preserve
   the local archive. It keeps each message's raw protobuf because
-  the keys to fetch an attachment live in it. `src/archive/encryption.rs` opens
+  the keys to fetch an attachment live in it. `crates/zapfast-core/src/archive/encryption.rs` opens
   the archive with SQLCipher and a random key stored in the OS keyring. Plaintext
   migration checkpoints the old WAL and verifies an encrypted staging file before
   atomic replacement. A locked or missing key stops linking; never fall back to
   a disposable archive. Tests use fixtures and mock credentials only.
-- `src/model.rs` holds the app's own types. Views never touch a protobuf;
+- `crates/zapfast-core/src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
 - A motion photo is a photo plus a short clip sent as a second message in an
   `associatedChildMessage` wrapper. The clip is never a message: its bare
@@ -163,7 +173,7 @@ protocol. These notes are for coding agents and new contributors.
   families, source references, and live-test limits.
 - Calls use whatsapp-rust's `voip` feature (`Client::voip()`): signaling,
   keys, the relay transport and the codecs are the library's, never ours.
-  `src/calls.rs` is one call's phase machine, fed only by the protocol's own
+  `crates/zapfast-core/src/calls.rs` is one call's phase machine, fed only by the protocol's own
   stanzas and media events (a relay alone is not an answered call). The one
   local phase is `Placing`: the window draws it ("Connecting…") the moment a
   call button is pressed, under a generation it takes from
@@ -172,10 +182,10 @@ protocol. These notes are for coding agents and new contributors.
   every way placing stops short answers with that generation failed. Ringing
   is the peer's `<preaccept>`. A call hung up or declined here leaves the
   screen at once, any other end after `CALL_FAREWELL` (1.5 s).
-  `src/call_tones.rs` synthesises the ETSI ringback (while `Ringing`) and
+  `crates/zapfast-core/src/call_tones.rs` synthesises the ETSI ringback (while `Ringing`) and
   the incoming ringtone (while the call's notification may sound) on the
   default output, and only tracks them in tests and demos;
-  `src/call_audio.rs` bridges the engine's 16 kHz frames to a
+  `crates/zapfast-core/src/call_audio.rs` bridges the engine's 16 kHz frames to a
   fastframe-audio microphone and a speaker output of the call's own behind
   stable channels, so a device change rebinds a stream instead of the call;
   its pickers list and open devices by the system's id (`DeviceId`).
@@ -282,11 +292,11 @@ protocol. These notes are for coding agents and new contributors.
   updates are withheld during privacy recovery like other private content,
   and a locked chat's call shows only "Locked chat" until its folder opens.
   Calls open the system default devices; the call screen's pickers apply to
-  the running call only and are not saved. Video: `src/camera.rs` reads
+  the running call only and are not saved. Video: `crates/zapfast-core/src/camera.rs` reads
   cameras through linuxvideo on Linux (pure Rust, no build-time bindings) and
   nokhwa on macOS and Windows, converts every layout to YUV 4:2:0, and the
   call's capture thread encodes it with openh264 (Constrained Baseline, 720p
-  at most, 25 fps) into the library's timed `VideoSource`. `src/video_rate.rs`
+  at most, 25 fps) into the library's timed `VideoSource`. `crates/zapfast-core/src/video_rate.rs`
   adapts the bitrate (from 700 kbit/s) and the step of size and frame rate
   (480p, 540p and 720p, all at 25 fps, preferring motion to size) to the peer's RTCP loss, its REMB, dropped video,
   queue delay (the round trip from its reports' LSR/DLSR above the call's
@@ -306,7 +316,7 @@ protocol. These notes are for coding agents and new contributors.
   (`RateControl::on_fec_sent`, `MediaStats::video_fec_bytes_sent`) and the
   encoder's target leaves room for them. The
   call's heartbeat logs both directions' frame counts, keyframes and decode
-  failures, and the peer's H.264 profile (`src/call_diag.rs`);
+  failures, and the peer's H.264 profile (`crates/zapfast-core/src/call_diag.rs`);
   `ZAPFAST_CALL_VIDEO_DUMP=<folder>` writes both directions' access units as
   raw H.264 for offline analysis, never by default. The camera is thinned to every nth frame of its measured rate and
   stamped from capture time, never thinned by elapsed time; the peer's access
@@ -340,7 +350,7 @@ protocol. These notes are for coding agents and new contributors.
 - Chat ids are canonical strings: a chat behind a privacy id (`@lid`) is
   filed under its phone number once the mapping is known. Use
   `Worker::canonical` for anything that arrives as a `Jid`.
-- Updates come from fastframe-update: `src/updates.rs` holds ZapFast's
+- Updates come from fastframe-update: `crates/zapfast-core/src/updates.rs` holds ZapFast's
   `UpdateConfig` (legacy `fastsapp` names, the publisher key) and the
   proxy-aware client. It downloads verified GitHub releases and hands
   installation to a helper after an explicit restart action. `main` calls
@@ -349,7 +359,7 @@ protocol. These notes are for coding agents and new contributors.
   helpers (`tests/update_flags.rs`). Portable releases carry
   `packaging/zapfast-portable.txt`; the Windows installer has its own marker.
 - Custom themes come from fastframe-theme (`theme::Catalog`, ZapFast's
-  `fastframe_theme::Palette` impl in `src/theme.rs`): it scans local JSON
+  `fastframe_theme::Palette` impl in `crates/zapfast-core/src/theme.rs`): it scans local JSON
   palettes off the UI thread, and the app caches the last usable choice in
   settings, with the palettes shared with Spotifast embedded as defaults. On Linux filesystem notifications reload the catalog and the active
   Omarchy palette without a repaint timer; following Omarchy does not require
@@ -358,12 +368,12 @@ protocol. These notes are for coding agents and new contributors.
   `omarchy_previous_templates`, so untouched installed copies are upgraded. Native packages ship optional hooks and templates, preserving
   existing per-user files. `reload-themes` uses the single-instance channel
   without opening a window.
-- `src/theme.rs` owns colours, fonts, and icons; `src/ui/widgets.rs` the
+- `crates/zapfast-core/src/theme.rs` owns colours, fonts, and icons; `src/ui/widgets.rs` the
   shared controls. New icons go in `assets/icons/` as 24px Lucide-style SVGs
   and in the `fastframe_icons::icons!` table; an icon fastframe-icons already
   ships is named there as `lucide "name"` instead of copied.
-- `src/markup.rs` turns WhatsApp's text markup, links, and mentions into an
-  egui `LayoutJob`; `src/emoji.rs` hands emoji to fastframe-emoji, which
+- `crates/zapfast-core/src/markup.rs` turns WhatsApp's text markup, links, and mentions into an
+  egui `LayoutJob`; `crates/zapfast-core/src/emoji.rs` hands emoji to fastframe-emoji, which
   swaps every emoji for a placeholder glyph at layout time and paints the
   platform's picture over it afterwards (Apple Color Emoji, Segoe UI Emoji
   through DirectWrite, or the desktop's bitmap emoji font, with the bundled
@@ -377,7 +387,7 @@ protocol. These notes are for coding agents and new contributors.
   `widgets::line` / `widgets::rich_text` or `markup::layout`: their
   placeholders keep the emoji-only sizing and let `transcript::refine`
   put copied emoji back.
-- `src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
+- `crates/zapfast-core/src/animation.rs` plays animated stickers and GIFs: WebP/GIF frames
   decode in-process, and so do MP4s (the `mp4` crate demuxes, `openh264`
   decodes the H.264 WhatsApp uses, samples converted from AVCC to Annex
   B); `ffmpeg` is only a fallback for other codecs. `openh264` compiles
@@ -387,7 +397,7 @@ protocol. These notes are for coding agents and new contributors.
   thread and are dropped when unseen. A paused animation decodes only its
   first frame, the poster, and the rest once it plays: full decodes of a
   picker's paused stickers overran the frame budget and evicted each other.
-- `src/video.rs` plays other videos inside their message, one at a time,
+- `crates/zapfast-core/src/video.rs` plays other videos inside their message, one at a time,
   with the same `mp4` and `openh264` pieces: a thread decodes from the
   keyframe before the start (openh264 must not flush after each packet or
   B-frames stop it) and streams scaled frames with presentation times; the
@@ -422,7 +432,7 @@ protocol. These notes are for coding agents and new contributors.
   reporting a grabbed pointer beyond the window), and drops mid-drag
   `PointerGone`, so the selection keeps a row under it while the edge
   scroll brings more past. A copy that sweeps across
-  messages is rebuilt by `src/transcript.rs` with `[time, date] Name:`
+  messages is rebuilt by `crates/zapfast-core/src/transcript.rs` with `[time, date] Name:`
   per message (the phone's sharing format): every drawn body lands in
   `App::copy_rows` each frame, and the `CopyAnnotator` egui plugin
   rewrites the queued `CopyText` in `output_hook`, the only hook that
@@ -460,7 +470,7 @@ protocol. These notes are for coding agents and new contributors.
   people picked but missing are reported by name. `group_created` files the
   chat named, with its members and our admin rights, before
   `Event::GroupCreated` opens it.
-- Group management lives in the info panel (`src/group_admin.rs`, the worker's
+- Group management lives in the info panel (`crates/zapfast-core/src/group_admin.rs`, the worker's
   `backend/worker/group_admin.rs`). The metadata's permissions and admins are
   filed as `chats.group_settings` (JSON, NULL until known; `Chat::group_settings`),
   read by `settings_of`: only an explicit `all_member_add`/`all_member_link`
@@ -484,7 +494,7 @@ protocol. These notes are for coding agents and new contributors.
   group (`App::info_invite`). The library has no simple way to send an
   invite message, so people WhatsApp refuses are named and pointed to the link.
 - Mentioning everyone uses the visible body token `@all` and bit 1 of
-  `ContextInfo.non_jid_mentions` (`src/mentions.rs`). Localized words
+  `ContextInfo.non_jid_mentions` (`crates/zapfast-core/src/mentions.rs`). Localized words
   (`@todos` in Portuguese, and the one-word alias of each other language)
   are composer triggers only; `encode_composer_mentions` rewrites them to
   `@all` when `Chat::can_mention_everyone` allows it: the sender can post,
@@ -520,11 +530,11 @@ protocol. These notes are for coding agents and new contributors.
   Vsync stays on elsewhere. Spotifast, RekordFlash and TonePush pin the same
   two revisions; move them together. Repaints are event-driven, so nothing
   spins.
-- `src/voice.rs` is the codec for voice messages: OGG/Opus in and out
+- `crates/zapfast-core/src/voice.rs` is the codec for voice messages: OGG/Opus in and out
   (the `ogg` crate for the container, `opus` with libopus bundled and
   built by cmake for the codec, so cmake is a build dependency), plus
   the 64-bar waveform WhatsApp draws and a mono/48 kHz resampler.
-  `src/audio.rs` is the sound. Every sound and recording goes through
+  `crates/zapfast-core/src/audio.rs` is the sound. Every sound and recording goes through
   fastframe-audio, never rodio's or cpal's own devices: rodio only decodes
   and mixes. `audio/output.rs` keeps one shared output on a thread of its
   own (`open_output` hands out its mixer, to connect rodio players to); it
@@ -562,7 +572,7 @@ protocol. These notes are for coding agents and new contributors.
   both ways through `FavoriteStickerUpdate` and `schemas::FAVORITE_STICKER`;
   `backend/worker/stickers.rs` and `archive/stickers.rs` retain pending local
   changes and recover favourites synced before support was added.
-- `src/paths.rs` moves a setup left by the app's earlier name
+- `crates/zapfast-core/src/paths.rs` moves a setup left by the app's earlier name
   (`fastsapp`, then `fastwhatsapp`) over once, so the linked device survives
   the rename. Migration runs after the single-instance guard and outside demos;
   keep the guard's `fastsapp:` wire identity compatible with running old copies.
@@ -592,13 +602,13 @@ protocol. These notes are for coding agents and new contributors.
   `App::check_tray_wait`, then shows the window (#429). A
   hidden start makes the macOS item with `Tray::create_item`, which does not
   bring ZapFast forward; a window's `attach` makes it otherwise.
-  `src/single_instance.rs` claims fastframe-instance's slot in the runtime
+  `crates/zapfast-core/src/single_instance.rs` claims fastframe-instance's slot in the runtime
   directory (`Slot::at(runtime, "fastsapp")`, so requests and replies stay
   `fastsapp:show` and `fastsapp:ok` for older copies), and a second launch
   asks the first to surface over a private socket (a token-checked loopback
   port on Windows); the handler queues `ControlCommand`s and declines unknown
   verbs. The fixed port 47119 that 0.15-era copies look for stays in ZapFast,
-  answered once the slot is claimed. `src/notify.rs` sends desktop notifications
+  answered once the slot is claimed. `crates/zapfast-core/src/notify.rs` sends desktop notifications
   for `Event::Incoming` (live messages from others, not history) when the
   reader is away from that chat; a click carries the chat and the message
   id, so the reader lands on the announced message. macOS has no title bar:
@@ -630,7 +640,7 @@ protocol. These notes are for coding agents and new contributors.
   recipient. Never promote a group from one reader, apply a receipt to earlier
   messages, or infer a historical audience from current membership. History
   trusts the phone's aggregate status, not a partial `user_receipt` list.
-- The app lock (`src/app_lock.rs`, `ui/lock.rs`) is a local screen lock, not
+- The app lock (`crates/zapfast-core/src/app_lock.rs`, `ui/lock.rs`) is a local screen lock, not
   encryption, and independent of the locked-chats code. Settings keep only a
   salted PBKDF2 verifier, checked and made on a thread. While locked,
   `ui::show` draws only the lock screen, `App::apply` drops every action
@@ -754,7 +764,8 @@ released, which goes out as soon as it is fixed.
 
 A release is not finished when the tag is pushed. Do these in order:
 
-1. From a clean, up-to-date `main`, bump `version` in `Cargo.toml`, add the
+1. From a clean, up-to-date `main`, bump `version` in `Cargo.toml` and
+   `crates/zapfast-core/Cargo.toml` (a test fails while they differ), add the
    release to the `<releases>` list in the Flatpak metainfo, and update
    `Cargo.lock` with a build. Write the release notes, in the style above, to
    `packaging/release-notes/vX.Y.Z.md`: the release workflow publishes that

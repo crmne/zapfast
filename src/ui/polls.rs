@@ -617,7 +617,7 @@ mod tests {
     fn visible_polls_request_history_automatically_without_a_control() {
         let ctx = egui::Context::default();
         theme::install(&ctx);
-        let mut row = crate::archive::tests::message("chat", "poll", 100, false);
+        let mut row = crate::archive::fixtures::message("chat", "poll", 100, false);
         row.content = Content::Poll {
             question: "Lunch?".into(),
             options: vec!["Pizza".into(), "Pasta".into()],

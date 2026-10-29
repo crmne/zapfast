@@ -1,8 +1,7 @@
-//! Compiles translations and embeds the icon and version information in
-//! Windows executables.
+//! Embeds the icon and version information in Windows executables.
 
 fn main() {
-    fastframe_i18n::build::compile_catalogs("assets/i18n");
+    println!("cargo:rerun-if-changed=build.rs");
 
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
