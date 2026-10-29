@@ -1785,6 +1785,18 @@ pub enum MediaState {
     Failed(String),
 }
 
+/// A file going out, for the strip above its chat's composer. An empty name
+/// is a pasted picture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Upload {
+    pub id: u64,
+    pub chat: ChatId,
+    pub name: String,
+    pub percent: u8,
+    /// Roughly how long the rest takes, once the pace is known.
+    pub seconds_left: Option<u32>,
+}
+
 /// Decoded straight-alpha RGBA image bytes ready for the clipboard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedImage {
@@ -2745,6 +2757,8 @@ pub enum Action {
         message: String,
     },
     CancelReply,
+    /// Stops sending the file with this upload id.
+    CancelUpload(u64),
     /// Starts selecting messages in the open chat with none picked yet.
     StartSelection,
     /// Adds a chat to the forwarding dialog's recipients or removes it,

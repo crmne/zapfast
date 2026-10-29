@@ -1327,6 +1327,41 @@ pub fn paint_spinner(ui: &egui::Ui, rect: egui::Rect, size: f32, color: Color32)
         .add(egui::Shape::line(points, Stroke::new(2.0, color)));
 }
 
+/// A ring filled to `fraction` of the way round, or a spinner while how far
+/// it has got is unknown.
+pub fn paint_progress(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    size: f32,
+    fraction: Option<f32>,
+    color: Color32,
+) {
+    let Some(fraction) = fraction else {
+        paint_spinner(ui, rect, size, color);
+        return;
+    };
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let radius = size / 2.0 - 2.0;
+    ui.painter().circle_stroke(
+        rect.center(),
+        radius,
+        Stroke::new(2.0, color.gamma_multiply(0.3)),
+    );
+    ui.painter().add(egui::Shape::line(
+        crate::video::arc(rect.center(), radius, fraction),
+        Stroke::new(2.0, color),
+    ));
+}
+
+/// [`paint_progress`] in space of its own, like [`spinner`].
+pub fn progress(ui: &mut egui::Ui, size: f32, fraction: Option<f32>, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    paint_progress(ui, rect, size, fraction, color);
+    response
+}
+
 /// Truncated single-line text.
 pub fn text(
     ui: &mut egui::Ui,
