@@ -331,6 +331,14 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Full debuginfo tripled link time and test-build time; CARGO_PROFILE_DEV_DEBUG=true restores it.
+[profile.dev]
+debug = "line-tables-only"
+
+# Matches dev so tempfile, a build and dev dependency, doesn't rebuild the protocol stack for tests.
+[profile.dev.build-override]
+debug = "line-tables-only"
+
 # Optimize dependencies in development for usable decryption and UI layout.
 # Keep the application crate incremental.
 [profile.dev.package."*"]
