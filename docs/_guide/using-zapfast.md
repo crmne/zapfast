@@ -525,7 +525,9 @@ system's defaults; a device that goes away falls back to the default, and the
 call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The
 Flatpak is allowed its devices for this, since Flatpak has no narrower
-permission for cameras.
+permission for cameras. On Linux, YU12 (I420) cameras, including Iriun Webcam,
+are read natively without an external converter. Start Iriun on the computer
+and connect the phone before selecting its camera in a call.
 Calls use your platform's own audio (PipeWire, PulseAudio or ALSA on Linux, Core Audio on
 macOS, WASAPI on Windows). ZapFast cancels echo itself, with the echo canceller
 browsers use (WebRTC's), so you can call with speakers and a microphone and the
