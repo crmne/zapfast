@@ -155,9 +155,11 @@ name or description, in the interface language or in English.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
-- **Transcribe voice messages**: on by default. Visible voice messages are
-  transcribed locally using Parakeet; audio stays in memory, never in a network
-  request or a temporary WAV. Text stays in the account's encrypted archive.
+- **Transcribe voice messages**: off by default. After enabling it, visible
+  downloaded voice messages are transcribed locally using Parakeet; audio stays in
+  memory, never in a network request or a temporary WAV. Text stays in the
+  account's encrypted archive and remains visible and copyable when automatic
+  transcription is turned off.
 - **Transcription model**: Parakeet v3 FP32 by default (about 2.55 GB), with
   Parakeet v3 INT8 (about 670 MB, lower memory and potentially lower accuracy)
   and Parakeet Ultra FP32 (about 2.51 GB) as alternatives. Models download
@@ -168,9 +170,14 @@ name or description, in the interface language or in English.
   Only weights and their names are requested; no audio, chat id or transcript
   is sent. Hugging Face and its HTTPS download CDN receive ordinary download
   metadata, such as the connection's IP address. Changing models does not erase
-  saved text. **Transcribe again** in a downloaded voice message's menu replaces
-  its text only after the new transcription succeeds. The native engine has
-  been exercised on macOS only in this custom build.
+  saved text. Selecting a model while automatic transcription is off does not
+  download or load it; **Prepare model** explicitly enables transcription and
+  requests the download. Healthy downloads have no fixed total duration limit;
+  connection/read timeouts and cancellation still bound stalls.
+  **Transcribe again** in a downloaded voice message's menu requests only that
+  message without changing the automatic setting, and replaces its text only
+  after the new transcription succeeds. Transcription and its packaging have
+  been tested on macOS only.
 - **Fetch older history**: off by default, and set for
   each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently

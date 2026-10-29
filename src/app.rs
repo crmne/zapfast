@@ -639,6 +639,10 @@ pub struct App {
     /// it left out has just arrived. Kept apart from `voices_sent`: that one
     /// is what the backend still has queued, and cancellation needs it.
     voices_resend: bool,
+    /// Manual requests in the account on screen. A missing viewport report
+    /// (including the frame that opens a starred row) must not cancel them.
+    /// They end with their answer, or when the reader leaves or locks the chat.
+    voices_explicit: HashSet<(ChatId, String)>,
     /// When `voices_wanted` last changed, for the debounce.
     voices_changed: Instant,
     /// Public model progress shared by the process, not account content.
@@ -1515,6 +1519,7 @@ impl App {
             voices_wanted: None,
             voices_sent: None,
             voices_resend: false,
+            voices_explicit: HashSet::new(),
             voices_changed: Instant::now(),
             transcription_state: None,
             selection_view: Default::default(),
@@ -3416,6 +3421,13 @@ impl App {
                 text,
             } => {
                 self.transcribing.remove(&(chat.clone(), message.clone()));
+                if live
+                    && self
+                        .voices_explicit
+                        .remove(&(chat.clone(), message.clone()))
+                {
+                    self.voices_resend = true;
+                }
                 if let Some(text) = text
                     && let Some(conversation) = self.conversations.get_mut(&chat)
                     && let Some(found) = conversation
@@ -7423,11 +7435,16 @@ impl App {
                 if self.settings.transcription_model != model {
                     self.cancel_transcriptions();
                     self.settings.transcription_model = model;
-                    self.transcription_state = Some((model, crate::transcribe::State::Queued));
+                    self.transcription_state = self
+                        .settings
+                        .transcribe_voice_notes
+                        .then_some((model, crate::transcribe::State::Queued));
                     for account in &self.accounts {
                         account.backend.send(Command::SetTranscriptionModel(model));
                     }
-                    self.backend.send(Command::PrepareTranscriptionModel(model));
+                    if self.settings.transcribe_voice_notes {
+                        self.backend.send(Command::PrepareTranscriptionModel(model));
+                    }
                     self.mark_settings_dirty();
                 }
             }
@@ -7453,14 +7470,13 @@ impl App {
                     .chat(&chat)
                     .is_some_and(|known| !known.locked || self.locked_folder_open());
                 if accessible {
-                    self.settings.transcribe_voice_notes = true;
+                    self.voices_explicit.insert((chat.clone(), message.clone()));
                     self.transcribing.insert((chat.clone(), message.clone()));
                     self.backend.send(Command::TranscribeAgain {
                         chat,
                         message,
                         model: self.settings.transcription_model,
                     });
-                    self.mark_settings_dirty();
                 }
             }
             Action::SweepMessages { anchor, to } => {
@@ -10515,8 +10531,15 @@ impl App {
     /// voice list this window asked for. An in-flight inference chunk may
     /// finish, but its cancelled result is not stored.
     fn cancel_transcriptions(&mut self) {
-        if self.voices_sent.take().is_some() || !self.transcribing.is_empty() {
+        let explicit = std::mem::take(&mut self.voices_explicit);
+        if self.voices_sent.take().is_some()
+            || !self.transcribing.is_empty()
+            || !explicit.is_empty()
+        {
             self.backend.send(Command::CancelTranscription);
+        }
+        for key in explicit {
+            self.transcribing.remove(&key);
         }
         self.voices_wanted = None;
         self.voices_resend = false;
@@ -10526,7 +10549,26 @@ impl App {
     /// Wait for a settled viewport instead of transcribing every row that a
     /// quick scroll only passed by.
     fn queue_transcriptions(&mut self, ctx: &egui::Context) {
-        if !crate::transcribe::available() || !self.settings.transcribe_voice_notes {
+        if !crate::transcribe::available() {
+            self.cancel_transcriptions();
+            return;
+        }
+        if !self.voices_explicit.is_empty() {
+            // This is a one-message request, not an opt-in to automatic work.
+            // Keep it through missing/empty viewport reports and scrolling,
+            // but not through leaving this account, chat, or unlocked view.
+            let here = self.chat_view()
+                && !self.window_hidden
+                && !self.app_lock.is_locked()
+                && self
+                    .current_chat()
+                    .is_some_and(|chat| self.voices_explicit.iter().all(|(id, _)| id == &chat.id));
+            if !here {
+                self.cancel_transcriptions();
+            }
+            return;
+        }
+        if !self.settings.transcribe_voice_notes {
             self.cancel_transcriptions();
             return;
         }
@@ -10556,7 +10598,7 @@ impl App {
                                 media,
                                 voice_note: true,
                                 ..
-                            } if media.path.as_ref().is_some_and(|path| path.is_file())
+                            } if media.path.is_some()
                         )
                 })
             })
@@ -11611,6 +11653,7 @@ mod tests {
     #[test]
     fn changing_the_transcription_model_preserves_saved_words_and_routes_the_choice() {
         let mut app = app();
+        app.settings.transcribe_voice_notes = true;
         let (backend, mut commands) = Backend::recording();
         app.accounts[0].backend = backend;
         let chat = "synthetic@s.whatsapp.net";
@@ -11647,6 +11690,200 @@ mod tests {
                 crate::transcribe::Model::ParakeetUltra
             ))
         ));
+    }
+
+    #[test]
+    fn choosing_a_model_while_transcription_is_off_does_not_prepare_or_enable_it() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.accounts[0].backend = backend;
+        assert!(!app.settings.transcribe_voice_notes);
+        app.voices_on_screen = Some(("synthetic@s.whatsapp.net".into(), vec!["voice".into()]));
+        app.queue_transcriptions(&egui::Context::default());
+        assert!(
+            commands.try_recv().is_err(),
+            "a visible voice must not opt in to a download"
+        );
+        app.apply(
+            Action::SetTranscriptionModel(crate::transcribe::Model::ParakeetUltra),
+            &egui::Context::default(),
+        );
+        assert_eq!(
+            app.settings.transcription_model,
+            crate::transcribe::Model::ParakeetUltra
+        );
+        assert!(!app.settings.transcribe_voice_notes);
+        assert!(app.transcription_state.is_none());
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SetTranscriptionModel(
+                crate::transcribe::Model::ParakeetUltra
+            ))
+        ));
+        assert!(
+            commands.try_recv().is_err(),
+            "a passive choice must not prepare/download a model"
+        );
+
+        app.apply(Action::PrepareTranscriptionModel, &egui::Context::default());
+        assert!(
+            app.settings.transcribe_voice_notes,
+            "Prepare model is the explicit opt-in"
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::PrepareTranscriptionModel(
+                crate::transcribe::Model::ParakeetUltra
+            ))
+        ));
+    }
+
+    #[test]
+    fn a_manual_transcription_from_a_starred_row_survives_the_opening_frame() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "synthetic@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        let mut row = voice(chat, "voice", 10, Some("synthetic.ogg"));
+        row.transcript = Some("Saved words".into());
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .messages
+            .push(row);
+        app.show_starred = true;
+        // The list menu opens the chat after drawing, then asks for the retry.
+        app.apply(
+            Action::OpenMessage {
+                chat: chat.into(),
+                message: "voice".into(),
+            },
+            &ctx,
+        );
+        while commands.try_recv().is_ok() {}
+        app.settings_dirty = false;
+        app.apply(
+            Action::TranscribeAgain {
+                chat: chat.into(),
+                message: "voice".into(),
+            },
+            &ctx,
+        );
+        assert!(!app.settings.transcribe_voice_notes);
+        assert!(
+            !app.settings_dirty,
+            "one message is not an automatic-transcription opt-in"
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::TranscribeAgain { .. })
+        ));
+        assert!(
+            app.voices_on_screen.is_none(),
+            "the new conversation has not drawn yet"
+        );
+        app.queue_transcriptions(&ctx);
+        app.voices_on_screen = Some((chat.into(), Vec::new()));
+        app.queue_transcriptions(&ctx);
+        assert!(
+            commands.try_recv().is_err(),
+            "missing or empty viewport reports must not cancel a manual request"
+        );
+        assert!(app.voices_explicit.contains(&(chat.into(), "voice".into())));
+
+        // A different account's answer with the same ids cannot end this one.
+        app.apply_backend_event(
+            Event::Transcription {
+                chat: chat.into(),
+                message: "voice".into(),
+                text: None,
+            },
+            false,
+        );
+        assert!(!app.voices_explicit.is_empty());
+        app.apply_backend_event(
+            Event::Transcription {
+                chat: chat.into(),
+                message: "voice".into(),
+                text: Some("New words".into()),
+            },
+            true,
+        );
+        assert!(app.voices_explicit.is_empty());
+        assert_eq!(
+            app.conversations[chat].messages[0].transcript.as_deref(),
+            Some("New words")
+        );
+        assert!(!app.settings.transcribe_voice_notes);
+    }
+
+    #[test]
+    fn leaving_or_locking_the_chat_cancels_a_manual_transcription() {
+        for departure in ["chat", "page", "window", "lock", "folder", "account"] {
+            let mut app = app();
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            let ctx = egui::Context::default();
+            let chat = "synthetic@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Ada".into()));
+            app.open_chat = Some(chat.into());
+            app.apply(
+                Action::TranscribeAgain {
+                    chat: chat.into(),
+                    message: "voice".into(),
+                },
+                &ctx,
+            );
+            while commands.try_recv().is_ok() {}
+            match departure {
+                "chat" => app.open_chat = None,
+                "page" => app.page = Page::Settings,
+                "window" => app.window_gone(),
+                "lock" => app.app_lock.lock(),
+                "folder" => app.chats[0].locked = true,
+                "account" => app.clear_account_ui(),
+                _ => unreachable!(),
+            }
+            app.queue_transcriptions(&ctx);
+            let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+            assert!(
+                sent.iter()
+                    .any(|command| matches!(command, Command::CancelTranscription)),
+                "{departure}: {sent:?}"
+            );
+            assert!(app.voices_explicit.is_empty(), "{departure}");
+            assert!(
+                !app.transcribing.contains(&(chat.into(), "voice".into())),
+                "{departure}"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_transcription_leaves_file_checks_to_the_worker() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.settings.transcribe_voice_notes = true;
+        let ctx = egui::Context::default();
+        let chat = "synthetic@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.conversations.entry(chat.into()).or_default().messages = vec![
+            voice(chat, "downloaded", 10, Some("nonexistent-synthetic.ogg")),
+            voice(chat, "not-downloaded", 11, None),
+        ];
+        app.voices_on_screen = Some((
+            chat.into(),
+            vec!["downloaded".into(), "not-downloaded".into()],
+        ));
+        app.queue_transcriptions(&ctx);
+        app.voices_changed = Instant::now() - Duration::from_millis(301);
+        app.queue_transcriptions(&ctx);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Transcribe { ids, .. }) if ids == ["downloaded"])
+        );
     }
 
     /// While recording, the light, the timer and the waveform ask for a

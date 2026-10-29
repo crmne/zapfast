@@ -37,11 +37,13 @@ pub(super) fn ensure(
             .build()
             .map_err(|_| failed("Could not start the speech model downloader."))?,
     );
+    // Bound connection stalls and idle reads, not the whole multi-gigabyte
+    // transfer. A fixed total timeout makes healthy slow links restart from
+    // zero forever. wait() still handles explicit cancellation promptly.
     let mut builder = reqwest::Client::builder()
         .user_agent("ZapFast speech models")
         .connect_timeout(Duration::from_secs(30))
         .read_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(30 * 60))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 10 || attempt.url().scheme() != "https" {
                 attempt.error("Speech model redirects must remain HTTPS")

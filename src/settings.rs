@@ -572,7 +572,7 @@ impl Default for Settings {
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
-            transcribe_voice_notes: true,
+            transcribe_voice_notes: false,
             transcription_model: crate::transcribe::Model::default(),
             show_wallpaper: true,
             wallpaper_color: WallpaperColor::Theme,
@@ -984,7 +984,8 @@ mod tests {
             previous.transcription_model,
             crate::transcribe::Model::ParakeetV3
         );
-        assert!(previous.transcribe_voice_notes);
+        assert!(!previous.transcribe_voice_notes);
+        assert!(!Settings::default().transcribe_voice_notes);
         for model in crate::transcribe::Model::ALL {
             let settings = Settings {
                 transcription_model: model,
@@ -993,6 +994,11 @@ mod tests {
             let stored = serde_json::to_string(&settings).unwrap();
             let restored: Settings = serde_json::from_str(&stored).unwrap();
             assert_eq!(restored.transcription_model, model);
+        }
+        for enabled in [false, true] {
+            let stored = format!("{{\"transcribe_voice_notes\":{enabled}}}");
+            let restored: Settings = serde_json::from_str(&stored).unwrap();
+            assert_eq!(restored.transcribe_voice_notes, enabled);
         }
     }
 

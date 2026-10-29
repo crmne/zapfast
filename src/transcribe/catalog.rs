@@ -24,14 +24,6 @@ impl Model {
         }
     }
 
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::ParakeetV3 => "Full precision. Recommended for transcription quality.",
-            Self::ParakeetV3Int8 => "Uses less memory, but can omit words and be less accurate.",
-            Self::ParakeetUltra => "A refined version of v3. Results vary with the recording.",
-        }
-    }
-
     pub fn key(self) -> &'static str {
         match self {
             Self::ParakeetV3 => "parakeet-v3-fp32",

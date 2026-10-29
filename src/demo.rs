@@ -2511,6 +2511,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "transcription-downloading" => {
                 app.page = Page::Settings;
                 app.settings_search = "transcr".into();
+                app.settings.transcribe_voice_notes = true;
                 let model = crate::transcribe::Model::default();
                 app.transcription_state = Some((
                     model,
@@ -22842,6 +22843,31 @@ mod bubble_detail_tests {
     }
 
     #[test]
+    fn transcription_settings_explain_the_download_before_opt_in() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.locale = crate::i18n::Locale::English;
+        apply_flags(&mut app, Some("transcription-settings"));
+        let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 900.0));
+        let text = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!app.settings.transcribe_voice_notes);
+        assert!(text.contains("Download from Hugging Face:"));
+        assert!(text.contains(&crate::util::bytes(
+            crate::transcribe::Model::default().total_bytes()
+        )));
+        assert!(text.contains("Enable transcription or prepare the model to download it."));
+        assert!(text.contains("Prepare model"));
+    }
+
+    #[test]
     fn transcription_settings_show_the_model_and_download_progress() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -22868,6 +22894,7 @@ mod bubble_detail_tests {
     #[test]
     fn a_transcribed_voice_message_shows_its_text_under_the_player() {
         let mut app = app();
+        assert!(!app.settings.transcribe_voice_notes);
         let ctx = egui::Context::default();
         app.attach(&ctx);
         apply_flags(&mut app, Some("voice-transcript"));
@@ -22892,6 +22919,22 @@ mod bubble_detail_tests {
         assert!(
             bubble.contains_rect(footer),
             "the time stays inside the bubble ({footer:?} in {bubble:?})"
+        );
+        let saved = app.conversations[chat]
+            .messages
+            .iter()
+            .find(|message| message.id == "ada-voice")
+            .unwrap()
+            .transcript
+            .as_deref()
+            .unwrap();
+        assert!(
+            app.copy_rows
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|row| row.body == saved),
+            "saved words stay in cross-message copies while automatic transcription is off"
         );
     }
 

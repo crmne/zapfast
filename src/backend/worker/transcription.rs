@@ -365,6 +365,36 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_cached_file_is_skipped_before_starting_the_recognizer() {
+        let (mut worker, events, _, _) = worker();
+        let root = tempfile::tempdir().unwrap();
+        let mut row = crate::archive::tests::message(PEER, "voice", 10, false);
+        row.content = Content::Audio {
+            media: crate::model::Media {
+                mime: "audio/ogg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                album: None,
+                path: Some(root.path().join("missing.ogg")),
+                state: crate::model::MediaState::Idle,
+            },
+            seconds: Some(1),
+            voice_note: true,
+            waveform: Vec::new(),
+        };
+        worker.archive.insert_message(&row, None).unwrap();
+        worker.transcribe_on_screen(PEER.into(), vec!["voice".into()], Model::default());
+        assert!(worker.transcribing.is_none());
+        assert!(worker.transcription_queue.is_empty());
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::TranscriptionStarted { .. }))
+        );
+    }
+
+    #[test]
     fn changing_models_cancels_old_jobs_and_preparations() {
         let (mut worker, _, _, _) = worker();
         let job = Arc::new(AtomicBool::new(false));

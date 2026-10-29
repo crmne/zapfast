@@ -452,7 +452,7 @@ fn sections(app: &App) -> Vec<Section> {
     let model = app.settings.transcription_model;
     let description = format!(
         "{}\n{}\n{}",
-        crate::i18n::gettext(locale, model.description()),
+        transcription_model_description(locale, model),
         crate::i18n::gettext(locale, "Download from Hugging Face: {size}")
             .replace("{size}", &crate::util::bytes(model.total_bytes())),
         crate::i18n::gettext(
@@ -1898,7 +1898,30 @@ fn custom_titlebar_switch(ui: &mut egui::Ui, app: &mut App) {
     }
 }
 
+fn transcription_model_description(
+    locale: Locale,
+    model: crate::transcribe::Model,
+) -> Cow<'static, str> {
+    use crate::i18n::gettext;
+    use crate::transcribe::Model;
+    match model {
+        Model::ParakeetV3 => gettext(
+            locale,
+            "Full precision. Recommended for transcription quality.",
+        ),
+        Model::ParakeetV3Int8 => gettext(
+            locale,
+            "Uses less memory, but can omit words and be less accurate.",
+        ),
+        Model::ParakeetUltra => gettext(
+            locale,
+            "A refined version of v3. Results vary with the recording.",
+        ),
+    }
+}
+
 fn transcription_model(ui: &mut egui::Ui, app: &mut App) {
+    use crate::i18n::gettext;
     use crate::transcribe::{Model, State};
     let palette = app.palette;
     let locale = app.locale;
@@ -1933,44 +1956,40 @@ fn transcription_model(ui: &mut egui::Ui, app: &mut App) {
                     .text(label),
             );
         } else {
-            let source = match state {
-                Some(State::Queued) => "Waiting for the speech worker…",
-                Some(State::Checking) => "Verifying model files…",
-                Some(State::Loading) => "Loading speech model…",
-                Some(State::Ready) => "Ready",
-                Some(State::Paused) => "Paused",
-                Some(State::Failed(_)) => "Could not prepare the speech model. Try again.",
-                _ => "Downloads automatically on first use.",
+            let label = match state {
+                Some(State::Queued) => gettext(locale, "Waiting for the speech worker…"),
+                Some(State::Checking) => gettext(locale, "Verifying model files…"),
+                Some(State::Loading) => gettext(locale, "Loading speech model…"),
+                Some(State::Ready) => gettext(locale, "Ready"),
+                Some(State::Paused) => gettext(locale, "Paused"),
+                Some(State::Failed(_)) => {
+                    gettext(locale, "Could not prepare the speech model. Try again.")
+                }
+                _ if app.settings.transcribe_voice_notes => {
+                    gettext(locale, "Downloads automatically on first use.")
+                }
+                _ => gettext(
+                    locale,
+                    "Enable transcription or prepare the model to download it.",
+                ),
             };
-            let response = widgets::rich_text(
-                ui,
-                &crate::i18n::gettext(locale, source),
-                theme::regular(12.0),
-                palette.secondary,
-            );
+            let response = widgets::rich_text(ui, &label, theme::regular(12.0), palette.secondary);
             if let Some(State::Failed(message)) = state {
                 response.on_hover_text(message.clone());
             }
         }
         let busy = state.is_some_and(State::busy);
         let button = if busy {
-            "Pause transcription"
+            gettext(locale, "Pause transcription")
         } else if matches!(state, Some(State::Failed(_))) {
-            "Try again"
+            gettext(locale, "Try again")
         } else if matches!(state, Some(State::Paused)) {
-            "Resume"
+            gettext(locale, "Resume")
         } else {
-            "Prepare model"
+            gettext(locale, "Prepare model")
         };
         if !matches!(state, Some(State::Ready))
-            && theme::soft_button(
-                ui,
-                &palette,
-                None,
-                &crate::i18n::gettext(locale, button),
-                false,
-            )
-            .clicked()
+            && theme::soft_button(ui, &palette, None, &button, false).clicked()
         {
             app.actions.push(if busy {
                 Action::CancelTranscriptionDownload

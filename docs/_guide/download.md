@@ -17,6 +17,10 @@ The current version is **v{{ v }}**. SHA-256 checksums are in
 [checksums.txt]({{ base }}/checksums.txt). Older versions are on the
 [releases page](https://github.com/crmne/zapfast/releases).
 
+Voice message transcription runs locally with Parakeet. It has been tested on
+macOS only; transcription and its packaging on Linux, Windows and Nix have not
+been tested yet.
+
 ## Linux
 
 On Arch Linux and derivatives, install from the
@@ -37,10 +41,6 @@ nix profile install github:crmne/zapfast
 NixOS configurations can add the repository as a flake input and include
 `inputs.zapfast.packages.${pkgs.system}.default` in
 `environment.systemPackages`.
-
-This custom branch uses native Parakeet inference, not macOS's Swift speech
-helper. Its current packaging and transcription have been validated on macOS
-only; the Nix package and other platforms have not been revalidated here.
 
 For other distributions, download a tarball with the binary, desktop file,
 and icon:

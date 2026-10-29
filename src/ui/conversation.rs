@@ -6869,14 +6869,11 @@ fn context_menu(
             ui,
             &palette,
             Some(Icon::Refresh),
-            &crate::i18n::gettext(
-                view.locale,
-                if message.transcript.is_some() {
-                    "Transcribe again"
-                } else {
-                    "Transcribe"
-                },
-            ),
+            &if message.transcript.is_some() {
+                crate::i18n::gettext(view.locale, "Transcribe again")
+            } else {
+                crate::i18n::gettext(view.locale, "Transcribe")
+            },
             !view
                 .transcribing
                 .contains(&(chat.clone(), message.id.clone())),
@@ -7405,11 +7402,7 @@ fn content(
         _ => false,
     };
     if !has_body && let Some(copy_rows) = view.copy_rows {
-        let body = if view.transcribe_voices {
-            message.transcript.clone().unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let body = message.transcript.clone().unwrap_or_default();
         copy_rows
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -10791,18 +10784,16 @@ fn voice_player(
         });
     }
     // What the clip says, under the player. The time keeps the player's line.
-    if view.transcribe_voices {
-        if view
-            .transcribing
-            .contains(&(view.chat.id.clone(), message.id.clone()))
-        {
-            ui.add_space(6.0);
-            let label = crate::i18n::gettext(view.locale, "Transcribing…");
-            widgets::rich_text(ui, &label, theme::regular(12.5), palette.secondary);
-        }
-        if let Some(text) = &message.transcript {
-            transcript_block(ui, view, message, text, width);
-        }
+    if view
+        .transcribing
+        .contains(&(view.chat.id.clone(), message.id.clone()))
+    {
+        ui.add_space(6.0);
+        let label = crate::i18n::gettext(view.locale, "Transcribing…");
+        widgets::rich_text(ui, &label, theme::regular(12.5), palette.secondary);
+    }
+    if let Some(text) = &message.transcript {
+        transcript_block(ui, view, message, text, width);
     }
     // The time and ticks share the duration's line, as on the phone. A long
     // error leaves them no room, so they keep a line of their own.

@@ -477,21 +477,31 @@ Starting a reply before recording includes the quoted message.
 
 ### Transcripts
 
-A voice message that comes into view is transcribed on this computer, and the
-text appears under its player, selectable and copyable like any other message.
+With automatic transcription enabled, a downloaded voice message that comes
+into view is transcribed on this computer. Its text appears under the player,
+selectable and copyable like any other message. If automatic file downloads are
+off, download the audio first; transcription does not download audio itself.
 The recognizer is Parakeet, running natively on the CPU; audio stays in memory
-and is never uploaded. Automatic transcription is on by default and can be
-turned off in Settings, under **Chats**.
+and is never uploaded. Automatic transcription is off by default. Turn on
+**Transcribe voice messages** in Settings, under **Chats**, to enable it. The
+model size is shown there before you enable the download. Existing saved
+transcripts remain readable and copyable while automatic transcription is off.
 
 **Transcription model**, in the same section, selects Parakeet v3 FP32 (the
 default, about 2.55 GB), Parakeet v3 INT8 (about 670 MB, less memory but potentially
 less accurate), or Parakeet Ultra FP32 (about 2.51 GB, a refined v3 whose results
 vary with the recording). A model downloads directly from its publisher's
-Hugging Face repository on first use, when selected, or through **Prepare model**.
-The download shows progress, uses a fixed revision and checks every file's size
-and SHA-256. Completed files are reused after an interrupted download, and
-subsequent transcription works offline. **Pause transcription** stops the
-download and turns off automatic transcription; **Resume** prepares it again.
+Hugging Face repository on first use, when selected while automatic transcription
+is enabled, or through **Prepare model**.
+Selecting another model while transcription is off only saves the choice; it
+does not start a download. **Prepare model** is an explicit request to download
+and enable transcription with that model. The download shows progress, uses a
+fixed revision and checks every file's size and SHA-256. Completed files are
+reused after an interrupted download, and subsequent transcription works
+offline. Healthy transfers have no fixed total time limit, so slow connections
+can finish; connection/read timeouts still bound stalls. **Pause transcription**
+stops the download and turns off automatic transcription; **Resume** prepares
+it again.
 
 The model detects the spoken language automatically, independently of the
 interface language. It supports 25 languages, including Portuguese, English,
@@ -504,11 +514,14 @@ message.
 
 Changing models preserves existing transcripts. To compare a saved voice note
 with the selected model, download its audio if needed, then right-click it and
-choose **Transcribe again**. Its previous text stays until a new transcript is
-successfully saved. A message being transcribed says **Transcribing…**.
+choose **Transcribe again**, or **Transcribe** for a note without saved text.
+This requests only that message, without enabling automatic transcription.
+The request continues through scrolling and stops if you leave or lock the
+chat. Its previous text stays until a new transcript is successfully saved.
+A message being transcribed says **Transcribing…**.
 
-This custom build's native recognizer has been run on macOS only. Linux and
-Windows use the same native engine, but have not been tested or packaged here.
+The native recognizer has been tested on macOS only. Linux and Windows use
+the same engine, but their transcription and packaging have not been tested.
 
 ## Calls
 
