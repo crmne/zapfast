@@ -23,6 +23,7 @@ thread_local! {
     static CURRENT_EVENT_CHARS: RefCell<Option<String>> = const { RefCell::new(None) };
     static WAS_IME_INSERTED: Cell<bool> = const { Cell::new(false) };
     static WAS_COMMAND: Cell<bool> = const { Cell::new(false) };
+    static PRESS_HOLD_HELD_CHAR: Cell<Option<char>> = const { Cell::new(None) };
 }
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
@@ -117,17 +118,29 @@ unsafe extern "C-unwind" fn swizzled_insert_text(
     }
 
     let event_chars = CURRENT_EVENT_CHARS.with(|ec| ec.borrow().clone());
+    let held_char = PRESS_HOLD_HELD_CHAR.with(|ph| ph.take());
     let is_press_and_hold_replace =
-        replacement_range.location != (NSNotFound as usize) && replacement_range.length > 0;
+        (replacement_range.location != (NSNotFound as usize) && replacement_range.length > 0)
+            || held_char.is_some();
     let is_composed_accent = event_chars.as_ref().is_some_and(|ec| ec != &text);
     let is_outside_key_down = event_chars.is_none();
 
     if is_press_and_hold_replace || is_composed_accent || is_outside_key_down {
         WAS_IME_INSERTED.with(|cell| cell.set(true));
 
-        if is_press_and_hold_replace {
+        let backspace_count = if replacement_range.location != (NSNotFound as usize)
+            && replacement_range.length > 0
+        {
+            replacement_range.length
+        } else if is_press_and_hold_replace {
+            1
+        } else {
+            0
+        };
+
+        if backspace_count > 0 {
             LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
-            for _ in 0..replacement_range.length {
+            for _ in 0..backspace_count {
                 EDIT_EVENTS.lock().unwrap_or_else(|p| p.into_inner()).push(egui::Event::Key {
                     key: egui::Key::Backspace,
                     physical_key: None,
@@ -187,27 +200,45 @@ unsafe extern "C-unwind" fn swizzled_key_down(
     let characters = unsafe { (*event).characters() };
     let characters_str = characters.map(|s| s.to_string()).unwrap_or_default();
 
-    if let Some(c) = characters_str.chars().next() {
-        if !c.is_control() {
-            LAST_CHAR.with(|lc| *lc.borrow_mut() = Some(c));
-        } else {
-            LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
-        }
-    } else {
-        LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
-    }
-
     let is_letter = characters_str.chars().next().is_some_and(|c| c.is_alphabetic());
+    let is_digit_selection = characters_str
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit() && c != '0');
+    let press_hold_active = PRESS_HOLD_HELD_CHAR.with(|ph| ph.get().is_some());
+
     if is_repeat && is_letter {
         // AppKit intercepts repeats of letter keys to display the Press & Hold accent popover.
-        // Forwarding repeated letter events to winit causes winit to queue KeyboardInput
-        // events and flood the text edit with repeated letters ("nnnnnn") while waiting for
-        // or displaying the popover.
-        // Instead, pass the repeat event directly to interpretKeyEvents: so AppKit handles
-        // the Press & Hold popover lifecycle, and return without calling orig_key_down.
+        // Record the held base letter so that when the user chooses an accent from the popover,
+        // we can cleanly delete the base letter and replace it with the chosen accent.
+        PRESS_HOLD_HELD_CHAR.with(|ph| {
+            if ph.get().is_none() {
+                ph.set(characters_str.chars().next());
+            }
+        });
+
+        // Forward repeat to interpretKeyEvents: so AppKit handles the popover lifecycle,
+        // but do NOT call orig_key_down so egui is not flooded with repeated characters.
         let events = unsafe { NSArray::from_slice(&[&*event]) };
         let _: () = unsafe { msg_send![this, interpretKeyEvents: &*events] };
         return;
+    }
+
+    if !is_repeat && !is_digit_selection && press_hold_active {
+        // User pressed a key other than a selection digit; cancel the held char tracking.
+        PRESS_HOLD_HELD_CHAR.with(|ph| ph.set(None));
+    }
+
+    if !press_hold_active || !is_digit_selection {
+        if let Some(c) = characters_str.chars().next() {
+            if !c.is_control() {
+                LAST_CHAR.with(|lc| *lc.borrow_mut() = Some(c));
+            } else {
+                LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
+            }
+        } else {
+            LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
+        }
     }
 
     CURRENT_EVENT_CHARS.with(|ec| *ec.borrow_mut() = Some(characters_str.clone()));
@@ -224,9 +255,6 @@ unsafe extern "C-unwind" fn swizzled_key_down(
     }
 
     // Keep CURRENT_EVENT_CHARS set while calling orig_key_down!
-    // winit's keyDown: also calls interpretKeyEvents: internally. Because CURRENT_EVENT_CHARS
-    // is still set to Some(characters_str), swizzled_insert_text knows this is a normal keystroke
-    // and does NOT treat it as is_outside_key_down, preventing double character insertion.
     if let Some(orig_imp) = *ORIG_KEY_DOWN.lock().unwrap_or_else(|p| p.into_inner()) {
         unsafe {
             let orig_fn: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSEvent) =
