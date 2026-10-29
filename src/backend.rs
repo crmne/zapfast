@@ -232,6 +232,13 @@ pub enum Command {
         chat: ChatId,
         before: Option<PageKey>,
     },
+    /// Checks an explicitly opened cache file, repairing only a confirmed missing reference.
+    RecoverCachedAttachment {
+        request: u64,
+        chat: ChatId,
+        message: String,
+        path: PathBuf,
+    },
     /// Asks for one chat's active pins, for the line under its header.
     LoadPins(ChatId),
     /// Requests messages before the archive's earliest message. `explicit`
@@ -1156,6 +1163,15 @@ pub enum Event {
         error: String,
     },
     MessageUpdated(Box<Message>),
+    CachedAttachmentChecked {
+        request: u64,
+        result: Result<(), String>,
+    },
+    CachedMediaMissing {
+        chat: ChatId,
+        message: String,
+        paths: Vec<PathBuf>,
+    },
     /// The account's media cache as measured, `None` when it could not be
     /// read. `cleared` says the cache was just emptied, so files the
     /// interface still points into it are gone.

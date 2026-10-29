@@ -83,6 +83,9 @@ read what ZapFast has already stored. See
 walkthrough and [How it links](https://zapfast.rocks/how-it-links/) for the
 details.
 
+Missing cached attachments regain their download controls when you try to open
+them, without restarting. Files outside the account cache are left unchanged.
+
 ## Guides and help
 
 The complete guide lives at **[zapfast.rocks](https://zapfast.rocks/)**.

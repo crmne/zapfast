@@ -39,6 +39,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod bot_replies;
+mod cached_media;
 mod calls;
 mod channel_pictures;
 mod contact_names;
@@ -6634,6 +6635,17 @@ impl Worker {
                 }
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
+            Command::RecoverCachedAttachment {
+                request,
+                chat,
+                message,
+                path,
+            } => {
+                let result = self
+                    .check_cached_attachment(&chat, &message, &path)
+                    .map_err(|error| error.to_string());
+                self.emit(Event::CachedAttachmentChecked { request, result });
+            }
             Command::LoadPins(chat) => self.emit_pins(&chat),
             Command::FetchOlder { chat, explicit } => {
                 let _ = self.fetch_older(chat, explicit, false);

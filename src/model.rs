@@ -1494,8 +1494,43 @@ impl Content {
     /// carousel card's picture. Files elsewhere, such as a chosen download
     /// folder, are kept.
     pub fn forget_files_in(&mut self, dir: &std::path::Path) {
+        self.forget_files_where(|path| path.starts_with(dir));
+    }
+
+    /// Forgets only the unavailable file, retaining later replacements and other attachment slots.
+    pub fn forget_file(&mut self, missing: &Path) {
+        self.forget_files_where(|path| path == missing);
+    }
+
+    /// Saved attachment paths, including independent carousel pictures and motion clips.
+    pub fn local_files(&self) -> Vec<&Path> {
+        let mut files = Vec::new();
+        if let Some(path) = self.media().and_then(|media| media.path.as_deref()) {
+            files.push(path);
+        }
+        match self {
+            Self::Image {
+                motion: Some(motion),
+                ..
+            } => files.extend(motion.path.as_deref()),
+            Self::Interactive {
+                card: Some(card), ..
+            } => {
+                files.extend(
+                    card.carousel
+                        .iter()
+                        .filter_map(|card| card.image.as_ref()?.path.as_deref()),
+                );
+            }
+            _ => {}
+        }
+        files
+    }
+
+    /// Clears matching attachment slots and resets their download state without touching others.
+    fn forget_files_where(&mut self, matches: impl Fn(&Path) -> bool) {
         let forget = |path: &mut Option<PathBuf>, state: &mut MediaState| {
-            if path.as_deref().is_some_and(|path| path.starts_with(dir)) {
+            if path.as_deref().is_some_and(&matches) {
                 *path = None;
                 *state = MediaState::Idle;
             }
