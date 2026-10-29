@@ -38,6 +38,38 @@ NixOS configurations can add the repository as a flake input and include
 `inputs.zapfast.packages.${pkgs.system}.default` in
 `environment.systemPackages`.
 
+With [Home Manager](https://github.com/nix-community/home-manager), the
+flake's module installs ZapFast and declares its settings:
+
+```nix
+imports = [ inputs.zapfast.homeManagerModules.default ];
+
+programs.zapfast = {
+  enable = true;
+  settings = {
+    check_for_updates = false;
+    message_sound = "none";
+  };
+};
+```
+
+`settings` takes the keys of `settings.json` (see
+[Settings & Files](/settings-and-files/)). They are merged into the file on
+every activation, so the window size, recent emoji, and lock verifiers the app
+keeps there are left alone. A declared key that is changed in the app is reset
+on the next activation. Restart ZapFast after activating: it reads the file at
+start, and its next save writes back the values it already had.
+
+Values in `settings` are copied to the Nix store, which every user on the
+computer can read, so keep secrets such as proxy credentials or a GIPHY key
+out of it. Either set them in the app and leave them undeclared, or name a
+file for each key in `secretFiles`, for example one that sops-nix or agenix
+decrypts. The module reads those files when it activates:
+
+```nix
+programs.zapfast.secretFiles.proxy = config.sops.secrets.zapfast-proxy.path;
+```
+
 For other distributions, download a tarball with the binary, desktop file,
 and icon:
 

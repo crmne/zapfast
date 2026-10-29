@@ -12,7 +12,7 @@ On Linux:
 
 | What | Where | Notes |
 | --- | --- | --- |
-| Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit; the app lock password and the locked-chats code are kept only as salted verifiers |
+| Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit, or declared with the [Home Manager module](/download/); the app lock password and the locked-chats code are kept only as salted verifiers |
 | Account list | `~/.config/zapfast/accounts.json` | Which numbers are linked here and which one is showing |
 | Session keys | `~/.local/state/zapfast/accounts/<id>/session.db` | Deleting it unlinks that number |
 | Message archive | `~/.local/state/zapfast/accounts/<id>/archive.db` | Encrypted; the only copy of history WhatsApp will not send again |
