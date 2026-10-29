@@ -14,8 +14,8 @@ use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
-    Action, Chat, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState, Message,
-    PickerTab, Scroll,
+    Action, Chat, ChatActivity, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState,
+    Message, PickerTab, Scroll,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -893,13 +893,38 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
     let palette = app.palette;
     let typing = app.typing_in(&chat.id);
     if !typing.is_empty() {
+        let activity = typing[0].2;
         let text = if chat.is_group() {
-            let names: Vec<&str> = typing.iter().map(|(_, name)| name.as_str()).collect();
-            match names.as_slice() {
-                [] => String::new(),
-                [one] => format!("{one} is typing…"),
-                [rest @ .., last] => format!("{} and {last} are typing…", rest.join(", ")),
-            }
+            let describe = |activity| {
+                let names: Vec<&str> = typing
+                    .iter()
+                    .filter(|(_, _, other)| *other == activity)
+                    .map(|(_, name, _)| name.as_str())
+                    .collect();
+                match (activity, names.as_slice()) {
+                    (_, []) => None,
+                    (ChatActivity::RecordingAudio, [one]) => Some(
+                        crate::i18n::gettext(app.locale, "{name} is recording audio…")
+                            .replace("{name}", one),
+                    ),
+                    (ChatActivity::RecordingAudio, [rest @ .., last]) => Some(
+                        crate::i18n::gettext(app.locale, "{names} and {last} are recording audio…")
+                            .replace("{names}", &rest.join(", "))
+                            .replace("{last}", last),
+                    ),
+                    (_, [one]) => Some(format!("{one} is typing…")),
+                    (_, [rest @ .., last]) => {
+                        Some(format!("{} and {last} are typing…", rest.join(", ")))
+                    }
+                }
+            };
+            [ChatActivity::Typing, ChatActivity::RecordingAudio]
+                .into_iter()
+                .filter_map(describe)
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else if activity == ChatActivity::RecordingAudio {
+            crate::i18n::gettext(app.locale, "recording audio…").into_owned()
         } else {
             "typing…".to_owned()
         };
@@ -2594,7 +2619,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             .map(|message| message.sender.clone())
             .collect();
         // A typing participant may not have a visible message.
-        senders.extend(typing.iter().map(|(id, _)| id.clone()));
+        senders.extend(typing.iter().map(|(id, _, _)| id.clone()));
         for sender in senders {
             let picture = app.avatar(&sender);
             avatars.insert(sender, picture);
@@ -3906,8 +3931,8 @@ fn top_of_history(
     });
 }
 
-/// Typing indicator with stacked avatars and animated dots.
-fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]) {
+/// Live chat activity with stacked avatars, typing dots, and a recording icon.
+fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String, ChatActivity)]) {
     let palette = view.palette;
     ui.horizontal(|ui| {
         if shows_sender_pictures(view.chat) {
@@ -3916,7 +3941,7 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]
             let width = SENDER_AVATAR + step * (count.saturating_sub(1)) as f32;
             let (rect, _) = ui.allocate_exact_size(vec2(width, SENDER_AVATAR), Sense::hover());
             if ui.is_rect_visible(rect) {
-                for (index, (id, name)) in typers.iter().take(count).enumerate() {
+                for (index, (id, name, _)) in typers.iter().take(count).enumerate() {
                     let avatar = Rect::from_min_size(
                         rect.min + vec2(step * index as f32, 0.0),
                         Vec2::splat(SENDER_AVATAR),
@@ -3944,7 +3969,22 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]
         let backdrop = ui.painter().add(egui::Shape::Noop);
         let rect = Frame::new()
             .inner_margin(Margin::symmetric(12, 9))
-            .show(ui, |ui| typing_dots(ui, &palette))
+            .show(ui, |ui| {
+                let recording = typers
+                    .iter()
+                    .any(|(_, _, activity)| *activity == ChatActivity::RecordingAudio);
+                let typing = typers
+                    .iter()
+                    .any(|(_, _, activity)| *activity == ChatActivity::Typing);
+                ui.horizontal(|ui| {
+                    if recording {
+                        theme::icon(ui, Icon::Mic, 18.0, palette.secondary);
+                    }
+                    if typing {
+                        typing_dots(ui, &palette);
+                    }
+                });
+            })
             .response
             .rect;
         ui.painter().set(

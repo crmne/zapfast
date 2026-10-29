@@ -12,6 +12,13 @@ use serde::{Deserialize, Serialize};
 /// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
 pub type ChatId = String;
 
+/// Live activity another participant is performing in a chat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatActivity {
+    Typing,
+    RecordingAudio,
+}
+
 /// Stable folder name for a linked WhatsApp account on this computer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub String);
