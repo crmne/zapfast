@@ -2724,9 +2724,13 @@ impl Worker {
             }
             // Every address the host resolves to is dialed, not only the first
             // one, so a network whose IPv6 does not answer still links over
-            // IPv4 (#212).
+            // IPv4 (#212). The library's own HTTP, the version fetch and media
+            // downloads, gets the same ordering on its resolver.
             None => builder
-                .with_transport_factory(crate::transport::HappyEyeballsTransportFactory::new()),
+                .with_transport_factory(crate::transport::HappyEyeballsTransportFactory::new())
+                .with_http_client(whatsapp_rust::http::UreqHttpClient::with_agent(
+                    crate::proxy::direct_agent(),
+                )),
         };
         let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
