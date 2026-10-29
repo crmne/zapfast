@@ -3,21 +3,313 @@
 //! traffic lights are placed by fastframe-titlebar. The Messages theme's
 //! translucent sidebar is AppKit's own sidebar material, behind the window.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use objc2_app_kit::{NSApplication, NSText};
+use objc2::msg_send;
+use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+use objc2::sel;
+use objc2_app_kit::{NSApplication, NSEvent, NSText};
+use objc2_foundation::{NSArray, NSAttributedString, NSNotFound, NSRange, NSString, NSUserDefaults};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, Submenu};
 
 use crate::model::{Action, Dialog, Page};
 
 thread_local! {
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
+    static LAST_CHAR: RefCell<Option<char>> = const { RefCell::new(None) };
+    static CURRENT_EVENT_CHARS: RefCell<Option<String>> = const { RefCell::new(None) };
+    static WAS_IME_INSERTED: Cell<bool> = const { Cell::new(false) };
+    static WAS_COMMAND: Cell<bool> = const { Cell::new(false) };
 }
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 static REPAINT: Mutex<Option<egui::Context>> = Mutex::new(None);
+
+static SWIZZLED: AtomicBool = AtomicBool::new(false);
+static ORIG_KEY_DOWN: Mutex<Option<Imp>> = Mutex::new(None);
+static ORIG_INSERT_TEXT: Mutex<Option<Imp>> = Mutex::new(None);
+static ORIG_SELECTED_RANGE: Mutex<Option<Imp>> = Mutex::new(None);
+static ORIG_ATTR_SUBSTRING: Mutex<Option<Imp>> = Mutex::new(None);
+static ORIG_DO_COMMAND: Mutex<Option<Imp>> = Mutex::new(None);
+
+unsafe extern "C-unwind" fn swizzled_selected_range(
+    _this: *mut AnyObject,
+    _sel: Sel,
+) -> NSRange {
+    let has_char = LAST_CHAR.with(|lc| lc.borrow().is_some());
+    if has_char {
+        NSRange::new(1, 0)
+    } else {
+        NSRange::new(0, 0)
+    }
+}
+
+unsafe extern "C-unwind" fn swizzled_attributed_substring(
+    _this: *mut AnyObject,
+    _sel: Sel,
+    proposed_range: NSRange,
+    actual_range: *mut NSRange,
+) -> *mut AnyObject {
+    let c = LAST_CHAR.with(|lc| *lc.borrow());
+    if let Some(ch) = c {
+        if !actual_range.is_null() {
+            unsafe {
+                let loc = if proposed_range.location != (NSNotFound as usize) {
+                    proposed_range.location
+                } else {
+                    0
+                };
+                *actual_range = NSRange::new(loc, 1);
+            }
+        }
+        let str_val = NSString::from_str(&ch.to_string());
+        let attr = NSAttributedString::from_nsstring(&str_val);
+        Retained::autorelease_ptr(attr).cast()
+    } else {
+        if !actual_range.is_null() {
+            unsafe {
+                *actual_range = NSRange::new(0, 0);
+            }
+        }
+        let attr = NSAttributedString::new();
+        Retained::autorelease_ptr(attr).cast()
+    }
+}
+
+unsafe extern "C-unwind" fn swizzled_insert_text(
+    this: *mut AnyObject,
+    sel: Sel,
+    string: *mut AnyObject,
+    replacement_range: NSRange,
+) {
+    if string.is_null() {
+        return;
+    }
+
+    let text = unsafe {
+        if let Some(ns_str) = (*string).downcast_ref::<NSString>() {
+            ns_str.to_string()
+        } else if let Some(attr_str) = (*string).downcast_ref::<NSAttributedString>() {
+            attr_str.string().to_string()
+        } else {
+            let desc: Retained<NSString> = msg_send![string, description];
+            desc.to_string()
+        }
+    };
+
+    if text.is_empty() {
+        return;
+    }
+
+    if text.chars().all(|c| c.is_control()) {
+        if let Some(orig_imp) = *ORIG_INSERT_TEXT.lock().unwrap_or_else(|p| p.into_inner()) {
+            unsafe {
+                let orig_fn: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, NSRange) =
+                    std::mem::transmute(orig_imp);
+                orig_fn(this, sel, string, replacement_range);
+            }
+        }
+        return;
+    }
+
+    let event_chars = CURRENT_EVENT_CHARS.with(|ec| ec.borrow().clone());
+    let is_press_and_hold_replace =
+        replacement_range.location != (NSNotFound as usize) && replacement_range.length > 0;
+    let is_composed_accent = event_chars.as_ref().is_some_and(|ec| ec != &text);
+    let is_outside_key_down = event_chars.is_none();
+
+    if is_press_and_hold_replace || is_composed_accent || is_outside_key_down {
+        WAS_IME_INSERTED.with(|cell| cell.set(true));
+
+        if is_press_and_hold_replace {
+            LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
+            for _ in 0..replacement_range.length {
+                EDIT_EVENTS.lock().unwrap_or_else(|p| p.into_inner()).push(egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                EDIT_EVENTS.lock().unwrap_or_else(|p| p.into_inner()).push(egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+
+        EDIT_EVENTS.lock().unwrap_or_else(|p| p.into_inner()).push(egui::Event::Text(text));
+
+        if let Some(ctx) = &*REPAINT.lock().unwrap_or_else(|p| p.into_inner()) {
+            ctx.request_repaint();
+        }
+    } else if let Some(orig_imp) = *ORIG_INSERT_TEXT.lock().unwrap_or_else(|p| p.into_inner()) {
+        unsafe {
+            let orig_fn: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, NSRange) =
+                std::mem::transmute(orig_imp);
+            orig_fn(this, sel, string, replacement_range);
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn swizzled_do_command_by_selector(
+    this: *mut AnyObject,
+    sel: Sel,
+    command: Sel,
+) {
+    WAS_COMMAND.with(|cell| cell.set(true));
+    if let Some(orig_imp) = *ORIG_DO_COMMAND.lock().unwrap_or_else(|p| p.into_inner()) {
+        unsafe {
+            let orig_fn: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Sel) =
+                std::mem::transmute(orig_imp);
+            orig_fn(this, sel, command);
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn swizzled_key_down(
+    this: *mut AnyObject,
+    sel: Sel,
+    event: *mut NSEvent,
+) {
+    if event.is_null() {
+        return;
+    }
+
+    let is_repeat = unsafe { (*event).isARepeat() };
+    let characters = unsafe { (*event).characters() };
+    let characters_str = characters.map(|s| s.to_string()).unwrap_or_default();
+
+    if let Some(c) = characters_str.chars().next() {
+        if !c.is_control() {
+            LAST_CHAR.with(|lc| *lc.borrow_mut() = Some(c));
+        } else {
+            LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
+        }
+    } else {
+        LAST_CHAR.with(|lc| *lc.borrow_mut() = None);
+    }
+
+    let is_letter = characters_str.chars().next().is_some_and(|c| c.is_alphabetic());
+    if is_repeat && is_letter {
+        // AppKit intercepts repeats of letter keys to display the Press & Hold accent popover.
+        // Forwarding repeated letter events to winit causes winit to queue KeyboardInput
+        // events and flood the text edit with repeated letters ("nnnnnn") while waiting for
+        // or displaying the popover.
+        // Instead, pass the repeat event directly to interpretKeyEvents: so AppKit handles
+        // the Press & Hold popover lifecycle, and return without calling orig_key_down.
+        let events = unsafe { NSArray::from_slice(&[&*event]) };
+        let _: () = unsafe { msg_send![this, interpretKeyEvents: &*events] };
+        return;
+    }
+
+    CURRENT_EVENT_CHARS.with(|ec| *ec.borrow_mut() = Some(characters_str.clone()));
+    WAS_IME_INSERTED.with(|cell| cell.set(false));
+    WAS_COMMAND.with(|cell| cell.set(false));
+
+    let events = unsafe { NSArray::from_slice(&[&*event]) };
+    let _: () = unsafe { msg_send![this, interpretKeyEvents: &*events] };
+
+    let inserted = WAS_IME_INSERTED.with(|cell| cell.get());
+    if inserted {
+        CURRENT_EVENT_CHARS.with(|ec| *ec.borrow_mut() = None);
+        return;
+    }
+
+    // Keep CURRENT_EVENT_CHARS set while calling orig_key_down!
+    // winit's keyDown: also calls interpretKeyEvents: internally. Because CURRENT_EVENT_CHARS
+    // is still set to Some(characters_str), swizzled_insert_text knows this is a normal keystroke
+    // and does NOT treat it as is_outside_key_down, preventing double character insertion.
+    if let Some(orig_imp) = *ORIG_KEY_DOWN.lock().unwrap_or_else(|p| p.into_inner()) {
+        unsafe {
+            let orig_fn: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSEvent) =
+                std::mem::transmute(orig_imp);
+            orig_fn(this, sel, event);
+        }
+    }
+
+    CURRENT_EVENT_CHARS.with(|ec| *ec.borrow_mut() = None);
+}
+
+pub fn swizzle_winit_view() {
+    if SWIZZLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(cls) = AnyClass::get(c"WinitView") else {
+        log::warn!("WinitView class not found for IME swizzling");
+        return;
+    };
+    SWIZZLED.store(true, Ordering::Relaxed);
+
+    unsafe {
+        let sel = sel!(selectedRange);
+        if let Some(m) = cls.instance_method(sel) {
+            let orig = m.set_implementation(std::mem::transmute(
+                swizzled_selected_range
+                    as unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> NSRange,
+            ));
+            *ORIG_SELECTED_RANGE.lock().unwrap_or_else(|p| p.into_inner()) = Some(orig);
+        }
+
+        let sel = sel!(attributedSubstringForProposedRange:actualRange:);
+        if let Some(m) = cls.instance_method(sel) {
+            let orig = m.set_implementation(std::mem::transmute(
+                swizzled_attributed_substring
+                    as unsafe extern "C-unwind" fn(
+                        *mut AnyObject,
+                        Sel,
+                        NSRange,
+                        *mut NSRange,
+                    ) -> *mut AnyObject,
+            ));
+            *ORIG_ATTR_SUBSTRING.lock().unwrap_or_else(|p| p.into_inner()) = Some(orig);
+        }
+
+        let sel = sel!(insertText:replacementRange:);
+        if let Some(m) = cls.instance_method(sel) {
+            let orig = m.set_implementation(std::mem::transmute(
+                swizzled_insert_text
+                    as unsafe extern "C-unwind" fn(
+                        *mut AnyObject,
+                        Sel,
+                        *mut AnyObject,
+                        NSRange,
+                    ),
+            ));
+            *ORIG_INSERT_TEXT.lock().unwrap_or_else(|p| p.into_inner()) = Some(orig);
+        }
+
+        let sel = sel!(doCommandBySelector:);
+        if let Some(m) = cls.instance_method(sel) {
+            let orig = m.set_implementation(std::mem::transmute(
+                swizzled_do_command_by_selector
+                    as unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Sel),
+            ));
+            *ORIG_DO_COMMAND.lock().unwrap_or_else(|p| p.into_inner()) = Some(orig);
+        }
+
+        let sel = sel!(keyDown:);
+        if let Some(m) = cls.instance_method(sel) {
+            let orig = m.set_implementation(std::mem::transmute(
+                swizzled_key_down
+                    as unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSEvent),
+            ));
+            *ORIG_KEY_DOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(orig);
+        }
+
+        let defaults = NSUserDefaults::standardUserDefaults();
+        let key = objc2_foundation::ns_string!("ApplePressAndHoldEnabled");
+        defaults.setBool_forKey(true, &key);
+    }
+    log::info!("Configured WinitView for macOS dead keys and press-and-hold accents");
+}
 
 /// Menu edits must reach the input before egui processes focus and selection.
 struct MenuInput(Arc<Mutex<Vec<egui::Event>>>);
@@ -113,6 +405,7 @@ pub fn attach(ctx: &egui::Context) {
     if objc2::MainThreadMarker::new().is_none() {
         return;
     }
+    swizzle_winit_view();
     *REPAINT.lock().unwrap_or_else(|p| p.into_inner()) = Some(ctx.clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         // The tray's menu shares muda's one handler; its ids are its own.
