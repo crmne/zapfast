@@ -9,6 +9,14 @@ use crate::{
 pub fn respond(app: &mut App) {
     for command in app.backend.take_demo_commands() {
         match command {
+            Command::SetArchived(chat, archived) => {
+                if let Some(shown) = app.chats.iter_mut().find(|shown| shown.id == chat) {
+                    shown.archived = archived;
+                    if archived && app.open_chat.as_deref() == Some(chat.as_str()) {
+                        app.actions.push(crate::model::Action::CloseChat);
+                    }
+                }
+            }
             Command::CreatePoll { chat, draft } => {
                 let state = crate::model::PollState {
                     selectable: draft.selectable(),

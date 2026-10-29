@@ -38,6 +38,7 @@ use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
+mod archive_chats;
 mod bot_replies;
 mod calls;
 mod channel_pictures;
@@ -845,6 +846,8 @@ pub async fn run(
         privacy_retry: Instant::now(),
         star_generation: HashMap::new(),
         star_session: 0,
+        archive_requests: HashMap::new(),
+        archive_sequence: 0,
         pin_generation: HashMap::new(),
         withheld_pages: Vec::new(),
         dirs,
@@ -1224,6 +1227,8 @@ struct Worker {
     /// linked, and the per-message generations start over there, so the
     /// session has to be checked as well.
     star_session: u64,
+    archive_requests: HashMap<ChatId, u64>,
+    archive_sequence: u64,
     /// Latest pin or unpin attempt per message. A finished request whose
     /// generation is older than this is dropped.
     pin_generation: HashMap<(String, String), u64>,
@@ -1762,28 +1767,6 @@ impl Worker {
             }))
     }
 
-    /// Archives or unarchives a chat on the phone, naming its newest message.
-    /// A chat whose messages cannot be read is left alone there: a range made
-    /// up without them could move it past messages the phone has.
-    fn archive_on_phone(&self, chat: &str, archived: bool) {
-        let last = match self.newest_on_phone(chat) {
-            Ok(last) => last,
-            Err(error) => {
-                log::warn!("could not read a chat to archive it on the phone: {error}");
-                return;
-            }
-        };
-        self.tell_phone(chat, move |client, jid| async move {
-            let range = Some(archive_range(&jid, last.as_ref()));
-            if archived {
-                client.chat_actions().archive_chat(&jid, range).await
-            } else {
-                client.chat_actions().unarchive_chat(&jid, range).await
-            }
-            .map_err(|error| error.to_string())
-        });
-    }
-
     /// Stars or unstars one message for every linked device.
     fn next_star_generation(&mut self, chat: &str, id: &str) -> u64 {
         let slot = self
@@ -1921,6 +1904,7 @@ impl Worker {
                 }
                 if removed.existed {
                     if self.archive.chat(chat).ok().flatten().is_none() {
+                        self.cancel_archive(chat);
                         log::info!("chat removal: deleted cached chat");
                         self.emit(Event::ChatRemoved {
                             chat: chat.to_owned(),
@@ -3266,6 +3250,7 @@ impl Worker {
                 .delete_chat(&chat.id)
                 .is_ok_and(|removed| removed.existed)
             {
+                self.cancel_archive(&chat.id);
                 self.emit(Event::ChatRemoved { chat: chat.id });
             }
         }
@@ -4078,6 +4063,7 @@ impl Worker {
         // finishes after logout must not write the next account, whose
         // generations start over.
         self.star_generation.clear();
+        self.archive_requests.clear();
         self.pin_generation.clear();
         // Pin answers carry the same session as star answers.
         self.star_session = self.star_session.wrapping_add(1);
@@ -7682,10 +7668,15 @@ impl Worker {
                 self.leave_group(chat, archive).await;
             }
             Command::SetArchived(chat, archived) => {
-                let _ = self.archive.set_archived(&chat, archived);
-                self.emit_chat(&chat);
                 self.archive_on_phone(&chat, archived);
             }
+            Command::Archived {
+                chat,
+                archived,
+                at,
+                request,
+                result,
+            } => self.archived(chat, archived, at, request, result),
             Command::DeleteChat(chat) => {
                 // The phone deletes first. Deleting here while offline would
                 // leave the chat on the phone, and the next sync would bring
@@ -8420,7 +8411,6 @@ impl Worker {
         // writable again or bring Leave back.
         let _ = self.archive.set_left(chat, true);
         if archive {
-            let _ = self.archive.set_archived(chat, true);
             self.archive_on_phone(chat, true);
         }
         self.emit_chat(chat);
@@ -18033,6 +18023,8 @@ mod receipt_tests {
             privacy_retry: Instant::now(),
             star_generation: HashMap::new(),
             star_session: 0,
+            archive_requests: HashMap::new(),
+            archive_sequence: 0,
             pin_generation: HashMap::new(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),

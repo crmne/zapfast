@@ -632,10 +632,6 @@ impl Archive {
         Ok(())
     }
 
-    pub fn set_archived(&self, id: &str, archived: bool) -> Result<()> {
-        self.set_archived_at(id, archived, jiff::Timestamp::now().as_millisecond())
-    }
-
     /// Apply archive state in timestamp order, like pin and mute, so history
     /// arriving later cannot undo an archive change received from the phone.
     pub fn set_archived_at(&self, id: &str, archived: bool, timestamp: i64) -> Result<()> {
@@ -2579,6 +2575,12 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) fn reject_archive_updates(archive: &super::Archive) {
+        archive.connection.execute_batch(
+            "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        ).unwrap();
+    }
+
     pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"

@@ -4368,6 +4368,35 @@ impl App {
                 self.apply_backend_event(Event::Error(error), live);
             }
             Event::AccountRemoved => {}
+            Event::ArchiveFailed { archived, failure } => {
+                use crate::backend::ArchiveFailure;
+                let message = match failure {
+                    ArchiveFailure::Offline if archived => crate::i18n::gettext(
+                        self.locale,
+                        "Connect to WhatsApp to archive this chat",
+                    ),
+                    ArchiveFailure::Offline => crate::i18n::gettext(
+                        self.locale,
+                        "Connect to WhatsApp to unarchive this chat",
+                    ),
+                    ArchiveFailure::Read => {
+                        crate::i18n::gettext(self.locale, "Could not read this chat. Try again")
+                    }
+                    ArchiveFailure::Sync if archived => crate::i18n::gettext(
+                        self.locale,
+                        "Could not confirm archiving on WhatsApp. Try again",
+                    ),
+                    ArchiveFailure::Sync => crate::i18n::gettext(
+                        self.locale,
+                        "Could not confirm unarchiving on WhatsApp. Try again",
+                    ),
+                    ArchiveFailure::Write => crate::i18n::gettext(
+                        self.locale,
+                        "WhatsApp updated this chat, but ZapFast could not save the change",
+                    ),
+                };
+                self.toast_error(message);
+            }
         }
         // A hidden account's events never touch the window's selection.
         if !self.events_hidden {
@@ -8030,12 +8059,6 @@ impl App {
                 self.backend.send(Command::LeaveGroup { chat, archive });
             }
             Action::SetArchived(chat, archived) => {
-                if let Some(known) = self.chat_mut(&chat) {
-                    known.archived = archived;
-                }
-                if archived && self.open_chat.as_deref() == Some(chat.as_str()) {
-                    self.actions.push(Action::CloseChat);
-                }
                 self.backend.send(Command::SetArchived(chat, archived));
             }
             // The chat leaves the list once the phone confirmed, through
@@ -15968,6 +15991,51 @@ mod tests {
         let chat = app.chat(&id).expect("chat");
         assert_eq!(chat.unread, 3);
         assert!(!chat.marked_unread);
+    }
+
+    #[test]
+    fn archive_request_keeps_the_confirmed_state_until_whatsapp_answers() {
+        for archived in [false, true] {
+            let mut app = app();
+            let (backend, mut commands, events) = Backend::recording_with_events();
+            app.backend = backend;
+            let id = "15550002222@s.whatsapp.net".to_owned();
+            let mut chat = Chat::new(id.clone(), "Fixture".into());
+            chat.archived = !archived;
+            app.chats.push(chat.clone());
+            app.open_chat = Some(id.clone());
+            let ctx = egui::Context::default();
+
+            app.apply(Action::SetArchived(id.clone(), archived), &ctx);
+            app.apply_actions(&ctx);
+
+            assert_eq!(app.chat(&id).unwrap().archived, !archived);
+            assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+            assert!(
+                matches!(commands.try_recv(), Ok(Command::SetArchived(chat, state)) if chat == id && state == archived)
+            );
+            events
+                .send(Event::ArchiveFailed {
+                    archived,
+                    failure: crate::backend::ArchiveFailure::Sync,
+                })
+                .unwrap();
+            app.handle_events();
+            assert_eq!(app.chat(&id).unwrap().archived, !archived);
+            assert_eq!(app.open_chat.as_deref(), Some(id.as_str()));
+            assert!(
+                app.toasts
+                    .iter()
+                    .any(|toast| toast.message.contains("Try again"))
+            );
+
+            chat.archived = archived;
+            events.send(Event::ChatUpdated(Box::new(chat))).unwrap();
+            app.handle_events();
+            app.apply_actions(&ctx);
+            assert_eq!(app.chat(&id).unwrap().archived, archived);
+            assert_eq!(app.open_chat.is_none(), archived);
+        }
     }
 
     #[test]
