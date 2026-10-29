@@ -1,6 +1,6 @@
-//! Playback for WhatsApp GIFs, animated WebP stickers, and GIF files.
+//! Playback for WhatsApp GIFs and animated stickers, and downloaded media posters.
 //!
-//! Decoding runs off the UI thread. WebP, GIF, and H.264 MP4 decode in-process;
+//! Decoding runs off the UI thread. Photos, GIFs, and H.264 MP4 decode in-process;
 //! other MP4 codecs use `ffmpeg` when available. Idle animations are removed
 //! from memory, and a paused one keeps only its first frame, the poster, until
 //! it plays.
@@ -102,7 +102,7 @@ fn inbox(ctx: &egui::Context) -> Inbox {
     })
 }
 
-/// Current display state for an animated file.
+/// Current display state for a media file.
 pub enum Frame {
     /// Current animation frame.
     Ready(TextureHandle),
@@ -380,9 +380,26 @@ fn decode(path: &Path, limit: usize) -> Option<Decoded> {
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
+        "jpg" | "jpeg" | "png" => decode_still(path),
+        "webp" if limit == 1 => {
+            decode_image(path, &extension, limit).or_else(|| decode_still(path))
+        }
         "webp" | "gif" => decode_image(path, &extension, limit),
         _ => decode_video(path, limit),
     }
+}
+
+/// A downloaded photo's small poster, built on the decoder thread, never the UI thread.
+fn decode_still(path: &Path) -> Option<Decoded> {
+    let image = image::ImageReader::open(path)
+        .ok()?
+        .decode()
+        .ok()?
+        .thumbnail(MAX_WIDTH, MAX_WIDTH)
+        .to_rgba8();
+    Some(Decoded {
+        frames: vec![(to_color_image(&image), Duration::ZERO)],
+    })
 }
 
 /// Decodes animated GIF with the `image` crate.
@@ -779,6 +796,43 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn downloaded_photos_have_small_idle_posters() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for (extension, width, height) in [("jpg", 900, 300), ("png", 300, 900), ("webp", 900, 900)]
+        {
+            let path = dir.path().join(format!("photo.{extension}"));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            paths.push(path);
+        }
+        let ctx = egui::Context::default();
+        settle(&ctx, &paths, false);
+        for shown in draw_all(&ctx, &paths, false) {
+            let Frame::Ready(texture) = shown else {
+                panic!("a photo poster")
+            };
+            assert!(
+                texture
+                    .size()
+                    .into_iter()
+                    .all(|side| side <= MAX_WIDTH as usize)
+            );
+        }
+        let cache = cache(&ctx);
+        let cached = cache.0.lock().unwrap();
+        for path in &paths {
+            let Some(Entry::Ready(playing)) = cached.entries.get(path) else {
+                panic!("cached poster")
+            };
+            assert_eq!(playing.frames.len(), 1);
+            assert!(!playing.animating, "a thumbnail never starts playback");
+        }
+        assert!(decode_still(&dir.path().join("missing.jpg")).is_none());
+    }
 
     /// A video being sent gets its picture, size, and length from its bytes.
     #[test]

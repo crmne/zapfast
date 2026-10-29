@@ -1061,15 +1061,17 @@ enum Tile {
     /// The thumbnail the archive stored with the message: already the 56 px the
     /// strip wants.
     Stored,
-    /// The message's kind icon. A tile is never drawn from the file itself: a
-    /// 56 px square is not worth decoding a whole photo on the interface
-    /// thread, nor holding its full-size texture for a strip that scrolls.
+    /// A small poster generated from the downloaded file off the UI thread.
+    Downloaded,
+    /// The message's kind icon while neither a stored preview nor a file is available.
     Icon,
 }
 
 fn tile_of(item: &MediaItem) -> Tile {
     if item.thumbnail.is_some() {
         Tile::Stored
+    } else if item.path.is_some() {
+        Tile::Downloaded
     } else {
         Tile::Icon
     }
@@ -1081,11 +1083,9 @@ mod tile_tests {
     use crate::model::MediaItem;
     use std::path::PathBuf;
 
-    /// The strip draws the thumbnail the archive stored, and the message's
-    /// kind icon when there is none: decoding the file for a 56 px tile
-    /// would run on the interface thread and hold its full-size texture.
+    /// Missing stored previews use downloaded photos and videos before falling back to icons.
     #[test]
-    fn a_tile_is_drawn_from_the_stored_thumbnail_or_not_at_all() {
+    fn a_tile_prefers_the_stored_thumbnail_then_the_downloaded_file() {
         let stored = MediaItem {
             card: None,
             id: "m1".into(),
@@ -1099,12 +1099,14 @@ mod tile_tests {
             thumbnail: None,
             ..stored.clone()
         };
-        assert_eq!(tile_of(&file_only), Tile::Icon);
+        assert_eq!(tile_of(&file_only), Tile::Downloaded);
         let clip = MediaItem {
             video: true,
             ..file_only
         };
-        assert_eq!(tile_of(&clip), Tile::Icon);
+        assert_eq!(tile_of(&clip), Tile::Downloaded);
+        let missing = MediaItem { path: None, ..clip };
+        assert_eq!(tile_of(&missing), Tile::Icon);
     }
 }
 
@@ -1117,10 +1119,20 @@ fn thumb(
     current: bool,
 ) {
     ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
-    match (tile_of(item), item.thumbnail.as_deref()) {
+    let generated = if tile_of(item) == Tile::Downloaded {
+        item.path.as_deref().and_then(
+            |path| match crate::animation::frame(ui, path, rect, false) {
+                crate::animation::Frame::Ready(texture) => Some(texture),
+                _ => None,
+            },
+        )
+    } else {
+        None
+    };
+    match (tile_of(item), item.thumbnail.as_deref(), generated.as_ref()) {
         // A message id is only unique inside its chat, and the image cache
         // keeps the first bytes for a URI, so the chat has to be part of it.
-        (Tile::Stored, Some(bytes)) => {
+        (Tile::Stored, Some(bytes), _) => {
             // A carousel's cards share their message's id, and each has its
             // own preview, so the card is part of the key too.
             let key = match item.card {
@@ -1128,6 +1140,12 @@ fn thumb(
                 None => item.id.clone(),
             };
             egui::Image::new(thumbnail_uri(ui.ctx(), chat, &key, bytes))
+                .fit_to_exact_size(rect.size())
+                .corner_radius(6.0)
+                .paint_at(ui, rect);
+        }
+        (_, _, Some(texture)) => {
+            egui::Image::from_texture(texture)
                 .fit_to_exact_size(rect.size())
                 .corner_radius(6.0)
                 .paint_at(ui, rect);
