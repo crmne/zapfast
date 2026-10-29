@@ -22230,6 +22230,10 @@ mod long_chat_tests {
         for _ in 0..12 {
             frame(&mut app, &ctx, wheel(300.0));
         }
+        // These tests start from stationary text. End the positioning gesture
+        // before choosing cursors: Linux adds a delayed touchpad glide, so a
+        // fixed number of idle frames can otherwise capture moving targets.
+        app.scrolling.stop();
         for _ in 0..15 {
             frame(&mut app, &ctx, Vec::new());
         }
