@@ -945,6 +945,9 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
+        /// Resolved once this attachment has gone out or failed, so the next
+        /// one queued for the chat may follow it.
+        done: Option<tokio::sync::oneshot::Sender<()>>,
     },
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {

@@ -6012,8 +6012,20 @@ impl App {
         let mut mentions = mentions;
         self.emoji_start = None;
         self.mention_start = None;
-        // Files go in runs of one kind, in the order they were staged.
-        let mut runs: Vec<(bool, Vec<PathBuf>)> = Vec::new();
+        // Everything goes in the order it was staged, files in runs of one
+        // kind; a picture between files splits the run around it.
+        enum Send {
+            Picture {
+                width: u32,
+                height: u32,
+                rgba: Vec<u8>,
+            },
+            Files {
+                documents: bool,
+                paths: Vec<PathBuf>,
+            },
+        }
+        let mut sends: Vec<Send> = Vec::new();
         for staged in std::mem::take(&mut self.pending) {
             let (documents, path) = match staged.item {
                 Pending::Picture {
@@ -6022,35 +6034,56 @@ impl App {
                     rgba,
                     ..
                 } => {
-                    self.backend.send(Command::SendImage {
-                        chat: chat.clone(),
+                    sends.push(Send::Picture {
                         width: width as u32,
                         height: height as u32,
                         rgba: std::sync::Arc::try_unwrap(rgba).unwrap_or_else(|arc| (*arc).clone()),
-                        view_once,
-                        caption: caption.take(),
-                        mentions: std::mem::take(&mut mentions),
-                        quoting: quoting.take(),
                     });
                     continue;
                 }
                 Pending::File(path) => (false, path),
                 Pending::Document(path) => (true, path),
             };
-            match runs.last_mut() {
-                Some((kind, paths)) if *kind == documents => paths.push(path),
-                _ => runs.push((documents, vec![path])),
+            match sends.last_mut() {
+                Some(Send::Files {
+                    documents: kind,
+                    paths,
+                }) if *kind == documents => paths.push(path),
+                _ => sends.push(Send::Files {
+                    documents,
+                    paths: vec![path],
+                }),
             }
         }
-        for (documents, paths) in runs {
-            self.backend.send(Command::SendFiles {
-                chat: chat.clone(),
-                paths,
-                documents,
-                view_once,
-                caption: caption.take(),
-                mentions: std::mem::take(&mut mentions),
-                quoting: quoting.take(),
+        for send in sends {
+            let chat = chat.clone();
+            let caption = caption.take();
+            let mentions = std::mem::take(&mut mentions);
+            let quoting = quoting.take();
+            self.backend.send(match send {
+                Send::Picture {
+                    width,
+                    height,
+                    rgba,
+                } => Command::SendImage {
+                    chat,
+                    width,
+                    height,
+                    rgba,
+                    view_once,
+                    caption,
+                    mentions,
+                    quoting,
+                },
+                Send::Files { documents, paths } => Command::SendFiles {
+                    chat,
+                    paths,
+                    documents,
+                    view_once,
+                    caption,
+                    mentions,
+                    quoting,
+                },
             });
         }
         // Everything staged has gone, so nothing is remembered about it.
@@ -19347,6 +19380,53 @@ mod tests {
     }
 
     /// Checks that an unsent recording remains scoped to its destination and retains its quote.
+    #[test]
+    fn a_picture_between_files_is_sent_in_its_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.stage(Pending::File("/fixture/a.png".into()));
+        app.stage(Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![0; 4]),
+            texture: None,
+        });
+        app.stage(Pending::File("/fixture/b.png".into()));
+        app.apply(
+            Action::SendPending {
+                account: app.account().id.clone(),
+                mentions: Vec::new(),
+                chat: chat.into(),
+                caption: "Caption fixture".into(),
+            },
+            &ctx,
+        );
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::SendFiles { paths, caption, .. } => Some((Some(paths), caption)),
+                Command::SendImage { caption, .. } => Some((None, caption)),
+                _ => None,
+            })
+            .collect();
+        // The caption goes with the first thing staged, a file here.
+        assert_eq!(
+            sent,
+            vec![
+                (
+                    Some(vec![PathBuf::from("/fixture/a.png")]),
+                    Some("Caption fixture".to_owned())
+                ),
+                (None, None),
+                (Some(vec![PathBuf::from("/fixture/b.png")]), None),
+            ]
+        );
+    }
+
     #[test]
     fn picked_documents_are_sent_as_documents_in_the_order_they_were_staged() {
         let root = tempfile::tempdir().unwrap();
