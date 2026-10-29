@@ -2368,6 +2368,7 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         Content::Document { caption, .. } => 70.0 + caption_rows(caption),
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
+        Content::DisappearingTimer { .. } => 0.0,
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
@@ -2672,12 +2673,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         .as_ref()
         .filter(|divider| divider.chat == chat.id)
         .and_then(|divider| {
-            conversation
-                .messages
-                .iter()
-                .rev()
-                .filter(|message| !message.from_me)
-                .nth(divider.count.saturating_sub(1) as usize)
+            unread_divider_message(&conversation.messages, divider.count)
                 .map(|message| (message.id.clone(), divider.count, divider.placed))
         });
     let mut divider_placed = false;
@@ -3089,9 +3085,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                 let show_sender = shows_sender_pictures(chat)
                                     && !message.from_me
                                     && (new_day
-                                        || previous.is_none_or(|previous| {
-                                            previous.sender != message.sender || previous.from_me
-                                        }));
+                                        || previous
+                                            .is_none_or(|previous| !same_run(previous, message)));
                                 // The first message of a run from one side, as the
                                 // phone draws it: a little apart, with a tail.
                                 let first_in_run = new_day
@@ -4160,6 +4155,37 @@ struct RunPlace {
     tailed: bool,
 }
 
+/// The message the unread divider sits before: the `count`-th incoming row
+/// from the end. Rows ZapFast filed for itself (a call entry, a timer notice)
+/// are never counted as unread, so counting one here would put the divider on
+/// the wrong row.
+fn unread_divider_message(messages: &[Message], count: u32) -> Option<&Message> {
+    messages
+        .iter()
+        .rev()
+        .filter(|message| !message.from_me && !crate::model::local_message_id(&message.id))
+        .nth(count.saturating_sub(1) as usize)
+}
+
+/// The system row a disappearing-message timer change leaves in the
+/// transcript: a centred chip naming who changed it and to what, as the
+/// phone shows it. It is not a message, so nothing selects or copies it.
+fn timer_notice(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    seconds: u32,
+) -> egui::Response {
+    let name = if message.from_me {
+        crate::i18n::gettext(view.locale, "You").into_owned()
+    } else {
+        (view.names_or)(&message.sender, message.sender_name.as_deref())
+    };
+    let text = crate::util::disappearing_change(view.locale, &name, seconds);
+    ui.vertical_centered(|ui| widgets::chip(ui, &view.palette, &text))
+        .inner
+}
+
 /// Draws a message row and returns its bubble response for scrolling.
 fn bubble(
     ui: &mut egui::Ui,
@@ -4169,6 +4195,11 @@ fn bubble(
     place: RunPlace,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // A timer change is a system row, not a message: a centred chip naming
+    // who changed it and to what, with no bubble, avatar, or selection.
+    if let Content::DisappearingTimer { seconds } = &message.content {
+        return Some(timer_notice(ui, view, message, *seconds));
+    }
     let RunPlace {
         show_sender,
         show_avatar,
@@ -4830,7 +4861,10 @@ fn last_bubble_of_run(palette: &Palette, messages: &[Message], index: usize) -> 
 /// Whether `next` continues the run `message` belongs to: the same side,
 /// and in a group the same sender.
 fn same_run(message: &Message, next: &Message) -> bool {
-    message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
+    !matches!(message.content, Content::DisappearingTimer { .. })
+        && !matches!(next.content, Content::DisappearingTimer { .. })
+        && message.from_me == next.from_me
+        && (message.from_me || message.sender == next.sender)
 }
 
 /// Room around a bubble's contents: none around a picture that stands
@@ -6368,7 +6402,10 @@ fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> 
     for message in messages {
         if remaining.remove(message.id.as_str()) {
             if !message.from_me
-                || matches!(message.content, Content::Revoked)
+                || matches!(
+                    message.content,
+                    Content::Revoked | Content::DisappearingTimer { .. }
+                )
                 || now - message.timestamp > crate::app::REVOKE_WINDOW.as_secs() as i64
             {
                 return false;
@@ -7851,6 +7888,11 @@ fn content(
                     );
                 },
             );
+            None
+        }
+        Content::DisappearingTimer { .. } => {
+            // Drawn as a centred system row by `bubble`, which returns before
+            // the bubble is built. This arm only keeps the match exhaustive.
             None
         }
     }
@@ -11351,6 +11393,100 @@ mod tests {
             thumbnail: None,
             history_order: None,
         }
+    }
+
+    /// The unread divider skips the rows the unread count leaves out, so the
+    /// count-th real incoming message is the right one.
+    #[test]
+    fn the_unread_divider_skips_rows_that_are_not_counted() {
+        let incoming = |id: &str, content: Content| {
+            let mut row = message(content);
+            row.id = id.into();
+            row.from_me = false;
+            row
+        };
+        let rows = vec![
+            incoming("old", Content::text("old")),
+            incoming(
+                "zapfast-timer-1",
+                Content::DisappearingTimer { seconds: 86_400 },
+            ),
+            incoming(
+                "zapfast-call-1",
+                Content::Call {
+                    video: false,
+                    status: crate::model::CallStatus::Missed,
+                    duration: 0,
+                    group: false,
+                },
+            ),
+            incoming("newest", Content::text("newest")),
+        ];
+        assert_eq!(unread_divider_message(&rows, 1).unwrap().id, "newest");
+        // Neither local row is counted, so the second real message is chosen.
+        assert_eq!(unread_divider_message(&rows, 2).unwrap().id, "old");
+    }
+
+    #[test]
+    fn timer_notices_break_message_runs_on_both_sides() {
+        for from_me in [false, true] {
+            let text = Message {
+                from_me,
+                ..message(Content::text("Hello"))
+            };
+            let notice = Message {
+                content: Content::DisappearingTimer { seconds: 86_400 },
+                ..text.clone()
+            };
+            assert!(same_run(&text, &text));
+            assert!(!same_run(&text, &notice));
+            assert!(!same_run(&notice, &text));
+            assert!(!same_run(&notice, &notice));
+            let rows = [text.clone(), notice, text];
+            assert!(last_of_run(&rows, 0));
+            for palette in [Palette::dark(), Palette::messages()] {
+                assert!(last_bubble_of_run(&palette, &rows, 0));
+                assert!(last_bubble_of_run(&palette, &rows, 2));
+            }
+        }
+    }
+
+    #[test]
+    fn timer_notices_return_a_navigation_response_without_selection() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|view| {
+            let notice = message(Content::DisappearingTimer { seconds: 86_400 });
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 300.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = bubble(
+                        ui,
+                        view,
+                        &notice,
+                        None,
+                        RunPlace {
+                            show_sender: false,
+                            show_avatar: false,
+                            tailed: false,
+                        },
+                        &mut actions,
+                    )
+                    .expect("the notice needs a response for scroll and focus handling");
+                    assert!(response.rect.is_positive());
+                    assert!(!response.sense.senses_click());
+                    assert!(!response.sense.senses_drag());
+                },
+            );
+            output.textures_delta.clear();
+            assert!(!crate::app::can_select(&notice.content));
+            assert!(actions.is_empty());
+            assert!(view.copy_rows.unwrap().lock().unwrap().is_empty());
+        });
     }
 
     /// The menu offers the viewer for a message the album takes and a file

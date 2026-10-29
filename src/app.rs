@@ -338,6 +338,7 @@ pub(crate) fn can_select(content: &Content) -> bool {
             | Content::Poll { .. }
             | Content::Interactive { .. }
             | Content::Call { .. }
+            | Content::DisappearingTimer { .. }
     )
 }
 
@@ -566,6 +567,9 @@ pub struct App {
     /// Demo/test: keep this group member's menu open in the info panel.
     #[cfg(any(test, feature = "demo"))]
     pub open_member_menu: Option<ChatId>,
+    /// Demo/test: keep the info panel's disappearing-timer menu open.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_timer_menu: Option<ChatId>,
     /// Demo/test: keep the selection bar's delete menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_selection_delete_menu: bool,
@@ -1469,6 +1473,8 @@ impl App {
             open_header_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_member_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            open_timer_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_selection_delete_menu: false,
             emoji_jump: None,
@@ -4318,6 +4324,13 @@ impl App {
                     self.group_saving.remove(&chat);
                 }
             }
+            Event::TimerSaving { chat, saving } => {
+                if saving {
+                    self.timer_saving.insert(chat);
+                } else {
+                    self.timer_saving.remove(&chat);
+                }
+            }
             Event::Error(message) => {
                 self.sticker_import_pending = false;
                 // The worker sends the English catalog key. `gettext` only
@@ -4337,6 +4350,23 @@ impl App {
                     crate::calls::CALL_LINKS_OFF => crate::i18n::gettext(
                         self.locale,
                         "ZapFast can't join group calls yet: open the link on your phone.",
+                    )
+                    .into_owned(),
+                    "Connect to WhatsApp to change disappearing messages." => {
+                        crate::i18n::gettext(
+                            self.locale,
+                            "Connect to WhatsApp to change disappearing messages.",
+                        )
+                        .into_owned()
+                    }
+                    "Could not change disappearing messages." => crate::i18n::gettext(
+                        self.locale,
+                        "Could not change disappearing messages.",
+                    )
+                    .into_owned(),
+                    "Only admins can change disappearing messages." => crate::i18n::gettext(
+                        self.locale,
+                        "Only admins can change disappearing messages.",
                     )
                     .into_owned(),
                     _ => message,
@@ -4509,6 +4539,10 @@ impl App {
                 self.chat_pins.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
                 self.account_receipts_off = false;
+                // A change in flight belonged to that account. Its completion
+                // is discarded, so nothing else would clear this.
+                self.group_saving.clear();
+                self.timer_saving.clear();
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
                 // went away, but only when that account is the one on screen.
@@ -8868,6 +8902,10 @@ impl App {
             }
             Action::PickChatSound(chat) => self.backend.send(Command::PickChatSound(chat)),
             Action::SetChatVoiceSpeed { chat, speed } => self.set_chat_voice_speed(chat, speed),
+            Action::SetDisappearingTimer { chat, seconds } => {
+                self.backend
+                    .send(Command::SetDisappearingTimer { chat, seconds });
+            }
             Action::SetDownloadFolder(folder) => {
                 self.settings.download_folder = folder.clone();
                 self.mark_settings_dirty();
@@ -12070,6 +12108,19 @@ mod tests {
         app.handle_link(LinkStatus::LoggedOut, true);
         assert!(app.attachment_drafts.is_empty());
         assert!(app.pending.is_empty());
+    }
+
+    /// A group or timer change still in flight belongs to the account that
+    /// went away. Logging out drops its saving state, since the completion
+    /// that would have cleared it is discarded.
+    #[test]
+    fn logout_drops_a_change_that_was_still_saving() {
+        let mut app = app();
+        app.group_saving.insert("120363000000000001@g.us".into());
+        app.timer_saving.insert("15550000001@s.whatsapp.net".into());
+        app.handle_link(LinkStatus::LoggedOut, true);
+        assert!(app.group_saving.is_empty());
+        assert!(app.timer_saving.is_empty());
     }
 
     /// Hiding a locked conversation retains its attachment draft without exposing it in the regular list.

@@ -618,6 +618,15 @@ pub struct LinkPreview {
 }
 
 impl Message {
+    /// Whether WhatsApp also holds this row under an id it can be named by. A
+    /// send still pending or failed here may never have reached it, and a
+    /// disappearing-timer notice is filed under an id it never issued. Neither
+    /// may be named in a message range sent to the phone.
+    pub fn known_to_phone(&self) -> bool {
+        !timer_notice_id(&self.id)
+            && !(self.from_me && matches!(self.status, Delivery::Pending | Delivery::Failed))
+    }
+
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
         (!self.from_me
@@ -862,6 +871,14 @@ pub enum Content {
     },
     /// "This message was deleted."
     Revoked,
+    /// A disappearing-message timer change, drawn as a centred system row
+    /// rather than a bubble. The message's `from_me` and `sender` say who
+    /// changed it.
+    #[serde(rename = "disappearing_timer")]
+    DisappearingTimer {
+        /// The new duration in seconds; `0` means the timer was turned off.
+        seconds: u32,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -903,6 +920,22 @@ pub const CALL_ENTRY_PREFIX: &str = "zapfast-call-";
 /// under. No chat has it: such a call belongs to none, so its entries show on
 /// the Calls page alone, never in the chat list.
 pub const CALL_LINK_CHAT: &str = "zapfast-call-link";
+
+/// The id prefix of the disappearing-timer notices ZapFast files from live
+/// setting changes. They are local system rows, never sent anywhere.
+pub const TIMER_NOTICE_PREFIX: &str = "zapfast-timer-";
+
+/// Whether `id` is one ZapFast made up for a row of its own, which no server
+/// ever issued: a call entry, or a disappearing-timer notice. Nothing sent to
+/// WhatsApp may name such an id.
+pub fn local_message_id(id: &str) -> bool {
+    id.starts_with(CALL_ENTRY_PREFIX) || timer_notice_id(id)
+}
+
+/// Whether `id` names a disappearing-timer notice.
+pub fn timer_notice_id(id: &str) -> bool {
+    id.starts_with(TIMER_NOTICE_PREFIX)
+}
 
 /// How far apart, in seconds, two entries for one call may be: the phone's
 /// call-log message and the call's record are stamped by different clocks.
@@ -1312,6 +1345,11 @@ impl Content {
 
     /// [`Self::summary`] with its content label in `locale`.
     pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        // The duration after the label is a phrase of its own, so the whole
+        // line is built in the reader's language rather than only its label.
+        if let Self::DisappearingTimer { seconds } = self {
+            return disappearing_summary(locale, *seconds);
+        }
         let summary = self.summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1322,6 +1360,9 @@ impl Content {
 
     /// [`Self::full_summary`] with its content label in `locale`.
     pub fn full_summary_in(&self, locale: crate::i18n::Locale) -> String {
+        if matches!(self, Self::DisappearingTimer { .. }) {
+            return self.summary_in(locale);
+        }
         let summary = self.full_summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1370,6 +1411,10 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::DisappearingTimer { seconds } => {
+                crate::util::disappearing_line(crate::i18n::Locale::English, Some(*seconds))
+                    .unwrap_or_else(|| "Disappearing messages changed".to_owned())
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {
@@ -1635,6 +1680,14 @@ fn summary_label(
         "Video call" => gettext(locale, "Video call"),
         _ => std::borrow::Cow::Borrowed(label),
     }
+}
+
+/// A timer change's line in `locale`, as the chat list and a notification
+/// show it: "Disappearing messages: 7 days", both parts translated.
+fn disappearing_summary(locale: crate::i18n::Locale, seconds: u32) -> String {
+    // A known duration always reads, so the label alone is only a fallback.
+    crate::util::disappearing_line(locale, Some(seconds))
+        .unwrap_or_else(|| crate::i18n::gettext(locale, "Disappearing messages").into_owned())
 }
 
 /// `summary` with the content label it starts with, such as "Photo" or
@@ -3078,6 +3131,11 @@ pub enum Action {
     SetChatVoiceSpeed {
         chat: ChatId,
         speed: Option<f32>,
+    },
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
     },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,

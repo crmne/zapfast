@@ -39,6 +39,7 @@ const RESET_LINK_STOP: u8 = 14;
 const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
+const TIMER_STOP: u8 = 32;
 
 /// The media view's title, and the overview row that opens it.
 fn media_title(app: &App) -> String {
@@ -213,10 +214,13 @@ struct Shown {
     muted: bool,
     pinned: bool,
     archived: bool,
+    /// A chat we have left. It stays readable but takes no new settings.
+    left: bool,
     /// A group's description, when it has one.
     description: Option<String>,
     /// The disappearing-message timer line, when the timer is known.
     timer: Option<String>,
+    timer_seconds: Option<u32>,
 }
 
 impl Shown {
@@ -250,11 +254,13 @@ impl Shown {
             muted: chat.muted(crate::util::now()),
             pinned: chat.pinned,
             archived: chat.archived,
+            left: chat.left,
             description: chat
                 .group_description
                 .clone()
                 .filter(|text| chat.is_group() && !text.trim().is_empty()),
             timer: crate::util::disappearing_line(app.locale, chat.ephemeral_expiration),
+            timer_seconds: chat.ephemeral_expiration,
         }
     }
 }
@@ -500,25 +506,124 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                 palette.secondary,
             );
         }
-        // The chat's disappearing-message timer, read-only. A timer WhatsApp
-        // turned off reads as "Off", which is a fact; a chat whose timer
-        // nobody has mentioned draws nothing rather than guessing.
-        // Recorded every frame, drawn or not, so a test reading the marker
-        // after the row went away sees nothing instead of the last frame.
+        // Keep a known timer visible even when the group's permissions make
+        // it read-only. An editable chat with no known timer still offers the
+        // choice without guessing "Off". Record the marker every frame so a
+        // hidden row cannot leave the previous chat's value behind.
+        let eligible = shown.has_chat && !shown.channel && !shown.left;
+        let changeable = eligible && (!shown.group || shown.can_edit_info);
+        let showable = eligible && (changeable || shown.timer.is_some());
+        let label = shown.timer.clone().unwrap_or_else(|| {
+            crate::i18n::gettext(app.locale, "Disappearing messages").into_owned()
+        });
         ui.ctx().data_mut(|data| {
             data.insert_temp(
                 super::dialogs::disappearing_timer_id(),
-                shown.timer.as_deref().map(|text| super::dialogs::TimerRow {
-                    text: text.to_owned(),
+                showable.then(|| super::dialogs::TimerRow {
+                    text: label.clone(),
                     rect: Rect::NOTHING,
                 }),
             )
         });
-        if let Some(text) = shown.timer.as_deref() {
+        if showable {
+            let text = label.as_str();
+            // A hover highlight painted under the row: the placeholder is
+            // added first and filled in once the row's rect is known.
+            let painter = ui.painter().clone();
+            let highlight = painter.add(egui::Shape::Noop);
             let drawn = super::dialogs::disappearing_timer_row(ui, &palette, text);
             ui.ctx().data_mut(|data| {
-                data.insert_temp(super::dialogs::disappearing_timer_id(), Some(drawn))
+                data.insert_temp(super::dialogs::disappearing_timer_id(), Some(drawn.clone()))
             });
+            let saving = app.timer_saving.contains(id);
+            let can_change = changeable && !saving;
+            let response = ui.interact(
+                drawn.rect.expand2(vec2(8.0, 4.0)),
+                egui::Id::new(("disappearing-timer-control", id)),
+                if can_change {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
+            let response = if can_change {
+                response.tab_stop(Stop::InfoControl(TIMER_STOP))
+            } else {
+                response
+            };
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, can_change, text)
+            });
+            // Keyboard focus shows the same way the media row's does.
+            theme::reveal_focus(&response);
+            theme::focus_outline(ui, response.id, drawn.rect.expand2(vec2(8.0, 4.0)), 6.0);
+            // A clickable row reads as one: the pointer changes over it and a
+            // soft fill appears behind it. The placeholder was added before
+            // the row, so the fill stays under its icon and text.
+            if can_change && response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                painter.set(
+                    highlight,
+                    egui::Shape::rect_filled(
+                        drawn.rect.expand2(vec2(8.0, 4.0)),
+                        6.0,
+                        palette.surface_hover,
+                    ),
+                );
+            }
+            // Demo/test: hold this menu open for a screenshot.
+            #[cfg(any(test, feature = "demo"))]
+            if can_change && app.open_timer_menu.as_deref() == Some(id) {
+                egui::Popup::open_id(ui.ctx(), response.id.with("popup"));
+            }
+            let choices = [
+                (0, crate::i18n::gettext(app.locale, "Off")),
+                (86_400, crate::i18n::gettext(app.locale, "24 hours")),
+                (604_800, crate::i18n::gettext(app.locale, "7 days")),
+                (7_776_000, crate::i18n::gettext(app.locale, "90 days")),
+            ];
+            let mut selected = None;
+            egui::Popup::menu(&response)
+                .open_memory((!can_change).then_some(egui::SetOpenCommand::Bool(false)))
+                .align(egui::RectAlign::BOTTOM)
+                .width(widgets::menu_width(
+                    ui,
+                    &choices
+                        .iter()
+                        .map(|(_, label)| label.as_ref())
+                        .collect::<Vec<_>>(),
+                    true,
+                ))
+                .frame(widgets::menu_frame(&palette))
+                .show(|ui| {
+                    for (seconds, label) in &choices {
+                        if widgets::menu_item_enabled(
+                            ui,
+                            &palette,
+                            (shown.timer_seconds == Some(*seconds)).then_some(Icon::Check),
+                            label,
+                            can_change,
+                        ) {
+                            selected = Some(*seconds);
+                            ui.close();
+                        }
+                    }
+                });
+            if let Some(seconds) = selected {
+                app.actions.push(Action::SetDisappearingTimer {
+                    chat: id.to_owned(),
+                    seconds,
+                });
+            }
+            // Both direct and group changes disable the row while waiting.
+            if saving {
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(app.locale, "Saving…"),
+                    theme::regular(12.5),
+                    palette.dim,
+                );
+            }
         }
     });
     if let Some((first, last)) = saved {
