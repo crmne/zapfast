@@ -735,9 +735,11 @@ the link only while the details are open, never on disk.
 
 **Media, links and docs** in the panel lists the photos and videos, the
 documents, and the links shared in the chat, newest first: click a photo or a
-document to go to its message, or a link to open it in the browser. Press
-Escape to go back to the overview, and again to close the panel. Drag its edge
-to change its width. The conversation narrows beside the panel, and when the
+document to go to its message, or a link to open it in the browser.
+The square thumbnails here and along the media viewer's bottom edge show a
+centered crop without stretching the picture; opening it shows the full image.
+Press Escape to go back to the overview, and again to close the panel. Drag its
+edge to change its width. The conversation narrows beside the panel, and when the
 window is too tight for the chat list as well, the list steps aside until the
 panel closes. In a narrow window the panel is a page of its own: **Back**
 returns to the chat. A locked

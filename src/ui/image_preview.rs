@@ -1081,6 +1081,111 @@ mod tile_tests {
     use crate::model::MediaItem;
     use std::path::PathBuf;
 
+    #[test]
+    fn strip_thumbnails_crop_the_longer_side_without_stretching() {
+        for (width, height, uv) in [
+            (
+                120,
+                40,
+                Rect::from_min_max(pos2(1.0 / 3.0, 0.0), pos2(2.0 / 3.0, 1.0)),
+            ),
+            (
+                40,
+                120,
+                Rect::from_min_max(pos2(0.0, 1.0 / 3.0), pos2(1.0, 2.0 / 3.0)),
+            ),
+            (
+                400,
+                40,
+                Rect::from_min_max(pos2(0.45, 0.0), pos2(0.55, 1.0)),
+            ),
+            (
+                40,
+                400,
+                Rect::from_min_max(pos2(0.0, 0.45), pos2(1.0, 0.55)),
+            ),
+            (40, 40, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))),
+        ] {
+            for video in [false, true] {
+                let ctx = egui::Context::default();
+                egui_extras::install_image_loaders(&ctx);
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::RgbImage::from_pixel(width, height, image::Rgb([60, 120, 180]))
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .unwrap();
+                let item = MediaItem {
+                    card: None,
+                    id: "crop-fixture".into(),
+                    timestamp: 0,
+                    video,
+                    path: None,
+                    thumbnail: Some(png.into_inner()),
+                };
+                let rect = Rect::from_min_size(pos2(16.0, 16.0), Vec2::splat(THUMB));
+                let uri =
+                    thumbnail_uri(&ctx, "fixture", &item.id, item.thumbnail.as_ref().unwrap());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                loop {
+                    match egui::Image::new(uri.clone())
+                        .load_for_size(&ctx, rect.size())
+                        .unwrap()
+                    {
+                        egui::load::TexturePoll::Ready { texture } => {
+                            assert_eq!(texture.size, vec2(width as f32, height as f32));
+                            break;
+                        }
+                        egui::load::TexturePoll::Pending { .. } => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "thumbnail did not load"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                    }
+                }
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::splat(200.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        thumb(
+                            ui,
+                            &crate::theme::Palette::dark(),
+                            "fixture",
+                            &item,
+                            rect,
+                            false,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let painted = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(shape) if shape.brush.is_some() => Some(shape),
+                        _ => None,
+                    })
+                    .expect("the stored thumbnail is painted");
+                assert_eq!(painted.rect, rect);
+                assert_eq!(painted.corner_radius, CornerRadius::same(6));
+                let crop = painted.brush.as_ref().unwrap().uv;
+                assert!(
+                    (crop.min - uv.min).length() < 0.00001,
+                    "{width}x{height}: {crop:?}"
+                );
+                assert!(
+                    (crop.max - uv.max).length() < 0.00001,
+                    "{width}x{height}: {crop:?}"
+                );
+            }
+        }
+    }
+
     /// The strip draws the thumbnail the archive stored, and the message's
     /// kind icon when there is none: decoding the file for a 56 px tile
     /// would run on the interface thread and hold its full-size texture.
@@ -1127,10 +1232,19 @@ fn thumb(
                 Some(card) => format!("{}#{card}", item.id),
                 None => item.id.clone(),
             };
-            egui::Image::new(thumbnail_uri(ui.ctx(), chat, &key, bytes))
-                .fit_to_exact_size(rect.size())
-                .corner_radius(6.0)
-                .paint_at(ui, rect);
+            let image = egui::Image::new(thumbnail_uri(ui.ctx(), chat, &key, bytes));
+            if let Ok(egui::load::TexturePoll::Ready { texture }) =
+                image.load_for_size(ui.ctx(), rect.size())
+            {
+                // Match the info panel's square thumbnails: crop the longer
+                // side instead of stretching the whole picture into the tile.
+                let size = texture.size.max(Vec2::splat(1.0));
+                let uv = Vec2::splat(size.min_elem()) / size;
+                image
+                    .uv(Rect::from_center_size(pos2(0.5, 0.5), uv))
+                    .corner_radius(6.0)
+                    .paint_at(ui, rect);
+            }
         }
         _ => {
             theme::paint_icon(
