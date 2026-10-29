@@ -411,6 +411,7 @@ fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
 /// unlike the `image` decoder, which did not apply frame disposal correctly.
 fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
+    let announced = webp_moves(&bytes);
     let decoder = webp_animation::Decoder::new(&bytes).ok()?;
     let (width, height) = decoder.dimensions();
     let mut decoded = Vec::new();
@@ -422,8 +423,10 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         previous = i64::from(frame.timestamp());
         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
     }
-    // Single-frame files use the static-image path.
-    if decoded.len() < 2 {
+    // A single frame is a still for the static-image path, unless the file
+    // announces an animation: callers draw such a file only through this
+    // path, so its one frame shows here.
+    if decoded.is_empty() || (decoded.len() < 2 && !announced) {
         return None;
     }
     decoded.truncate(limit);
@@ -903,6 +906,61 @@ mod tests {
             .save(&path)
             .expect("saves");
         assert!(decode(&path, MAX_FRAMES).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_webp_announcing_an_animation_shows_its_only_frame() {
+        // Some sticker makers wrap one still frame in the animation container.
+        let dir = std::env::temp_dir().join(format!("zapfast-one-frame-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let still = dir.join("still.webp");
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
+            .save(&still)
+            .expect("saves");
+        let bytes = std::fs::read(&still).expect("reads");
+        // The still's bitstream chunk becomes the animation's one frame.
+        let mut at = 12;
+        let bitstream = loop {
+            let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().expect("size")) as usize;
+            let end = (at + 8 + size + size % 2).min(bytes.len());
+            if matches!(&bytes[at..at + 4], b"VP8L" | b"VP8 ") {
+                break &bytes[at..end];
+            }
+            at = end;
+        };
+        let chunk = |tag: &[u8], payload: &[u8]| {
+            let mut out = tag.to_vec();
+            out.extend((payload.len() as u32).to_le_bytes());
+            out.extend(payload);
+            if !payload.len().is_multiple_of(2) {
+                out.push(0);
+            }
+            out
+        };
+        // Canvas and frame are 4x4, written as width - 1 and height - 1.
+        let side = [3u8, 0, 0];
+        let mut header = vec![0x12u8, 0, 0, 0];
+        header.extend(side);
+        header.extend(side);
+        let mut frame = vec![0u8; 6];
+        frame.extend(side);
+        frame.extend(side);
+        frame.extend([100, 0, 0, 0]);
+        frame.extend(bitstream);
+        let mut body = b"WEBP".to_vec();
+        body.extend(chunk(b"VP8X", &header));
+        body.extend(chunk(b"ANIM", &[0; 6]));
+        body.extend(chunk(b"ANMF", &frame));
+        let mut webp = b"RIFF".to_vec();
+        webp.extend((body.len() as u32).to_le_bytes());
+        webp.extend(body);
+        assert!(webp_moves(&webp));
+        let path = dir.join("one-frame.webp");
+        std::fs::write(&path, &webp).expect("writes");
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
+        assert_eq!(decoded.frames.len(), 1);
+        assert!(decode(&still, MAX_FRAMES).is_none(), "a plain still is not");
         let _ = std::fs::remove_dir_all(dir);
     }
 
