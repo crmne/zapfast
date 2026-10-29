@@ -18,6 +18,9 @@ to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 like WhatsApp, and a message of nothing but emoji shows large.
 Paste text with Ctrl+V (Command+V on macOS) or Shift+Insert, as in other
 Linux applications.
+Use Ctrl+Shift+V (Option+Shift+Command+V on macOS) to paste only text, even when
+the clipboard also offers a picture or copied files. If there is no text,
+this shortcut inserts nothing.
 Mentions in a group are written with `@`. Choose **all** to mention
 everyone when the group's member list is available: the message shows `@all`,
 highlighted like any other mention.
