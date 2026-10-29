@@ -1064,7 +1064,41 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                         if ui.is_rect_visible(rect) {
                             ui.painter().rect_filled(rect, 6.0, palette.surface);
-                            if let Some(still) = &gif.still {
+                            if !app.gif_pending
+                                && gif.animated.is_none()
+                                && !app.gif_requested.contains(&gif.id)
+                                && let Some((url, extension)) = &gif.animated_source
+                            {
+                                app.actions.push(Action::FetchGifAnimation {
+                                    id: gif.id.clone(),
+                                    url: url.clone(),
+                                    extension: extension.clone(),
+                                });
+                            }
+                            // Visible tiles play; the animation player pauses
+                            // tiles that are off screen. The still stays
+                            // underneath while a preview decodes or fails.
+                            let playing = gif.animated.as_ref().and_then(|path| {
+                                match crate::animation::frame_with_cache(
+                                    ui,
+                                    path,
+                                    rect,
+                                    true,
+                                    egui::Id::new("gif-picker"),
+                                ) {
+                                    crate::animation::Frame::Ready(texture) => Some(texture),
+                                    _ => None,
+                                }
+                            });
+                            if let Some(texture) = playing {
+                                egui::Image::from_texture(egui::load::SizedTexture::new(
+                                    texture.id(),
+                                    texture.size_vec2(),
+                                ))
+                                .fit_to_exact_size(size)
+                                .corner_radius(6.0)
+                                .paint_at(ui, rect);
+                            } else if let Some(still) = &gif.still {
                                 widgets::file_image(ui, still)
                                     .fit_to_exact_size(size)
                                     .corner_radius(6.0)

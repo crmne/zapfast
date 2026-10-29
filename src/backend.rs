@@ -796,6 +796,12 @@ pub enum Command {
         query: String,
         key: String,
     },
+    /// Downloads one GIF result's animated preview when its tile shows.
+    FetchGifAnimation {
+        id: String,
+        url: String,
+        extension: String,
+    },
     /// Loads recent and saved stickers for the picker.
     RecentStickers,
     React {
@@ -915,6 +921,11 @@ pub enum Command {
     GifResults {
         query: String,
         results: Result<Vec<Gif>, GifError>,
+    },
+    /// Internal GIF animated-preview result.
+    GifAnimated {
+        id: String,
+        path: Option<PathBuf>,
     },
     /// Measures this account's media cache for Settings, answered by
     /// `Event::StorageStats` with the same `token`.
@@ -1213,6 +1224,11 @@ pub enum Event {
     Gifs {
         query: String,
         results: Result<Vec<Gif>, GifError>,
+    },
+    /// A GIF result's animated preview finished downloading.
+    GifAnimated {
+        id: String,
+        path: Option<PathBuf>,
     },
     /// A picture chosen for the sticker maker: its file, size, and whether it
     /// has see-through pixels.

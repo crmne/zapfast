@@ -3698,10 +3698,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "gifs" => {
                 app.picker = Some(crate::model::PickerTab::Gifs);
                 app.settings.giphy_key = "demo".into();
+                let (still, animated) = sample_files(app);
                 app.gif_results = (0..6)
                     .map(|index| crate::model::Gif {
                         id: format!("demo{index}"),
-                        still: Some(sample_files(app).0),
+                        still: Some(still.clone()),
+                        animated: Some(animated.clone()),
+                        animated_source: None,
                         mp4: String::new(),
                         width: 200,
                         height: if index % 2 == 0 { 150 } else { 200 },

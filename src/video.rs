@@ -1089,20 +1089,6 @@ impl Timeline {
                 time += u64::from(entry.sample_delta);
             }
         }
-        let shift = track
-            .trak
-            .edts
-            .as_ref()
-            .and_then(|edts| edts.elst.as_ref())
-            .and_then(|elst| {
-                // An empty edit, a delay before the track starts, has a
-                // media time of -1.
-                elst.entries
-                    .iter()
-                    .map(|entry| entry.media_time)
-                    .find(|&time| time != u64::from(u32::MAX) && time != u64::MAX)
-            })
-            .unwrap_or(0);
         Self {
             timescale: u64::from(track.timescale().max(1)),
             starts,
@@ -1111,7 +1097,7 @@ impl Timeline {
                 .as_ref()
                 .map(|stss| stss.entries.clone())
                 .unwrap_or_default(),
-            shift,
+            shift: crate::animation::edit_shift(track),
         }
     }
 

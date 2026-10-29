@@ -31,7 +31,8 @@ again. A group where an unread message mentions you, or everyone, shows **@**
 beside its unread count in the chat list, even when muted, and opening it shows
 the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
-including the stickers used on the phone.
+including the stickers used on the phone. GIF search results play when they
+come into view and pause when they scroll away.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that

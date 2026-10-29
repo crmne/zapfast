@@ -630,6 +630,8 @@ pub struct App {
     pub selection_view: std::sync::Arc<std::sync::Mutex<Option<egui::Rect>>>,
     pub gif_query: String,
     pub gif_results: Vec<Gif>,
+    /// GIF ids whose animated preview was requested for the current results.
+    pub gif_requested: HashSet<String>,
     /// Whether a GIF search is active.
     pub gif_pending: bool,
     pub gif_error: Option<GifError>,
@@ -1497,6 +1499,7 @@ impl App {
             selection_view: Default::default(),
             gif_query: String::new(),
             gif_results: Vec::new(),
+            gif_requested: HashSet::new(),
             gif_pending: false,
             gif_error: None,
             sticker_shelf: StickerShelf::default(),
@@ -1794,6 +1797,13 @@ impl App {
         self.reaction_target = None;
         self.reaction_anchor = None;
         self.picker = None;
+        // GIF results and their cached previews belong to the account whose
+        // backend fetched them.
+        self.gif_query.clear();
+        self.gif_results.clear();
+        self.gif_requested.clear();
+        self.gif_pending = false;
+        self.gif_error = None;
         self.pending.clear();
         self.pending_view_once = false;
         self.forget_unstaged_pictures();
@@ -3794,18 +3804,25 @@ impl App {
                 );
             }
             Event::Gifs { query, results } => {
-                if query == self.gif_query {
+                if live && query == self.gif_query {
                     self.gif_pending = false;
                     match results {
                         Ok(results) => {
                             self.gif_results = results;
+                            self.gif_requested.clear();
                             self.gif_error = None;
                         }
                         Err(error) => {
                             self.gif_results.clear();
+                            self.gif_requested.clear();
                             self.gif_error = Some(error);
                         }
                     }
+                }
+            }
+            Event::GifAnimated { id, path } => {
+                if live && let Some(gif) = self.gif_results.iter_mut().find(|gif| gif.id == id) {
+                    gif.animated = path;
                 }
             }
             Event::Stickers {
@@ -7945,6 +7962,12 @@ impl App {
                     query,
                     key: self.settings.effective_giphy_key().unwrap_or_default(),
                 });
+            }
+            Action::FetchGifAnimation { id, url, extension } => {
+                if self.gif_requested.insert(id.clone()) {
+                    self.backend
+                        .send(Command::FetchGifAnimation { id, url, extension });
+                }
             }
             Action::SendGif(gif) => {
                 if let Some(chat) = self.open_chat.clone() {
@@ -12747,6 +12770,79 @@ mod tests {
         app.accounts.push(second);
         app.active = 0;
         (app, commands)
+    }
+
+    #[test]
+    fn a_gif_preview_is_requested_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let request = || Action::FetchGifAnimation {
+            id: "fixture".into(),
+            url: "https://example.invalid/fixture.webp".into(),
+            extension: "webp".into(),
+        };
+        app.apply(request(), &ctx);
+        app.apply(request(), &ctx);
+        let requests = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter(|command| {
+                matches!(command, Command::FetchGifAnimation { id, .. } if id == "fixture")
+            })
+            .count();
+        assert_eq!(requests, 1);
+        assert!(app.gif_requested.contains("fixture"));
+    }
+
+    /// GIF search results and their cached previews belong to the account on
+    /// screen, never to a hidden one using the same picker.
+    #[test]
+    fn a_hidden_accounts_gif_results_never_reach_the_picker() {
+        let directory = tempfile::tempdir().unwrap();
+        let chat = "15550007777@s.whatsapp.net";
+        let (mut app, events) = two_accounts_on_settings(directory.path(), chat);
+        let gif = |id: &str| Gif {
+            id: id.into(),
+            still: None,
+            animated: None,
+            animated_source: None,
+            mp4: String::new(),
+            width: 200,
+            height: 200,
+        };
+        app.gif_query = "fixture".into();
+        app.gif_results = vec![gif("visible")];
+        app.gif_requested.insert("visible".into());
+        app.gif_pending = true;
+        app.gif_error = Some(GifError {
+            message: "stale".into(),
+            bad_key: false,
+        });
+        events
+            .send(Event::Gifs {
+                query: "fixture".into(),
+                results: Ok(vec![gif("hidden")]),
+            })
+            .unwrap();
+        events
+            .send(Event::GifAnimated {
+                id: "visible".into(),
+                path: Some(PathBuf::from("/hidden/visible.webp")),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.gif_results, vec![gif("visible")]);
+        assert!(app.gif_results[0].animated.is_none());
+        assert!(app.gif_pending, "the hidden result is not the search's end");
+        assert!(app.gif_error.is_some(), "the visible search still failed");
+
+        app.switch_account(&AccountId::parse("2").unwrap());
+        assert!(app.gif_query.is_empty());
+        assert!(app.gif_results.is_empty());
+        assert!(app.gif_requested.is_empty());
+        assert!(!app.gif_pending);
+        assert!(app.gif_error.is_none());
     }
 
     /// Background history is each account's own switch. Only the account on
@@ -19105,6 +19201,8 @@ mod tests {
             Action::SendGif(Gif {
                 id: "fixture".into(),
                 still: None,
+                animated: None,
+                animated_source: None,
                 mp4: "https://example.invalid/fixture.mp4".into(),
                 width: 2,
                 height: 2,
@@ -20064,6 +20162,8 @@ mod tests {
                     3 => Action::SendGif(Gif {
                         id: "fixture".into(),
                         still: None,
+                        animated: None,
+                        animated_source: None,
                         mp4: "https://example.invalid/fixture.mp4".into(),
                         width: 2,
                         height: 2,

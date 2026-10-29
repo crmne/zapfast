@@ -1,4 +1,4 @@
-//! Still GIF-search thumbnails and stickers from the stock demo media, and
+//! Animated GIF-search thumbnails and stickers from the stock demo media, and
 //! emoji pictures from the bundled emoji font.
 
 use anyhow::{Context, Result};
@@ -37,12 +37,15 @@ pub(crate) fn emoji_image(character: char, side: u32) -> Result<RgbaImage> {
 pub fn populate(app: &mut App) -> Result<()> {
     let dir = app.account().dirs.media_cache_dir().join("tour");
     std::fs::create_dir_all(&dir)?;
+    let animated = stock::save(&dir, "reaction-animated.webp", stock::ANIMATED_STICKER);
     let gifs = stock::GIFS
         .into_iter()
         .enumerate()
         .map(|(index, still)| Gif {
             id: format!("tour-{index}"),
             still: Some(stock::save(&dir, &format!("reaction-{index}.jpg"), still)),
+            animated: Some(animated.clone()),
+            animated_source: None,
             mp4: String::new(),
             width: 320,
             height: 240,
