@@ -435,7 +435,7 @@ fn split_atoms(glyphs: &[Glyph], visual_keys: &[usize], skip: &[usize]) -> Vec<R
             index += 1;
             continue;
         }
-        if let Some(end) = rtl_run_end(glyphs, index) {
+        if let Some(end) = rtl_run_end(glyphs, visual_keys, index) {
             atoms.push(index..end);
             index = end;
             continue;
@@ -448,16 +448,18 @@ fn split_atoms(glyphs: &[Glyph], visual_keys: &[usize], skip: &[usize]) -> Vec<R
         }
         // Keep a left-to-right run together only while its visual order matches
         // the buffer. A space before a number is earlier in the buffer and later
-        // on screen, so it has to move on its own.
+        // on screen, so it has to move on its own. So does the space a row wraps
+        // after, which ends the row however far the word before it sits.
         let start = index;
         let mut previous = visual_keys.get(index).copied().unwrap_or(usize::MAX);
         index += 1;
         while index < glyphs.len()
-            && rtl_run_end(glyphs, index).is_none()
+            && rtl_run_end(glyphs, visual_keys, index).is_none()
             && !is_strong_rtl(glyphs[index].chr)
         {
             let key = visual_keys.get(index).copied().unwrap_or(usize::MAX);
-            if key < previous {
+            let adjacent = key == previous || previous.checked_add(1) == Some(key);
+            if key != usize::MAX && !adjacent {
                 break;
             }
             previous = key;
@@ -489,13 +491,22 @@ fn is_continuation(glyph: &Glyph) -> bool {
     glyph.advance_width == 0.0 && glyph.uv_rect.is_nothing()
 }
 
-fn rtl_run_end(glyphs: &[Glyph], start: usize) -> Option<usize> {
+/// End of the run the shaper laid right to left from `start`: clusters that
+/// descend in the buffer while they advance on screen.
+///
+/// The space a row wraps after is shaped with the word before it, but ends the
+/// row at the paragraph's own level. In a left-to-right paragraph that puts it
+/// at the far side of the word, so it is not part of the word's run.
+fn rtl_run_end(glyphs: &[Glyph], visual_keys: &[usize], start: usize) -> Option<usize> {
+    let follows = |previous: usize, next: usize| {
+        glyphs[next].cluster < glyphs[previous].cluster && visual_keys[next] > visual_keys[previous]
+    };
     let mut previous = start;
     let mut end = same_cluster_end(glyphs, start);
-    if end >= glyphs.len() || glyphs[end].cluster >= glyphs[previous].cluster {
+    if end >= glyphs.len() || !follows(previous, end) {
         return None;
     }
-    while end < glyphs.len() && glyphs[end].cluster < glyphs[previous].cluster {
+    while end < glyphs.len() && follows(previous, end) {
         previous = end;
         end = same_cluster_end(glyphs, end);
     }
@@ -817,7 +828,7 @@ pub(crate) fn assert_right_aligned(galley: &Galley) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::text::{FontData, FontDefinitions, FontFamily, LayoutJob};
+    use egui::text::{CCursor, FontData, FontDefinitions, FontFamily, LayoutJob};
     use egui::{Color32, FontId, Pos2, vec2};
     use std::path::PathBuf;
 
@@ -1217,28 +1228,7 @@ mod tests {
             assert!(galley.rows.len() >= 3, "{text:?} should wrap narrowly");
             assert_rows_follow_uba(&galley, &atlas);
 
-            let spans: Vec<(u32, u32)> = galley
-                .rows
-                .iter()
-                .filter(|placed| !placed.row.glyphs.is_empty())
-                .map(|placed| {
-                    let clusters = placed.row.glyphs.iter().map(|glyph| glyph.cluster);
-                    (
-                        clusters.clone().min().expect("row starts"),
-                        clusters.max().expect("row ends"),
-                    )
-                })
-                .collect();
-            assert_eq!(
-                spans[0].0, 0,
-                "the first visual row must contain the logical start of {text:?}: {spans:?}"
-            );
-            for rows in spans.windows(2) {
-                assert!(
-                    rows[0].1 < rows[1].0,
-                    "wrapped rows must stay in logical order for {text:?}: {spans:?}"
-                );
-            }
+            assert_logical_row_order(&galley);
         }
     }
 
@@ -1377,6 +1367,414 @@ mod tests {
         }
     }
 
+    /// A face that draws both the letters and the spaces has a whole sentence
+    /// shaped as one right-to-left run, as with a system font such as
+    /// Liberation Sans or Arial. Inter has no Hebrew, so behind it every word
+    /// is a run of its own and a sentence wraps between runs.
+    #[test]
+    fn a_sentence_in_one_face_wraps_in_logical_order() {
+        for text in [
+            "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך הרחוב עד שהגיע אל הגינה השקטה",
+            "Hello הכלב הגדול קפץ מעל החתול והמשיך לרוץ world and more english here",
+            "שלום this is English בתוך משפט עברי ארוך שממשיך עוד ועוד",
+            "המחיר 1,250.50 ש״ח (כולל מע״מ) ואפשר לשלם עד 31/12/2026 בטלפון 03-1234567",
+        ] {
+            for width in [90.0, 150.0, 230.0] {
+                let (galley, atlas) = wrapped_in_one_face(text, width);
+                assert!(galley.rows.len() >= 2, "{text:?} should wrap at {width}");
+                assert_rows_follow_uba(&galley, &atlas);
+                assert_logical_row_order(&galley);
+            }
+        }
+    }
+
+    /// Lays `text` out with a face that has Hebrew ahead of Inter.
+    fn wrapped_in_one_face(text: &str, width: f32) -> (Galley, egui::ColorImage) {
+        wrapped(text, width, true)
+    }
+
+    /// Lays `text` out within `width`, behind Inter or in one face with Hebrew.
+    fn wrapped(text: &str, width: f32, one_face: bool) -> (Galley, egui::ColorImage) {
+        let wrap = egui::text::TextWrapping {
+            max_width: width,
+            ..Default::default()
+        };
+        laid_out(text, wrap, one_face)
+    }
+
+    /// Lays `text` out with `wrap`, reorders it, and returns it with the font
+    /// atlas, behind Inter or in one face with Hebrew.
+    fn laid_out(
+        text: &str,
+        wrap: egui::text::TextWrapping,
+        one_face: bool,
+    ) -> (Galley, egui::ColorImage) {
+        let ctx = egui::Context::default();
+        install_fonts_with(&ctx, one_face);
+        let galley = std::cell::RefCell::new(None);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut job = LayoutJob {
+                    wrap: wrap.clone(),
+                    ..Default::default()
+                };
+                job.append(
+                    text,
+                    0.0,
+                    TextFormat::simple(FontId::proportional(14.0), Color32::WHITE),
+                );
+                *galley.borrow_mut() = Some(layout_job(ui, job));
+            },
+        );
+        output.textures_delta.clear();
+        let galley = galley.into_inner().expect("galley");
+        let galley = Arc::try_unwrap(galley).unwrap_or_else(|arc| (*arc).clone());
+        (galley, ctx.fonts(|fonts| fonts.image()))
+    }
+
+    /// A text cut short loses its end. The ellipsis used to replace the first
+    /// letters of the last word left on the row, or of the whole row when one
+    /// face had shaped it as a single run.
+    #[test]
+    fn an_elided_text_keeps_its_start() {
+        let text = "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך הרחוב עד שהגיע אל הגינה";
+        for one_face in [false, true] {
+            for (width, max_rows, break_anywhere) in [
+                (100.0, 2, false),
+                (133.0, 3, false),
+                (150.0, 1, false),
+                (70.0, 1, true),
+                (97.0, 2, true),
+            ] {
+                let wrap = egui::text::TextWrapping {
+                    max_width: width,
+                    max_rows,
+                    break_anywhere,
+                    overflow_character: Some('…'),
+                };
+                let (galley, _) = laid_out(text, wrap, one_face);
+                assert!(
+                    galley.elided,
+                    "{text:?} does not fit {max_rows} rows of {width}"
+                );
+                assert_logical_row_order(&galley);
+                let mut kept: Vec<usize> = galley
+                    .rows
+                    .iter()
+                    .flat_map(|placed| &placed.row.glyphs)
+                    .filter(|glyph| !is_overflow_replacement(glyph, text, Some('…')))
+                    .map(|glyph| glyph.cluster as usize)
+                    .collect();
+                kept.sort_unstable();
+                kept.dedup();
+                let start: Vec<usize> = text
+                    .char_indices()
+                    .map(|(byte, _)| byte)
+                    .take(kept.len())
+                    .collect();
+                assert_eq!(
+                    kept, start,
+                    "one_face={one_face} width={width} rows={max_rows}: not the start of {text:?}"
+                );
+            }
+        }
+    }
+
+    /// Where the caret before the character at `index` is drawn.
+    fn caret_x(galley: &Galley, index: usize) -> f32 {
+        galley.pos_from_cursor(CCursor::new(index)).center().x
+    }
+
+    /// Left and right edge of the glyph that draws the character at `index`
+    /// of a one-row galley.
+    fn edges(galley: &Galley, index: usize) -> (f32, f32) {
+        let glyph = &galley.rows[0].glyphs[index];
+        (glyph.pos.x, glyph.max_x())
+    }
+
+    /// English or a number typed after Hebrew sits to the left of it. The
+    /// caret belongs at the right of its last character, where the next one
+    /// will land, and not at the right end of the row, where the line starts.
+    #[test]
+    fn the_caret_stays_beside_what_was_just_typed() {
+        for one_face in [false, true] {
+            for text in ["שלום abc", "המחיר 50", "שלום עולם abc 123", "abc שלום def"]
+            {
+                let (galley, _) = wrapped(text, f32::INFINITY, one_face);
+                let last = text.chars().count() - 1;
+                let (caret, right) = (caret_x(&galley, last + 1), edges(&galley, last).1);
+                assert!(
+                    (caret - right).abs() < 0.5,
+                    "caret at {caret} after {text:?}, whose last character ends at {right}"
+                );
+            }
+            for text in ["שלום", "hello שלום", "שלום abc עולם", "abc 123 עולם"]
+            {
+                let (galley, _) = wrapped(text, f32::INFINITY, one_face);
+                let last = text.chars().count() - 1;
+                let (caret, left) = (caret_x(&galley, last + 1), edges(&galley, last).0);
+                assert!(
+                    (caret - left).abs() < 0.5,
+                    "caret at {caret} after {text:?}, whose last character ends at {left}"
+                );
+            }
+            // In the middle of a line too: after the `c`, before the space.
+            let (galley, _) = wrapped("שלום abc עולם", f32::INFINITY, one_face);
+            let (caret, right) = (caret_x(&galley, 8), edges(&galley, 7).1);
+            assert!(
+                (caret - right).abs() < 0.5,
+                "caret at {caret}, c ends at {right}"
+            );
+            // And an empty line starts where its glyphs will.
+            assert!((caret_x(&galley, 0) - edges(&galley, 0).1).abs() < 0.5);
+        }
+    }
+
+    /// Niqqud and the second half of an emoji are not places for a caret: a
+    /// letter typed there would take the mark, or split the emoji.
+    #[test]
+    fn the_caret_does_not_stop_inside_a_cluster() {
+        for one_face in [false, true] {
+            let text = "שָׁלוֹם 👍🏽 עולם";
+            let (galley, _) = wrapped(text, f32::INFINITY, one_face);
+            let starts: Vec<usize> = {
+                use unicode_segmentation::UnicodeSegmentation as _;
+                let mut at = 0;
+                let mut starts = vec![0];
+                for grapheme in text.graphemes(true) {
+                    at += grapheme.chars().count();
+                    starts.push(at);
+                }
+                starts
+            };
+            let mut cursor = galley.cursor_from_pos(vec2(10_000.0, 2.0));
+            assert_eq!(cursor.index.0, 0, "the line starts at its right end");
+            let mut visited = vec![cursor.index.0];
+            loop {
+                let next = galley.cursor_left_one_character(&cursor);
+                if next == cursor {
+                    break;
+                }
+                cursor = next;
+                visited.push(cursor.index.0);
+            }
+            assert_eq!(visited, starts, "{text:?} one_face={one_face}");
+            let width = galley.rows[0].size.x;
+            for step in 0..=200 {
+                let x = width * step as f32 / 200.0;
+                let hit = galley.cursor_from_pos(vec2(x, 2.0)).index.0;
+                assert!(
+                    starts.contains(&hit),
+                    "a click at {x} lands inside a cluster: {hit}"
+                );
+            }
+        }
+    }
+
+    /// Left moves the caret left and Right moves it right, and neither wraps
+    /// round at the end of a row. The arrow that points the way a line is
+    /// read walks the whole text, onto each next row, and the other one walks
+    /// it back.
+    #[test]
+    fn arrow_keys_move_the_caret_the_way_they_point() {
+        for one_face in [false, true] {
+            for (text, width) in [
+                ("שלום עולם", f32::INFINITY),
+                ("שלום abc עולם", f32::INFINITY),
+                ("hello שלום world", f32::INFINITY),
+                ("המחיר 1,250 ש״ח", f32::INFINITY),
+                ("שלום\n\nabc\nעולם\n123", f32::INFINITY),
+                ("hello\n\nשלום\nworld", f32::INFINITY),
+                (
+                    "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך הרחוב עד שהגיע אל הגינה",
+                    120.0,
+                ),
+                (
+                    "שלום this is English בתוך משפט עברי ארוך שממשיך עוד ועוד and more",
+                    120.0,
+                ),
+                (
+                    "Hello הכלב הגדול קפץ מעל החתול והמשיך לרוץ world and more english",
+                    120.0,
+                ),
+            ] {
+                let (galley, _) = wrapped(text, width, one_face);
+                // Whether each row's paragraph is read right to left. A line
+                // with no letters goes the way of the message.
+                let mut paragraphs = text.split('\n');
+                let mut paragraph = paragraphs.next().unwrap_or_default();
+                let rtl: Vec<bool> = galley
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let rtl = match unicode_bidi::get_base_direction(paragraph) {
+                            unicode_bidi::Direction::Ltr => false,
+                            unicode_bidi::Direction::Rtl => true,
+                            unicode_bidi::Direction::Mixed => message_rtl(text),
+                        };
+                        if row.ends_with_newline {
+                            paragraph = paragraphs.next().unwrap_or_default();
+                        }
+                        rtl
+                    })
+                    .collect();
+                let place = |cursor: &CCursor| {
+                    let row = galley.layout_from_cursor(*cursor).row;
+                    (row, galley.pos_from_cursor(*cursor).center().x)
+                };
+                let step = |cursor: &CCursor, left: bool| {
+                    if left {
+                        galley.cursor_left_one_character(cursor)
+                    } else {
+                        galley.cursor_right_one_character(cursor)
+                    }
+                };
+                for onward in [true, false] {
+                    let mut cursor = if onward { galley.begin() } else { galley.end() };
+                    let mut visited = vec![cursor.index.0];
+                    loop {
+                        let from = place(&cursor);
+                        let left = rtl[from.0] == onward;
+                        let next = step(&cursor, left);
+                        if next == cursor {
+                            break;
+                        }
+                        let to = place(&next);
+                        let followed = if to.0 == from.0 {
+                            if left { to.1 < from.1 } else { to.1 > from.1 }
+                        } else if onward {
+                            to.0 == from.0 + 1
+                        } else {
+                            to.0 + 1 == from.0
+                        };
+                        assert!(
+                            followed,
+                            "{text:?} one_face={one_face}: {from:?} to {to:?} with left={left}"
+                        );
+                        cursor = next;
+                        visited.push(cursor.index.0);
+                        assert!(visited.len() < 1000, "the caret never arrives in {text:?}");
+                    }
+                    let last = if onward { galley.rows.len() - 1 } else { 0 };
+                    assert_eq!(
+                        place(&cursor).0,
+                        last,
+                        "{text:?} one_face={one_face} onward={onward}: stopped at {cursor:?}"
+                    );
+                    if galley
+                        .rows
+                        .iter()
+                        .all(|row| row.glyphs.iter().all(|glyph| glyph.rtl))
+                    {
+                        let count = text.chars().count();
+                        let mut all: Vec<usize> = (0..=count).collect();
+                        if !onward {
+                            all.reverse();
+                        }
+                        assert_eq!(visited, all, "every place in {text:?} is a stop");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The highlight covers the selected glyphs and no others, wherever the
+    /// bidi algorithm put them on their rows.
+    #[test]
+    fn a_selection_is_highlighted_under_its_own_glyphs() {
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        for one_face in [false, true] {
+            for (text, width, range) in [
+                ("שלום abc עולם", f32::INFINITY, 2..7),
+                ("שלום abc עולם", f32::INFINITY, 6..11),
+                ("hello שלום world", f32::INFINITY, 3..9),
+                (
+                    "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך הרחוב עד שהגיע אל הגינה",
+                    120.0,
+                    7..40,
+                ),
+                (
+                    "שלום this is English בתוך משפט עברי ארוך שממשיך עוד ועוד and more",
+                    120.0,
+                    3..45,
+                ),
+            ] {
+                let (galley, _) = wrapped(text, width, one_face);
+                let mut galley = Arc::new(galley);
+                let mut painted = Vec::new();
+                paint_text_selection(
+                    &mut galley,
+                    &egui::Visuals::dark(),
+                    &CCursorRange::two(CCursor::new(range.start), CCursor::new(range.end)),
+                    Some(&mut painted),
+                );
+                let mut index = 0;
+                for (row_index, placed) in galley.rows.iter().enumerate() {
+                    let spans: Vec<(f32, f32)> = painted
+                        .iter()
+                        .filter(|rect| rect.row == row_index)
+                        .map(|rect| {
+                            let xs = rect.vertex_indices.map(|vertex| {
+                                placed.row.visuals.mesh.vertices[vertex as usize].pos.x
+                            });
+                            (
+                                xs.iter().copied().fold(f32::INFINITY, f32::min),
+                                xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                            )
+                        })
+                        .collect();
+                    for glyph in &placed.row.glyphs {
+                        if glyph.advance_width > 0.01 {
+                            let middle = glyph.pos.x + glyph.advance_width / 2.0;
+                            let lit = spans
+                                .iter()
+                                .any(|(left, right)| (left..=right).contains(&&middle));
+                            assert_eq!(
+                                lit,
+                                range.contains(&index),
+                                "{:?} at {index} in row {row_index} of {text:?}, one_face={one_face}",
+                                glyph.chr
+                            );
+                        }
+                        index += 1;
+                    }
+                    index += usize::from(placed.ends_with_newline);
+                }
+            }
+        }
+    }
+
+    /// Every row starts after the one above it ends, from the start of the text.
+    fn assert_logical_row_order(galley: &Galley) {
+        let text = galley.text();
+        let spans: Vec<(u32, u32)> = galley
+            .rows
+            .iter()
+            .filter(|placed| !placed.row.glyphs.is_empty())
+            .map(|placed| {
+                let clusters = placed.row.glyphs.iter().map(|glyph| glyph.cluster);
+                (
+                    clusters.clone().min().expect("row starts"),
+                    clusters.max().expect("row ends"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            spans[0].0, 0,
+            "the first visual row must contain the logical start of {text:?}: {spans:?}"
+        );
+        for rows in spans.windows(2) {
+            assert!(
+                rows[0].1 < rows[1].0,
+                "wrapped rows must stay in logical order for {text:?}: {spans:?}"
+            );
+        }
+    }
+
     fn layout_fixed(text: &str) -> Galley {
         layout_with_atlas(text).0
     }
@@ -1411,7 +1809,14 @@ mod tests {
         Arc::try_unwrap(galley).unwrap_or_else(|arc| (*arc).clone())
     }
 
+    /// Inter with a face that has Hebrew and Arabic behind it, as in the app.
     fn install_fonts(ctx: &egui::Context) {
+        install_fonts_with(ctx, false);
+    }
+
+    /// The same two faces. With `primary_rtl` the one with Hebrew comes first,
+    /// as a system font that draws Hebrew itself does.
+    fn install_fonts_with(ctx: &egui::Context, primary_rtl: bool) {
         // DejaVu, Liberation, and Arial stay ahead of the extra fallbacks so the
         // font that already satisfies these tests is unchanged when it is installed.
         // `ZAPFAST_TEST_RTL_FONT` overrides the search.
@@ -1464,14 +1869,22 @@ mod tests {
                 .insert("arabic".into(), Arc::new(FontData::from_owned(arabic)));
             fonts.families.insert(
                 FontFamily::Proportional,
-                vec!["inter".into(), "rtl-fallback".into(), "arabic".into()],
+                if primary_rtl {
+                    vec!["rtl-fallback".into(), "inter".into(), "arabic".into()]
+                } else {
+                    vec!["inter".into(), "rtl-fallback".into(), "arabic".into()]
+                },
             );
             ctx.set_fonts(fonts);
             return;
         }
         fonts.families.insert(
             FontFamily::Proportional,
-            vec!["inter".into(), "rtl-fallback".into()],
+            if primary_rtl {
+                vec!["rtl-fallback".into(), "inter".into()]
+            } else {
+                vec!["inter".into(), "rtl-fallback".into()]
+            },
         );
         fonts
             .families
