@@ -10,7 +10,7 @@
 use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
-use crate::i18n::{Locale, gettext};
+use crate::i18n::{Locale, gettext, ngettext};
 use crate::model::{Action, CallFilter, CallStatus, Content, Message};
 use crate::theme::{self, Icon};
 use crate::ui::focus::{Stop, TabStop};
@@ -26,6 +26,10 @@ pub struct Entry {
     /// Seconds the call was up.
     pub duration: u64,
     pub group: bool,
+    /// How many people were on a group call, this account counted once, from the entry's own
+    /// record; `None` for a one-to-one call and for a group call whose record never named who
+    /// took part. The Calls page's history row is where it is drawn.
+    pub participants: Option<u32>,
 }
 
 impl Entry {
@@ -37,12 +41,14 @@ impl Entry {
                 status,
                 duration,
                 group,
+                participants,
             } => Some(Self {
                 from_me: message.from_me,
                 video,
                 status,
                 duration,
                 group,
+                participants,
             }),
             _ => None,
         }
@@ -470,12 +476,24 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     detail.paint(ui, pos2(left + 21.0, rect.top() + 38.0), palette.secondary);
 }
 
-/// What a call was and how it went, on one line: "Video call · 12 min 34 s".
+/// What a call was and how it went, on one line: "Video call · 12 min 34 s", with how many
+/// people were on a group call once its record says: "Group video call · 12 min 34 s ·
+/// 4 participants".
 fn summary(entry: &Entry, locale: Locale) -> String {
-    match entry.detail(locale) {
+    let mut text = match entry.detail(locale) {
         Some(detail) => format!("{} · {detail}", entry.title(locale)),
         None => entry.title(locale),
+    };
+    if let Some(count) = entry.participants {
+        text.push_str(" · ");
+        text.push_str(&participants(locale, count));
     }
+    text
+}
+
+/// How many people were on a call, in this language's own plural form.
+fn participants(locale: Locale, count: u32) -> String {
+    ngettext(locale, "{} participant", "{} participants", count).replace("{}", &count.to_string())
 }
 
 /// How many people the new-call list offers as frequently contacted.
@@ -711,6 +729,7 @@ mod tests {
                 status,
                 duration: 0,
                 group: false,
+                participants: None,
             },
             status: crate::model::Delivery::None,
             delivered_at: None,
@@ -930,7 +949,109 @@ mod tests {
             status,
             duration: 0,
             group: false,
+            participants: None,
         }
+    }
+
+    /// Every word one frame of the history drew.
+    fn drawn_rows(app: &mut App, ctx: &egui::Context) -> Vec<String> {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 600.0))),
+                ..Default::default()
+            },
+            |ui| list(app, ui),
+        );
+        output.textures_delta.clear();
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            texts(&clipped.shape, &mut out);
+        }
+        out
+    }
+
+    fn group_entry(chat: &str, id: &str, count: Option<u32>) -> Message {
+        let mut message = call(chat, id, true, 60, CallStatus::Answered);
+        message.content = Content::Call {
+            video: true,
+            status: CallStatus::Answered,
+            duration: 754,
+            group: true,
+            participants: count,
+        };
+        message
+    }
+
+    /// A group call's history row says how many people were on it, drawn as the rest of the
+    /// summary is, and a one-to-one row says nothing of the kind.
+    #[test]
+    fn a_groups_history_row_says_how_many_were_on_the_call() {
+        let (_directory, mut app, ctx) = calls_app();
+        let group = "120363000000000009@g.us";
+        app.call_log.insert(0, group_entry(group, "g", Some(4)));
+        frame(&mut app, &ctx, vec![]);
+        let drawn = drawn_rows(&mut app, &ctx);
+        let counted: Vec<&String> = drawn
+            .iter()
+            .filter(|text| text.contains("participant"))
+            .collect();
+        assert_eq!(
+            counted,
+            ["Group video call · 12 min 34 s · 4 participants"],
+            "only the group's row is counted: {drawn:?}"
+        );
+        // The one-to-one rows the same list holds keep to what they said before.
+        assert!(
+            drawn.iter().any(|text| text == "Missed voice call"),
+            "{drawn:?}"
+        );
+        assert!(drawn.iter().any(|text| text == "Voice call"), "{drawn:?}");
+    }
+
+    /// The count is a plural message of its own, so one person reads as one and the rest as many,
+    /// and it follows the call whether or not anyone answered.
+    #[test]
+    fn a_rows_count_reads_as_one_or_as_many() {
+        let locale = Locale::default();
+        let mut alone = entry(true, false, CallStatus::Answered);
+        alone.group = true;
+        alone.participants = Some(1);
+        assert_eq!(summary(&alone, locale), "Group voice call · 1 participant");
+        let many = Entry {
+            participants: Some(12),
+            ..alone
+        };
+        assert_eq!(summary(&many, locale), "Group voice call · 12 participants");
+        let missed = Entry {
+            from_me: false,
+            status: CallStatus::Missed,
+            participants: Some(3),
+            ..alone
+        };
+        assert_eq!(
+            summary(&missed, locale),
+            "Missed group voice call · 3 participants",
+            "the title already says it went unanswered, and the count still stands"
+        );
+    }
+
+    /// A group call whose record names nobody, and one filed before a count was kept, reads as it
+    /// did before there was one: the title, then how the call went.
+    #[test]
+    fn a_group_row_without_a_count_says_only_what_it_used_to() {
+        let locale = Locale::default();
+        let mut older = entry(true, true, CallStatus::Answered);
+        older.group = true;
+        older.duration = 754;
+        assert_eq!(older.participants, None);
+        assert_eq!(summary(&older, locale), "Group video call · 12 min 34 s");
     }
 
     #[test]
@@ -961,5 +1082,16 @@ mod tests {
         assert_eq!(missed.detail(locale), None, "the title already says it");
         let refused = entry(true, false, CallStatus::NoAnswer);
         assert_eq!(refused.detail(locale).as_deref(), Some("No answer"));
+    }
+
+    /// The count comes off the message, so a row shows what the entry that was filed holds.
+    #[test]
+    fn a_row_reads_the_count_off_the_entry_it_lists() {
+        let message = group_entry("120363000000000009@g.us", "g", Some(4));
+        let entry = Entry::of(&message).expect("a call entry");
+        assert_eq!(entry.participants, Some(4));
+        assert!(entry.group);
+        let one_to_one = call(ADA, "1", true, 60, CallStatus::Answered);
+        assert_eq!(Entry::of(&one_to_one).unwrap().participants, None);
     }
 }

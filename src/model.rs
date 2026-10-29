@@ -891,6 +891,13 @@ pub enum Content {
         /// A group call.
         #[serde(default)]
         group: bool,
+        /// How many people were on the call, this account counted once. `None`
+        /// for a one-to-one call, and for a group call whose record does not
+        /// name who took part (one filed before this was kept, or a missed-call
+        /// notice that carries no roster). Only the number is kept, never who:
+        /// no name, number, or id of anyone on the call is stored.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        participants: Option<u32>,
     },
 }
 

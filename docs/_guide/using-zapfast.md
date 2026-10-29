@@ -567,9 +567,11 @@ in a chat to call back from there.
 on macOS) opens the **Calls** tab, laid out as in WhatsApp: the list shows
 every call of the number on screen, newest first, with calls in a row from the
 same person folded into one row with a count. Each row says which way the call
-went (a missed call's name is red), when, and how it went, and its phone or
-camera button calls back the same way. The search field finds calls by name or
-number. The chips under it show **All** calls or only the **Missed** ones (calls
+went (a missed call's name is red), when, and how it went; a group call's row
+also says how many people were on it, when the call's own record names who
+took part. Its phone or camera button calls back the same way. The search
+field finds calls by name or number. The chips under it show **All** calls or
+only the **Missed** ones (calls
 to you that nobody answered, group calls included); a search looks among the
 calls the chip shows, and ZapFast remembers the chip for each number. The chat
 you had open stays beside the list; clicking a row opens that

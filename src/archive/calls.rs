@@ -97,6 +97,7 @@ mod tests {
                 status: CallStatus::Missed,
                 duration: 0,
                 group: false,
+                participants: None,
             },
             status: Delivery::None,
             delivered_at: None,
@@ -186,6 +187,46 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// An entry filed before a count was kept reads back without one, so no migration is needed:
+    /// the content is JSON and the field is simply absent.
+    #[test]
+    fn an_entry_filed_before_the_count_reads_back_without_one() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "15550001111@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").unwrap();
+        archive
+            .connection
+            .execute(
+                "INSERT INTO messages (chat, id, sender, from_me, timestamp, content)
+                 VALUES (?1, ?2, ?3, 0, 100, ?4)",
+                params![
+                    chat,
+                    "PHONE-CALL-LOG",
+                    chat,
+                    r#"{"kind":"call","video":true,"status":"missed","duration":0,"group":true}"#
+                ],
+            )
+            .unwrap();
+
+        let log = archive.call_log(10).unwrap();
+        assert_eq!(log.len(), 1);
+        assert!(
+            matches!(
+                log[0].content,
+                Content::Call {
+                    group: true,
+                    participants: None,
+                    ..
+                }
+            ),
+            "an older entry keeps its call and gains no count: {:?}",
+            log[0].content
+        );
+        // And it is not rewritten with one: the field is left out of what is stored.
+        let stored = serde_json::to_string(&log[0].content).unwrap();
+        assert!(!stored.contains("participants"), "{stored}");
     }
 
     #[test]

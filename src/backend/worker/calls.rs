@@ -990,6 +990,9 @@ pub(super) struct CallEntry {
     pub status: calls::CallOutcome,
     pub duration: u64,
     pub group: bool,
+    /// How many people were on a group call, this account included; `None` when the entry's
+    /// record does not name who took part.
+    pub participants: Option<u32>,
 }
 
 impl Worker {
@@ -1035,6 +1038,7 @@ impl Worker {
                 status: entry.status,
                 duration: entry.duration,
                 group: entry.group,
+                participants: entry.participants,
             },
             status: Delivery::None,
             delivered_at: None,
@@ -1102,6 +1106,28 @@ impl Worker {
         // A call joined through a link belongs to no chat, and is filed under
         // the id kept for such calls.
         let link = update.group.as_ref().is_some_and(|group| group.link);
+        // Everyone the call service's roster reported as on the call, minus our own entry, plus
+        // this account when its own outcome says it was there: the service lists our entry on a
+        // call we started, and a call that only rang here must not put us on it.
+        let participants = call.group_people().and_then(|people| {
+            let me = self.me();
+            // The archive's canonical id is what tells one person from another: a participant
+            // named once by privacy id and once by phone number is counted once.
+            let mut others: Vec<String> = people
+                .iter()
+                .map(|id| self.canonical_str(id.as_str()))
+                .filter(|id| *id != me)
+                .collect();
+            others.sort_unstable();
+            others.dedup();
+            // A call cut off before it was up never put this account on it, whatever the
+            // service calls the outcome.
+            let was_up = update.started.is_some();
+            let on_call = account_was_on_call(status)
+                && (status != calls::CallOutcome::ConnectionLost || was_up);
+            let count = others.len() as u32 + u32::from(on_call);
+            (count > 0).then_some(count)
+        });
         self.file_call_entry(CallEntry {
             chat: if link {
                 crate::model::CALL_LINK_CHAT.to_owned()
@@ -1118,6 +1144,7 @@ impl Worker {
                 .started
                 .map_or(0, |started| started.elapsed().as_secs()),
             group: call.is_group(),
+            participants,
         });
     }
 
@@ -1139,6 +1166,8 @@ impl Worker {
             status: calls::CallOutcome::Missed,
             duration: 0,
             group: false,
+            // The notice names nobody on the call.
+            participants: None,
         });
     }
 
@@ -1151,6 +1180,7 @@ impl Worker {
         from_me: Option<bool>,
         record: &wa::CallLogRecord,
     ) {
+        use wa::call_log_record::CallResult;
         let Some(from_me) = from_me else {
             return;
         };
@@ -1183,6 +1213,16 @@ impl Worker {
         let caller = (group.is_some() && !from_me)
             .then(|| creator.map(|creator| self.canonical(&creator.to_non_ad())))
             .flatten();
+        let participants = group.is_some().then(|| {
+            counted_people(
+                record
+                    .participants
+                    .iter()
+                    .filter(|participant| participant.call_result == Some(CallResult::CONNECTED))
+                    .filter_map(|participant| participant.user_jid.as_deref()),
+                account_was_on_call(status),
+            )
+        });
         self.file_call_entry(CallEntry {
             chat,
             caller,
@@ -1193,6 +1233,7 @@ impl Worker {
             status,
             duration: record.duration.unwrap_or(0).max(0) as u64,
             group: group.is_some(),
+            participants: participants.flatten(),
         });
     }
 
@@ -1242,12 +1283,56 @@ pub(super) fn call_log_content(log: &wa::message::CallLogMessage) -> Content {
         // caller: either way nobody answered.
         _ => Status::Missed,
     };
+    let group = log.participants.len() > 1;
+    let participants = if group {
+        counted_people(
+            log.participants
+                .iter()
+                .filter(|participant| participant.call_outcome == Some(CallOutcome::CONNECTED))
+                .filter_map(|participant| participant.jid.as_deref()),
+            account_was_on_call(status),
+        )
+    } else {
+        None
+    };
     Content::Call {
         video: log.is_video.unwrap_or(false),
         status,
         duration: log.duration_secs.unwrap_or(0).max(0) as u64,
-        group: log.participants.len() > 1,
+        group,
+        participants,
     }
+}
+
+/// Whether this account was on the call: answered here or on another of its devices, or cut off
+/// after the call was up. One that only rang, one refused, and one that never connected did not
+/// put this account on it, and so must not be counted among the people who were.
+fn account_was_on_call(status: calls::CallOutcome) -> bool {
+    use calls::CallOutcome as Status;
+    matches!(
+        status,
+        Status::Answered | Status::AnsweredElsewhere | Status::ConnectionLost
+    )
+}
+
+/// How many people a call's own record says were on it: the people it lists as having connected,
+/// each counted once, plus this account when the record says it was on the call.
+///
+/// A record can list a person's device more than once, so the ids are compared without their
+/// device suffix. Only the count comes back: who was on the call is never kept.
+fn counted_people<'a>(ids: impl Iterator<Item = &'a str>, ours: bool) -> Option<u32> {
+    let mut people: Vec<String> = Vec::new();
+    for id in ids {
+        let Ok(jid) = id.parse::<Jid>() else {
+            continue;
+        };
+        let person = jid.to_non_ad_string();
+        if !people.contains(&person) {
+            people.push(person);
+        }
+    }
+    let count = people.len() as u32 + u32::from(ours);
+    (count > 0).then_some(count)
 }
 
 /// A missed call the phone filed as a bare notice in a chat's history.
@@ -1265,6 +1350,8 @@ pub(super) fn missed_call_stub(stub: wa::web_message_info::StubType) -> Option<C
         status: calls::CallOutcome::Missed,
         duration: 0,
         group,
+        // A notice that the call was missed carries no roster.
+        participants: None,
     })
 }
 
@@ -1499,6 +1586,7 @@ mod tests {
             status: calls::CallOutcome::Answered,
             duration: 75,
             group: true,
+            participants: None,
         });
         let filed = worker.archive.call_log(10).unwrap();
         assert_eq!(filed.len(), 1);
@@ -1606,6 +1694,7 @@ mod tests {
                 status: calls::CallOutcome::Answered,
                 duration: 754,
                 group: false,
+                participants: None,
             }
         ));
         let mut missed = wa::message::CallLogMessage::default();
@@ -1619,6 +1708,214 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// How many people a call's own record says were on it: the ids it lists as connected, each
+    /// person once, plus this account when the record says it was on the call. A record that names
+    /// nobody leaves the entry without a count rather than with zero people.
+    #[test]
+    fn a_records_people_are_counted_once_each() {
+        let ids = [
+            "4917000000001@lid",
+            "4917000000001:4@lid",
+            "not a jid",
+            "4917000000002@s.whatsapp.net",
+        ];
+        assert_eq!(
+            counted_people(ids.into_iter(), false),
+            Some(2),
+            "the same person under two device ids is one person, and a malformed id is nobody"
+        );
+        assert_eq!(
+            counted_people(ids.into_iter(), true),
+            Some(3),
+            "the account is one of the people on the call"
+        );
+        assert_eq!(counted_people(["not a jid"].into_iter(), false), None);
+        assert_eq!(counted_people(std::iter::empty(), false), None);
+        assert_eq!(counted_people(std::iter::empty(), true), Some(1));
+    }
+
+    /// Whether the entry's own outcome puts this account on the call: a call that only rang, one
+    /// refused, and one that never connected did not.
+    #[test]
+    fn only_an_answered_call_puts_this_account_on_it() {
+        use calls::CallOutcome as Status;
+        for status in [
+            Status::Answered,
+            Status::AnsweredElsewhere,
+            Status::ConnectionLost,
+        ] {
+            assert!(account_was_on_call(status), "{status:?}");
+        }
+        for status in [
+            Status::Missed,
+            Status::NoAnswer,
+            Status::Declined,
+            Status::DeclinedElsewhere,
+            Status::Busy,
+            Status::Failed,
+        ] {
+            assert!(!account_was_on_call(status), "{status:?}");
+        }
+    }
+
+    /// A group's call-log message counts the people it lists as having connected, and only them:
+    /// a member who refused, a member named twice, and an id that is not one are not people who
+    /// were on the call.
+    #[test]
+    fn a_group_call_log_message_counts_who_connected() {
+        use wa::message::call_log_message::{CallOutcome, CallParticipant};
+        let participant = |jid: &str, outcome: CallOutcome| {
+            let mut person = CallParticipant::default();
+            person.jid = Some(jid.to_owned());
+            person.call_outcome = Some(outcome);
+            person
+        };
+        let mut log = wa::message::CallLogMessage::default();
+        log.is_video = Some(true);
+        log.call_outcome = Some(CallOutcome::CONNECTED);
+        log.duration_secs = Some(754);
+        log.participants = vec![
+            participant("4917000000001@s.whatsapp.net", CallOutcome::CONNECTED),
+            participant("4917000000001:4@s.whatsapp.net", CallOutcome::CONNECTED),
+            participant("4917000000002@s.whatsapp.net", CallOutcome::REJECTED),
+        ];
+        assert!(
+            matches!(
+                call_log_content(&log),
+                Content::Call {
+                    group: true,
+                    status: calls::CallOutcome::Answered,
+                    participants: Some(2),
+                    ..
+                }
+            ),
+            "we were on it and so was one other person: {:?}",
+            call_log_content(&log)
+        );
+
+        // Nobody connected: a missed group call shows no count rather than zero people.
+        let mut missed = wa::message::CallLogMessage::default();
+        missed.call_outcome = Some(CallOutcome::MISSED);
+        missed.participants = vec![
+            participant("4917000000001@s.whatsapp.net", CallOutcome::REJECTED),
+            participant("4917000000002@s.whatsapp.net", CallOutcome::REJECTED),
+        ];
+        assert!(matches!(
+            call_log_content(&missed),
+            Content::Call {
+                group: true,
+                status: calls::CallOutcome::Missed,
+                participants: None,
+                ..
+            }
+        ));
+
+        // A one-to-one call has nobody to count.
+        let mut alone = wa::message::CallLogMessage::default();
+        alone.call_outcome = Some(CallOutcome::CONNECTED);
+        alone.participants = vec![participant(
+            "4917000000001@s.whatsapp.net",
+            CallOutcome::CONNECTED,
+        )];
+        assert!(matches!(
+            call_log_content(&alone),
+            Content::Call {
+                group: false,
+                participants: None,
+                ..
+            }
+        ));
+    }
+
+    /// The phone's own record of a group call files how many people were on it, and only that:
+    /// no name, number, or id of anyone on the call is kept.
+    #[tokio::test]
+    async fn the_phones_group_record_files_how_many_were_on_the_call() {
+        use wa::call_log_record::{CallResult, ParticipantInfo};
+        let (mut worker, _events, _inbox, _wa) = super::super::receipt_tests::worker();
+        let group = "120363000000000009@g.us";
+        let person = |jid: &str, result: CallResult| {
+            let mut info = ParticipantInfo::default();
+            info.user_jid = Some(jid.to_owned());
+            info.call_result = Some(result);
+            info
+        };
+        let mut record = wa::CallLogRecord::default();
+        record.call_result = Some(CallResult::CONNECTED);
+        record.group_jid = Some(group.to_owned());
+        record.duration = Some(754);
+        record.start_time = Some(1_700_000_000);
+        record.participants = vec![
+            person("4917000000001@s.whatsapp.net", CallResult::CONNECTED),
+            person("4917000000001:9@s.whatsapp.net", CallResult::CONNECTED),
+            person("4917000000002@s.whatsapp.net", CallResult::REJECTED),
+        ];
+        worker.call_log_entry("CALLGROUP1", None, Some(true), &record);
+        let filed = worker.archive.call_log(10).unwrap();
+        assert_eq!(filed.len(), 1);
+        assert_eq!(filed[0].chat, group);
+        assert!(
+            matches!(
+                filed[0].content,
+                Content::Call {
+                    group: true,
+                    status: calls::CallOutcome::Answered,
+                    participants: Some(2),
+                    ..
+                }
+            ),
+            "this account and one other person: {:?}",
+            filed[0].content
+        );
+        let stored = serde_json::to_string(&filed[0].content).unwrap();
+        assert!(stored.contains("\"participants\":2"), "{stored}");
+        assert!(
+            !stored.contains("4917000000001") && !stored.contains("4917000000002"),
+            "only the number is kept: {stored}"
+        );
+    }
+
+    /// A group call this device handled is filed with how many people were on it. One answered
+    /// here counts this account with the members the roster named; one that only rang, and one
+    /// cut off before it came up, count the members and not us.
+    #[tokio::test]
+    async fn a_group_call_entry_says_how_many_people_were_on_it() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, group_offer, member};
+        use calls::CallOutcome as Status;
+        let _on = calls::override_group_calls(true);
+        for (outcome, expected) in [
+            (Some(Status::Answered), 2),
+            (None, 1),
+            (Some(Status::ConnectionLost), 1),
+        ] {
+            let (mut worker, _events, _, _) = super::super::receipt_tests::worker();
+            worker.archive.ensure_chat(GROUP, "Book club").unwrap();
+            worker.me_lid = Some("200000000000009@lid".to_owned());
+            let incoming = group_offer(vec![
+                member("200000000000001", true),
+                member("200000000000002", false),
+                member("200000000000009", true),
+            ]);
+            worker.call_signaling(&incoming).await;
+            assert!(worker.call.is_some(), "the group's call rings here");
+            assert!(worker.call_resolved(CALL_ID, outcome));
+            let filed = worker.archive.call_log(10).unwrap();
+            assert_eq!(filed.len(), 1);
+            assert!(
+                matches!(
+                    filed[0].content,
+                    Content::Call {
+                        group: true,
+                        participants: Some(count),
+                        ..
+                    } if count == expected
+                ),
+                "{outcome:?}: the member on the roster, our own entry left out, and this account only when it answered: {:?}",
+                filed[0].content
+            );
+        }
     }
 
     #[test]

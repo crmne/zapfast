@@ -2673,6 +2673,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                             status: crate::model::CallStatus::Answered,
                             duration: 1_260,
                             group: true,
+                            participants: Some(5),
                         },
                     ));
                 }
@@ -3942,6 +3943,7 @@ fn call_entries(now: i64) -> Vec<Message> {
                 status,
                 duration,
                 group: false,
+                participants: None,
             },
         )
     };
@@ -4021,8 +4023,15 @@ fn call_entries(now: i64) -> Vec<Message> {
         0,
     );
     group.sender = SAMPLES[2].id.to_owned();
-    if let Content::Call { group, .. } = &mut group.content {
+    if let Content::Call {
+        group,
+        participants,
+        ..
+    } = &mut group.content
+    {
         *group = true;
+        // Four people were on it, so the history row shows a count.
+        *participants = Some(4);
     }
     entries.push(group);
     for entry in &mut entries {
@@ -4085,6 +4094,8 @@ fn call_bubbles_sample(app: &mut App) {
                 status,
                 duration,
                 group: true,
+                // A chat's own call entry keeps to its title and length.
+                participants: None,
             },
         );
         if let Some((id, name)) = sender {
@@ -5357,6 +5368,7 @@ mod tests {
                     status: crate::model::CallStatus::Declined,
                     duration: 0,
                     group: false,
+                    participants: None,
                 },
             )
         };
@@ -8557,6 +8569,7 @@ mod tests {
                     status: crate::model::CallStatus::Missed,
                     duration: 0,
                     group: false,
+                    participants: None,
                 },
             );
             (app, ctx, chat)
@@ -8613,6 +8626,7 @@ mod tests {
                 status: crate::model::CallStatus::Missed,
                 duration: 0,
                 group: true,
+                participants: None,
             },
         );
         press_key(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::NONE);
