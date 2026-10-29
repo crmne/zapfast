@@ -661,6 +661,21 @@ it has been turned off. Change the timer on your phone; messages you send from
 ZapFast follow it. Messages you receive stay in ZapFast's archive after they
 disappear on your other devices.
 
+To block or unblock a person, open their contact info or either chat menu and
+choose **Block contact** or **Unblock contact**, then confirm. Blocking keeps
+the conversation and its history; the composer shows an **Unblock contact**
+button and keeps your unsent draft. Blocked contacts cannot be sent new direct
+messages or called from ZapFast. Shared groups are unaffected. Under
+**Settings > Privacy > Blocked contacts**, you can also see the account's full
+blocked list and unblock people with no chat on this computer.
+
+Changes apply to your WhatsApp account after the server accepts them. ZapFast
+refreshes the list when connecting, after blocking or unblocking, and when
+opening the blocked list. Changes made on your phone
+appear at the next refresh, rather than immediately. A failed lookup keeps the
+last confirmed list. Blocking requires WhatsApp's phone/privacy-id mapping;
+if it is unavailable, try again or block the person on your phone.
+
 The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
 Followed channels have their own **Channels** chip. **Archived**, in the rail

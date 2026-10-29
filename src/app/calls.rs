@@ -371,6 +371,13 @@ impl App {
     /// and the worker's updates move it on once its offer is out. A group's
     /// chat starts a call in the group, drawn as a group call from the start.
     fn place_call(&mut self, chat: ChatId, video: bool) {
+        if self.blocklist.contains(&chat) {
+            self.toast_error(crate::i18n::gettext(
+                self.locale,
+                "Unblock this contact to call them.",
+            ));
+            return;
+        }
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         let group = crate::model::ChatKind::from_id(&chat) == crate::model::ChatKind::Group;

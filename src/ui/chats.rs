@@ -1690,6 +1690,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             "Copy number",
             &crate::i18n::gettext(app.locale, "Clear chat"),
             &crate::i18n::gettext(app.locale, "Delete chat"),
+            &super::blocking::label(app, &chat.id),
         ],
         true,
     )
@@ -2157,8 +2158,9 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions.push(Action::OpenChat(chat.id.clone()));
         app.actions.push(Action::OpenInfo(chat.id.clone()));
     }
-    // Clearing and deleting reach the phone, so both wait for a connection.
+    // Blocking, clearing and deleting reach WhatsApp and need a connection.
     let connected = app.is_connected();
+    super::blocking::menu(app, ui, &chat.id);
     if widgets::menu_item_enabled(
         ui,
         palette,

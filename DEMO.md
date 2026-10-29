@@ -70,7 +70,9 @@ dialog with a spot pasted in. `typing`, `mention`, and
 `emoji-complete` preview the multiline field and inline suggestions.
 `mention-everyone` shows the group's synthetic `@all` message with the
 everyone suggestion at the top of the composer list.
-Use `--demo-page chat-menu` to preview the compact chat context menu,
+Use `--demo-page blocked` to preview a blocked conversation, `blocked-contacts`
+for the privacy list, or `block-confirm` for its confirmation. Use
+`--demo-page chat-menu` to preview the compact chat context menu,
 `--demo-page chat-header-menu` for the menu at the top of an open chat, and
 `--demo-page chat,voice,voice-menu` for a voice message's menu with its speeds.
 `--demo-page motion` shows a motion photo, `motion-playing` plays its clip in

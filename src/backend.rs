@@ -128,6 +128,22 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    FetchBlocklist,
+    SetBlocked {
+        chat: ChatId,
+        blocked: bool,
+    },
+    /// Internal replies from the library, bound to the requesting session.
+    BlocklistFetched {
+        generation: u64,
+        result: Result<Vec<ChatId>, ()>,
+    },
+    BlockedSet {
+        generation: u64,
+        chat: ChatId,
+        blocked: bool,
+        result: Result<(), ()>,
+    },
     RefreshPoll {
         chat: ChatId,
         message: String,
@@ -1047,6 +1063,17 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    Blocklist {
+        state: crate::blocking::Blocklist,
+        error: Option<crate::blocking::Failure>,
+    },
+    /// Apply a privacy-id mapping together with its chat locks and blocklist.
+    BlocklistMapped {
+        from: ChatId,
+        to: ChatId,
+        chats: Vec<Chat>,
+        state: crate::blocking::Blocklist,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,
@@ -1487,6 +1514,7 @@ pub struct ChannelPicture {
 /// Why the worker refused a send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
+    Blocked,
     /// There is no WhatsApp connection.
     Offline,
     /// The message being replied to cannot be quoted, because its row or its

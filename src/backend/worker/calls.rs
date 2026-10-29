@@ -228,6 +228,11 @@ impl Worker {
             return;
         }
         let placing = CallUpdate::placing(generation, chat.to_string(), video);
+        if self.blocklist.contains(&self.canonical_str(&chat)) {
+            self.emit(Event::Error("Unblock this contact to call them.".into()));
+            self.emit_call(placing.not_placed());
+            return;
+        }
         if self.call_busy() {
             self.emit_call(placing.not_placed());
             return;
