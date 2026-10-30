@@ -346,3 +346,5 @@ opt-level = 2
 # Compiles the PO catalogs to Rust, leaving out unfinished entries. Ordinary
 # builds do not need gettext tools.
 fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.15.2", features = ["build"] }
+# Checks a speech runtime a release carries against its pin (build.rs).
+sha2 = "0.11"

@@ -94,9 +94,20 @@ jobs:
       # The repository pins its toolchain; add the cross-target's standard
       # library to the toolchain the pin actually resolves to.
       - run: rustup target add ${{ matrix.target }}
+      # The speech runtime goes beside ZapFast in every package, and inside
+      # it too, for a portable copy whose updater replaces only the executable
+      # (PACKAGING.md, "Speech runtime").
+      - name: Speech runtime
+        shell: bash
+        run: |
+          python=python3
+          if [ "${{ runner.os }}" = "Windows" ]; then python=python; fi
+          "$python" packaging/onnxruntime.py ${{ matrix.target }} target/onnxruntime-embed
       # No compiler cache: published binaries never build from outputs
       # restored from an Actions cache.
       - run: cargo build --locked --release --target ${{ matrix.target }}
+        env:
+          ZAPFAST_ONNXRUNTIME_EMBED: target/onnxruntime-embed
 
       # native-packages signs the Windows code (native-packages.yaml,
       # windows.signing) through the Azure CLI sign-in below, once the
@@ -133,10 +144,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
           fi
           cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
-          # The speech runtime ZapFast loads from beside itself.
-          python=python3
-          if [ "${{ runner.os }}" = "Windows" ]; then python=python; fi
-          "$python" packaging/onnxruntime.py ${{ matrix.target }} "dist/$name"
+          cp target/onnxruntime-embed/* "dist/$name/"
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Desktop integration for package builds and hand-installs.
             cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg contrib/omarchy/zapfast.json.tpl contrib/omarchy/zapfast-theme "dist/$name/"

@@ -502,7 +502,9 @@ until the new one is saved. A message being transcribed says
 **Transcribing…**.
 
 Transcription works on Windows, Linux and macOS 13.4 or later, Apple silicon or
-Intel, with the speech runtime each ZapFast package carries. On Windows it needs
+Intel, with the speech runtime each ZapFast package carries; on Linux and Windows
+ZapFast also carries it inside itself (about 5 to 8 MB of the download), so a
+portable copy updated from an earlier release transcribes too. On Windows it needs
 the Microsoft Visual C++ Redistributable, 2019 or later; Settings names what is
 missing and where to get it. A copy built from source needs the runtime beside
 it (see Getting Started).

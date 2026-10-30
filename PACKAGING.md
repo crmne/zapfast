@@ -192,6 +192,18 @@ in `/app/lib`, Nix bakes its store path in with `ZAPFAST_ONNXRUNTIME`, and the
 Arch recipes install it in `/usr/lib/zapfast`. For a local build, use
 `target/debug` or `target/release` as DESTINATION.
 
+Linux and Windows release builds also carry the runtime inside ZapFast, so a
+portable copy whose updater replaced only the executable, such as one updated
+from a release before transcription, still transcribes. The release workflow
+names the folder `packaging/onnxruntime.py` filled in `ZAPFAST_ONNXRUNTIME_EMBED`;
+`build.rs` refuses a library other than the one `packaging/onnxruntime.sha256`
+pins. That adds 5 to 8 MB to each Linux and Windows download. ZapFast uses an
+installed runtime first; without one, or where it cannot load, the first
+transcription writes the carried copy and its notices to
+`<cache>/speech-runtime/onnxruntime-<version>-<rid>-<hash>/`, checks its hash
+there before every use, and replaces a damaged copy. Builds without the
+variable, Flatpak, Nix and the Arch source recipes among them, carry nothing.
+
 `packaging.yml` makes the packages it checks from v0.13.1's archives, which
 predate the runtime, so without a version it first adds the runtime to them as
 the release workflow does. The installation check loads the installed library

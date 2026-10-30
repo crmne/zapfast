@@ -22,7 +22,9 @@ Inference uses [parakeet-rs](https://crates.io/crates/parakeet-rs)
 Packages carry ONNX Runtime 1.23.2 as Microsoft builds it, from the
 `Microsoft.ML.OnnxRuntime` NuGet package, with its license and third-party
 notices beside the library (`onnxruntime-LICENSE.txt` and
-`onnxruntime-ThirdPartyNotices.txt`, or `share/licenses/onnxruntime/`).
+`onnxruntime-ThirdPartyNotices.txt`, or `share/licenses/onnxruntime/`). Linux
+and Windows releases also carry it inside ZapFast, and write it with both
+notices to ZapFast's cache, under `speech-runtime/`, when they use that copy.
 
 The following MIT notice applies to parakeet-rs and ONNX Runtime:
 

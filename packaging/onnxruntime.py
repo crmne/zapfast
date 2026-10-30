@@ -8,7 +8,9 @@ universal app. DESTINATION receives the ONNX Runtime library ZapFast loads
 (onnxruntime.dll, libonnxruntime.dylib or libonnxruntime.so) and its license
 and notices. The library comes from Microsoft's Microsoft.ML.OnnxRuntime
 package on NuGet, pinned with its SHA-256 in flatpak/onnxruntime-sources.json,
-which Flatpak and Nix read too. The package is kept under target/onnxruntime.
+which Flatpak and Nix read too, and each library is checked against
+onnxruntime.sha256, which build.rs reads when it carries one inside ZapFast
+(ZAPFAST_ONNXRUNTIME_EMBED). The package is kept under target/onnxruntime.
 """
 
 import hashlib
@@ -73,21 +75,36 @@ def package(cache):
     return path
 
 
-def place(target, destination, nupkg):
+def pinned(hashes=None):
+    """The SHA-256 of each library, by its path inside the package."""
+    text = hashes or (HERE / "onnxruntime.sha256").read_text()
+    return {name: digest for digest, name in (line.split() for line in text.splitlines() if line.strip())}
+
+
+def extract(archive, rid, hashes):
+    name = f"runtimes/{rid}/native/{library(rid)}"
+    data = archive.read(name)
+    if hashlib.sha256(data).hexdigest() != hashes.get(name):
+        sys.exit(f"{name} does not match onnxruntime.sha256")
+    return data
+
+
+def place(target, destination, nupkg, hashes=None):
     rids = TARGETS[target]
+    hashes = pinned(hashes)
     destination.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(nupkg) as archive:
         for name, output in NOTICES.items():
             (destination / output).write_bytes(archive.read(name))
         if len(rids) == 1:
             rid = rids[0]
-            (destination / library(rid)).write_bytes(archive.read(f"runtimes/{rid}/native/{library(rid)}"))
+            (destination / library(rid)).write_bytes(extract(archive, rid, hashes))
             return
         with tempfile.TemporaryDirectory(dir=destination) as work:
             slices = []
             for rid in rids:
                 path = Path(work) / rid
-                path.write_bytes(archive.read(f"runtimes/{rid}/native/{library(rid)}"))
+                path.write_bytes(extract(archive, rid, hashes))
                 slices.append(str(path))
             subprocess.run(["lipo", "-create", *slices, "-output", str(destination / library(rids[0]))], check=True)
 

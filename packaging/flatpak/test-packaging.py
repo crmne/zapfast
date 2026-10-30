@@ -73,21 +73,32 @@ class FlatpakPackaging(unittest.TestCase):
                 archive.writestr("ThirdPartyNotices.txt", "notices")
                 for rid in ["linux-x64", "linux-arm64", "win-x64", "win-arm64", "osx-arm64", "osx-x64"]:
                     archive.writestr(f"runtimes/{rid}/native/{helper.library(rid)}", rid)
+            pins = "".join(f"{hashlib.sha256(rid.encode()).hexdigest()}  runtimes/{rid}/native/{helper.library(rid)}\n"
+                           for rid in ["linux-x64", "win-arm64", "osx-x64"])
             for target, rid, name in [("x86_64-unknown-linux-gnu", "linux-x64", "libonnxruntime.so"),
                                       ("aarch64-pc-windows-msvc", "win-arm64", "onnxruntime.dll"),
                                       ("x86_64-apple-darwin", "osx-x64", "libonnxruntime.dylib")]:
                 with self.subTest(target=target):
                     output = directory / target
-                    helper.place(target, output, nupkg)
+                    helper.place(target, output, nupkg, pins)
                     self.assertEqual((output / name).read_text(), rid)
                     self.assertEqual((output / "onnxruntime-LICENSE.txt").read_text(), "license")
                     self.assertEqual((output / "onnxruntime-ThirdPartyNotices.txt").read_text(), "notices")
-        # Every release target has a runtime.
+            # A library that is not the pinned one is refused.
+            with self.assertRaises(SystemExit):
+                helper.place("x86_64-pc-windows-msvc", directory / "refused", nupkg, pins)
+        # Every target has a pinned library, and every Linux and Windows
+        # release build carries it.
+        pinned = helper.pinned()
+        for target, rids in helper.TARGETS.items():
+            for rid in rids:
+                self.assertRegex(pinned[f"runtimes/{rid}/native/{helper.library(rid)}"], r"^[0-9a-f]{64}$")
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
                        "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]:
             self.assertIn(f"target: {target}", workflow)
             self.assertIn(target, helper.TARGETS)
+        self.assertIn("ZAPFAST_ONNXRUNTIME_EMBED: target/onnxruntime-embed", workflow)
         self.assertIn("onnxruntime.py universal-apple-darwin", workflow)
 
     def test_source_and_bundle_have_the_same_sandbox(self):

@@ -13,6 +13,7 @@ use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber};
 
 mod catalog;
 mod download;
+mod embedded;
 pub use catalog::Model;
 
 /// Public, non-sensitive model progress. It contains no account or audio data.
@@ -46,10 +47,11 @@ pub enum Error {
 
 pub type Progress = Box<dyn Fn(State) + Send>;
 
-/// Whether this copy of ZapFast carries the speech runtime. The recognizer
-/// needs no system speech package, GPU driver, Python or helper executable.
+/// Whether this copy of ZapFast has the speech runtime, installed or carried
+/// inside it, without touching the carried copy. The recognizer needs no
+/// system speech package, GPU driver, Python or helper executable.
 pub fn available() -> bool {
-    runtime_library().is_some()
+    embedded::CARRIED || installed_runtime().is_some()
 }
 
 /// Turns off ONNX Runtime's own usage reports before anything loads it: from
@@ -79,7 +81,7 @@ const RUNTIME_BESIDE_EXECUTABLE: &[&str] = &[
 
 /// The runtime named by `ORT_DYLIB_PATH`, else the one a package was built
 /// against (`ZAPFAST_ONNXRUNTIME`), else the one beside the executable.
-fn runtime_library() -> Option<PathBuf> {
+fn installed_runtime() -> Option<PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
     FOUND
         .get_or_init(|| {
@@ -187,9 +189,6 @@ struct Loaded {
     engine: ParakeetTDT,
 }
 
-const RUNTIME_MISSING: &str = "This copy of ZapFast does not include the speech runtime. \
-     Download ZapFast again from https://zapfast.rocks/download/ to add it.";
-
 /// Microsoft's Windows build writes usage events to Event Tracing for Windows,
 /// which Windows' diagnostic data can collect and send to Microsoft. The
 /// switch is process-wide, and a Windows trace session that enables the
@@ -204,6 +203,19 @@ fn silence_runtime_events() {
         // SAFETY: a status the runtime returned, released once.
         unsafe { (ort::api().ReleaseStatus)(status.0) };
     }
+}
+
+/// Where the runtime a release carries is written, beside the model weights
+/// and away from every account's folders.
+fn runtime_directory() -> PathBuf {
+    crate::paths::AppDirs::discover()
+        .cache
+        .join("speech-runtime")
+}
+
+fn runtime_load_failure(error: ort::LoadDynamicError) -> Error {
+    log::warn!("could not load ONNX Runtime: {error}");
+    Error::Model(runtime_failure())
 }
 
 /// Why the runtime would not load, as far as this computer can tell.
@@ -264,11 +276,20 @@ fn environment() -> Result<ort::environment::Environment, Error> {
     if let Some(environment) = &*current {
         return Ok(environment.clone());
     }
-    let library = runtime_library().ok_or_else(|| Error::Model(RUNTIME_MISSING.to_owned()))?;
-    let builder = ort::init_from(&library).map_err(|error| {
-        log::warn!("could not load ONNX Runtime: {error}");
-        Error::Model(runtime_failure())
-    })?;
+    // An installed runtime first; the one this copy carries where none is,
+    // or where the installed one cannot load, such as one an earlier version
+    // left beside a portable copy.
+    let builder = match installed_runtime().map(|library| ort::init_from(&library)) {
+        Some(Ok(builder)) => builder,
+        Some(Err(error)) if !embedded::CARRIED => return Err(runtime_load_failure(error)),
+        installed => {
+            if let Some(Err(error)) = installed {
+                log::warn!("could not load the installed ONNX Runtime: {error}");
+            }
+            let carried = embedded::library(&runtime_directory())?;
+            ort::init_from(&carried).map_err(runtime_load_failure)?
+        }
+    };
     // Before the environment exists, so its start event is not written either.
     silence_runtime_events();
     let environment = builder
@@ -464,7 +485,7 @@ mod tests {
     /// Optional, explicitly supplied fixture, never the user's archive. Use a
     /// synthetic OGG and pre-downloaded models to validate a packaged engine.
     #[test]
-    #[ignore = "loads a real model; requires ORT_DYLIB_PATH, ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    #[ignore = "loads a real model; requires a runtime, ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
     fn native_model_transcribes_an_explicit_fixture() {
         let audio = std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture");
         let root = std::env::var_os("ZAPFAST_ASR_MODELS").expect("pinned model cache root");
@@ -488,6 +509,76 @@ mod tests {
         }
         // Explicit offline probe only, never a production log.
         println!("{text}");
+    }
+
+    /// A portable copy an earlier release's updater replaced: only the new
+    /// executable, nothing installed and no runtime in the cache. The settings
+    /// and state folders stay as they were; on a machine with none, setting
+    /// ZAPFAST_ASR_SYNTHETIC_SETTINGS first writes synthetic ones to check.
+    #[cfg(zapfast_embedded_runtime)]
+    #[test]
+    #[ignore = "writes the carried runtime to the cache and loads a real model; requires ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    fn the_carried_runtime_transcribes_with_nothing_installed() {
+        use std::collections::BTreeMap;
+
+        fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+            let mut found = BTreeMap::new();
+            let mut pending = vec![root.to_path_buf()];
+            while let Some(folder) = pending.pop() {
+                for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        pending.push(path);
+                    } else {
+                        found.insert(path.clone(), std::fs::read(&path).unwrap());
+                    }
+                }
+            }
+            found
+        }
+
+        assert!(std::env::var_os("ORT_DYLIB_PATH").is_none());
+        assert!(option_env!("ZAPFAST_ONNXRUNTIME").is_none());
+        assert_eq!(installed_runtime(), None, "nothing beside the executable");
+        let runtime = runtime_directory();
+        assert!(!runtime.exists(), "the runtime cache starts empty");
+        let dirs = crate::paths::AppDirs::discover();
+        let seeded =
+            std::env::var_os("ZAPFAST_ASR_SYNTHETIC_SETTINGS").is_some() && !dirs.config.exists();
+        if seeded {
+            std::fs::create_dir_all(&dirs.config).unwrap();
+            std::fs::write(
+                dirs.settings_file(),
+                r#"{"theme":"light","transcribe_voice_notes":true,"transcription_model":"parakeet-v3-int8"}"#,
+            )
+            .unwrap();
+        }
+        let before = (snapshot(&dirs.config), snapshot(&dirs.state));
+
+        let text = submit(
+            Model::default(),
+            Some(PathBuf::from(
+                std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture"),
+            )),
+            PathBuf::from(std::env::var_os("ZAPFAST_ASR_MODELS").expect("model cache root")),
+            Arc::new(AtomicBool::new(false)),
+            Box::new(|_| {}),
+        )
+        .expect("recognition with the carried runtime");
+        if let Ok(expected) = std::env::var("ZAPFAST_ASR_EXPECTED") {
+            assert!(text.to_lowercase().contains(&expected.to_lowercase()));
+        }
+        println!("{text}");
+
+        assert_eq!((snapshot(&dirs.config), snapshot(&dirs.state)), before);
+        if seeded {
+            let settings = crate::settings::Settings::load(&dirs.settings_file());
+            assert!(settings.transcribe_voice_notes);
+            assert_eq!(settings.transcription_model, Model::ParakeetV3Int8);
+        }
+        let written: Vec<_> = snapshot(&runtime).into_keys().collect();
+        println!("{written:#?}");
+        assert_eq!(written.len(), 3, "the library and its two notices");
     }
 
     /// Simulates idle eviction without a real-time minute-long sleep. The
