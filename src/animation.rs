@@ -435,8 +435,11 @@ fn decode_still(path: &Path) -> Option<Decoded> {
     limits.reserve(decoder.total_bytes()).ok()?;
     decoder.set_limits(limits).ok()?;
     let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    if image.width() > MAX_WIDTH || image.height() > MAX_WIDTH {
+        image = image.thumbnail(MAX_WIDTH, MAX_WIDTH);
+    }
     image.apply_orientation(orientation);
-    let image = image.thumbnail(MAX_WIDTH, MAX_WIDTH).to_rgba8();
+    let image = image.to_rgba8();
     Some(Decoded {
         frames: vec![(to_color_image(&image), Duration::ZERO)],
     })
@@ -480,7 +483,7 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         let image = image::RgbaImage::from_raw(width, height, frame.data().to_vec())?;
         let delay = (i64::from(frame.timestamp()) - previous).max(20) as u64;
         previous = i64::from(frame.timestamp());
-        let image = if limit == 1 {
+        let image = if limit == 1 && (width > MAX_WIDTH || height > MAX_WIDTH) {
             image::DynamicImage::ImageRgba8(image)
                 .thumbnail(MAX_WIDTH, MAX_WIDTH)
                 .to_rgba8()
@@ -846,6 +849,26 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn small_posters_keep_their_original_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        for extension in ["jpg", "png", "webp"] {
+            let path = dir.path().join(format!("small.{extension}"));
+            image::RgbImage::from_pixel(64, 48, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            assert_eq!(decode(&path, 1).unwrap().frames[0].0.size, [64, 48]);
+        }
+        let path = dir.path().join("animated.webp");
+        let mut encoder = webp_animation::Encoder::new((64, 48)).unwrap();
+        for (index, shade) in [40, 200].into_iter().enumerate() {
+            let frame = image::RgbaImage::from_pixel(64, 48, image::Rgba([shade, 0, 0, 255]));
+            encoder.add_frame(&frame, index as i32 * 100).unwrap();
+        }
+        std::fs::write(&path, &*encoder.finalize(200).unwrap()).unwrap();
+        assert_eq!(decode(&path, 1).unwrap().frames[0].0.size, [64, 48]);
+    }
 
     /// Tall animated posters stay bounded while playback retains its previous resolution.
     #[test]
