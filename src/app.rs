@@ -3310,6 +3310,8 @@ impl App {
                 self.me_about = about;
             }
             Event::LinkPreviewsDisabled(disabled) => self.link_previews_disabled = disabled,
+            // The composer card that shows it arrives in a later change.
+            Event::LinkPreview { .. } => {}
             Event::Call(update) => self.handle_call_update(*update),
             Event::PhoneOnlyCall(update) => self.handle_phone_only_call(*update),
             Event::CallDevices(devices) => self.call_devices = *devices,
@@ -5851,6 +5853,7 @@ impl App {
             text,
             quoting,
             mentions,
+            preview: None,
         });
         self.follow_outgoing();
     }
