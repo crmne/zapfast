@@ -3361,20 +3361,27 @@ impl App {
             }
             Event::LinkPreviewsDisabled(disabled) => {
                 self.link_previews_disabled = disabled;
+                // Only this event's own account is touched: the composer
+                // state is the window's, and may belong to another account.
+                let origin = self.account().id.clone();
                 // Turned back on, the text is asked about afresh.
-                if !disabled {
+                if !disabled
+                    && self
+                        .preview_seen
+                        .as_ref()
+                        .is_some_and(|seen| seen.0 == origin)
+                {
                     self.preview_seen = None;
                 }
-                // A card already above the composer goes with the setting.
-                if disabled && !self.events_hidden {
-                    let account = self.account().id.clone();
-                    if self
-                        .composer_preview
-                        .as_ref()
-                        .is_some_and(|preview| preview.account == account)
-                    {
-                        self.composer_preview = None;
-                    }
+                // A card already above the composer goes with the setting,
+                // and a hidden account's loading one, whose answer is lost.
+                if disabled
+                    && self.composer_preview.as_ref().is_some_and(|preview| {
+                        preview.account == origin
+                            && (!self.events_hidden || preview.state == LinkPreviewState::Loading)
+                    })
+                {
+                    self.composer_preview = None;
                 }
             }
             Event::LinkPreview { url, preview } => self.link_preview_arrived(url, preview),
@@ -5853,14 +5860,24 @@ impl App {
             // An answer dropped for being hidden must not leave its card
             // loading: forget it and the text seen, so the pause runs and
             // asks again on return.
-            if self.events_hidden
-                && self
-                    .composer_preview
+            if self.events_hidden {
+                // `account()` is the answer's own account while hidden; the
+                // composer state may be another account's.
+                let origin = self.account().id.clone();
+                if self.composer_preview.as_ref().is_some_and(|asked| {
+                    asked.account == origin
+                        && asked.url == url
+                        && asked.state == LinkPreviewState::Loading
+                }) {
+                    self.composer_preview = None;
+                }
+                if self
+                    .preview_seen
                     .as_ref()
-                    .is_some_and(|asked| asked.state == LinkPreviewState::Loading)
-            {
-                self.composer_preview = None;
-                self.preview_seen = None;
+                    .is_some_and(|seen| seen.0 == origin)
+                {
+                    self.preview_seen = None;
+                }
             }
             return;
         }
@@ -19505,6 +19522,47 @@ mod tests {
         app.watch_link_preview(1.0);
         app.watch_link_preview(1.6);
         assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+    }
+
+    /// A hidden account's dropped answer leaves the card and pause of the
+    /// account on screen alone.
+    #[test]
+    fn composer_preview_hidden_answer_leaves_other_account_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _hidden_commands) = two_accounts(directory.path());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(PREVIEW_CHAT.into(), "Fixture".into()));
+        app.open_chat = Some(PREVIEW_CHAT.into());
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        // Typing again starts a pause that is still running.
+        app.composer = "hi https://ex.com/a!".into();
+        app.watch_link_preview(2.0);
+        let (card, seen, typed_at) = (
+            app.composer_preview.clone(),
+            app.preview_seen.clone(),
+            app.preview_typed_at,
+        );
+        assert!(typed_at.is_some());
+        // The other account's answer, applied the way `handle_events` does.
+        app.active = 1;
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        app.active = 0;
+        assert_eq!(app.composer_preview, card);
+        assert_eq!(app.preview_seen, seen);
+        assert_eq!(app.preview_typed_at, typed_at);
+        app.watch_link_preview(2.6);
+        assert!(preview_fetches(&mut commands).is_empty(), "asked once");
     }
 
     #[test]
