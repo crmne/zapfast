@@ -365,22 +365,34 @@ async fn read_body(mut response: reqwest::Response, limit: usize) -> Option<(Vec
     Some((body, false))
 }
 
+/// Makes SOCKS proxies resolve the target name themselves, so it is never
+/// looked up on this computer. Credentials and other schemes are unchanged.
+fn proxy_url_for_preview(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("socks5://") {
+        format!("socks5h://{rest}")
+    } else if let Some(rest) = url.strip_prefix("socks4://") {
+        format!("socks4a://{rest}")
+    } else {
+        url.to_owned()
+    }
+}
+
 fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= MAX_REDIRECTS || !literal_host_allowed(attempt.url()) {
+            if attempt.previous().len() > MAX_REDIRECTS || !literal_host_allowed(attempt.url()) {
                 attempt.stop()
             } else {
                 attempt.follow()
             }
         }))
         .no_proxy();
-    let proxied = if let Some(proxy) = crate::proxy::reqwest_proxy() {
-        builder = builder.proxy(proxy);
+    let proxied = if let Some(proxy) = crate::proxy::from_settings() {
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url_for_preview(proxy.url())).ok()?);
         true
     } else if let Some(proxy) = url.host_str().and_then(crate::proxy::from_env) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy.url()).ok()?);
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url_for_preview(proxy.url())).ok()?);
         true
     } else {
         false
@@ -472,6 +484,21 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    #[test]
+    fn socks_proxies_resolve_names_remotely() {
+        assert_eq!(
+            proxy_url_for_preview("socks5://u:p@127.0.0.1:1080"),
+            "socks5h://u:p@127.0.0.1:1080"
+        );
+        assert_eq!(
+            proxy_url_for_preview("socks4://127.0.0.1:1080"),
+            "socks4a://127.0.0.1:1080"
+        );
+        for kept in ["socks5h://u:p@h:1", "socks4a://h:1", "http://u:p@h:8080"] {
+            assert_eq!(proxy_url_for_preview(kept), kept);
+        }
+    }
 
     fn base() -> reqwest::Url {
         reqwest::Url::parse("https://ex.com/a/b").unwrap()
