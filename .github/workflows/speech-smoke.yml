@@ -37,18 +37,27 @@ jobs:
     needs: fixture
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
-    timeout-minutes: 120
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: Windows x64, os: windows-latest, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
-          - { name: Windows arm64, os: windows-11-arm, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
+          - { name: Linux x64, os: ubuntu-24.04, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast, carried: true, exe: zapfast }
+          - { name: Linux arm64, os: ubuntu-24.04-arm, runtime: aarch64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast, carried: true, exe: zapfast }
+          # Where the release's Linux builds are made, with its oldest glibc.
+          - { name: Debian 12 x64, os: ubuntu-24.04, container: 'debian:12', runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast, carried: true, exe: zapfast }
+          - { name: Windows x64, os: windows-latest, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll, packaged: ., carried: true, exe: zapfast.exe }
+          - { name: Windows arm64, os: windows-11-arm, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll, packaged: ., carried: true, exe: zapfast.exe }
+          - { name: macOS Intel, os: macos-15-intel, runtime: universal-apple-darwin, library: libonnxruntime.dylib, packaged: ../Frameworks, carried: false, exe: zapfast }
     defaults:
       run:
         shell: bash
     env:
       ZAPFAST_ASR_EXPECTED: dog
+      # The release workflow's setting: Linux and Windows builds carry the runtime.
+      ZAPFAST_ONNXRUNTIME_EMBED: runtime
+      # This runner's Homebrew webp does not link; the crate's own build does.
+      LIBWEBP_SYS_STATIC: ${{ runner.os == 'macOS' && '1' || '' }}
     steps:
       - name: Debian build dependencies
         if: matrix.container
@@ -84,49 +93,74 @@ jobs:
         with:
           name: speech
           path: speech
-      - name: The runtime the release puts beside ZapFast
+      - name: The runtime the release puts beside ZapFast and inside it
         run: |
           python=python3
           if [ "$RUNNER_OS" = Windows ]; then python=python; fi
           "$python" packaging/onnxruntime.py ${{ matrix.runtime }} runtime
           ls -l runtime
-      - name: Build the tests
-        run: cargo test --locked --lib --no-run
+      - name: A release build, as the release workflow makes it
+        run: |
+          cargo build --locked --release
+          ls -l target/release/${{ matrix.exe }}
+          target/release/${{ matrix.exe }} --version
+          python=python3
+          if [ "$RUNNER_OS" = Windows ]; then python=python; fi
+          "$python" - target/release/${{ matrix.exe }} runtime/${{ matrix.library }} ${{ matrix.carried }} <<'PY'
+          import pathlib, sys
+          executable, library, carried = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3] == "true"
+          inside = library.read_bytes() in executable.read_bytes()
+          print(f"{executable}: {executable.stat().st_size} bytes, carries {library.name}: {inside}")
+          assert inside == carried
+          assert not (executable.parent / library.name).exists()
+          PY
+      - name: Only the new executable, nothing installed and an empty cache
+        if: matrix.carried
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            home=$(mktemp -d)
+            export XDG_CONFIG_HOME="$home/config" XDG_STATE_HOME="$home/state" XDG_CACHE_HOME="$home/cache"
+          fi
+          test ! -e "target/release/deps/${{ matrix.library }}"
+          export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
+          export ZAPFAST_ASR_SYNTHETIC_SETTINGS=1
+          cargo test --locked --release --lib -- --ignored --exact --nocapture 'transcribe::tests::the_carried_runtime_transcribes_with_nothing_installed'
+      - name: Clippy where the runtime is carried
+        if: matrix.name == 'Linux x64' || matrix.name == 'Windows x64'
+        run: cargo clippy --locked --release --all-targets -- -D warnings
+      - name: The library's own tests, with what a release carries
+        run: cargo test --locked --release --lib
       - name: Runtime, idle reload and a model switch (v3 FP32, then INT8)
         run: |
           export ORT_DYLIB_PATH="$PWD/runtime/${{ matrix.library }}"
           export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
           export ZAPFAST_ASR_SWITCH_MODEL=parakeet-v3-int8
-          cargo test --locked --lib -- --ignored --test-threads=1 --nocapture 'transcribe::tests::'
+          cargo test --locked --release --lib -- --ignored --test-threads=1 --nocapture 'transcribe::tests::native_model' 'transcribe::tests::the_runtime_environment'
       - name: The runtime found where packages put it, relative to the executable
         run: |
           export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
-          mkdir -p "target/debug/deps/${{ matrix.packaged }}"
-          cp "runtime/${{ matrix.library }}" "target/debug/deps/${{ matrix.packaged }}/"
-          cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
+          mkdir -p "target/release/deps/${{ matrix.packaged }}"
+          cp "runtime/${{ matrix.library }}" "target/release/deps/${{ matrix.packaged }}/"
+          cargo test --locked --release --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
       - name: Parakeet Ultra
         if: matrix.name == 'Linux x64' || matrix.name == 'Windows x64'
         run: |
           export ORT_DYLIB_PATH="$PWD/runtime/${{ matrix.library }}"
           export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
           export ZAPFAST_ASR_MODEL=parakeet-ultra-fp32
-          cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
-      - name: The app starts with the telemetry guard and prints its version
-        run: |
-          cargo build --locked
-          target/debug/zapfast --version
+          cargo test --locked --release --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
       - name: The macOS bundle carries and signs the runtime
         if: runner.os == 'macOS'
         run: |
-          bash packaging/macos/bundle.sh target/debug/zapfast "$RUNNER_TEMP/ZapFast.app" 0.0.0 runtime
+          bash packaging/macos/bundle.sh target/release/zapfast "$RUNNER_TEMP/ZapFast.app" 0.0.0 runtime
           codesign --verify --strict --deep "$RUNNER_TEMP/ZapFast.app"
           lipo -info "$RUNNER_TEMP/ZapFast.app/Contents/Frameworks/libonnxruntime.dylib"
           ls "$RUNNER_TEMP/ZapFast.app/Contents/Resources"/onnxruntime-*
-      - name: What the Windows runtime imports, and its signature
+      - name: What the Windows runtime and ZapFast import, and the runtime's signature
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Get-AuthenticodeSignature runtime\onnxruntime.dll | Format-List Status, SignerCertificate
           $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           & $dumpbin.FullName /nologo /dependents runtime\onnxruntime.dll
-          & $dumpbin.FullName /nologo /dependents target\debug\zapfast.exe
+          & $dumpbin.FullName /nologo /dependents target\release\zapfast.exe
