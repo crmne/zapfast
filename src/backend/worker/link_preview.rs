@@ -184,10 +184,13 @@ fn decode(text: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         rest = &rest[amp..];
-        let decoded = rest[1..]
-            .find(';')
-            .filter(|&n| n <= 10)
-            .and_then(|n| entity(&rest[1..1 + n]).map(|c| (c, n + 2)));
+        // Only the next 11 bytes can hold the `;`, so a page full of `&`
+        // costs a constant each, not a scan of the rest.
+        let decoded = rest.as_bytes()[1..]
+            .iter()
+            .take(11)
+            .position(|&byte| byte == b';')
+            .and_then(|n| entity(rest.get(1..1 + n)?).map(|c| (c, n + 2)));
         match decoded {
             Some((c, used)) => {
                 // `&#0;` and the like would put control characters in a title.
@@ -479,7 +482,11 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
     }
     let base = response.url().clone();
     let (bytes, _) = read_body(response, MAX_PAGE).await?;
-    let meta = parse_page(&String::from_utf8_lossy(&bytes), &base);
+    // Parsing a large page is CPU work no timeout or abort can interrupt.
+    let meta =
+        tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
+            .await
+            .ok()?;
     if meta.title.is_none() && meta.description.is_none() && meta.image.is_none() {
         return None;
     }
@@ -522,6 +529,16 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    /// Every `&` here looks for a `;` that never comes; the look is bounded,
+    /// so the page decodes in linear time.
+    #[test]
+    fn decode_of_a_page_of_ampersands_is_linear() {
+        let text = "&".repeat(512 * 1024);
+        assert_eq!(decode(&text), text);
+        let wide = "&é".repeat(1024);
+        assert_eq!(decode(&wide), wide);
+    }
 
     #[test]
     fn common_named_entities_decode() {
