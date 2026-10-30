@@ -361,7 +361,7 @@ pub(super) fn thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     limits.max_image_height = Some(MAX_SOURCE_SIDE);
     limits.max_alloc = Some(MAX_DECODE_BYTES);
     reader.limits(limits);
-    let image = image::DynamicImage::from_decoder(reader.into_decoder().ok()?).ok()?;
+    let image = reader.decode().ok()?;
     if image.width() < MIN_SIDE || image.height() < MIN_SIDE {
         return None;
     }
