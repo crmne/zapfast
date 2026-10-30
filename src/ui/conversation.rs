@@ -6855,16 +6855,19 @@ fn context_menu(
     {
         speed_menu_row(ui, view, message, actions);
     }
-    if matches!(
-        message.content,
-        Content::Audio {
-            voice_note: true,
-            ..
-        }
-    ) && message
-        .content
-        .media()
-        .is_some_and(|media| media.path.is_some())
+    if matches!(origin, MenuOrigin::Chat)
+        && crate::transcribe::available()
+        && matches!(
+            message.content,
+            Content::Audio {
+                voice_note: true,
+                ..
+            }
+        )
+        && message
+            .content
+            .media()
+            .is_some_and(|media| media.path.is_some())
         && widgets::menu_item_enabled(
             ui,
             &palette,
@@ -6879,12 +6882,6 @@ fn context_menu(
                 .contains(&(chat.clone(), message.id.clone())),
         )
     {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
         actions.push(Action::TranscribeAgain {
             chat: chat.clone(),
             message: message.id.clone(),

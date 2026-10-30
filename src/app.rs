@@ -639,9 +639,10 @@ pub struct App {
     /// it left out has just arrived. Kept apart from `voices_sent`: that one
     /// is what the backend still has queued, and cancellation needs it.
     voices_resend: bool,
-    /// Manual requests in the account on screen. A missing viewport report
-    /// (including the frame that opens a starred row) must not cancel them.
-    /// They end with their answer, or when the reader leaves or locks the chat.
+    /// Manual requests in the account on screen. An empty or missing viewport
+    /// report, as automatic transcription being off sends, must not cancel
+    /// them. They end with their answer, or when the reader leaves or locks
+    /// the chat.
     voices_explicit: HashSet<(ChatId, String)>,
     /// When `voices_wanted` last changed, for the debounce.
     voices_changed: Instant,
@@ -11751,9 +11752,9 @@ mod tests {
     }
 
     #[test]
-    /// The menu's post-draw navigation must not cancel a one-message retry or
-    /// enable automatic work, and another account cannot finish that retry.
-    fn a_manual_transcription_from_a_starred_row_survives_the_opening_frame() {
+    /// Automatic transcription being off must not cancel a one-message retry,
+    /// the retry must not enable it, and another account cannot finish it.
+    fn a_manual_transcription_survives_while_automatic_transcription_is_off() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -11767,16 +11768,7 @@ mod tests {
             .or_default()
             .messages
             .push(row);
-        app.show_starred = true;
-        // The list menu opens the chat after drawing, then asks for the retry.
-        app.apply(
-            Action::OpenMessage {
-                chat: chat.into(),
-                message: "voice".into(),
-            },
-            &ctx,
-        );
-        while commands.try_recv().is_ok() {}
+        app.open_chat = Some(chat.into());
         app.settings_dirty = false;
         app.apply(
             Action::TranscribeAgain {
@@ -11794,10 +11786,7 @@ mod tests {
             commands.try_recv(),
             Ok(Command::TranscribeAgain { .. })
         ));
-        assert!(
-            app.voices_on_screen.is_none(),
-            "the new conversation has not drawn yet"
-        );
+        assert!(app.voices_on_screen.is_none());
         app.queue_transcriptions(&ctx);
         app.voices_on_screen = Some((chat.into(), Vec::new()));
         app.queue_transcriptions(&ctx);
