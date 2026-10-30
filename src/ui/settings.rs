@@ -212,9 +212,7 @@ impl Section {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    if theme::chrome_in_headers(ui.ctx()) {
-        super::banner(app, ui);
-    }
+    super::banner(app, ui);
     let palette = app.palette;
     let locale = app.locale;
     // The caption buttons ZapFast draws, beside the column's title row when
@@ -1208,9 +1206,7 @@ fn language_picker(ui: &mut egui::Ui, app: &mut App) {
 
 /// Wallpaper colour picker and live preview.
 pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
-    if theme::chrome_in_headers(ui.ctx()) {
-        super::banner(app, ui);
-    }
+    super::banner(app, ui);
     let palette = app.palette;
     let body_height = ui.available_height().max(0.0);
     ui.with_layout(

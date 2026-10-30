@@ -13123,6 +13123,76 @@ mod tests {
     }
 
     #[test]
+    fn connection_banner_stays_below_the_header_without_moving_the_list() {
+        fn text_rect(shapes: &[egui::epaint::ClippedShape], needle: &str) -> egui::Rect {
+            fn find(shape: &egui::Shape, needle: &str) -> Option<egui::Rect> {
+                match shape {
+                    egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+                        Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                    }
+                    egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, needle)),
+                    _ => None,
+                }
+            }
+            shapes
+                .iter()
+                .find_map(|shape| find(&shape.shape, needle))
+                .expect("banner text")
+        }
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let header_id = crate::ui::chats::header_row_id();
+        let original = ctx
+            .data(|data| data.get_temp::<egui::Rect>(header_id))
+            .unwrap();
+        app.syncing = true;
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let shapes = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        let list_header = ctx
+            .data(|data| data.get_temp::<egui::Rect>(header_id))
+            .unwrap();
+        assert_eq!(list_header.top(), original.top());
+        let chat_header = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::header_row_id()))
+            .unwrap();
+        let banner = text_rect(&shapes, "Loading chat history");
+        assert!(banner.left() >= chat_header.left());
+        assert!(banner.top() >= chat_header.bottom());
+        // The list-only layout retains the notice and its actions too.
+        let narrow_frame = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        app.open_chat = None;
+        for _ in 0..3 {
+            narrow_frame(&mut app);
+        }
+        let shapes = narrow_frame(&mut app);
+        let header = ctx
+            .data(|data| data.get_temp::<egui::Rect>(header_id))
+            .unwrap();
+        assert!(text_rect(&shapes, "Loading chat history").top() >= header.bottom());
+    }
+
+    #[test]
     fn preview_navigation_overlays_the_photo_on_hover() {
         fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
             fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {

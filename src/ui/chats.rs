@@ -46,7 +46,11 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
-            header(app, ui);
+            egui::Panel::top("narrow-chat-header")
+                .show_separator_line(false)
+                .frame(Frame::NONE)
+                .show(ui, |ui| header(app, ui));
+            super::banner(app, ui);
             body(app, ui);
         });
 }
