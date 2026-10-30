@@ -100,6 +100,16 @@
         <RegistryValue Root="HKCU" Key="Software\ZapFast"
           Name="Documents" Type="integer" Value="1" KeyPath="yes" />
       </Component>
+      <!-- The speech runtime voice message transcription loads (PACKAGING.md). -->
+      <Component Id="SpeechRuntime" Guid="{1746FA71-2ACB-4565-88CD-917F41AEEA8C}">
+        <File Id="OnnxRuntime" Name="onnxruntime.dll" Source="$(SourceDir)\onnxruntime.dll" KeyPath="no" />
+        <File Id="OnnxRuntimeLicense" Name="onnxruntime-LICENSE.txt"
+          Source="$(SourceDir)\onnxruntime-LICENSE.txt" KeyPath="no" />
+        <File Id="OnnxRuntimeNotices" Name="onnxruntime-ThirdPartyNotices.txt"
+          Source="$(SourceDir)\onnxruntime-ThirdPartyNotices.txt" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\ZapFast"
+          Name="SpeechRuntime" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
       <!--
         Taking over an Inno Setup install: its uninstaller and Settings > Apps
         entry go, and never run, because they would delete these files. The

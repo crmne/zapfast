@@ -162,25 +162,44 @@ A signature doesn't silence SmartScreen at once: reputation builds as people
 download releases signed by the same publisher, so keep signing every release
 with this identity.
 
-## ONNX Runtime in sandboxed builds
+## Speech runtime
 
-Parakeet links ONNX Runtime 1.31.0 at build time. Normal Cargo builds use the
-`ort` downloader with Rustls, not a system OpenSSL dependency. No native runtime
-binary is downloaded when the reader enables transcription, only model weights.
+Voice message transcription runs on ONNX Runtime 1.23.2 as Microsoft builds it,
+from the `Microsoft.ML.OnnxRuntime` NuGet package, whose URL and SHA-256 are
+pinned in `packaging/flatpak/onnxruntime-sources.json`. ZapFast loads the
+library when transcription starts, so building needs no runtime and ZapFast
+starts without one. 1.23 is the last release with an Intel macOS build; it
+needs macOS 13.4. Only model weights are downloaded when the reader enables
+transcription.
 
-Flatpak and Nix prefetch Microsoft's official `Microsoft.ML.OnnxRuntime` 1.31.0
-package from the NuGet registry, before entering their network-isolated builds.
-The URL and SHA-256 pin are shared in
-`packaging/flatpak/onnxruntime-sources.json`. Both select the platform's shared
-library from the package, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK`,
-and disable build-script downloads. Flatpak installs the library and its SONAME
-link under `/app/lib`; Nix patches the library and executable to use store
-paths. No runtime is fetched at app startup, and model weights are not bundled.
+ZapFast looks for the library at `ORT_DYLIB_PATH`, then at the path
+`ZAPFAST_ONNXRUNTIME` named at build time, then beside the executable:
+`onnxruntime.dll` on Windows, `../Frameworks/libonnxruntime.dylib` on macOS,
+and `libonnxruntime.so`, `../lib/zapfast/libonnxruntime.so` or
+`../lib/libonnxruntime.so` on Linux. Without one, Settings says so and no
+model is downloaded.
 
-An `ort`/`ort-sys` update must recheck the registry package's native API version
-and hash. `packaging/flatpak/test-packaging.py` checks the pinned registry source,
-crate, TLS features, both Linux architectures, offline extraction, shared-library
-installation and generated manifest completeness without downloading dependencies.
+`python3 packaging/onnxruntime.py TARGET DESTINATION` downloads the package,
+checks its hash and puts the library, `onnxruntime-LICENSE.txt` and
+`onnxruntime-ThirdPartyNotices.txt` in DESTINATION; `universal-apple-darwin`
+merges both macOS architectures. The release workflow puts them in each
+archive and Windows installer, and `bundle.sh` takes the folder as its fourth
+argument for `Contents/Frameworks`. For a local build, use
+`target/debug` or `target/release` as DESTINATION. Flatpak installs the library
+in `/app/lib`, Nix bakes its store path in with `ZAPFAST_ONNXRUNTIME`, and the
+Arch recipes install it in `/usr/lib/zapfast`.
+
+The deb, rpm and AppImage packages do not carry it yet: they are made from the
+published archive, and `packaging.yml` checks them against v0.13.1's, which
+lacks the library. Once a release archive has it, move that check to the release
+and add `libonnxruntime.so` to `native-packages.yaml` as
+`/usr/lib/zapfast/libonnxruntime.so`, with its notices.
+
+Microsoft's macOS and Linux builds report usage from 1.29 on unless
+`ORT_DISABLE_TELEMETRY` is set, which `src/main.rs` does before anything starts
+the runtime. On Windows, Windows' own diagnostic data can record one event, as
+Windows' privacy settings allow, when the runtime starts and before ZapFast
+turns its events off.
 
 ## Flatpak
 

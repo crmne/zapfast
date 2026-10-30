@@ -19,9 +19,10 @@ Inference uses [parakeet-rs](https://crates.io/crates/parakeet-rs)
 (MIT OR Apache-2.0) and [ONNX Runtime](https://github.com/microsoft/onnxruntime)
 (MIT). Model licenses are separate from the runtime licenses.
 
-Nix and Flatpak use Microsoft's official `Microsoft.ML.OnnxRuntime` 1.31.0
-NuGet package. They install its license and third-party notices with the native
-library under `share/licenses/onnxruntime/`.
+Packages carry ONNX Runtime 1.23.2 as Microsoft builds it, from the
+`Microsoft.ML.OnnxRuntime` NuGet package, with its license and third-party
+notices beside the library (`onnxruntime-LICENSE.txt` and
+`onnxruntime-ThirdPartyNotices.txt`, or `share/licenses/onnxruntime/`).
 
 The following MIT notice applies to parakeet-rs and ONNX Runtime:
 

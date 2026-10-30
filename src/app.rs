@@ -10553,10 +10553,6 @@ impl App {
     /// Wait for a settled viewport instead of transcribing every row that a
     /// quick scroll only passed by.
     fn queue_transcriptions(&mut self, ctx: &egui::Context) {
-        if !crate::transcribe::available() {
-            self.cancel_transcriptions();
-            return;
-        }
         if !self.voices_explicit.is_empty() {
             // This is a one-message request, not an opt-in to automatic work.
             // Keep it through missing/empty viewport reports and scrolling,

@@ -186,6 +186,8 @@ impl Drop for RemoveOnDrop {
 }
 
 fn main() -> eframe::Result<()> {
+    // SAFETY: nothing has started another thread yet.
+    unsafe { zapfast::transcribe::disable_runtime_telemetry() };
     let result = run();
     // A Windows release has no console, so an error that ends the start
     // would otherwise leave the reader nothing to see (#349). `run` has

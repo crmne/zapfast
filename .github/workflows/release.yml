@@ -81,7 +81,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential pkg-config \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
-            libpipewire-0.3-dev clang libclang-dev cmake perl
+            libpipewire-0.3-dev clang libclang-dev cmake perl python3
       - uses: actions/checkout@v7
       - name: Check release version
         shell: bash
@@ -133,6 +133,10 @@ jobs:
             cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
           fi
           cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
+          # The speech runtime ZapFast loads from beside itself.
+          python=python3
+          if [ "${{ runner.os }}" = "Windows" ]; then python=python; fi
+          "$python" packaging/onnxruntime.py ${{ matrix.target }} "dist/$name"
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Desktop integration for package builds and hand-installs.
             cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg contrib/omarchy/zapfast.json.tpl contrib/omarchy/zapfast-theme "dist/$name/"
@@ -161,6 +165,7 @@ jobs:
           New-Item -ItemType Directory -Force $payload | Out-Null
           Copy-Item "target\$target\release\zapfast.exe", README.md, LICENSE, THIRD-PARTY-NOTICES.md, `
             packaging\windows\zapfast-installer.txt $payload
+          Copy-Item "dist\zapfast-$env:GITHUB_REF_NAME-$target\onnxruntime*" $payload
           $packageTarget = if ($target.StartsWith("aarch64")) { "windows-arm64" } else { "windows-amd64" }
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           native-packages build --version $version --target $packageTarget `
@@ -234,7 +239,8 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist/macos-input
-          bash packaging/macos/bundle.sh universal/zapfast dist/macos-input/ZapFast.app "$version"
+          python3 packaging/onnxruntime.py universal-apple-darwin dist/onnxruntime
+          bash packaging/macos/bundle.sh universal/zapfast dist/macos-input/ZapFast.app "$version" dist/onnxruntime
           cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
 
       - name: Package, sign and notarize macOS app

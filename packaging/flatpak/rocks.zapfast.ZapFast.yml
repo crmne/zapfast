@@ -44,30 +44,23 @@ build-options:
   env:
     CARGO_HOME: /run/build/zapfast/cargo
     LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
-    ORT_LIB_LOCATION: /run/build/zapfast/onnxruntime
-    ORT_PREFER_DYNAMIC_LINK: '1'
-    ORT_SKIP_DOWNLOAD: '1'
 modules:
   - name: zapfast
     buildsystem: simple
     build-commands:
-      # The source stage fetches and verifies the runtime. Cargo's build
-      # sandbox has no network, including for native-library build scripts.
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --locked
+      - install -Dm755 target/release/zapfast /app/bin/zapfast
+      # The speech runtime ZapFast loads from /app/lib, which the source
+      # stage fetched and verified.
       - >-
         case "$FLATPAK_ARCH" in
         x86_64) rid=linux-x64 ;;
         aarch64) rid=linux-arm64 ;;
         *) echo "Unsupported ONNX Runtime architecture" >&2; exit 1 ;;
         esac;
-        mkdir -p onnxruntime;
-        unzip -j onnxruntime.nupkg "runtimes/$rid/native/*.so" -d onnxruntime;
-        ln -s libonnxruntime.so onnxruntime/libonnxruntime.so.1
-      - cargo --offline fetch --manifest-path Cargo.toml --verbose
-      - cargo --offline build --release --locked
-      - install -Dm755 target/release/zapfast /app/bin/zapfast
-      - install -Dm755 onnxruntime/libonnxruntime.so /app/lib/libonnxruntime.so
-      - install -Dm755 onnxruntime/libonnxruntime_providers_shared.so /app/lib/libonnxruntime_providers_shared.so
-      - ln -s libonnxruntime.so /app/lib/libonnxruntime.so.1
+        mkdir -p /app/lib;
+        unzip -j onnxruntime.nupkg "runtimes/$rid/native/libonnxruntime.so" -d /app/lib
       - mkdir -p /app/share/licenses/onnxruntime
       - unzip -j onnxruntime.nupkg LICENSE ThirdPartyNotices.txt -d /app/share/licenses/onnxruntime
       - install -Dm644 packaging/applications/*.desktop /app/share/applications/rocks.zapfast.ZapFast.desktop
@@ -85,6 +78,6 @@ modules:
       # Every crate the lockfile names, for the offline build; flathub.sh
       # writes it with flatpak-cargo-generator.
       - cargo-sources.json
-      # Microsoft's official NuGet package, pinned to the ort-sys ABI version.
-      # Nix consumes the same registry source/hash. No model weights bundled.
+      # Microsoft's ONNX Runtime package from NuGet, pinned with its hash,
+      # which Nix and packaging/onnxruntime.py read too.
       - onnxruntime-sources.json

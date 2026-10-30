@@ -22,8 +22,11 @@ replaces=('fastsapp-git')
 # undefined ring_core_* symbols. The stable package is prebuilt and never
 # meets this.
 options=('!debug' '!lto')
-source=("${pkgname}::git+https://github.com/crmne/zapfast.git")
-sha256sums=('SKIP')
+source=("${pkgname}::git+https://github.com/crmne/zapfast.git"
+        "onnxruntime-1.23.2.nupkg::https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.23.2/microsoft.ml.onnxruntime.1.23.2.nupkg")
+sha256sums=('SKIP'
+            '25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a')
+noextract=('onnxruntime-1.23.2.nupkg')
 
 pkgver() {
   cd "${srcdir}/${pkgname}"
@@ -87,5 +90,17 @@ package() {
     install -Dm755 "contrib/omarchy/zapfast-theme" \
       "${pkgdir}/usr/share/zapfast/omarchy/zapfast-theme"
   fi
-
+  # The speech runtime ZapFast loads from /usr/lib/zapfast (PACKAGING.md).
+  local rid
+  case "$CARCH" in
+    x86_64) rid=linux-x64 ;;
+    aarch64) rid=linux-arm64 ;;
+  esac
+  bsdtar -xf "${srcdir}/onnxruntime-1.23.2.nupkg" -C "${srcdir}" \
+    "runtimes/${rid}/native/libonnxruntime.so" LICENSE ThirdPartyNotices.txt
+  install -Dm644 "${srcdir}/runtimes/${rid}/native/libonnxruntime.so" \
+    "${pkgdir}/usr/lib/zapfast/libonnxruntime.so"
+  install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/onnxruntime-LICENSE.txt"
+  install -Dm644 "${srcdir}/ThirdPartyNotices.txt" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/onnxruntime-ThirdPartyNotices.txt"
 }

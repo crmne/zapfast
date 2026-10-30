@@ -450,7 +450,7 @@ fn sections(app: &App) -> Vec<Section> {
         |settings| &mut settings.transcribe_voice_notes,
     );
     let model = app.settings.transcription_model;
-    let description = format!(
+    let mut description = format!(
         "{}\n{}\n{}",
         transcription_model_description(locale, model),
         crate::i18n::gettext(locale, "Download from Hugging Face: {size}")
@@ -460,6 +460,13 @@ fn sections(app: &App) -> Vec<Section> {
             "Saved transcripts are preserved. Use Transcribe again on a voice message to replace its text."
         )
     );
+    if !crate::transcribe::available() {
+        description.push('\n');
+        description.push_str(&crate::i18n::gettext(
+            locale,
+            "This copy of ZapFast does not include the speech runtime.",
+        ));
+    }
     chats.row(
         translated(locale, "Transcription model"),
         description,

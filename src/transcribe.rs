@@ -46,10 +46,66 @@ pub enum Error {
 
 pub type Progress = Box<dyn Fn(State) + Send>;
 
-/// The recognizer runs on all three desktop platforms, without a system
-/// speech package, a GPU driver, Python or a helper executable.
+/// Whether this copy of ZapFast carries the speech runtime. The recognizer
+/// needs no system speech package, GPU driver, Python or helper executable.
 pub fn available() -> bool {
-    true
+    runtime_library().is_some()
+}
+
+/// Turns off ONNX Runtime's own usage reports before anything loads it: from
+/// 1.29 on, Microsoft's macOS and Linux builds send them unless this is set,
+/// and `ORT_DYLIB_PATH` can name such a build.
+///
+/// # Safety
+///
+/// Call first in `main`, while the process has a single thread.
+pub unsafe fn disable_runtime_telemetry() {
+    // SAFETY: the caller guarantees no other thread reads the environment.
+    unsafe { std::env::set_var("ORT_DISABLE_TELEMETRY", "1") };
+}
+
+/// Where packages put the runtime, relative to the executable's folder.
+#[cfg(windows)]
+const RUNTIME_BESIDE_EXECUTABLE: &[&str] = &["onnxruntime.dll"];
+#[cfg(target_os = "macos")]
+const RUNTIME_BESIDE_EXECUTABLE: &[&str] =
+    &["../Frameworks/libonnxruntime.dylib", "libonnxruntime.dylib"];
+#[cfg(not(any(windows, target_os = "macos")))]
+const RUNTIME_BESIDE_EXECUTABLE: &[&str] = &[
+    "libonnxruntime.so",
+    "../lib/zapfast/libonnxruntime.so",
+    "../lib/libonnxruntime.so",
+];
+
+/// The runtime named by `ORT_DYLIB_PATH`, else the one a package was built
+/// against (`ZAPFAST_ONNXRUNTIME`), else the one beside the executable.
+fn runtime_library() -> Option<PathBuf> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let executable = std::env::current_exe().ok();
+            runtime_candidates(
+                std::env::var_os("ORT_DYLIB_PATH").map(PathBuf::from),
+                option_env!("ZAPFAST_ONNXRUNTIME").map(PathBuf::from),
+                executable.as_deref().and_then(Path::parent),
+            )
+            .into_iter()
+            .find(|path| path.is_file())
+        })
+        .clone()
+}
+
+fn runtime_candidates(
+    named: Option<PathBuf>,
+    built: Option<PathBuf>,
+    folder: Option<&Path>,
+) -> Vec<PathBuf> {
+    let beside = folder.into_iter().flat_map(|folder| {
+        RUNTIME_BESIDE_EXECUTABLE
+            .iter()
+            .map(move |relative| folder.join(relative))
+    });
+    named.into_iter().chain(built).chain(beside).collect()
 }
 
 /// The common cache contains public weights only, never account data.
@@ -143,7 +199,14 @@ fn environment() -> Result<ort::environment::Environment, Error> {
     if let Some(environment) = &*current {
         return Ok(environment.clone());
     }
-    let environment = ort::init()
+    let library = runtime_library().ok_or_else(|| {
+        Error::Model("This copy of ZapFast does not include the speech runtime.".to_owned())
+    })?;
+    let builder = ort::init_from(&library).map_err(|error| {
+        log::warn!("could not load ONNX Runtime: {error}");
+        Error::Model("Could not start the speech runtime on this computer.".to_owned())
+    })?;
+    let environment = builder
         .with_name("ZapFast speech")
         .with_telemetry(false)
         .build()
@@ -192,11 +255,13 @@ fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
     {
         // Return the old model's memory before allocating its replacement.
         *loaded = None;
+        // A computer where the runtime cannot start needs no model download.
+        let environment = environment()?;
         let directory = download::ensure(job.model, &job.root, &job.cancel, job.progress.as_ref())?;
         check_cancel(&job.cancel)?;
         (job.progress)(State::Loading);
         let config = ExecutionConfig::new()
-            .with_environment(environment()?)
+            .with_environment(environment)
             .with_intra_threads(4)
             .with_inter_threads(1);
         let engine = ParakeetTDT::from_pretrained(directory, Some(config))
@@ -270,6 +335,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_runtime_is_looked_for_where_it_is_named_then_where_packages_put_it() {
+        let folder = Path::new("app");
+        let found = runtime_candidates(Some("named".into()), Some("built".into()), Some(folder));
+        assert_eq!(found[..2], [PathBuf::from("named"), PathBuf::from("built")]);
+        assert_eq!(found.len(), 2 + RUNTIME_BESIDE_EXECUTABLE.len());
+        assert!(found[2..].iter().all(|path| path.starts_with(folder)));
+        assert!(runtime_candidates(None, None, None).is_empty());
+    }
+
+    #[test]
+    #[ignore = "loads ONNX Runtime; requires ORT_DYLIB_PATH"]
     /// Pins the process-wide context across shared users and idle eviction.
     fn the_runtime_environment_outlives_its_model_sessions() {
         use ort::AsPointer;
@@ -320,7 +396,7 @@ mod tests {
     /// Optional, explicitly supplied fixture, never the user's archive. Use a
     /// synthetic OGG and pre-downloaded models to validate a packaged engine.
     #[test]
-    #[ignore = "loads a real model; requires ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    #[ignore = "loads a real model; requires ORT_DYLIB_PATH, ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
     fn native_model_transcribes_an_explicit_fixture() {
         let audio = std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture");
         let root = std::env::var_os("ZAPFAST_ASR_MODELS").expect("pinned model cache root");
@@ -349,7 +425,7 @@ mod tests {
     /// Simulates idle eviction without a real-time minute-long sleep. The
     /// model is dropped between jobs, just as the speech thread does on idle.
     #[test]
-    #[ignore = "loads a real model; requires synthetic ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
+    #[ignore = "loads a real model; requires ORT_DYLIB_PATH, ZAPFAST_ASR_FIXTURE and ZAPFAST_ASR_MODELS"]
     fn native_model_reloads_after_idle_without_restarting_the_process() {
         let audio = std::env::var_os("ZAPFAST_ASR_FIXTURE").expect("synthetic OGG fixture");
         let root = std::env::var_os("ZAPFAST_ASR_MODELS").expect("pinned model cache root");

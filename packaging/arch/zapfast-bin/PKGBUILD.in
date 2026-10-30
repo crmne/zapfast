@@ -47,5 +47,12 @@ package() {
     install -Dm755 "${dir}/contrib/omarchy/zapfast-theme" \
       "${pkgdir}/usr/share/zapfast/omarchy/zapfast-theme"
   fi
-
+  # The speech runtime ZapFast loads; releases predating transcription lack it.
+  if [[ -f "${dir}/libonnxruntime.so" ]]; then
+    install -Dm644 "${dir}/libonnxruntime.so" "${pkgdir}/usr/lib/zapfast/libonnxruntime.so"
+    install -Dm644 "${dir}/onnxruntime-LICENSE.txt" \
+      "${pkgdir}/usr/share/licenses/${pkgname}/onnxruntime-LICENSE.txt"
+    install -Dm644 "${dir}/onnxruntime-ThirdPartyNotices.txt" \
+      "${pkgdir}/usr/share/licenses/${pkgname}/onnxruntime-ThirdPartyNotices.txt"
+  fi
 }

@@ -24,6 +24,9 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 zapfast /app/bin/zapfast
+      - install -Dm644 libonnxruntime.so /app/lib/libonnxruntime.so
+      - install -Dm644 onnxruntime-LICENSE.txt /app/share/licenses/onnxruntime/LICENSE
+      - install -Dm644 onnxruntime-ThirdPartyNotices.txt /app/share/licenses/onnxruntime/ThirdPartyNotices.txt
       - install -Dm644 packaging/applications/*.desktop /app/share/applications/rocks.zapfast.ZapFast.desktop
       - sed -i 's/^Icon=.*$/Icon=rocks.zapfast.ZapFast/;s/^StartupWMClass=zapfast$/StartupWMClass=rocks.zapfast.ZapFast/' /app/share/applications/rocks.zapfast.ZapFast.desktop
       - install -Dm644 packaging/icons/zapfast.svg /app/share/icons/hicolor/scalable/apps/rocks.zapfast.ZapFast.svg

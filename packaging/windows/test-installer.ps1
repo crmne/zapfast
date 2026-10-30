@@ -31,6 +31,9 @@ function Payload($version) {
   New-Item -ItemType Directory -Force $dir | Out-Null
   Set-Content -NoNewline -Path (Join-Path $dir "zapfast.exe") -Value "zapfast.exe $version"
   Copy-Item README.md, LICENSE, THIRD-PARTY-NOTICES.md, packaging\windows\zapfast-installer.txt $dir
+  foreach ($name in "onnxruntime.dll", "onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt") {
+    Set-Content -NoNewline -Path (Join-Path $dir $name) -Value "$name $version"
+  }
   Get-ChildItem $dir | ForEach-Object { $_.LastWriteTime = (Get-Date).AddDays(-30) }
   $dir
 }
@@ -92,6 +95,7 @@ $code = Msiexec "/i `"$v1`" /qn /norestart INSTALLFOLDER=`"$defaultFolder`""
 Check ($code -in 0, 3010) "the MSI takes over the Inno install ($code)"
 Check ((Program $defaultFolder) -eq "zapfast.exe msi-0.18.1-x64") "the program is replaced"
 Check (Test-Path (Join-Path $defaultFolder "zapfast-installer.txt")) "the installer marker is in place"
+Check (Test-Path (Join-Path $defaultFolder "onnxruntime.dll")) "the speech runtime is beside the program"
 Check (-not (Test-Path (Join-Path $defaultFolder "unins000.exe"))) "Inno's uninstaller is gone"
 Check (-not (Test-Path (Join-Path $defaultFolder "unins000.dat"))) "Inno's uninstall log is gone"
 Check (-not (Test-Path $innoKey)) "Inno's Settings > Apps entry is gone"

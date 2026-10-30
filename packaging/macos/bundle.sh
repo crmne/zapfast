@@ -1,7 +1,10 @@
 #!/bin/bash
 # Build ZapFast.app from a GUI binary on macOS.
 #
-#   packaging/macos/bundle.sh <binary> <output.app> <version>
+#   packaging/macos/bundle.sh <binary> <output.app> <version> [<runtime folder>]
+#
+# The runtime folder, as packaging/onnxruntime.py fills it, carries the speech
+# runtime into Contents/Frameworks and its license and notices into Resources.
 #
 # Set CODESIGN_IDENTITY to use a Developer ID. Otherwise, use the ad-hoc
 # signature required on arm64.
@@ -13,6 +16,7 @@ set -euo pipefail
 binary="$1"
 app="$2"
 version="$3"
+runtime="${4:-}"
 numeric_version="${version%%-*}"
 here="$(cd "$(dirname "$0")" && pwd)"
 
@@ -44,6 +48,19 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/zapfast.icns"
 sounds="$here/../../assets/sounds"
 cp "$sounds/receive.wav" "$app/Contents/Resources/zapfast-receive.wav"
 cp "$sounds/alert.wav" "$app/Contents/Resources/zapfast-alert.wav"
+
+if [ -n "$runtime" ]; then
+    mkdir -p "$app/Contents/Frameworks"
+    cp "$runtime/libonnxruntime.dylib" "$app/Contents/Frameworks/"
+    cp "$runtime"/onnxruntime-*.txt "$app/Contents/Resources/"
+    # Nested code is signed before the bundle that contains it.
+    if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+        codesign --force --timestamp --options runtime --sign "$CODESIGN_IDENTITY" \
+            "$app/Contents/Frameworks/libonnxruntime.dylib"
+    else
+        codesign --force --sign - "$app/Contents/Frameworks/libonnxruntime.dylib"
+    fi
+fi
 
 # Attach the microphone entitlement before native-packages preserves it when
 # replacing the ad-hoc signature with a hardened Developer ID signature.

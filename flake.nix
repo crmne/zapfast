@@ -109,8 +109,8 @@
             libxi
             libxrandr
           ];
-          # Fetch Microsoft's official registry package before the Cargo
-          # sandbox. Flatpak shares the same pinned source and hash.
+          # The speech runtime ZapFast loads, from Microsoft's package on
+          # NuGet: the same pinned source and hash as Flatpak's.
           onnxSource = builtins.head (
             builtins.fromJSON (builtins.readFile ./packaging/flatpak/onnxruntime-sources.json)
           );
@@ -119,31 +119,24 @@
             aarch64-linux = "linux-arm64";
             aarch64-darwin = "osx-arm64";
           }.${pkgs.stdenv.hostPlatform.system};
+          onnxLibrary = if isDarwin then "libonnxruntime.dylib" else "libonnxruntime.so";
           onnxRuntime = pkgs.stdenv.mkDerivation {
             pname = "zapfast-onnxruntime";
-            version = "1.31.0";
+            version = "1.23.2";
             src = pkgs.fetchurl {
               inherit (onnxSource) url sha256;
             };
             dontUnpack = true;
-            nativeBuildInputs = [ pkgs.unzip ]
-              ++ pkgs.lib.optionals isLinux [ pkgs.autoPatchelfHook ]
-              ++ pkgs.lib.optionals isDarwin [ pkgs.rcodesign ];
+            # Stripping would void the macOS library's signature.
+            dontStrip = true;
+            nativeBuildInputs = [ pkgs.unzip ] ++ pkgs.lib.optionals isLinux [ pkgs.autoPatchelfHook ];
             buildInputs = pkgs.lib.optionals isLinux [ pkgs.stdenv.cc.cc.lib ];
             installPhase = ''
               runHook preInstall
-              mkdir -p $out/lib
-              unzip -j "$src" 'runtimes/${onnxRid}/native/*' -d $out/lib
-              mkdir -p $out/share/licenses/onnxruntime
+              mkdir -p $out/lib $out/share/licenses/onnxruntime
+              unzip -j "$src" 'runtimes/${onnxRid}/native/${onnxLibrary}' -d $out/lib
               unzip -j "$src" LICENSE ThirdPartyNotices.txt -d $out/share/licenses/onnxruntime
-            '' + pkgs.lib.optionalString isLinux ''
-              ln -s libonnxruntime.so $out/lib/libonnxruntime.so.1
-            '' + ''
               runHook postInstall
-            '';
-            postFixup = pkgs.lib.optionalString isDarwin ''
-              install_name_tool -id "$out/lib/libonnxruntime.dylib" $out/lib/libonnxruntime.dylib
-              rcodesign sign $out/lib/libonnxruntime.dylib
             '';
           };
           zapfast = rustPlatform.buildRustPackage rec {
@@ -171,7 +164,6 @@
               ++ lib.optionals isLinux [
                 removeReferencesTo
                 rustPlatform.bindgenHook
-                patchelf
               ]
               # Sandboxed stand-ins for iconutil and codesign in bundle.sh.
               ++ lib.optionals isDarwin [
@@ -179,7 +171,7 @@
                 rcodesign
               ];
             # On macOS the app links the system frameworks instead.
-            buildInputs = [ onnxRuntime ] ++ pkgs.lib.optionals isLinux (
+            buildInputs = pkgs.lib.optionals isLinux (
               with pkgs;
               [
                 alsa-lib
@@ -189,13 +181,8 @@
               ]
             );
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
-            ORT_SKIP_DOWNLOAD = "1";
-            ORT_PREFER_DYNAMIC_LINK = "1";
-            ORT_LIB_LOCATION = "${onnxRuntime}/lib";
-            # Test executables run before the installed binary's RPATH fixup.
-            preCheck = pkgs.lib.optionalString isLinux ''
-              export LD_LIBRARY_PATH="${onnxRuntime}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            '';
+            # The binary names the runtime's store path (src/transcribe.rs).
+            ZAPFAST_ONNXRUNTIME = "${onnxRuntime}/lib/${onnxLibrary}";
 
             # The vendored OpenSSL (through rusqlite's bundled SQLCipher) embeds
             # its build line, compiler path included, in the binary. The app
@@ -208,7 +195,6 @@
               # The GUI dlopens its Wayland, X11 and GL libraries at run time.
               pkgs.lib.optionalString isLinux ''
                 find $out/bin -type f -exec remove-references-to -t ${pkgs.stdenv.cc} {} +
-                patchelf --add-rpath ${onnxRuntime}/lib $out/bin/zapfast
                 wrapProgram $out/bin/zapfast \
                   --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
               ''

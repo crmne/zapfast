@@ -3,8 +3,9 @@
 #
 #   ruby packaging/windows/msi.rb PAYLOAD PACKAGE VERSION [ARCH]
 #
-# PAYLOAD holds zapfast.exe, README.md, LICENSE, THIRD-PARTY-NOTICES.md and
-# zapfast-installer.txt. ARCH is x64 or arm64; without it, it comes from
+# PAYLOAD holds zapfast.exe, README.md, LICENSE, THIRD-PARTY-NOTICES.md,
+# zapfast-installer.txt and packaging/onnxruntime.py's onnxruntime.dll,
+# license and notices. ARCH is x64 or arm64; without it, it comes from
 # NATIVE_PACKAGES_TARGET. Needs WiX 5 and its Util extension:
 #
 #   dotnet tool install --global wix --version 5.0.2

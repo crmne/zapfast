@@ -82,6 +82,9 @@ jobs:
           New-Item -ItemType Directory -Force $payload | Out-Null
           Copy-Item "$env:SystemRoot\System32\PING.EXE" "$payload\zapfast.exe"
           Copy-Item README.md, LICENSE, THIRD-PARTY-NOTICES.md, packaging\windows\zapfast-installer.txt $payload
+          foreach ($name in "onnxruntime.dll", "onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt") {
+            Set-Content -NoNewline -Path (Join-Path $payload $name) -Value $name
+          }
           native-packages build --version 0.0.1 --target windows-amd64 `
             --defer-recipes --output "$env:RUNNER_TEMP\windows-packages"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

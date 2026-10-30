@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Check manifest parity and revision-pinned generation without network access."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -19,78 +21,76 @@ APP_ID = "rocks.zapfast.ZapFast"
 
 
 class FlatpakPackaging(unittest.TestCase):
-    """Validate registry pins, offline native extraction and release manifests."""
-
-    def test_native_runtime_sources_are_pinned_for_both_linux_architectures(self):
-        """Require one official, ABI-matched registry package shared with Nix."""
-        sources = json.loads((HERE / "onnxruntime-sources.json").read_text())
-        self.assertEqual(len(sources), 1)
-        source = sources[0]
+    def test_the_speech_runtime_comes_from_one_pinned_registry_package(self):
+        [source] = json.loads((HERE / "onnxruntime-sources.json").read_text())
         self.assertEqual(source["type"], "file")
-        self.assertEqual(source["url"],
-                         "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.0/"
-                         "microsoft.ml.onnxruntime.1.31.0.nupkg")
+        self.assertRegex(source["url"],
+                         r"^https://api\.nuget\.org/v3-flatcontainer/microsoft\.ml\.onnxruntime/")
         self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(source["dest-filename"], "onnxruntime.nupkg")
-        # An ort-sys update must recheck the native package's ABI version.
-        lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
-        versions = [package["version"] for package in lock["package"]
-                    if package["name"] == "ort-sys"]
-        self.assertEqual(versions, ["2.0.0-rc.15"])
         nix = (ROOT / "flake.nix").read_text()
         self.assertIn("builtins.readFile ./packaging/flatpak/onnxruntime-sources.json", nix)
-        self.assertIn('ORT_SKIP_DOWNLOAD = "1";', nix)
-        self.assertIn('ORT_PREFER_DYNAMIC_LINK = "1";', nix)
-        for rid in ["linux-x64", "linux-arm64", "osx-arm64"]:
-            self.assertIn(f'"{rid}"', nix)
+        self.assertIn("ZAPFAST_ONNXRUNTIME = ", nix)
+        for recipe in ["zapfast", "zapfast-git"]:
+            text = (ROOT / "packaging/arch" / recipe / "PKGBUILD.in").read_text()
+            self.assertIn(source["url"], text, recipe)
+            self.assertIn(source["sha256"], text, recipe)
+        # Building fetches no native library: ZapFast loads it at run time.
+        ort = tomllib.loads((ROOT / "Cargo.toml").read_text())["dependencies"]["ort"]
+        self.assertIn("load-dynamic", ort["features"])
+        self.assertNotIn("download-binaries", ort["features"])
+        manifest = (HERE / f"{APP_ID}.yml").read_text()
+        self.assertNotIn("ORT_", manifest + nix)
 
-    def test_runtime_downloader_uses_rustls_not_system_openssl(self):
-        """Keep the ordinary Cargo downloader free of host OpenSSL requirements."""
-        dependencies = tomllib.loads((ROOT / "Cargo.toml").read_text())["dependencies"]
-        parakeet = dependencies["parakeet-rs"]
-        self.assertFalse(parakeet["default-features"])
-        self.assertNotIn("ort-defaults", parakeet["features"])
-        ort = dependencies["ort"]
-        self.assertEqual(ort["version"], "=2.0.0-rc.15")
-        self.assertFalse(ort["default-features"])
-        self.assertIn("tls-rustls", ort["features"])
-        self.assertNotIn("tls-native", ort["features"])
-
-    def test_build_unpacks_the_verified_runtime_before_offline_cargo(self):
-        """Extract both Linux RIDs offline, keeping the SONAME and install files."""
+    def test_flatpak_installs_the_runtime_where_zapfast_looks(self):
         manifest = yaml.safe_load((HERE / f"{APP_ID}.yml").read_text())
-        self.assertEqual(manifest["build-options"]["env"]["ORT_SKIP_DOWNLOAD"], "1")
-        self.assertEqual(manifest["build-options"]["env"]["ORT_LIB_LOCATION"],
-                         "/run/build/zapfast/onnxruntime")
-        self.assertNotIn("--share=network", manifest["build-options"].get("build-args", []))
-        self.assertEqual(manifest["build-options"]["env"]["ORT_PREFER_DYNAMIC_LINK"], "1")
         module = manifest["modules"][0]
         self.assertIn("onnxruntime-sources.json", module["sources"])
+        [command] = [command for command in module["build-commands"] if "onnxruntime.nupkg" in command
+                     and "FLATPAK_ARCH" in command]
         for arch, rid in [("x86_64", "linux-x64"), ("aarch64", "linux-arm64")]:
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as directory:
                 directory = Path(directory)
                 with zipfile.ZipFile(directory / "onnxruntime.nupkg", "w") as archive:
-                    for native_rid in ["linux-x64", "linux-arm64"]:
-                        for lib in ["libonnxruntime.so", "libonnxruntime_providers_shared.so"]:
-                            archive.writestr(f"runtimes/{native_rid}/native/{lib}", native_rid.encode())
-                for command in module["build-commands"]:
-                    if command.startswith("cargo "):
-                        self.assertIn("--offline", command)
-                        break
-                    subprocess.run(["bash", "-euo", "pipefail", "-c", command], cwd=directory,
-                                   env={**os.environ, "FLATPAK_ARCH": arch}, check=True)
-                else:
-                    self.fail("the manifest must still build with offline Cargo")
-                runtime = directory / "onnxruntime"
-                self.assertEqual((runtime / "libonnxruntime.so.1").read_bytes(), rid.encode())
-                self.assertEqual((runtime / "libonnxruntime_providers_shared.so").read_bytes(), rid.encode())
-        commands = "\n".join(module["build-commands"])
-        self.assertIn("/app/lib/libonnxruntime.so", commands)
-        self.assertIn("/app/lib/libonnxruntime.so.1", commands)
-        self.assertIn("/app/lib/libonnxruntime_providers_shared.so", commands)
+                    for native in ["linux-x64", "linux-arm64"]:
+                        archive.writestr(f"runtimes/{native}/native/libonnxruntime.so", native)
+                subprocess.run(["bash", "-euo", "pipefail", "-c", command.replace("/app/", f"{directory}/app/")],
+                               cwd=directory, env={**os.environ, "FLATPAK_ARCH": arch}, check=True)
+                self.assertEqual((directory / "app/lib/libonnxruntime.so").read_text(), rid)
+        bundle = "\n".join(yaml.safe_load((HERE / f"{APP_ID}.bundle.yml").read_text())["modules"][0]["build-commands"])
+        self.assertIn("libonnxruntime.so /app/lib/libonnxruntime.so", bundle)
+
+    def test_the_runtime_helper_places_each_platforms_library(self):
+        sys.dont_write_bytecode = True
+        spec = importlib.util.spec_from_file_location("onnxruntime", ROOT / "packaging/onnxruntime.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            nupkg = directory / "onnxruntime.nupkg"
+            with zipfile.ZipFile(nupkg, "w") as archive:
+                archive.writestr("LICENSE", "license")
+                archive.writestr("ThirdPartyNotices.txt", "notices")
+                for rid in ["linux-x64", "linux-arm64", "win-x64", "win-arm64", "osx-arm64", "osx-x64"]:
+                    archive.writestr(f"runtimes/{rid}/native/{helper.library(rid)}", rid)
+            for target, rid, name in [("x86_64-unknown-linux-gnu", "linux-x64", "libonnxruntime.so"),
+                                      ("aarch64-pc-windows-msvc", "win-arm64", "onnxruntime.dll"),
+                                      ("x86_64-apple-darwin", "osx-x64", "libonnxruntime.dylib")]:
+                with self.subTest(target=target):
+                    output = directory / target
+                    helper.place(target, output, nupkg)
+                    self.assertEqual((output / name).read_text(), rid)
+                    self.assertEqual((output / "onnxruntime-LICENSE.txt").read_text(), "license")
+                    self.assertEqual((output / "onnxruntime-ThirdPartyNotices.txt").read_text(), "notices")
+        # Every release target has a runtime.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+                       "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]:
+            self.assertIn(f"target: {target}", workflow)
+            self.assertIn(target, helper.TARGETS)
+        self.assertIn("onnxruntime.py universal-apple-darwin", workflow)
 
     def test_source_and_bundle_have_the_same_sandbox(self):
-        """Keep source and binary releases within the same sandbox permissions."""
         source = yaml.safe_load((HERE / f"{APP_ID}.yml").read_text())
         bundle = yaml.safe_load((HERE / f"{APP_ID}.bundle.yml").read_text())
         for key in ("id", "runtime", "runtime-version", "sdk", "command", "finish-args"):
@@ -106,7 +106,6 @@ class FlatpakPackaging(unittest.TestCase):
         self.assertEqual(meta.findtext("launchable"), f"{APP_ID}.desktop")
 
     def test_generation_uses_the_requested_revisions_lockfile(self):
-        """Carry the requested Cargo lock and pinned runtime include into releases."""
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         lock = subprocess.check_output(["git", "show", f"{revision}:Cargo.lock"], cwd=ROOT)
         with tempfile.TemporaryDirectory() as directory:
