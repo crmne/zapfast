@@ -231,14 +231,14 @@ name or description, in the interface language or in English.
   background; restarting stays your choice. Package managers and Flatpak update
   ZapFast themselves.
 - **Proxy**: for the WhatsApp connection, media, profile pictures, GIF search,
-  Signal sticker imports, and update checks. It accepts `socks5h://host:port`
-  (the proxy resolves names, as Tor expects), `socks5://host:port`, and
-  `http://host:port`, each with an optional `user:password@`; a bare
-  `host:port` is an HTTP proxy. Changing it reconnects at once. Empty uses
-  `ALL_PROXY` or `HTTPS_PROXY` from the environment and honors `NO_PROXY`.
-  A call's signaling goes through the proxy, but its audio and video do not:
-  they travel over UDP straight to WhatsApp's call relays, which see this
-  computer's address.
+  Signal sticker imports, link previews for the messages you write, and update
+  checks. It accepts `socks5h://host:port` (the proxy resolves names, as Tor
+  expects), `socks5://host:port`, and `http://host:port`, each with an optional
+  `user:password@`; a bare `host:port` is an HTTP proxy. Changing it reconnects
+  at once. Empty uses `ALL_PROXY` or `HTTPS_PROXY` from the environment and
+  honors `NO_PROXY`. A call's signaling goes through the proxy, but its audio
+  and video do not: they travel over UDP straight to WhatsApp's call relays,
+  which see this computer's address.
 - **GIPHY API key**: for GIF search, unless the build includes one. Set
   `ZAPFAST_GIPHY_KEY` at compile time to include a default key. The earlier
   `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.

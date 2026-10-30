@@ -617,6 +617,13 @@ pub struct LinkPreview {
     pub description: Option<String>,
 }
 
+/// A link preview made here for an outgoing message, with its picture as JPEG.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComposedPreview {
+    pub preview: LinkPreview,
+    pub thumbnail: Option<Vec<u8>>,
+}
+
 impl Message {
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
@@ -2745,6 +2752,9 @@ pub enum Action {
         message: String,
     },
     CancelReply,
+    /// Takes away the link preview above the composer, for its link only:
+    /// the message goes without one.
+    DismissLinkPreview,
     /// Starts selecting messages in the open chat with none picked yet.
     StartSelection,
     /// Adds a chat to the forwarding dialog's recipients or removes it,

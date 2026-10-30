@@ -15,6 +15,33 @@ pub fn preview_url(value: &str) -> Option<String> {
     (matches!(url.scheme(), "http" | "https") && url.host_str().is_some()).then(|| url.to_string())
 }
 
+/// The first web address in `text`, without the punctuation around it.
+pub fn first_link(text: &str) -> Option<String> {
+    text.split_whitespace().find_map(|token| {
+        let token = token.trim_start_matches(['(', '[', '<', '"', '\'']);
+        (token.starts_with("http://") || token.starts_with("https://")).then(|| {
+            let mut link = token;
+            loop {
+                let trimmed = link.trim_end_matches(['.', ',', '?', '!', ';', ':', '>', '"', '\'']);
+                // A closing bracket stays while the link opened one for it.
+                let closes = |open: char, close: char| {
+                    trimmed.ends_with(close)
+                        && trimmed.matches(close).count() > trimmed.matches(open).count()
+                };
+                let trimmed = if closes('(', ')') || closes('[', ']') {
+                    &trimmed[..trimmed.len() - 1]
+                } else {
+                    trimmed
+                };
+                if trimmed.len() == link.len() {
+                    break trimmed.to_owned();
+                }
+                link = trimmed;
+            }
+        })
+    })
+}
+
 /// Check again at the action boundary, including previews already in archives.
 pub fn external_url(value: &str) -> Option<String> {
     if value.chars().any(char::is_control) || value.contains('\\') {
@@ -193,6 +220,34 @@ pub fn can_open_attachment(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_link_trims_punctuation() {
+        assert_eq!(
+            first_link("see https://ex.com/a, ok?").as_deref(),
+            Some("https://ex.com/a")
+        );
+        assert_eq!(
+            first_link("(https://ex.com/a)").as_deref(),
+            Some("https://ex.com/a")
+        );
+        let wiki = "https://en.wikipedia.org/wiki/Rust_(programming_language)";
+        assert_eq!(first_link(wiki).as_deref(), Some(wiki));
+        assert_eq!(
+            first_link("(see https://en.wikipedia.org/wiki/Rust_(programming_language))")
+                .as_deref(),
+            Some(wiki)
+        );
+        assert_eq!(
+            first_link("(https://en.wikipedia.org/wiki/Rust_(programming_language)).").as_deref(),
+            Some(wiki)
+        );
+        assert_eq!(
+            first_link("https://ex.com/a). Next").as_deref(),
+            Some("https://ex.com/a")
+        );
+        assert_eq!(first_link("no link here"), None);
+    }
 
     #[test]
     fn call_links_are_recognised_and_nothing_else() {

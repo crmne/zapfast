@@ -397,6 +397,46 @@ struct PendingFollow {
     answered: bool,
 }
 
+/// How long the composer's text rests before its link is previewed.
+const PREVIEW_PAUSE: f64 = 0.5;
+
+/// The link preview for the message being written, with the account, chat
+/// and link it was asked for. It shows only while all three are still the
+/// ones on screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComposerPreview {
+    pub account: AccountId,
+    pub chat: ChatId,
+    pub url: String,
+    pub state: LinkPreviewState,
+}
+
+impl ComposerPreview {
+    /// The preview, once it has come and was not dismissed.
+    pub fn ready(&self) -> Option<&crate::model::ComposedPreview> {
+        match &self.state {
+            LinkPreviewState::Ready(preview) => Some(preview),
+            LinkPreviewState::Loading | LinkPreviewState::Dismissed => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkPreviewState {
+    /// Asked for; the card says it is loading.
+    Loading,
+    /// Shown above the composer, and sent with the message.
+    Ready(crate::model::ComposedPreview),
+    /// Taken away with its X, or nothing usable came back: no card, and
+    /// this link is not asked for again.
+    Dismissed,
+}
+
+/// The composer's link that a preview would be made for.
+fn composer_link(text: &str) -> Option<String> {
+    crate::safety::first_link(text).filter(|url| crate::safety::preview_url(url).is_some())
+}
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -436,6 +476,16 @@ pub struct App {
     stale_images: Vec<String>,
     pub composer: String,
     composer_mentions: Vec<ComposerMention>,
+    /// The link preview above the composer.
+    pub composer_preview: Option<ComposerPreview>,
+    /// egui time of the last composer change, while its pause runs.
+    preview_typed_at: Option<f64>,
+    /// The account, chat and composer text the preview watch saw last, to
+    /// tell when it changes.
+    preview_seen: Option<(AccountId, Option<ChatId>, String)>,
+    /// Whether attachments were staged when the watch last saw a change, so
+    /// staging or removing them makes it look again.
+    preview_staged: bool,
     /// Byte offset of the `:` starting the active emoji query.
     pub emoji_start: Option<usize>,
     /// Keyboard-highlighted emoji in suggestions or the full picker.
@@ -1406,6 +1456,10 @@ impl App {
             stale_images: Vec::new(),
             composer: String::new(),
             composer_mentions: Vec::new(),
+            composer_preview: None,
+            preview_typed_at: None,
+            preview_seen: None,
+            preview_staged: false,
             emoji_start: None,
             emoji_selected: 0,
             mention_start: None,
@@ -3309,6 +3363,32 @@ impl App {
                 self.me_name = name;
                 self.me_about = about;
             }
+            Event::LinkPreviewsDisabled(disabled) => {
+                self.link_previews_disabled = disabled;
+                // Only this event's own account is touched: the composer
+                // state is the window's, and may belong to another account.
+                let origin = self.account().id.clone();
+                // Turned back on, the text is asked about afresh.
+                if !disabled
+                    && self
+                        .preview_seen
+                        .as_ref()
+                        .is_some_and(|seen| seen.0 == origin)
+                {
+                    self.preview_seen = None;
+                }
+                // A card already above the composer goes with the setting,
+                // and a hidden account's loading one, whose answer is lost.
+                if disabled
+                    && self.composer_preview.as_ref().is_some_and(|preview| {
+                        preview.account == origin
+                            && (!self.events_hidden || preview.state == LinkPreviewState::Loading)
+                    })
+                {
+                    self.composer_preview = None;
+                }
+            }
+            Event::LinkPreview { url, preview } => self.link_preview_arrived(url, preview),
             Event::Call(update) => self.handle_call_update(*update),
             Event::PhoneOnlyCall(update) => self.handle_phone_only_call(*update),
             Event::CallDevices(devices) => self.call_devices = *devices,
@@ -5695,6 +5775,143 @@ impl App {
             .map(|message| message.id.clone())
     }
 
+    /// Asks for a preview of the composer's link once its text has rested
+    /// for [`PREVIEW_PAUSE`] at egui time `now`, and drops the card when the
+    /// link is gone. Returns how long until the pause ends, for a repaint
+    /// then, while one is running.
+    pub(crate) fn watch_link_preview(&mut self, now: f64) -> Option<Duration> {
+        let unchanged = self
+            .preview_seen
+            .as_ref()
+            .is_some_and(|(account, chat, text)| {
+                *account == self.account().id && *chat == self.open_chat && *text == self.composer
+            })
+            && self.preview_staged == !self.pending.is_empty();
+        if !unchanged {
+            self.preview_staged = !self.pending.is_empty();
+            self.preview_seen = Some((
+                self.account().id.clone(),
+                self.open_chat.clone(),
+                self.composer.clone(),
+            ));
+            self.preview_typed_at = Some(now);
+        }
+        let waited = now - self.preview_typed_at?;
+        if waited < PREVIEW_PAUSE {
+            return Some(Duration::from_secs_f64(PREVIEW_PAUSE - waited));
+        }
+        self.preview_typed_at = None;
+        let link = self
+            .open_chat
+            .clone()
+            .filter(|chat| {
+                self.editing.is_none()
+                    && !self.link_previews_disabled
+                    && self.chat(chat).is_some_and(Chat::can_send)
+            })
+            .zip(composer_link(&self.composer));
+        let Some((chat, url)) = link else {
+            // No link, or none to preview: no card, and a dismissed one is
+            // forgotten with its text.
+            self.composer_preview = None;
+            return None;
+        };
+        if !self.pending.is_empty() {
+            // A caption never gets a card, but a dismissed or finished one
+            // is kept for its link; only a fetch still running is dropped,
+            // to be asked for again once the attachments are gone.
+            if self
+                .composer_preview
+                .as_ref()
+                .is_some_and(|preview| preview.state == LinkPreviewState::Loading)
+            {
+                self.composer_preview = None;
+            }
+            return None;
+        }
+        let account = self.account().id.clone();
+        if self.composer_preview.as_ref().is_some_and(|preview| {
+            preview.account == account && preview.chat == chat && preview.url == url
+        }) {
+            return None;
+        }
+        self.composer_preview = Some(ComposerPreview {
+            account,
+            chat,
+            url: url.clone(),
+            state: LinkPreviewState::Loading,
+        });
+        self.backend.send(Command::FetchLinkPreview { url });
+        None
+    }
+
+    /// The composer's preview while it belongs to `text` in `chat` of the
+    /// account on screen, and previews may be shown.
+    fn preview_for(&self, chat: &str, text: &str) -> Option<&ComposerPreview> {
+        if self.link_previews_disabled || self.editing.is_some() || !self.pending.is_empty() {
+            return None;
+        }
+        let url = composer_link(text)?;
+        self.composer_preview.as_ref().filter(|preview| {
+            preview.account == self.account().id && preview.chat == chat && preview.url == url
+        })
+    }
+
+    /// The card above the open chat's composer, whatever its state.
+    pub(crate) fn shown_preview(&self) -> Option<&ComposerPreview> {
+        self.preview_for(self.open_chat.as_deref()?, &self.composer)
+    }
+
+    /// The preview a message sent from the composer now would carry.
+    pub fn current_preview(&self) -> Option<&crate::model::ComposedPreview> {
+        self.shown_preview()?.ready()
+    }
+
+    /// Files a fetched preview with the request it answers. A hidden
+    /// account's answer is not for the window's composer, and a phone that
+    /// turned previews off since gets none.
+    pub(crate) fn link_preview_arrived(
+        &mut self,
+        url: String,
+        preview: Option<crate::model::ComposedPreview>,
+    ) {
+        if self.events_hidden || self.link_previews_disabled {
+            // An answer dropped for being hidden must not leave its card
+            // loading: forget it and the text seen, so the pause runs and
+            // asks again on return.
+            if self.events_hidden {
+                // `account()` is the answer's own account while hidden; the
+                // composer state may be another account's.
+                let origin = self.account().id.clone();
+                if self.composer_preview.as_ref().is_some_and(|asked| {
+                    asked.account == origin
+                        && asked.url == url
+                        && asked.state == LinkPreviewState::Loading
+                }) {
+                    self.composer_preview = None;
+                }
+                if self
+                    .preview_seen
+                    .as_ref()
+                    .is_some_and(|seen| seen.0 == origin)
+                {
+                    self.preview_seen = None;
+                }
+            }
+            return;
+        }
+        let account = self.account().id.clone();
+        if let Some(asked) = self.composer_preview.as_mut().filter(|asked| {
+            asked.account == account && asked.url == url && asked.state == LinkPreviewState::Loading
+        }) {
+            asked.state = match preview {
+                Some(preview) => LinkPreviewState::Ready(preview),
+                // Nothing usable: no card, and no asking again.
+                None => LinkPreviewState::Dismissed,
+            };
+        }
+    }
+
     /// Updates typing state after composer changes.
     pub fn note_keystroke(&mut self) {
         self.last_keystroke = Some(Instant::now());
@@ -5816,6 +6033,15 @@ impl App {
         if text.is_empty() {
             return;
         }
+        // Only a preview ready for this very text goes with it; one still
+        // loading is not waited for.
+        let preview = self
+            .preview_for(&chat, &text)
+            .and_then(ComposerPreview::ready)
+            .cloned();
+        // Whatever is typed next is watched afresh, the same link included.
+        self.composer_preview = None;
+        self.preview_seen = None;
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
         let mention_everyone = self.chat(&chat).is_some_and(Chat::can_mention_everyone)
             && crate::mentions::has_everyone_token(&text);
@@ -5850,6 +6076,7 @@ impl App {
             text,
             quoting,
             mentions,
+            preview,
         });
         self.follow_outgoing();
     }
@@ -7218,6 +7445,14 @@ impl App {
             Action::CancelReply => {
                 self.reply_to = None;
                 self.reply_when_loaded = None;
+            }
+            Action::DismissLinkPreview => {
+                if let Some(chat) = self.open_chat.clone()
+                    && self.preview_for(&chat, &self.composer).is_some()
+                    && let Some(shown) = self.composer_preview.as_mut()
+                {
+                    shown.state = LinkPreviewState::Dismissed;
+                }
             }
             Action::SetStar {
                 chat,
@@ -10347,6 +10582,11 @@ impl App {
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // After the view and its actions, so a change this frame starts the
+        // pause from now. Nobody types behind the lock screen.
+        if !locked && let Some(wait) = self.watch_link_preview(ctx.input(|input| input.time)) {
+            ctx.request_repaint_after(wait);
+        }
         crate::ui::overlay::settle(self, ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
@@ -19011,6 +19251,537 @@ mod tests {
             "a reader at the newest edge keeps following outgoing messages"
         );
         assert!(app.at_bottom);
+    }
+
+    const PREVIEW_CHAT: &str = "fixture@s.whatsapp.net";
+    const PREVIEW_URL: &str = "https://ex.com/a";
+
+    /// An app with [`PREVIEW_CHAT`] open, on a backend that records
+    /// commands and delivers the events the test sends.
+    fn composer_preview_app() -> (
+        App,
+        tokio::sync::mpsc::UnboundedReceiver<Command>,
+        std::sync::mpsc::Sender<Event>,
+    ) {
+        let mut app = app();
+        let (backend, commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(PREVIEW_CHAT.into(), "Fixture".into()));
+        app.open_chat = Some(PREVIEW_CHAT.into());
+        (app, commands, events)
+    }
+
+    fn composed_preview(url: &str) -> crate::model::ComposedPreview {
+        crate::model::ComposedPreview {
+            preview: crate::model::LinkPreview {
+                url: url.into(),
+                title: Some("Fixture title".into()),
+                description: Some("Fixture description".into()),
+            },
+            thumbnail: None,
+        }
+    }
+
+    fn preview_fetches(
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) -> Vec<String> {
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::FetchLinkPreview { url } => Some(url),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Types `text` at `at` and lets it rest past the pause.
+    fn rest_on(app: &mut App, text: &str, at: f64) {
+        app.composer = text.into();
+        app.watch_link_preview(at);
+        app.watch_link_preview(at + 0.6);
+    }
+
+    /// Sends the composer the way its Send key does.
+    fn send_composer(app: &mut App) {
+        let text = std::mem::take(&mut app.composer);
+        app.apply(
+            Action::SendText {
+                chat: PREVIEW_CHAT.into(),
+                text,
+                quoting: None,
+            },
+            &egui::Context::default(),
+        );
+    }
+
+    fn sent_preview(
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) -> Option<Option<crate::model::ComposedPreview>> {
+        std::iter::from_fn(|| commands.try_recv().ok()).find_map(|command| match command {
+            Command::SendText { preview, .. } => Some(preview),
+            _ => None,
+        })
+    }
+
+    /// A link typed in the composer is asked for once the text has rested
+    /// for half a second, and not before.
+    #[test]
+    fn composer_preview_link_in_composer_requests_preview_after_pause() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(PREVIEW_CHAT.into(), "Fixture".into()));
+        app.open_chat(PREVIEW_CHAT.into());
+        let ctx = egui::Context::default();
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        composer_undo_boundary_frame(
+            &mut app,
+            &ctx,
+            0.1,
+            vec![egui::Event::Text("hi https://ex.com/a".into())],
+        );
+        assert_eq!(app.composer, "hi https://ex.com/a");
+        composer_undo_boundary_frame(&mut app, &ctx, 0.3, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.55, vec![]);
+        assert!(
+            preview_fetches(&mut commands).is_empty(),
+            "not before the pause"
+        );
+        composer_undo_boundary_frame(&mut app, &ctx, 0.65, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.5, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 3.0, vec![]);
+        assert_eq!(
+            preview_fetches(&mut commands),
+            [PREVIEW_URL],
+            "exactly once"
+        );
+    }
+
+    /// The state check asks the window back for the end of the pause, so no
+    /// frame has to come by chance and none spins in between.
+    #[test]
+    fn composer_preview_pause_asks_for_a_frame_at_its_end() {
+        let (mut app, _commands, _events) = composer_preview_app();
+        app.composer = "hi https://ex.com/a".into();
+        let wait = app.watch_link_preview(1.0).unwrap();
+        assert!((wait.as_secs_f64() - 0.5).abs() < 1e-6, "{wait:?}");
+        let wait = app.watch_link_preview(1.2).unwrap();
+        assert!((wait.as_secs_f64() - 0.3).abs() < 1e-6, "{wait:?}");
+        assert_eq!(app.watch_link_preview(1.5), None);
+        assert_eq!(app.watch_link_preview(1.6), None, "nothing to wait for");
+    }
+
+    #[test]
+    fn composer_preview_ready_preview_is_sent() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        assert_eq!(app.current_preview(), None, "still loading");
+        events
+            .send(Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.current_preview(), Some(&composed_preview(PREVIEW_URL)));
+        send_composer(&mut app);
+        assert_eq!(
+            sent_preview(&mut commands),
+            Some(Some(composed_preview(PREVIEW_URL)))
+        );
+        assert!(app.composer_preview.is_none(), "the card went with it");
+    }
+
+    /// A page with nothing to show leaves no card, and is not asked again.
+    #[test]
+    fn composer_preview_failed_fetch_shows_nothing() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        events
+            .send(Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: None,
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.current_preview(), None);
+        rest_on(&mut app, "hi https://ex.com/a again", 1.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
+    }
+
+    #[test]
+    fn composer_preview_dismissed_preview_is_not_sent() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        let arrive = |url: &str| {
+            events
+                .send(Event::LinkPreview {
+                    url: url.into(),
+                    preview: Some(composed_preview(url)),
+                })
+                .unwrap();
+        };
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        arrive(PREVIEW_URL);
+        app.handle_events();
+        app.apply(Action::DismissLinkPreview, &egui::Context::default());
+        assert_eq!(app.current_preview(), None);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
+
+        // Dismissing is for that link only: sent, it is offered again, and
+        // another link in the same text brings a card of its own.
+        rest_on(&mut app, "hi https://ex.com/a", 1.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        arrive(PREVIEW_URL);
+        app.handle_events();
+        app.apply(Action::DismissLinkPreview, &egui::Context::default());
+        rest_on(&mut app, "hi https://ex.com/a, see", 2.0);
+        assert!(preview_fetches(&mut commands).is_empty(), "still dismissed");
+        assert_eq!(app.current_preview(), None);
+        rest_on(&mut app, "hi https://ex.com/b", 3.0);
+        assert_eq!(preview_fetches(&mut commands), ["https://ex.com/b"]);
+        arrive("https://ex.com/b");
+        app.handle_events();
+        assert_eq!(
+            app.current_preview(),
+            Some(&composed_preview("https://ex.com/b"))
+        );
+    }
+
+    #[test]
+    fn composer_preview_sending_while_loading_sends_plain() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None), "sent at once");
+        // The answer that comes after has nothing to go with.
+        events
+            .send(Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.current_preview(), None);
+        assert!(app.composer_preview.is_none());
+    }
+
+    #[test]
+    fn composer_preview_late_result_ignored_in_other_chat() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        let other = "other@s.whatsapp.net";
+        app.chats.push(Chat::new(other.into(), "Other".into()));
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        // The reader moves to another chat holding the same link.
+        app.open_chat = Some(other.into());
+        app.composer = "also https://ex.com/a".into();
+        app.watch_link_preview(1.0);
+        let arrive = || {
+            events
+                .send(Event::LinkPreview {
+                    url: PREVIEW_URL.into(),
+                    preview: Some(composed_preview(PREVIEW_URL)),
+                })
+                .unwrap();
+        };
+        arrive();
+        app.handle_events();
+        assert_eq!(app.current_preview(), None, "the first chat's answer");
+        app.watch_link_preview(1.6);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL], "its own");
+        assert_eq!(app.current_preview(), None);
+        arrive();
+        app.handle_events();
+        assert_eq!(app.current_preview(), Some(&composed_preview(PREVIEW_URL)));
+        // And back in the first chat, nothing of the other's shows.
+        app.open_chat = Some(PREVIEW_CHAT.into());
+        app.composer = "hi https://ex.com/a".into();
+        assert_eq!(app.current_preview(), None);
+    }
+
+    #[test]
+    fn composer_preview_hidden_account_result_ignored() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        assert_eq!(app.current_preview(), None);
+    }
+
+    /// An answer dropped while its account was hidden does not leave the
+    /// card loading: back on the account, the pause asks again.
+    #[test]
+    fn composer_preview_hidden_account_result_is_asked_again() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        app.watch_link_preview(1.0);
+        app.watch_link_preview(1.6);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+    }
+
+    /// A hidden account's dropped answer leaves the card and pause of the
+    /// account on screen alone.
+    #[test]
+    fn composer_preview_hidden_answer_leaves_other_account_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _hidden_commands) = two_accounts(directory.path());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(PREVIEW_CHAT.into(), "Fixture".into()));
+        app.open_chat = Some(PREVIEW_CHAT.into());
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        // Typing again starts a pause that is still running.
+        app.composer = "hi https://ex.com/a!".into();
+        app.watch_link_preview(2.0);
+        let (card, seen, typed_at) = (
+            app.composer_preview.clone(),
+            app.preview_seen.clone(),
+            app.preview_typed_at,
+        );
+        assert!(typed_at.is_some());
+        // The other account's answer, applied the way `handle_events` does.
+        app.active = 1;
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        app.active = 0;
+        assert_eq!(app.composer_preview, card);
+        assert_eq!(app.preview_seen, seen);
+        assert_eq!(app.preview_typed_at, typed_at);
+        app.watch_link_preview(2.6);
+        assert!(preview_fetches(&mut commands).is_empty(), "asked once");
+    }
+
+    /// A caption never gets a card: with attachments staged nothing is
+    /// fetched, and taking them away lets the link be asked for afresh.
+    #[test]
+    fn composer_preview_staged_attachment_requests_nothing() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        app.pending.push(Staged {
+            id: 1,
+            item: Pending::File("a.png".into()),
+        });
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert!(preview_fetches(&mut commands).is_empty());
+        assert!(app.composer_preview.is_none());
+        app.pending.clear();
+        app.watch_link_preview(2.0);
+        app.watch_link_preview(2.6);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+    }
+
+    /// A dismissed card stays dismissed while attachments come and go.
+    #[test]
+    fn composer_preview_dismissal_survives_staged_attachments() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        app.composer_preview.as_mut().unwrap().state = LinkPreviewState::Dismissed;
+        app.pending.push(Staged {
+            id: 1,
+            item: Pending::File("a.png".into()),
+        });
+        app.watch_link_preview(1.0);
+        app.watch_link_preview(1.6);
+        app.pending.clear();
+        app.watch_link_preview(2.0);
+        app.watch_link_preview(2.6);
+        assert!(preview_fetches(&mut commands).is_empty());
+        assert_eq!(
+            app.composer_preview.as_ref().map(|card| &card.state),
+            Some(&LinkPreviewState::Dismissed)
+        );
+        assert_eq!(app.current_preview(), None);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
+    }
+
+    #[test]
+    fn composer_preview_disabled_setting_requests_nothing() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        app.link_previews_disabled = true;
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert!(preview_fetches(&mut commands).is_empty());
+        events
+            .send(Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.composer_preview.is_none());
+        assert_eq!(app.current_preview(), None);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
+    }
+
+    /// The phone's setting turning on drops a card already shown, and an
+    /// answer still on its way when it does.
+    #[test]
+    fn composer_preview_setting_turned_on_drops_the_card() {
+        let (mut app, mut commands, events) = composer_preview_app();
+        let arrive = || {
+            events
+                .send(Event::LinkPreview {
+                    url: PREVIEW_URL.into(),
+                    preview: Some(composed_preview(PREVIEW_URL)),
+                })
+                .unwrap();
+        };
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        arrive();
+        app.handle_events();
+        assert!(app.current_preview().is_some());
+        events.send(Event::LinkPreviewsDisabled(true)).unwrap();
+        app.handle_events();
+        assert!(app.composer_preview.is_none());
+        assert_eq!(app.current_preview(), None);
+
+        events.send(Event::LinkPreviewsDisabled(false)).unwrap();
+        app.handle_events();
+        rest_on(&mut app, "hi https://ex.com/a again", 1.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL, PREVIEW_URL]);
+        events.send(Event::LinkPreviewsDisabled(true)).unwrap();
+        arrive();
+        app.handle_events();
+        assert_eq!(app.current_preview(), None);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
+    }
+
+    #[test]
+    fn composer_preview_editing_never_previews() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        app.editing = Some("edited-message".into());
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert!(preview_fetches(&mut commands).is_empty());
+        send_composer(&mut app);
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(command,
+                Command::EditText { chat, id, text, mentions }
+                    if chat == PREVIEW_CHAT && id == "edited-message"
+                        && text == "hi https://ex.com/a" && mentions.is_empty())),
+            "{sent:?}"
+        );
+        assert!(
+            !sent
+                .iter()
+                .any(|command| matches!(command, Command::SendText { .. }))
+        );
+    }
+
+    /// The card sits above the composer's pill; its X dismisses it.
+    #[test]
+    fn composer_preview_card_is_drawn_above_the_pill_and_dismissed() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.chats
+            .push(Chat::new(PREVIEW_CHAT.into(), "Fixture".into()));
+        app.open_chat(PREVIEW_CHAT.into());
+        let ctx = egui::Context::default();
+        let card = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::link_preview_strip_id())
+            })
+        };
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        app.composer = "hi https://ex.com/a".into();
+        composer_undo_boundary_frame(&mut app, &ctx, 0.1, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.7, vec![]);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.8, vec![]);
+        assert!(card(&ctx).is_some(), "loading shows a quiet card");
+        events
+            .send(Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(crate::model::ComposedPreview {
+                    // Not a picture egui can read, but it holds the card's room.
+                    thumbnail: Some(vec![0; 4]),
+                    ..composed_preview(PREVIEW_URL)
+                }),
+            })
+            .unwrap();
+        app.handle_events();
+        ctx.data_mut(|data| {
+            data.remove::<egui::Rect>(crate::ui::conversation::link_preview_strip_id())
+        });
+        composer_undo_boundary_frame(&mut app, &ctx, 0.9, vec![]);
+        let strip = card(&ctx).expect("the ready card");
+        let pill = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id()))
+            .unwrap();
+        assert!(strip.bottom() <= pill.top(), "{strip:?} above {pill:?}");
+        assert!(strip.height() >= 64.0, "room for the thumbnail: {strip:?}");
+        let close = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("link-preview-dismiss")))
+            .unwrap();
+        let at = close.center();
+        composer_undo_boundary_frame(
+            &mut app,
+            &ctx,
+            1.0,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        composer_undo_boundary_frame(
+            &mut app,
+            &ctx,
+            1.05,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(app.current_preview(), None, "dismissed");
+        assert_eq!(app.composer, "hi https://ex.com/a", "the text stays");
+        ctx.data_mut(|data| {
+            data.remove::<egui::Rect>(crate::ui::conversation::link_preview_strip_id())
+        });
+        composer_undo_boundary_frame(&mut app, &ctx, 1.1, vec![]);
+        assert!(card(&ctx).is_none(), "a dismissed card is not drawn");
     }
 
     #[test]

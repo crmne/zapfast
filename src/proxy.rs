@@ -106,6 +106,11 @@ impl Proxy {
         })
     }
 
+    /// The normalized URL with credentials, for HTTP clients; never log it.
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
     /// The URL without its password, for logs and Settings.
     pub fn redacted(&self) -> String {
         match (&self.auth, self.url.split_once('@')) {
@@ -313,7 +318,7 @@ fn bypassed(host: &str, no_proxy: &str) -> bool {
     })
 }
 
-fn from_env(host: &str) -> Option<Proxy> {
+pub(crate) fn from_env(host: &str) -> Option<Proxy> {
     let no_proxy = std::env::var("NO_PROXY")
         .or_else(|_| std::env::var("no_proxy"))
         .unwrap_or_default();

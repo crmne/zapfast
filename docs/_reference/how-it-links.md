@@ -37,7 +37,9 @@ changes take precedence, including removing a star or pin.
 The message archive, media, and session keys stay on your computer.
 [Settings & Files](/settings-and-files/) lists their paths. ZapFast connects
 to WhatsApp's servers, GIPHY for the GIF picker and search, and Signal's sticker
-CDN when you import a Signal sticker pack. It has no telemetry. It also asks
+CDN when you import a Signal sticker pack. While you write a link in a new text
+message, it also contacts that link's own site for its
+[preview](/using-zapfast/#writing). It has no telemetry. It also asks
 `api.github.com` once a day whether a newer release exists; you can turn this
 off in Settings. Downloading an update fetches release files from GitHub.
 
