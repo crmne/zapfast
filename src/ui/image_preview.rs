@@ -1061,15 +1061,17 @@ enum Tile {
     /// The thumbnail the archive stored with the message: already the 56 px the
     /// strip wants.
     Stored,
-    /// The message's kind icon. A tile is never drawn from the file itself: a
-    /// 56 px square is not worth decoding a whole photo on the interface
-    /// thread, nor holding its full-size texture for a strip that scrolls.
+    /// A small poster generated from the downloaded file off the UI thread.
+    Downloaded,
+    /// The message's kind icon while neither a stored preview nor a file is available.
     Icon,
 }
 
 fn tile_of(item: &MediaItem) -> Tile {
     if item.thumbnail.is_some() {
         Tile::Stored
+    } else if item.path.is_some() {
+        Tile::Downloaded
     } else {
         Tile::Icon
     }
@@ -1081,11 +1083,74 @@ mod tile_tests {
     use crate::model::MediaItem;
     use std::path::PathBuf;
 
-    /// The strip draws the thumbnail the archive stored, and the message's
-    /// kind icon when there is none: decoding the file for a 56 px tile
-    /// would run on the interface thread and hold its full-size texture.
+    /// Exercise the generated tile's actual painted mesh, for both source orientations.
     #[test]
-    fn a_tile_is_drawn_from_the_stored_thumbnail_or_not_at_all() {
+    fn downloaded_thumbnail_paint_preserves_aspect_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, height, expected) in [(160, 80, vec2(56.0, 28.0)), (80, 160, vec2(28.0, 56.0))]
+        {
+            let path = dir.path().join(format!("{width}x{height}.png"));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            let item = MediaItem {
+                id: "test".into(),
+                card: None,
+                timestamp: 0,
+                video: false,
+                path: Some(path.clone()),
+                thumbnail: None,
+            };
+            let ctx = egui::Context::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let mut texture = None;
+                let rect = Rect::from_min_size(pos2(20.0, 20.0), Vec2::splat(THUMB));
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    if let crate::animation::Frame::Ready(ready) =
+                        crate::animation::frame(ui, &path, rect, false)
+                    {
+                        texture = Some(ready.id());
+                    }
+                    thumb(
+                        ui,
+                        &crate::theme::Palette::dark(),
+                        "chat",
+                        &item,
+                        rect,
+                        false,
+                    );
+                });
+                if let Some(texture) = texture {
+                    let painted = output
+                        .shapes
+                        .iter()
+                        .find(|shape| shape.shape.texture_id() == texture)
+                        .expect("the generated thumbnail is painted")
+                        .shape
+                        .visual_bounding_rect();
+                    assert!(
+                        (painted.width() - expected.x).abs() < 0.1
+                            && (painted.height() - expected.y).abs() < 0.1,
+                        "{painted:?}"
+                    );
+                    assert_eq!(painted.center(), rect.center());
+                    output.textures_delta.clear();
+                    break;
+                }
+                output.textures_delta.clear();
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "poster did not arrive"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+
+    /// Missing stored previews use downloaded photos and videos before falling back to icons.
+    #[test]
+    fn a_tile_prefers_the_stored_thumbnail_then_the_downloaded_file() {
         let stored = MediaItem {
             card: None,
             id: "m1".into(),
@@ -1099,12 +1164,14 @@ mod tile_tests {
             thumbnail: None,
             ..stored.clone()
         };
-        assert_eq!(tile_of(&file_only), Tile::Icon);
+        assert_eq!(tile_of(&file_only), Tile::Downloaded);
         let clip = MediaItem {
             video: true,
             ..file_only
         };
-        assert_eq!(tile_of(&clip), Tile::Icon);
+        assert_eq!(tile_of(&clip), Tile::Downloaded);
+        let missing = MediaItem { path: None, ..clip };
+        assert_eq!(tile_of(&missing), Tile::Icon);
     }
 }
 
@@ -1117,10 +1184,20 @@ fn thumb(
     current: bool,
 ) {
     ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
-    match (tile_of(item), item.thumbnail.as_deref()) {
+    let generated = if tile_of(item) == Tile::Downloaded {
+        item.path.as_deref().and_then(
+            |path| match crate::animation::frame(ui, path, rect, false) {
+                crate::animation::Frame::Ready(texture) => Some(texture),
+                _ => None,
+            },
+        )
+    } else {
+        None
+    };
+    match (tile_of(item), item.thumbnail.as_deref(), generated.as_ref()) {
         // A message id is only unique inside its chat, and the image cache
         // keeps the first bytes for a URI, so the chat has to be part of it.
-        (Tile::Stored, Some(bytes)) => {
+        (Tile::Stored, Some(bytes), _) => {
             // A carousel's cards share their message's id, and each has its
             // own preview, so the card is part of the key too.
             let key = match item.card {
@@ -1131,6 +1208,12 @@ fn thumb(
                 .fit_to_exact_size(rect.size())
                 .corner_radius(6.0)
                 .paint_at(ui, rect);
+        }
+        (_, _, Some(texture)) => {
+            let fitted = fit_within(texture.size_vec2(), rect);
+            egui::Image::from_texture(texture)
+                .corner_radius(6.0)
+                .paint_at(ui, fitted);
         }
         _ => {
             theme::paint_icon(
@@ -1348,8 +1431,7 @@ fn paint_sticker(
     }
 }
 
-/// The largest rect of `size`'s shape centred in `rect`. Stickers are small,
-/// so unlike photos they are enlarged to fill it.
+/// Fit a poster or sticker into its available rectangle without changing its aspect ratio.
 fn fit_within(size: Vec2, rect: Rect) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return rect;
