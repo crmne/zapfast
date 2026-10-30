@@ -36,6 +36,7 @@ pub(super) struct Finished {
 }
 
 impl Worker {
+    /// Drops account requests and marks the running inference result unusable.
     pub(super) fn cancel_transcription(&mut self) {
         self.transcription_queue.clear();
         if let Some(cancel) = &self.transcription_cancel {
@@ -43,6 +44,8 @@ impl Worker {
         }
     }
 
+    /// Cancels old preparation/inference and advances the generation before
+    /// accepting work for a different model or an explicit retry reset.
     pub(super) fn configure_transcription(&mut self, model: Model) {
         self.cancel_transcription();
         if let Some(cancel) = self.transcription_prepare_cancel.take() {
@@ -54,6 +57,7 @@ impl Worker {
         self.transcription_tries.clear();
     }
 
+    /// Tags public progress with its model/generation so stale loads stay hidden.
     fn transcription_progress(&self) -> Progress {
         let sender = self.transcription_tx.clone();
         let model = self.transcription_model;
@@ -67,6 +71,7 @@ impl Worker {
         })
     }
 
+    /// Explicitly prepares public weights without reading an account message.
     pub(super) fn prepare_transcription(&mut self, model: Model) {
         if self.transcription_model != model {
             self.configure_transcription(model);
@@ -86,6 +91,8 @@ impl Worker {
         });
     }
 
+    /// Replaces automatic viewport work while retaining this chat's manual
+    /// retries; cancelled active jobs may queue a replacement before finishing.
     pub(super) fn transcribe_on_screen(&mut self, chat: ChatId, ids: Vec<String>, model: Model) {
         if self.transcription_model != model {
             self.configure_transcription(model);
@@ -128,6 +135,7 @@ impl Worker {
         self.pump_transcription();
     }
 
+    /// Prioritizes one downloaded voice note without erasing its previous text.
     pub(super) fn transcribe_again(&mut self, chat: ChatId, id: String, model: Model) {
         let eligible = self
             .archive
@@ -169,6 +177,8 @@ impl Worker {
         self.pump_transcription();
     }
 
+    /// Starts at most one eligible account job, checking privacy, the retained
+    /// message and its local file before calling the shared recognizer.
     fn pump_transcription(&mut self) {
         if !self.privacy_ready {
             self.transcription_queue.clear();
@@ -247,6 +257,8 @@ impl Worker {
         }
     }
 
+    /// Applies preparation/progress only to the current generation and routes
+    /// completed inference through the account/session persistence checks.
     pub(super) fn transcription_update(&mut self, update: Update) {
         match update {
             Update::Progress {
@@ -270,6 +282,8 @@ impl Worker {
         }
     }
 
+    /// Rejects cancelled/stale results and replaces saved words only after the
+    /// archive accepts them; model failures pause the queue, not every message.
     fn transcription_finished(&mut self, done: Finished) {
         let key = (done.chat.clone(), done.id.clone());
         if self.transcribing.as_ref() != Some(&key) {
@@ -336,6 +350,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Reopening a viewport must replace a job still finishing cancellation.
     fn a_visible_voice_is_requeued_while_its_cancelled_job_is_still_finishing() {
         let (mut worker, _, _, _) = worker();
         worker.transcribing = Some((PEER.into(), "voice".into()));
@@ -356,6 +371,7 @@ mod tests {
     }
 
     #[test]
+    /// Repeated viewport reports do not queue a second copy of active work.
     fn the_same_live_job_is_not_queued_twice() {
         let (mut worker, _, _, _) = worker();
         worker.transcribing = Some((PEER.into(), "voice".into()));
@@ -365,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    /// A missing cached file is filtered before spawning any native inference.
     fn a_missing_cached_file_is_skipped_before_starting_the_recognizer() {
         let (mut worker, events, _, _) = worker();
         let root = tempfile::tempdir().unwrap();
@@ -394,7 +411,47 @@ mod tests {
         );
     }
 
+    /// A canonical message already drawn with saved words must receive the
+    /// newly learned LID revocation, not wait for a history page to reload it.
     #[test]
+    fn a_lid_revocation_refreshes_the_canonical_row_already_on_screen() {
+        let (mut worker, events, _, _) = worker();
+        let lid = "100001";
+        let pn = "100002";
+        let lid_chat = format!("{lid}@lid");
+        let phone_chat = format!("{pn}@s.whatsapp.net");
+        for chat in [&lid_chat, &phone_chat] {
+            worker.archive.ensure_chat(chat, "Fixture").unwrap();
+            worker
+                .archive
+                .insert_message(
+                    &crate::archive::tests::message(chat, "voice", 10, false),
+                    None,
+                )
+                .unwrap();
+        }
+        worker
+            .archive
+            .set_transcript(&phone_chat, "voice", "saved fixture", "test")
+            .unwrap();
+        worker
+            .archive
+            .set_content(&lid_chat, "voice", &Content::Revoked, false)
+            .unwrap();
+
+        worker.learn_lid(lid, pn);
+
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::MessageUpdated(row)
+            if row.chat == phone_chat && row.id == "voice"
+                && matches!(row.content, Content::Revoked) && row.transcript.is_none()))
+        );
+    }
+
+    #[test]
+    /// Switching generations invalidates both preparation and inference tokens.
     fn changing_models_cancels_old_jobs_and_preparations() {
         let (mut worker, _, _, _) = worker();
         let job = Arc::new(AtomicBool::new(false));
@@ -414,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    /// Failed manual recognition preserves previously persisted words.
     fn a_failed_retry_keeps_the_saved_transcript() {
         let (mut worker, events, _, _) = worker();
         let row = crate::archive::tests::message(PEER, "voice", 10, false);
@@ -448,6 +506,7 @@ mod tests {
     }
 
     #[test]
+    /// An earlier model's answer may clear progress but must never store text.
     fn a_late_result_from_an_old_model_is_not_stored() {
         let (mut worker, events, _, _) = worker();
         worker.transcribing = Some((PEER.into(), "voice".into()));

@@ -32,6 +32,21 @@ END;
 ";
 
 impl Archive {
+    /// Canonical rows whose previously unknown LID copy was revoked. The
+    /// worker reads this before merging so already-drawn words are refreshed
+    /// afterward, rather than lingering until the chat is opened again.
+    pub(crate) fn lid_revocations(&self, lid_chat: &str, phone_chat: &str) -> Result<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.id FROM messages p JOIN messages l ON p.id = l.id
+             WHERE p.chat = ?2 AND l.chat = ?1
+                 AND json_extract(l.content, '$.kind') = 'revoked'
+                 AND json_extract(p.content, '$.kind') != 'revoked'",
+        )?;
+        statement
+            .query_map(params![lid_chat, phone_chat], |row| row.get(0))?
+            .collect()
+    }
+
     /// Stores a transcript, replacing an older one of the same message. A
     /// message deleted while it was being transcribed writes nothing, so the
     /// table never holds a row without its message.

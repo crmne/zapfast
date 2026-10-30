@@ -1173,7 +1173,11 @@ impl Archive {
              FROM messages WHERE chat = ?1 AND timestamp > COALESCE(
                 (SELECT through FROM chat_removals WHERE chat = ?2), -1)
              ON CONFLICT(chat, id) DO UPDATE SET
-                content = CASE WHEN excluded.edited > messages.edited THEN excluded.content ELSE messages.content END,
+                 content = CASE
+                     WHEN json_extract(messages.content, '$.kind') = 'revoked' THEN messages.content
+                     WHEN json_extract(excluded.content, '$.kind') = 'revoked' THEN excluded.content
+                     WHEN excluded.edited > messages.edited THEN excluded.content
+                     ELSE messages.content END,
                 sender_name = COALESCE(messages.sender_name, excluded.sender_name),
                 status = MAX(messages.status, excluded.status),
                 quoted = COALESCE(messages.quoted, excluded.quoted),
@@ -3041,6 +3045,61 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// Revocation wins from either identity, even over an edited duplicate
+    /// whose transcript was already saved under the canonical phone chat.
+    #[test]
+    fn a_lid_merge_never_restores_a_revoked_message_or_its_transcript() {
+        for revoked_lid in [false, true] {
+            let archive = Archive::in_memory().unwrap();
+            let lid = "5511999999999";
+            let pn = "5511888888888";
+            let lid_chat = format!("{lid}@lid");
+            let phone_chat = format!("{pn}@s.whatsapp.net");
+            for chat in [&lid_chat, &phone_chat] {
+                archive.ensure_chat(chat, "Fixture").unwrap();
+                archive
+                    .insert_message(&message(chat, "voice", 10, false), None)
+                    .unwrap();
+                assert!(
+                    archive
+                        .set_transcript(chat, "voice", "saved fixture", "test")
+                        .unwrap()
+                );
+            }
+            let (revoked, duplicate) = if revoked_lid {
+                (&lid_chat, &phone_chat)
+            } else {
+                (&phone_chat, &lid_chat)
+            };
+            archive
+                .set_content(revoked, "voice", &Content::Revoked, false)
+                .unwrap();
+            archive
+                .set_content(duplicate, "voice", &Content::text("edited fixture"), true)
+                .unwrap();
+
+            archive.put_lid(lid, pn).unwrap();
+
+            let row = archive.message(&phone_chat, "voice").unwrap().unwrap();
+            assert!(
+                matches!(row.content, Content::Revoked),
+                "revoked_lid={revoked_lid}"
+            );
+            assert!(row.transcript.is_none(), "revoked_lid={revoked_lid}");
+            assert!(
+                archive
+                    .transcripts(&phone_chat, &["voice".into()])
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                !archive
+                    .set_transcript(&phone_chat, "voice", "late result", "test")
+                    .unwrap()
+            );
+        }
     }
 
     /// Moves a LID chat with a transcript onto its phone chat, with the named

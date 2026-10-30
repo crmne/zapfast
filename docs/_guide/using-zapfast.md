@@ -520,6 +520,10 @@ The request continues through scrolling and stops if you leave or lock the
 chat. Its previous text stays until a new transcript is successfully saved.
 A message being transcribed says **Transcribing…**.
 
+A message deleted for everyone also loses its saved transcript. Reconciling
+the same chat under a phone number and a privacy ID cannot restore that
+revoked message or its text, even when the other copy contains an edit.
+
 The native recognizer has been tested on macOS only. Linux and Windows use
 the same engine, but their transcription and packaging have not been tested.
 
