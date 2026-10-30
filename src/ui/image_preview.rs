@@ -120,7 +120,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 preview.path()
             }
             .map(Path::to_path_buf);
-            let drawn = if clip {
+            if clip {
                 video(
                     app,
                     &mut body,
@@ -146,15 +146,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 )
             };
             if strip {
-                navigation_overlay(
-                    ui,
-                    stage,
-                    drawn.unwrap_or(stage),
-                    &palette,
-                    app.locale,
-                    clip,
-                    &mut actions,
-                );
+                navigation_overlay(ui, stage, &palette, app.locale, clip, &mut actions);
                 let mut bar = ui.new_child(UiBuilder::new().max_rect(strip_rect));
                 bar.set_clip_rect(strip_rect);
                 strip_bar(
@@ -1159,15 +1151,11 @@ fn thumb(
     }
 }
 
-/// Previous and next buttons over the visible part of the picture or clip,
-/// shown while the pointer is over it. A picture too narrow for both gets a
-/// band just wide enough, centred on it, so the buttons sit at its edges
-/// instead of on top of each other. Over a clip the arrow keys jump through
-/// it, so the tooltips name no key there.
+/// Previous and next buttons stay at the viewer stage edges while the pointer
+/// is over the stage. Over a clip the arrow keys seek, so its tooltips name no key.
 fn navigation_overlay(
     ui: &mut egui::Ui,
     area: Rect,
-    image: Rect,
     palette: &theme::Palette,
     locale: crate::i18n::Locale,
     clip: bool,
@@ -1175,12 +1163,7 @@ fn navigation_overlay(
 ) {
     const DIAMETER: f32 = 40.0;
     const INSET: f32 = 12.0;
-    let min_width = 2.0 * (DIAMETER + INSET) + DIAMETER;
-    let mut band = image;
-    if band.width() < min_width {
-        band = Rect::from_center_size(band.center(), vec2(min_width, band.height()));
-    }
-    let band = band.intersect(area);
+    let band = area;
     if band.height() < DIAMETER || band.width() < 2.0 * DIAMETER {
         return;
     }
