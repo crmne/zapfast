@@ -380,12 +380,7 @@ fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
         builder = builder.proxy(proxy);
         true
     } else if let Some(proxy) = url.host_str().and_then(crate::proxy::from_env) {
-        // Only the redacted address is public; one with a password is unusable.
-        let address = proxy.redacted();
-        if address.contains("***") {
-            return None;
-        }
-        builder = builder.proxy(reqwest::Proxy::all(address).ok()?);
+        builder = builder.proxy(reqwest::Proxy::all(proxy.url()).ok()?);
         true
     } else {
         false

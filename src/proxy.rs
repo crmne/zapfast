@@ -106,6 +106,11 @@ impl Proxy {
         })
     }
 
+    /// The normalized URL with credentials, for HTTP clients; never log it.
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
     /// The URL without its password, for logs and Settings.
     pub fn redacted(&self) -> String {
         match (&self.auth, self.url.split_once('@')) {
