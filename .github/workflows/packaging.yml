@@ -38,7 +38,40 @@ permissions:
   contents: read
 
 jobs:
+  # Without a version, the packages are made from v0.13.1's archives, which
+  # predate the speech runtime: this adds it as release.yml now does, so the
+  # packages, their installation and the AppImage carry what a release does.
+  fixture:
+    name: v0.13.1 archives with the speech runtime
+    if: inputs.version == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release v0.13.1's assets, the Linux archives with the runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download v0.13.1 --repo crmne/zapfast --dir dist \
+            --pattern 'zapfast-v0.13.1-*-unknown-linux-gnu.tar.gz' --pattern 'zapfast-v0.13.1-macos-universal.dmg'
+          curl --fail --location --silent --show-error --output dist/zapfast-0.13.1.tar.gz \
+            https://github.com/crmne/zapfast/archive/refs/tags/v0.13.1.tar.gz
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            name="zapfast-v0.13.1-$target"
+            tar xzf "dist/$name.tar.gz" -C dist
+            python3 packaging/onnxruntime.py "$target" "dist/$name"
+            tar czf "dist/$name.tar.gz" -C dist "$name"
+            rm -r "dist/$name"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packaging-inputs
+          path: dist/
+          if-no-files-found: error
+
   packaging:
+    needs: fixture
+    if: ${{ !cancelled() && !failure() }}
     permissions:
       contents: write
     uses: crmne/native-packages/.github/workflows/package.yml@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
@@ -46,6 +79,7 @@ jobs:
       targets: linux-amd64,linux-arm64
       version: ${{ inputs.version || 'v0.13.1' }}
       publish: ${{ inputs.publish == true && inputs.version != '' }}
+      source-artifact: ${{ inputs.version == '' && 'packaging-inputs' || '' }}
     secrets: inherit
 
   # The Windows package, installed for real with stand-in program files: an
@@ -147,6 +181,8 @@ jobs:
           test "$#" -eq 1
           chmod +x "$1"
           "$1" --appimage-extract-and-run --version | grep -Ex '(zapfast|fastsapp) [0-9]+\.[0-9]+\.[0-9]+.*'
+          "$1" --appimage-extract >/dev/null
+          test -s squashfs-root/usr/lib/zapfast/libonnxruntime.so
 
   user-installer:
     name: User installer

@@ -49,6 +49,10 @@ On Debian 13, Ubuntu 24.04 or newer:
 sudo apt install build-essential cmake perl clang libclang-dev libasound2-dev libpipewire-0.3-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
 ```
 
+Voice message transcription needs the speech runtime beside the binary.
+`install-user.sh` installs it; for a copy you run from `target/release`, put it
+there with `python3 packaging/onnxruntime.py "$(rustc -vV | sed -n 's/host: //p')" target/release`.
+
 With Nix, `nix develop` provides the toolchain and every native dependency,
 and `nix run .#zapfast` builds and runs it.
 

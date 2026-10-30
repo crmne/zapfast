@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs a source build for the current user: the binary, the icon, and a
-# launcher entry that opens ZapFast with no terminal.
+# Installs a source build for the current user: the binary, the speech
+# runtime, the icon, and a launcher entry that opens ZapFast with no terminal.
 #
 # Usage: packaging/install-user.sh [binary] [prefix]
 #   binary  the built executable (default: target/release/zapfast)
@@ -43,6 +43,18 @@ fi
 
 installed="$bin_dir/zapfast"
 install -Dm755 "$binary" "$installed"
+# The speech runtime, which ZapFast looks for in ../lib/zapfast: the one beside
+# the binary, else Microsoft's pinned package, fetched beside it first.
+runtime="$(dirname -- "$binary")/libonnxruntime.so"
+if [[ ! -f "$runtime" ]]; then
+  python3 "$here/onnxruntime.py" "$(uname -m)-unknown-linux-gnu" "$(dirname -- "$binary")"
+fi
+install -Dm644 "$runtime" "$prefix/lib/zapfast/libonnxruntime.so"
+for notice in onnxruntime-LICENSE.txt onnxruntime-ThirdPartyNotices.txt; do
+  if [[ -f "$(dirname -- "$binary")/$notice" ]]; then
+    install -Dm644 "$(dirname -- "$binary")/$notice" "$data_dir/licenses/zapfast/$notice"
+  fi
+done
 install -Dm644 "$here/icons/zapfast.svg" "$icons_dir/zapfast.svg"
 mkdir -p "$apps_dir"
 # The lines that change: `Exec=zapfast`, and the actions' `Exec=zapfast <verb>`,
@@ -94,5 +106,6 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "Installed $installed"
+echo "Installed $prefix/lib/zapfast/libonnxruntime.so"
 echo "Installed $apps_dir/zapfast.desktop (Exec=\"$installed\")"
 echo "ZapFast now opens from the application launcher."

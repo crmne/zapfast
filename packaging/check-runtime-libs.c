@@ -12,6 +12,8 @@ int main(void) {
         "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
         "libxkbcommon.so.0", "libxkbcommon-x11.so.0",
         "libX11.so.6", "libX11-xcb.so.1", "libXcursor.so.1", "libXi.so.6", "libXrandr.so.2",
+        /* The speech runtime the package carries, with what it needs. */
+        "/usr/lib/zapfast/libonnxruntime.so",
     };
     int failed = 0;
     for (size_t i = 0; i < sizeof(libraries) / sizeof(libraries[0]); i++) {

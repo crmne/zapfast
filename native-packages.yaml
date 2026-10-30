@@ -35,6 +35,19 @@ nfpm:
     dst: "/usr/share/doc/zapfast/README.md"
     file_info:
       mode: 420
+  # The speech runtime, where ZapFast looks beside /usr/bin (PACKAGING.md).
+  - src: "@PAYLOAD@/zapfast-v@VERSION@-@TARGET@/libonnxruntime.so"
+    dst: "/usr/lib/zapfast/libonnxruntime.so"
+    file_info:
+      mode: 420
+  - src: "@PAYLOAD@/zapfast-v@VERSION@-@TARGET@/onnxruntime-LICENSE.txt"
+    dst: "/usr/share/licenses/zapfast/onnxruntime-LICENSE.txt"
+    file_info:
+      mode: 420
+  - src: "@PAYLOAD@/zapfast-v@VERSION@-@TARGET@/onnxruntime-ThirdPartyNotices.txt"
+    dst: "/usr/share/licenses/zapfast/onnxruntime-ThirdPartyNotices.txt"
+    file_info:
+      mode: 420
   - src: "@PAYLOAD@/zapfast-v@VERSION@-@TARGET@/packaging/applications/zapfast.desktop"
     dst: "/usr/share/applications/zapfast.desktop"
     file_info:

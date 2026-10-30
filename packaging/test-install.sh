@@ -45,11 +45,13 @@ docker run --rm \
     grep -qx "StartupWMClass=zapfast" /usr/share/applications/zapfast.desktop
     test -s /usr/share/zapfast/omarchy/zapfast.json.tpl
     test -x /usr/share/zapfast/omarchy/zapfast-theme
+    test -s /usr/share/licenses/zapfast/onnxruntime-ThirdPartyNotices.txt
     if [ "$FORMAT" = deb ]; then apt-get remove -y zapfast; else dnf remove -y zapfast; fi
     test ! -e /usr/bin/zapfast
     test ! -e /usr/share/applications/zapfast.desktop
     test ! -e /usr/share/icons/hicolor/scalable/apps/zapfast.svg
     test ! -e /usr/share/zapfast/omarchy/zapfast.json.tpl
     test ! -e /usr/share/zapfast/omarchy/zapfast-theme
+    test ! -e /usr/lib/zapfast/libonnxruntime.so
     test "$(cat /root/.config/zapfast/fixture)" = preserve-existing-settings
   '

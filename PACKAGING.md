@@ -176,30 +176,43 @@ ZapFast looks for the library at `ORT_DYLIB_PATH`, then at the path
 `ZAPFAST_ONNXRUNTIME` named at build time, then beside the executable:
 `onnxruntime.dll` on Windows, `../Frameworks/libonnxruntime.dylib` on macOS,
 and `libonnxruntime.so`, `../lib/zapfast/libonnxruntime.so` or
-`../lib/libonnxruntime.so` on Linux. Without one, Settings says so and no
-model is downloaded.
+`../lib/libonnxruntime.so` on Linux. Without one, Settings says so, with where
+to get it, and no model is downloaded.
 
 `python3 packaging/onnxruntime.py TARGET DESTINATION` downloads the package,
 checks its hash and puts the library, `onnxruntime-LICENSE.txt` and
 `onnxruntime-ThirdPartyNotices.txt` in DESTINATION; `universal-apple-darwin`
 merges both macOS architectures. The release workflow puts them in each
-archive and Windows installer, and `bundle.sh` takes the folder as its fourth
-argument for `Contents/Frameworks`. For a local build, use
-`target/debug` or `target/release` as DESTINATION. Flatpak installs the library
+archive, so the deb, rpm and AppImage made from it install the library as
+`/usr/lib/zapfast/libonnxruntime.so` (`native-packages.yaml`), and in the
+Windows installer; `bundle.sh` takes the folder as its fourth argument for
+`Contents/Frameworks`. `install-user.sh` installs it in `<prefix>/lib/zapfast`,
+fetching it beside the binary first when it is not there. Flatpak installs it
 in `/app/lib`, Nix bakes its store path in with `ZAPFAST_ONNXRUNTIME`, and the
-Arch recipes install it in `/usr/lib/zapfast`.
+Arch recipes install it in `/usr/lib/zapfast`. For a local build, use
+`target/debug` or `target/release` as DESTINATION.
 
-The deb, rpm and AppImage packages do not carry it yet: they are made from the
-published archive, and `packaging.yml` checks them against v0.13.1's, which
-lacks the library. Once a release archive has it, move that check to the release
-and add `libonnxruntime.so` to `native-packages.yaml` as
-`/usr/lib/zapfast/libonnxruntime.so`, with its notices.
+`packaging.yml` makes the packages it checks from v0.13.1's archives, which
+predate the runtime, so without a version it first adds the runtime to them as
+the release workflow does. The installation check loads the installed library
+in each distribution.
 
-Microsoft's macOS and Linux builds report usage from 1.29 on unless
-`ORT_DISABLE_TELEMETRY` is set, which `src/main.rs` does before anything starts
-the runtime. On Windows, Windows' own diagnostic data can record one event, as
-Windows' privacy settings allow, when the runtime starts and before ZapFast
-turns its events off.
+On Windows, Microsoft's `onnxruntime.dll` imports the Visual C++ runtime:
+`VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` (x64 only), `MSVCP140.dll` and
+`MSVCP140_1.dll`, from the Visual C++ 2015-2022 Redistributable, version 2019
+or later. ZapFast itself imports `VCRUNTIME140.dll`. Where one is missing,
+Settings names it and links Microsoft's installer.
+
+Microsoft's Windows build writes usage events to Event Tracing for Windows,
+which Windows' diagnostic data service can collect and send to Microsoft as
+the computer's diagnostic data settings allow. ZapFast turns those events off
+before creating the runtime's environment, so its start event is not written,
+and again before each model load and each transcription, because a trace
+session that enables the provider turns them back on. One that does so during a
+load or a transcription could still receive its events: the runtime version,
+the model file's name, metadata and hashes, and timings; never audio or text.
+The macOS and Linux builds of 1.23 have no such events; from 1.29 on they report
+usage unless `ORT_DISABLE_TELEMETRY` is set, which `src/main.rs` does first.
 
 ## Flatpak
 

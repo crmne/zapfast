@@ -17,6 +17,8 @@ trap 'rm -rf -- "$work"' EXIT
 fake="$work/zapfast-fake"
 printf '#!/bin/sh\nexit 0\n' > "$fake"
 chmod +x "$fake"
+# A stand-in for the speech runtime a release build has beside it.
+printf 'runtime' > "$work/libonnxruntime.so"
 
 # The Desktop Entry Exec escaping, mirroring fastframe-autostart: a backslash is
 # doubled first, then `"`, `` ` ``, `$` and `\` are backslash-escaped, and a
@@ -39,6 +41,7 @@ check_prefix() {
   local entry="$prefix/share/applications/zapfast.desktop"
   test -s "$entry"
   test -s "$prefix/share/icons/hicolor/scalable/apps/zapfast.svg"
+  test "$(cat "$prefix/lib/zapfast/libonnxruntime.so")" = runtime
 
   # `%U` stays after the quoted path: it is what passes a `whatsapp://` link
   # to the binary, which the MimeType line claims this entry handles.
