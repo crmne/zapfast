@@ -834,10 +834,7 @@ fn add_arabic_fallback(fonts: &mut egui::FontDefinitions) {
         if let Ok(bytes) = std::fs::read(path) {
             let font_name = "zapfast-arabic-fallback".to_string();
             let data = std::sync::Arc::new(egui::FontData::from_owned(bytes.clone()));
-            fonts.font_data.insert(font_name.clone(), data.clone());
-            // Also override "fallback-arabic" in case fastframe-fonts installed an
-            // incomplete face like Segoe UI that fails to render Arabic glyphs.
-            fonts.font_data.insert("fallback-arabic".into(), data);
+            fonts.font_data.insert(font_name.clone(), data);
 
             let insert_fallback = |fam: &mut Vec<String>| {
                 let idx = if fam.len() > 1 { 1 } else { fam.len() };
