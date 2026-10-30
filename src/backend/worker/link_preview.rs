@@ -15,6 +15,10 @@ const MAX_IMAGE: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
 const THUMB_SIDE: u32 = 300;
 const MIN_SIDE: u32 = 16;
+/// The widest or tallest picture worth decoding, and the most memory its
+/// decoder may ask for.
+const MAX_SOURCE_SIDE: u32 = 8192;
+const MAX_DECODE_BYTES: u64 = 64 * 1024 * 1024;
 const JPEG_QUALITY: u8 = 70;
 const TITLE_CHARS: usize = 300;
 const DESCRIPTION_CHARS: usize = 600;
@@ -347,7 +351,17 @@ pub(super) fn literal_host_allowed(url: &reqwest::Url) -> bool {
 /// Shrink a picture to at most 300 px on its long side and encode it as JPEG.
 /// Pictures too small to be worth showing, and anything undecodable, give `None`.
 pub(super) fn thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(bytes).ok()?;
+    // A small file can claim a huge picture: the header's size is checked
+    // against the limits when the decoder is made, before any pixel is read.
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SOURCE_SIDE);
+    limits.max_image_height = Some(MAX_SOURCE_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    reader.limits(limits);
+    let image = image::DynamicImage::from_decoder(reader.into_decoder().ok()?).ok()?;
     if image.width() < MIN_SIDE || image.height() < MIN_SIDE {
         return None;
     }
@@ -774,6 +788,39 @@ mod tests {
         assert_eq!(thumbnail(b"not an image"), None);
         assert_eq!(thumbnail(&png(1, 1)), None);
         assert_eq!(thumbnail(&png(15, 400)), None);
+    }
+
+    /// The CRC-32 a PNG chunk carries over its type and data.
+    fn crc32(bytes: &[u8]) -> u32 {
+        !bytes.iter().fold(!0u32, |mut crc, &byte| {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+            }
+            crc
+        })
+    }
+
+    /// `png` with its header claiming another size, and a valid CRC.
+    fn png_claiming(png: &[u8], width: u32, height: u32) -> Vec<u8> {
+        let mut out = png.to_vec();
+        out[16..20].copy_from_slice(&width.to_be_bytes());
+        out[20..24].copy_from_slice(&height.to_be_bytes());
+        let crc = crc32(&out[12..29]);
+        out[29..33].copy_from_slice(&crc.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn thumbnail_refuses_huge_claims_before_decoding() {
+        let started = std::time::Instant::now();
+        let small = png(100, 100);
+        assert_eq!(thumbnail(&png_claiming(&small, 60000, 60000)), None);
+        // A real picture over the cap is refused too.
+        assert_eq!(thumbnail(&png(8193, 20)), None);
+        assert_eq!(thumbnail(&png(20, 8193)), None);
+        assert!(thumbnail(&png(8192, 20)).is_some());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[tokio::test]
