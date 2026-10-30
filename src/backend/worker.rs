@@ -3,7 +3,7 @@
 //! Messages are archived before reaching the UI. Privacy ids (`@lid`) are
 //! canonicalized to phone-number ids as soon as their mapping is known.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -946,6 +946,7 @@ pub async fn run(
     worker.backfill_hd_copies();
     worker.backfill_group_status_mentions();
     worker.backfill_interactive();
+    worker.adopt_broadcast_lists();
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
     discard_attachment_staging(&worker.dirs.sticker_cache_dir());
@@ -2408,6 +2409,55 @@ impl Worker {
         }
     }
 
+    /// Moves the messages earlier versions filed under a contact's broadcast
+    /// list into the chat with that contact, where they now arrive. The phone
+    /// already shows them there, so this is local: nothing is sent.
+    ///
+    /// It runs at every start: an older build run in between may have filed
+    /// more, and a list that has moved has nothing left to find.
+    fn adopt_broadcast_lists(&mut self) {
+        let lists = match self.archive.received_broadcast_lists() {
+            Ok(lists) => lists,
+            Err(error) => {
+                log::warn!("could not read broadcast-list chats: {error}");
+                return;
+            }
+        };
+        let (mut chats, mut moved, mut left, mut strangers) = (0, 0, 0, 0);
+        for (list, senders) in lists {
+            // Only a person's messages have a chat with them to go to; the
+            // others stay in the list chat.
+            let mut moves = Vec::new();
+            for sender in senders {
+                let chat = self.canonical_str(&sender);
+                let person = Self::jid_of(&chat).is_some_and(|jid| jid.is_pn() || jid.is_lid());
+                if person && !self.is_me(&chat) {
+                    let name = self.chat_name(&chat, None);
+                    moves.push((sender, chat, name));
+                } else {
+                    strangers += 1;
+                }
+            }
+            match self.archive.adopt_broadcast_list(&list, &moves) {
+                Ok(adopted) => {
+                    chats += usize::from(adopted.moved > 0);
+                    moved += adopted.moved;
+                    left += adopted.left;
+                }
+                Err(error) => log::warn!("could not move a broadcast-list chat: {error}"),
+            }
+        }
+        if moved > 0 {
+            log::info!(
+                "moved {moved} messages from {chats} broadcast-list chats into their senders' chats; \
+                 {left} stayed ({strangers} senders without a chat, or removed or being deleted)"
+            );
+            self.emit_chats();
+        } else if left > 0 {
+            log::debug!("{left} messages stay in broadcast-list chats");
+        }
+    }
+
     /// Turns archived view-once media, filed as attachments that could never
     /// download, into the view-once placeholder. Only rows without a local
     /// file change, and only their content: an edit flag stays as it was.
@@ -3130,6 +3180,75 @@ impl Worker {
         match id.parse::<Jid>() {
             Ok(jid) => self.canonical(&jid),
             Err(_) => id.to_owned(),
+        }
+    }
+
+    /// The archive id of the chat a message belongs in. A contact's message
+    /// to one of their broadcast lists arrives addressed to the list, and
+    /// WhatsApp shows it in the chat with that contact, so it goes there.
+    /// Our own messages to a list stay under the list, as they always have.
+    ///
+    /// A recovered list message can come back without its sender. It goes
+    /// where its placeholder waits, and is not filed at all when there is
+    /// none, rather than under the list: `None`.
+    fn message_chat(&self, info: &MessageInfo) -> Option<String> {
+        let source = &info.source;
+        let Some(list) = received_through_list(source) else {
+            return Some(self.canonical(&source.chat));
+        };
+        let owner = self.canonical(
+            source
+                .broadcast_list_owner
+                .as_ref()
+                .unwrap_or(&source.sender),
+        );
+        if Self::jid_of(&owner).is_some_and(|jid| jid.is_pn() || jid.is_lid()) {
+            return Some(owner);
+        }
+        self.archive
+            .broadcast_list_chat(&list, &info.id)
+            .ok()
+            .flatten()
+    }
+
+    /// Files a received broadcast-list message with the list it came
+    /// through. A read or reaction our phone sent for it before it arrived
+    /// waits under the list, and moves to the chat the message goes in
+    /// before filing. What was removed from the list chat an earlier
+    /// version kept, the chat cleared or deleted past it, or the message
+    /// deleted there, does not come back in the sender's chat. A message
+    /// the sender's chat already holds, such as a placeholder waiting for
+    /// it, is not coming back, so it still fills in.
+    fn archive_list_message(
+        &mut self,
+        list: Option<String>,
+        message: Message,
+        raw: Option<Vec<u8>>,
+        push_name: Option<&str>,
+        poll_baseline: bool,
+    ) {
+        let (chat, id) = (message.chat.clone(), message.id.clone());
+        if let Some(list) = &list {
+            let held = matches!(self.archive.message(&chat, &id), Ok(Some(_)));
+            if !held
+                && (self.predates_removal(list, message.timestamp)
+                    || self.message_was_removed(list, &id))
+            {
+                return;
+            }
+            if let Some(played) = self.early.take_read(list, &id) {
+                self.early.wait_read(&chat, &id, played);
+            }
+            for mut reaction in self.early.take_reactions(list, &id) {
+                reaction.chat = chat.clone();
+                self.early.wait_reaction(reaction);
+            }
+        }
+        self.archive_message(message, raw, push_name, poll_baseline);
+        if let Some(list) = list
+            && let Err(error) = self.archive.set_broadcast_list(&chat, &id, &list)
+        {
+            log::warn!("could not remember a broadcast list: {error}");
         }
     }
 
@@ -4174,7 +4293,19 @@ impl Worker {
                 let played = receipt.r#type == ReceiptType::PlayedSelf;
                 // The receipt time is when the phone read, not the position
                 // it read through. A delayed receipt must leave newer messages.
+                let mut read = vec![chat.clone()];
                 for id in &receipt.message_ids {
+                    // A contact's broadcast-list message is filed in the chat
+                    // with them, while its read names the list.
+                    let chat = if receipt.source.chat.is_broadcast_list() {
+                        self.archive
+                            .broadcast_list_chat(&chat, id)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| chat.clone())
+                    } else {
+                        chat.clone()
+                    };
                     match self.archive.message(&chat, id) {
                         Ok(Some(message)) if !message.from_me => {
                             let _ = self.archive.mark_read_to(&chat, id);
@@ -4189,8 +4320,13 @@ impl Worker {
                         }
                         _ => {}
                     }
+                    if !read.contains(&chat) {
+                        read.push(chat);
+                    }
                 }
-                self.emit_chat(&chat);
+                for chat in read {
+                    self.emit_chat(&chat);
+                }
                 return;
             }
             // Own-device delivery counts as read only in the self chat.
@@ -4435,16 +4571,51 @@ impl Worker {
         if info.source.chat.is_status_broadcast() {
             return;
         }
-        let chat = self.canonical(&info.source.chat);
+        let Some(chat) = self.message_chat(info) else {
+            log::debug!("a broadcast-list message without its sender was not filed");
+            return;
+        };
+        // A list's disappearing timer is not that of the chat its messages
+        // are filed in.
+        let list = received_through_list(&info.source);
         let from_me = info.source.is_from_me;
         let sender = if from_me {
             self.me()
+        } else if list.is_some() {
+            // The person whose chat it is, even when it came back without
+            // its sender.
+            chat.clone()
         } else {
             self.canonical(&info.source.sender)
         };
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
         let base = message.get_base_message();
+        // Our phone's reaction to a contact's list message names the list,
+        // and the message is in the chat with them.
+        let chat = if from_me
+            && info.source.chat.is_broadcast_list()
+            && let Some(target) = reaction_target(base)
+            && let Ok(Some(filed)) = self
+                .archive
+                .broadcast_list_chat(&info.source.chat.to_non_ad_string(), &target)
+        {
+            filed
+        } else {
+            chat
+        };
+        // An edit, a deletion or a reaction naming a message an earlier
+        // version left in the list chat finds it there.
+        let chat = match (&list, message_target(base)) {
+            (Some(list), Some(target))
+                if matches!(self.archive.message(&chat, &target), Ok(None))
+                    && matches!(self.archive.message(list, &target), Ok(Some(_))) =>
+            {
+                list.clone()
+            }
+            _ => chat,
+        };
         if let Some(expiration) = base.get_ephemeral_expiration()
+            && list.is_none()
             && self
                 .archive
                 .ephemeral_expiration(&chat)
@@ -4459,6 +4630,9 @@ impl Worker {
         if let Some(protocol) = base.protocol_message.as_option() {
             use wa::message::protocol_message::Type;
             if protocol.r#type == Some(Type::EPHEMERAL_SETTING) {
+                if list.is_some() {
+                    return;
+                }
                 if let Some(expiration) = protocol.ephemeral_expiration {
                     let timestamp = protocol
                         .ephemeral_setting_timestamp
@@ -4639,7 +4813,8 @@ impl Worker {
                 Err(_) => false,
             };
         let id = row.id.clone();
-        self.archive_message(
+        self.archive_list_message(
+            list,
             row,
             Some(message.encode_to_vec()),
             push_name.as_deref(),
@@ -5129,7 +5304,10 @@ impl Worker {
             return;
         }
         let from_me = info.source.is_from_me;
-        let chat = self.canonical(&info.source.chat);
+        let Some(chat) = self.message_chat(info) else {
+            log::debug!("an unreadable broadcast-list message without its sender was not filed");
+            return;
+        };
         if self
             .archive
             .message(&chat, &info.id)
@@ -5140,8 +5318,12 @@ impl Worker {
             return;
         }
         let push_name = (!info.push_name.is_empty()).then(|| info.push_name.clone());
+        let list = received_through_list(&info.source);
         let sender = if from_me {
             self.me()
+        } else if list.is_some() {
+            // The person whose chat it is, as in `ingest`.
+            chat.clone()
         } else {
             self.canonical(&info.source.sender)
         };
@@ -5203,7 +5385,7 @@ impl Worker {
         };
         let id = row.id.clone();
         let chat = row.chat.clone();
-        self.store_message(row, None, push_name.as_deref());
+        self.archive_list_message(list, row, None, push_name.as_deref(), false);
         if from_me {
             self.settle_early_receipts(&chat, &id);
         }
@@ -9035,23 +9217,30 @@ impl Worker {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             return;
         };
-        let is_group = jid.is_group();
-        let mut by_sender: HashMap<Option<String>, Vec<String>> = HashMap::new();
-        for (id, sender) in ids {
-            by_sender
-                .entry(is_group.then_some(sender))
-                .or_default()
-                .push(id);
-        }
+        let ids = ids
+            .into_iter()
+            .map(|(id, sender)| {
+                let list = self.archive.broadcast_list(&chat, &id).ok().flatten();
+                (id, sender, list)
+            })
+            .collect();
+        let batches = read_receipt_batches(jid.is_group(), ids);
         let commands = self.commands.clone();
         tokio::spawn(async move {
             if !receipts_allowed(&client, &jid, &commands).await {
                 return;
             }
-            for (sender, ids) in by_sender {
+            for ((list, sender), ids) in batches {
+                let to = match list {
+                    Some(list) => match list.parse::<Jid>() {
+                        Ok(list) => list,
+                        Err(_) => continue,
+                    },
+                    None => jid.clone(),
+                };
                 let sender = sender.and_then(|sender| sender.parse::<Jid>().ok());
                 let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
-                if let Err(error) = client.mark_as_read(&jid, sender.as_ref(), &ids).await {
+                if let Err(error) = client.mark_as_read(&to, sender.as_ref(), &ids).await {
                     log::debug!("read receipt not sent: {error}");
                 }
             }
@@ -10547,18 +10736,27 @@ impl Worker {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             return;
         };
-        let sender = if jid.is_group() {
+        // A message received through a broadcast list is played back to the
+        // list, with its sender, like a group's.
+        let list = self
+            .archive
+            .broadcast_list(&chat, &message)
+            .ok()
+            .flatten()
+            .and_then(|list| list.parse::<Jid>().ok());
+        let sender = if jid.is_group() || list.is_some() {
             sender.parse::<Jid>().ok()
         } else {
             None
         };
+        let to = list.unwrap_or_else(|| jid.clone());
         let commands = self.commands.clone();
         tokio::spawn(async move {
             if !played_receipt_allowed(&client, &jid, &commands).await {
                 return;
             }
             if let Err(error) = client
-                .mark_as_played(&jid, sender.as_ref(), &[message.as_str()])
+                .mark_as_played(&to, sender.as_ref(), &[message.as_str()])
                 .await
             {
                 log::debug!("played receipt not sent: {error}");
@@ -10983,6 +11181,49 @@ fn forwarded_row(
     source.forwarded = true;
     source.thumbnail = thumbnail;
     source
+}
+
+/// Read receipts grouped by where they go, each with the message ids it
+/// names. A group's carry each message's sender. A message received through
+/// a broadcast list goes back to that list with its sender, which is how
+/// WhatsApp addresses a list message's receipt; the others go to the chat.
+fn read_receipt_batches(
+    is_group: bool,
+    ids: Vec<(String, String, Option<String>)>,
+) -> BTreeMap<(Option<String>, Option<String>), Vec<String>> {
+    let mut batches: BTreeMap<_, Vec<String>> = BTreeMap::new();
+    for (id, sender, list) in ids {
+        let sender = (is_group || list.is_some()).then_some(sender);
+        batches.entry((list, sender)).or_default().push(id);
+    }
+    batches
+}
+
+/// The message an edit, a deletion or a reaction names.
+fn message_target(message: &wa::Message) -> Option<String> {
+    match message.protocol_message.as_option() {
+        Some(protocol) => protocol.key.as_option().and_then(|key| key.id.clone()),
+        None => reaction_target(message),
+    }
+}
+
+/// The message a reaction names, plain or encrypted.
+fn reaction_target(message: &wa::Message) -> Option<String> {
+    if let Some(reaction) = message.reaction_message.as_option() {
+        return reaction.key.as_option().and_then(|key| key.id.clone());
+    }
+    if !message.enc_reaction_message.is_set() {
+        return None;
+    }
+    extract_secret_encrypted(message)
+        .filter(|env| env.kind == SecretEncKind::EncReaction)
+        .and_then(|env| env.target_id().map(str::to_owned))
+}
+
+/// The broadcast list a contact's message came through, when it is one: the
+/// list it was addressed to, which its receipts go back to.
+fn received_through_list(source: &MessageSource) -> Option<String> {
+    (source.chat.is_broadcast_list() && !source.is_from_me).then(|| source.chat.to_non_ad_string())
 }
 
 /// Fallback chat name from a phone number or bare id.
@@ -22423,6 +22664,719 @@ mod receipt_tests {
         };
         worker.store_message(incoming("photo", 10), Some(parent.encode_to_vec()), None);
         assert_eq!(reactions(&worker, "photo"), [(reactor.into(), "🏆".into())]);
+    }
+
+    /// A contact's broadcast list; the contact is `PEER`, known by `PEER_LID`.
+    const LIST: &str = "1234567890@broadcast";
+
+    /// A message addressed to `LIST`, the way whatsapp-rust reports one: the
+    /// list as the chat and its owner as the participant.
+    fn list_info(id: &str, timestamp: i64) -> MessageInfo {
+        MessageInfo {
+            id: id.into(),
+            source: MessageSource {
+                chat: LIST.parse().unwrap(),
+                sender: PEER_LID.parse().unwrap(),
+                is_group: true,
+                sender_alt: Some(PEER.parse().unwrap()),
+                broadcast_list_owner: Some(PEER_LID.parse().unwrap()),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(timestamp).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    fn list_protocol(kind: wa::message::protocol_message::Type, target: &str) -> wa::Message {
+        let mut proto = wa::Message::default();
+        proto.protocol_message = MessageField::some({
+            let mut proto = wa::message::ProtocolMessage::default();
+            proto.r#type = Some(kind);
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(LIST.into());
+                proto.from_me = Some(false);
+                proto.id = Some(target.into());
+                proto.participant = Some(PEER_LID.into());
+                proto
+            });
+            if kind == wa::message::protocol_message::Type::MESSAGE_EDIT {
+                proto.edited_message = MessageField::some(wa::Message::text("Edited fixture"));
+            }
+            proto
+        });
+        proto
+    }
+
+    fn broadcast_chats(worker: &Worker) -> Vec<String> {
+        let mut chats: Vec<String> = worker
+            .archive
+            .chats()
+            .unwrap()
+            .into_iter()
+            .map(|chat| chat.id)
+            .filter(|id| id.ends_with("@broadcast"))
+            .collect();
+        chats.sort();
+        chats
+    }
+
+    #[test]
+    fn a_broadcast_list_message_lands_in_the_senders_chat() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        // The list's disappearing timer is not the chat's.
+        let mut message = wa::Message::text("Hello fixture");
+        assert!(message.set_ephemeral_expiration(86_400));
+        worker.ingest(&Arc::new(message), &list_info("m", 100));
+        let row = worker.archive.message(PEER, "m").unwrap().expect("filed");
+        assert_eq!(row.sender, PEER);
+        assert!(!row.from_me);
+        assert!(worker.archive.message(LIST, "m").unwrap().is_none());
+        assert!(broadcast_chats(&worker).is_empty(), "no list chat is made");
+        let chat = worker.archive.chat(PEER).unwrap().expect("the 1:1 chat");
+        assert_eq!(chat.kind, ChatKind::Direct);
+        assert!(chat.can_send(), "the chat with the sender is not read-only");
+        assert_eq!(chat.unread, 1);
+        assert_eq!(chat.ephemeral_expiration, None);
+        assert_eq!(
+            worker.archive.broadcast_list(PEER, "m").unwrap().as_deref(),
+            Some(LIST)
+        );
+    }
+
+    #[test]
+    fn edits_and_revokes_of_a_broadcast_list_message_reach_its_row() {
+        use wa::message::protocol_message::Type;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("m", 100),
+        );
+        worker.ingest(
+            &Arc::new(list_protocol(Type::MESSAGE_EDIT, "m")),
+            &list_info("edit", 110),
+        );
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert!(row.edited);
+        assert_eq!(row.content, Content::text("Edited fixture"));
+        worker.ingest(
+            &Arc::new(list_protocol(Type::REVOKE, "m")),
+            &list_info("revoke", 120),
+        );
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert_eq!(row.content, Content::Revoked);
+        assert!(broadcast_chats(&worker).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_broadcast_list_message_waits_in_the_senders_chat() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.ingest_undecryptable(
+            &list_info("m", 100),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        assert!(
+            worker
+                .archive
+                .message(PEER, "m")
+                .unwrap()
+                .unwrap()
+                .content
+                .is_placeholder()
+        );
+        assert!(broadcast_chats(&worker).is_empty());
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("m", 100),
+        );
+        assert_eq!(
+            worker.archive.message(PEER, "m").unwrap().unwrap().content,
+            Content::text("Hello fixture")
+        );
+    }
+
+    #[test]
+    fn our_phones_read_of_a_broadcast_list_message_reads_the_senders_chat() {
+        for read_first in [false, true] {
+            let (mut worker, _events, _inbox, _wa) = worker();
+            let read = receipt(LIST, &["m"], ReceiptType::ReadSelf);
+            if read_first {
+                // Offline, the read can come before its message.
+                worker.on_receipt(&read);
+            }
+            worker.ingest(
+                &Arc::new(wa::Message::text("Hello fixture")),
+                &list_info("m", 100),
+            );
+            if !read_first {
+                assert_eq!(worker.archive.chat(PEER).unwrap().unwrap().unread, 1);
+                worker.on_receipt(&read);
+            }
+            assert_eq!(
+                worker.archive.chat(PEER).unwrap().unwrap().unread,
+                0,
+                "read first: {read_first}"
+            );
+            assert_eq!(worker.archive.read_through(PEER).unwrap(), Some(100));
+            assert!(broadcast_chats(&worker).is_empty());
+        }
+    }
+
+    #[test]
+    fn our_own_broadcast_list_messages_stay_under_the_list() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let info = MessageInfo {
+            id: "ours".into(),
+            source: MessageSource {
+                chat: LIST.parse().unwrap(),
+                sender: ME.parse().unwrap(),
+                is_from_me: true,
+                is_group: true,
+                broadcast_list_owner: Some(ME.parse().unwrap()),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(100).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(wa::Message::text("Hello fixture")), &info);
+        assert!(
+            worker
+                .archive
+                .message(LIST, "ours")
+                .unwrap()
+                .unwrap()
+                .from_me
+        );
+        assert!(
+            worker
+                .archive
+                .broadcast_list(LIST, "ours")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_receipts_for_broadcast_list_messages_go_to_the_list_with_their_sender() {
+        let list = Some(LIST.to_owned());
+        let direct = read_receipt_batches(
+            false,
+            vec![
+                ("a".into(), PEER.into(), None),
+                ("b".into(), PEER.into(), list.clone()),
+                ("c".into(), PEER.into(), None),
+            ],
+        );
+        assert_eq!(
+            direct.into_iter().collect::<Vec<_>>(),
+            vec![
+                ((None, None), vec!["a".to_owned(), "c".to_owned()]),
+                ((list, Some(PEER.to_owned())), vec!["b".to_owned()]),
+            ]
+        );
+        let group = read_receipt_batches(true, vec![("g".into(), PEER.into(), None)]);
+        assert_eq!(
+            group.into_iter().collect::<Vec<_>>(),
+            vec![((None, Some(PEER.to_owned())), vec!["g".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn older_broadcast_list_chats_move_into_the_senders_chats_once() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.learn_lid("167650256810092", "4917663430455");
+        let other_list = "222@broadcast";
+        let ours = "333@broadcast";
+        let status = "status@broadcast";
+        let received = |chat: &str, id: &str, timestamp: i64, sender: &str| Message {
+            sender: sender.into(),
+            ..crate::archive::tests::message(chat, id, timestamp, false)
+        };
+        // What earlier versions filed: one list from the contact, under
+        // their privacy id, with a reaction, a star and one unread message.
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .insert_message(&received(LIST, "a", 100, PEER_LID), None)
+            .unwrap();
+        worker
+            .archive
+            .insert_message(&received(LIST, "b", 200, PEER_LID), None)
+            .unwrap();
+        worker
+            .archive
+            .set_reaction(LIST, "a", PEER, false, "\u{1f44d}")
+            .unwrap();
+        worker
+            .archive
+            .set_star(LIST, "a", true, 300, false)
+            .unwrap();
+        worker.archive.bump_unread(LIST).unwrap();
+        // The contact's own chat, already holding an older message.
+        worker.store_message(incoming("old", 50), None, None);
+        worker.mark_read(PEER.into(), false);
+        // A list of another contact, never known under a privacy id.
+        let stranger = "12025550123@s.whatsapp.net";
+        worker.archive.ensure_chat(other_list, "~Stranger").unwrap();
+        worker
+            .archive
+            .insert_message(&received(other_list, "s", 150, stranger), None)
+            .unwrap();
+        // A list we send to, a locked list and status posts: all stay.
+        let locked = "444@broadcast";
+        worker.archive.ensure_chat(locked, "444").unwrap();
+        worker.archive.set_locked(locked, true).unwrap();
+        worker
+            .archive
+            .insert_message(&received(locked, "secret", 100, PEER), None)
+            .unwrap();
+        worker.archive.ensure_chat(ours, "333").unwrap();
+        worker
+            .archive
+            .insert_message(&received(ours, "reply", 100, PEER), None)
+            .unwrap();
+        worker
+            .archive
+            .insert_message(
+                &crate::archive::tests::message(ours, "sent", 90, true),
+                None,
+            )
+            .unwrap();
+        worker.archive.ensure_chat(status, "Status").unwrap();
+        worker
+            .archive
+            .insert_message(&received(status, "post", 100, PEER), None)
+            .unwrap();
+
+        worker.adopt_broadcast_lists();
+
+        assert_eq!(
+            broadcast_chats(&worker),
+            vec![ours.to_owned(), locked.to_owned(), status.to_owned()]
+        );
+        assert!(worker.archive.message(locked, "secret").unwrap().is_some());
+        assert!(worker.archive.message(ours, "sent").unwrap().is_some());
+        assert!(worker.archive.message(ours, "reply").unwrap().is_some());
+        assert!(worker.archive.message(status, "post").unwrap().is_some());
+        let a = worker.archive.message(PEER, "a").unwrap().expect("moved");
+        assert_eq!(
+            (a.sender.as_str(), a.timestamp, a.from_me),
+            (PEER, 100, false)
+        );
+        assert_eq!(a.reactions.len(), 1);
+        assert!(worker.archive.message(PEER, "b").unwrap().is_some());
+        assert!(worker.archive.message(PEER, "old").unwrap().is_some());
+        assert_eq!(
+            worker.archive.broadcast_list(PEER, "a").unwrap().as_deref(),
+            Some(LIST)
+        );
+        assert_eq!(
+            worker
+                .archive
+                .starred(10)
+                .unwrap()
+                .into_iter()
+                .map(|star| (star.message.chat, star.message.id))
+                .collect::<Vec<_>>(),
+            vec![(PEER.to_owned(), "a".to_owned())]
+        );
+        let chat = worker.archive.chat(PEER).unwrap().unwrap();
+        assert_eq!((chat.unread, chat.last_activity), (1, 200));
+        let made = worker.archive.chat(stranger).unwrap().expect("created");
+        assert_eq!(made.kind, ChatKind::Direct);
+        assert_eq!(made.name, worker.chat_name(stranger, None));
+        assert!(worker.archive.message(stranger, "s").unwrap().is_some());
+
+        // Once done, it is not done again, and doing it again changes nothing.
+        let moves = vec![(PEER.to_owned(), PEER.to_owned(), String::new())];
+        for list in [ours, LIST] {
+            assert_eq!(
+                worker.archive.adopt_broadcast_list(list, &moves).unwrap(),
+                crate::archive::Adopted::default()
+            );
+        }
+        worker.adopt_broadcast_lists();
+        assert_eq!(
+            worker.archive.received_broadcast_lists().unwrap(),
+            Vec::new()
+        );
+        assert_eq!(worker.archive.chat(PEER).unwrap().unwrap().unread, 1);
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 3);
+    }
+
+    /// A received message from `sender`, filed under `chat`.
+    fn received_from(chat: &str, id: &str, timestamp: i64, sender: &str) -> Message {
+        Message {
+            sender: sender.into(),
+            ..crate::archive::tests::message(chat, id, timestamp, false)
+        }
+    }
+
+    /// One list holding the contact's messages under both their privacy id
+    /// and their phone number counts its unread message once.
+    #[test]
+    fn a_list_with_a_privacy_id_and_a_phone_number_counts_unread_once() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.learn_lid("167650256810092", "4917663430455");
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "a", 100, PEER), None)
+            .unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "b", 200, PEER_LID), None)
+            .unwrap();
+        worker.archive.bump_unread(LIST).unwrap();
+        worker.adopt_broadcast_lists();
+        assert_eq!(
+            worker.archive.chat(PEER).unwrap().unwrap().unread,
+            1,
+            "counted once"
+        );
+    }
+
+    /// The contact's chat already holds the message, from history, without
+    /// the photo the list's copy downloaded.
+    #[test]
+    fn a_moved_message_keeps_the_photo_the_list_copy_downloaded() {
+        let (mut worker, _e, _i, _w) = worker();
+        let image = Content::Image {
+            motion: None,
+            caption: None,
+            media: media(Some(&"image/jpeg".to_owned()), Some(10), None, None),
+        };
+        let mut listed = received_from(LIST, "m", 100, PEER);
+        listed.content = image.clone();
+        worker.archive.ensure_chat(LIST, "x").unwrap();
+        worker.archive.insert_message(&listed, None).unwrap();
+        worker
+            .archive
+            .set_media_path(LIST, "m", std::path::Path::new("C:/x/photo.jpg"))
+            .unwrap();
+        let mut history = incoming("m", 100);
+        history.content = image;
+        worker.archive.ensure_chat(PEER, "p").unwrap();
+        worker.archive.insert_message(&history, None).unwrap();
+        worker.adopt_broadcast_lists();
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert!(
+            matches!(&row.content, Content::Image { media, .. } if media.path.is_some()),
+            "the downloaded photo is kept: {:?}",
+            row.content
+        );
+    }
+
+    #[test]
+    fn a_deletion_for_everyone_on_the_list_copy_stands_in_the_senders_chat() {
+        let (mut worker, _e, _i, _w) = worker();
+        let mut listed = received_from(LIST, "m", 100, PEER);
+        listed.content = Content::Revoked;
+        worker.archive.ensure_chat(LIST, "x").unwrap();
+        worker.archive.insert_message(&listed, None).unwrap();
+        worker.archive.ensure_chat(PEER, "p").unwrap();
+        worker
+            .archive
+            .insert_message(&incoming("m", 100), None)
+            .unwrap();
+        worker.adopt_broadcast_lists();
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert_eq!(row.content, Content::Revoked);
+    }
+
+    #[test]
+    fn a_senders_chat_deleted_past_every_message_is_not_made_again() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.archive.ensure_chat(LIST, "x").unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "m", 100, PEER), None)
+            .unwrap();
+        worker.archive.bump_unread(LIST).unwrap();
+        worker.archive.remove_chat_through(PEER, 500, true).unwrap();
+        worker.adopt_broadcast_lists();
+        let chat = worker.archive.chat(PEER).unwrap();
+        assert!(
+            chat.is_none(),
+            "the deleted chat came back: {:?}",
+            chat.map(|c| (c.unread, c.last_activity))
+        );
+    }
+
+    #[test]
+    fn a_list_with_a_sender_without_a_chat_moves_the_others_once() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "a", 100, PEER), None)
+            .unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "odd", 150, "fixture@g.us"), None)
+            .unwrap();
+        worker.adopt_broadcast_lists();
+        assert!(worker.archive.message(PEER, "a").unwrap().is_some());
+        assert!(worker.archive.message(LIST, "odd").unwrap().is_some());
+        assert_eq!(broadcast_chats(&worker), [LIST.to_owned()]);
+        // The next start finds the same and changes nothing.
+        worker.adopt_broadcast_lists();
+        assert_eq!(worker.archive.messages(PEER, None, 10).unwrap().len(), 1);
+        assert!(worker.archive.message(LIST, "odd").unwrap().is_some());
+    }
+
+    /// An older build run in between files list messages again; the next
+    /// start of this one moves them.
+    #[test]
+    fn list_chats_an_older_build_files_later_move_at_the_next_start() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.adopt_broadcast_lists();
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "later", 100, PEER), None)
+            .unwrap();
+        worker.adopt_broadcast_lists();
+        assert!(worker.archive.message(PEER, "later").unwrap().is_some());
+        assert!(broadcast_chats(&worker).is_empty());
+    }
+
+    /// What was removed from the list chat an older build kept stays
+    /// removed when the same message comes again, live or as a placeholder.
+    #[test]
+    fn what_the_list_chat_removed_does_not_come_back_in_the_senders_chat() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker.archive.remove_chat_through(LIST, 150, true).unwrap();
+        worker
+            .archive
+            .confirm_message_removal(ME, &[LIST.to_owned()], "deleted")
+            .unwrap();
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("cleared", 100),
+        );
+        worker.ingest_undecryptable(
+            &list_info("deleted", 200),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("deleted", 200),
+        );
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("new", 300),
+        );
+        let ids: Vec<String> = worker
+            .archive
+            .messages(PEER, None, 10)
+            .unwrap()
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
+        assert_eq!(ids, ["new"]);
+    }
+
+    /// An unreadable list message's placeholder names the contact as its
+    /// sender, as the message itself does.
+    #[test]
+    fn an_unreadable_list_message_is_from_the_contact() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.learn_lid("167650256810092", "4917663430455");
+        let mut info = list_info("m", 100);
+        info.source.sender = LIST.parse().unwrap();
+        worker.ingest_undecryptable(
+            &info,
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert_eq!(row.sender, PEER);
+        assert_eq!(
+            worker.archive.broadcast_list(PEER, "m").unwrap().as_deref(),
+            Some(LIST)
+        );
+    }
+
+    /// A recovered message (a placeholder resend) can come back from the
+    /// list without its sender: whatsapp-rust then reports the list as the
+    /// sender too.
+    fn senderless_list_info(id: &str, timestamp: i64) -> MessageInfo {
+        MessageInfo {
+            id: id.into(),
+            source: MessageSource {
+                chat: LIST.parse().unwrap(),
+                sender: LIST.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(timestamp).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_recovered_list_message_without_its_sender_never_makes_a_list_chat() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.ingest_undecryptable(
+            &list_info("m", 100),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &senderless_list_info("m", 100),
+        );
+        let row = worker.archive.message(PEER, "m").unwrap().unwrap();
+        assert_eq!(row.content, Content::text("Hello fixture"));
+        assert_eq!(row.sender, PEER);
+        // Nothing waits for this one: it has nowhere to go.
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &senderless_list_info("n", 110),
+        );
+        worker.ingest_undecryptable(
+            &senderless_list_info("o", 120),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        assert!(broadcast_chats(&worker).is_empty());
+        assert!(worker.archive.message(PEER, "n").unwrap().is_none());
+    }
+
+    #[test]
+    fn our_phones_reaction_to_a_list_message_reaches_it() {
+        let react = |worker: &mut Worker, sent_at: i64| {
+            let mut proto = wa::Message::default();
+            proto.reaction_message = MessageField::some({
+                let mut proto = wa::message::ReactionMessage::default();
+                proto.key = MessageField::some({
+                    let mut proto = wa::MessageKey::default();
+                    proto.remote_jid = Some(LIST.into());
+                    proto.from_me = Some(false);
+                    proto.id = Some("m".into());
+                    proto.participant = Some(PEER_LID.into());
+                    proto
+                });
+                proto.text = Some("\u{1f44d}".into());
+                proto.sender_timestamp_ms = Some(sent_at);
+                proto
+            });
+            let info = MessageInfo {
+                id: format!("reaction-{sent_at}").into(),
+                source: MessageSource {
+                    chat: LIST.parse().unwrap(),
+                    sender: ME.parse().unwrap(),
+                    is_from_me: true,
+                    is_group: true,
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(sent_at / 1000).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest(&Arc::new(proto), &info);
+        };
+        for react_first in [false, true] {
+            let (mut worker, _e, _i, _w) = worker();
+            if react_first {
+                // Offline, the reaction can come before its message.
+                react(&mut worker, 150_000);
+            }
+            worker.ingest(
+                &Arc::new(wa::Message::text("Hello fixture")),
+                &list_info("m", 100),
+            );
+            if !react_first {
+                react(&mut worker, 150_000);
+            }
+            assert_eq!(
+                reactions(&worker, "m"),
+                [(ME.into(), "\u{1f44d}".into())],
+                "react first: {react_first}"
+            );
+            assert!(broadcast_chats(&worker).is_empty());
+        }
+    }
+    /// A placeholder from the contact's list waits in the chat with them.
+    /// Deleting the empty list chat that an earlier version left sets that
+    /// chat's removal point to now; the message itself, coming later with
+    /// its original time, still fills the placeholder in.
+    #[test]
+    fn a_waiting_placeholder_fills_in_after_the_list_chat_was_deleted() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.ingest_undecryptable(
+            &list_info("m", 100),
+            wa_events::UnavailableType::Unknown,
+            wa_events::DecryptFailMode::Show,
+        );
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .remove_chat_through(LIST, 1000, true)
+            .unwrap();
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("m", 100),
+        );
+        assert_eq!(
+            worker.archive.message(PEER, "m").unwrap().unwrap().content,
+            Content::text("Hello fixture")
+        );
+    }
+
+    #[test]
+    fn a_list_message_newer_than_the_list_chats_removal_is_filed() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .remove_chat_through(LIST, 150, false)
+            .unwrap();
+        worker.ingest(
+            &Arc::new(wa::Message::text("Hello fixture")),
+            &list_info("n", 151),
+        );
+        assert!(worker.archive.message(PEER, "n").unwrap().is_some());
+    }
+
+    /// A message stays in the list chat because the contact's chat was
+    /// cleared past it. The contact then deletes it for everyone through
+    /// the list: the deletion reaches the copy in the list chat.
+    #[test]
+    fn a_deletion_for_everyone_reaches_a_message_left_in_the_list_chat() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.learn_lid("167650256810092", "4917663430455");
+        worker.archive.ensure_chat(LIST, "1234567890").unwrap();
+        worker
+            .archive
+            .insert_message(&received_from(LIST, "old", 100, PEER), None)
+            .unwrap();
+        worker.archive.ensure_chat(PEER, "Peer").unwrap();
+        worker
+            .archive
+            .remove_chat_through(PEER, 150, false)
+            .unwrap();
+        worker.adopt_broadcast_lists();
+        assert!(worker.archive.message(LIST, "old").unwrap().is_some());
+        worker.ingest(
+            &Arc::new(list_protocol(
+                wa::message::protocol_message::Type::REVOKE,
+                "old",
+            )),
+            &list_info("revoke", 200),
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(LIST, "old")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+        assert!(worker.archive.message(PEER, "old").unwrap().is_none());
     }
 }
 
