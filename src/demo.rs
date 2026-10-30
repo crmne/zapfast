@@ -13123,6 +13123,74 @@ mod tests {
     }
 
     #[test]
+    fn clicking_compact_reactions_opens_the_list_without_sending_a_reaction() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let chat = app.open_chat.clone().unwrap();
+        let reactor = "15550009999@s.whatsapp.net";
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .iter_mut()
+            .find(|message| message.id == "ada-photo")
+            .unwrap()
+            .reactions
+            .push(crate::model::Reaction {
+                sender: reactor.into(),
+                from_me: false,
+                emoji: "👍".into(),
+            });
+        app.me = Some("15550000000@s.whatsapp.net".into());
+
+        let id = "ada-photo";
+        let bubble = crate::ui::conversation::bubble_id(&chat, id);
+        for _ in 0..4 {
+            render(&mut app, &ctx);
+        }
+        let requests = app.backend.take_demo_commands();
+        for expected in [reactor, "15550000000@s.whatsapp.net"] {
+            assert!(requests.iter().any(|command| matches!(command, crate::backend::Command::FetchAvatar { id, full: false } if id == expected)), "missing avatar request for {expected}");
+        }
+        let response = ctx
+            .read_response(bubble.with("reactions"))
+            .expect("reaction badge");
+        assert!(response.rect.width() < 140.0);
+        let at = response.rect.center();
+        frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerMoved(at)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(at, true)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(at, false)]);
+        assert!(egui::Popup::is_id_open(&ctx, bubble.with("reaction-list")));
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::React { .. }))
+        );
+        let labels = accessible_labels(&mut app, &ctx);
+        assert!(labels.iter().any(|label| label == "You"), "{labels:?}");
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!egui::Popup::is_id_open(&ctx, bubble.with("reaction-list")));
+        egui::Popup::open_id(&ctx, bubble.with("reaction-list"));
+        accessible_nodes(&mut app, &ctx, vec![]);
+        let nodes = accessible_nodes(&mut app, &ctx, vec![]);
+        let own = nodes.iter().find(|(label, _, _)| label == "You").unwrap().2;
+        frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerMoved(own)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(own, true)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(own, false)]);
+        assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command,
+            crate::backend::Command::React { chat: target_chat, message, emoji } if *target_chat == chat && message == id && emoji.is_empty())));
+    }
+
+    #[test]
     fn preview_navigation_overlays_the_photo_on_hover() {
         fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
             fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
