@@ -3695,7 +3695,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "sticker-pack-message" | "sticker-pack-view" => {
                 shared_pack_sample(app, part == "sticker-pack-view")
             }
-            "gifs" => {
+            "gifs" | "gifs-more" => {
+                app.gif_next_offset = (part == "gifs-more").then_some(24);
                 app.picker = Some(crate::model::PickerTab::Gifs);
                 app.settings.giphy_key = "demo".into();
                 app.gif_results = (0..6)

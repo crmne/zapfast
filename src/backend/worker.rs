@@ -66,7 +66,7 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
     ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -7442,12 +7442,22 @@ impl Worker {
                 }
             }
             Command::SendGif { chat, gif, quoting } => self.send_gif(chat, gif, quoting),
-            Command::SearchGifs { query, key } => {
+            Command::SearchGifs {
+                query,
+                key,
+                offset,
+                request,
+            } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.cache.join("gifs");
                 tokio::task::spawn_blocking(move || {
-                    let results = search_gifs(&query, &key, &dir);
-                    let _ = commands.send(Command::GifResults { query, results });
+                    let results = search_gifs(&query, &key, &dir, offset);
+                    let _ = commands.send(Command::GifResults {
+                        query,
+                        offset,
+                        request,
+                        results,
+                    });
                 });
             }
             Command::ReceiptsPrivacy { disabled } => {
@@ -7599,8 +7609,18 @@ impl Worker {
                     }
                 });
             }
-            Command::GifResults { query, results } => {
-                self.emit(Event::Gifs { query, results });
+            Command::GifResults {
+                query,
+                offset,
+                request,
+                results,
+            } => {
+                self.emit(Event::Gifs {
+                    query,
+                    offset,
+                    request,
+                    results,
+                });
             }
             Command::ViewStickerPack { chat, message } => self.view_sticker_pack(&chat, &message),
             Command::StickerPackViewed { result } => {
@@ -12282,7 +12302,7 @@ fn percent_encode(text: &str) -> String {
 }
 
 /// Searches GIPHY and downloads result stills. Empty queries list trending GIFs.
-fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError> {
+fn search_gifs(query: &str, key: &str, dir: &Path, offset: usize) -> Result<GifPage, GifError> {
     let plain = |message: String| GifError {
         message,
         bad_key: false,
@@ -12294,10 +12314,12 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
         });
     }
     let url = if query.trim().is_empty() {
-        format!("https://api.giphy.com/v1/gifs/trending?api_key={key}&limit=24&rating=pg-13")
+        format!(
+            "https://api.giphy.com/v1/gifs/trending?api_key={key}&limit=24&offset={offset}&rating=pg-13"
+        )
     } else {
         format!(
-            "https://api.giphy.com/v1/gifs/search?api_key={key}&q={}&limit=24&rating=pg-13",
+            "https://api.giphy.com/v1/gifs/search?api_key={key}&q={}&limit=24&offset={offset}&rating=pg-13",
             percent_encode(query.trim())
         )
     };
@@ -12391,7 +12413,15 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
             });
         }
     });
-    Ok(gifs.into_iter().map(|(gif, _)| gif).collect())
+    Ok(GifPage {
+        gifs: gifs.into_iter().map(|(gif, _)| gif).collect(),
+        next_offset: gif_next_offset(
+            query,
+            offset,
+            data.len(),
+            json["pagination"]["total_count"].as_u64(),
+        ),
+    })
 }
 
 /// Copies a sent attachment to media storage and builds its archive row.
@@ -24160,5 +24190,28 @@ mod older_history_tests {
         worker.apply_history(history, true);
         worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
         assert!(!worker.archive.history_start(CHAT).unwrap());
+    }
+}
+
+/// API offsets count raw entries, including any without a playable rendition.
+fn gif_next_offset(query: &str, offset: usize, count: usize, total: Option<u64>) -> Option<usize> {
+    let next = offset.checked_add(count)?;
+    let max = if query.trim().is_empty() { 499 } else { 4999 };
+    (count > 0 && next <= max && total.map_or(count >= 24, |total| (next as u64) < total))
+        .then_some(next)
+}
+
+#[cfg(test)]
+mod gif_pagination_tests {
+    use super::gif_next_offset;
+    #[test]
+    fn pages_use_raw_counts_and_stop_at_the_end_or_api_limit() {
+        assert_eq!(gif_next_offset("cats", 24, 24, Some(60)), Some(48));
+        assert_eq!(gif_next_offset("cats", 48, 12, Some(60)), None);
+        assert_eq!(gif_next_offset("cats", 24, 0, Some(60)), None);
+        assert_eq!(gif_next_offset("cats", 0, 24, None), Some(24));
+        assert_eq!(gif_next_offset("cats", 24, 8, None), None);
+        assert_eq!(gif_next_offset("", 480, 24, Some(1000)), None);
+        assert_eq!(gif_next_offset("cats", 4992, 24, Some(10000)), None);
     }
 }

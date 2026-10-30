@@ -1029,7 +1029,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if query != app.picker_search {
         app.picker_search = query.clone();
     }
-    if submit && query.trim() != app.gif_query.trim() {
+    if submit && (query.trim() != app.gif_query.trim() || app.gif_error.is_some()) {
         app.actions.push(Action::SearchGifs(query));
     }
     if app.gif_pending {
@@ -1087,6 +1087,16 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     }
                 });
+            }
+            if !app.gif_pending && app.gif_next_offset.is_some() {
+                let label = if app.gif_error.is_some() {
+                    gettext(app.locale, "Retry")
+                } else {
+                    gettext(app.locale, "Load more")
+                };
+                if theme::soft_button(ui, palette, None, &label, false).clicked() {
+                    app.actions.push(Action::MoreGifs);
+                }
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
                 ui.add_space(20.0);
