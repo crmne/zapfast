@@ -39,8 +39,10 @@ impl Archive {
         let mut statement = self.connection.prepare(
             "SELECT p.id FROM messages p JOIN messages l ON p.id = l.id
              WHERE p.chat = ?2 AND l.chat = ?1
-                 AND json_extract(l.content, '$.kind') = 'revoked'
-                 AND json_extract(p.content, '$.kind') != 'revoked'",
+                 AND CASE WHEN json_valid(l.content)
+                     THEN json_extract(l.content, '$.kind') END = 'revoked'
+                 AND COALESCE(CASE WHEN json_valid(p.content)
+                     THEN json_extract(p.content, '$.kind') END, '') != 'revoked'",
         )?;
         statement
             .query_map(params![lid_chat, phone_chat], |row| row.get(0))?

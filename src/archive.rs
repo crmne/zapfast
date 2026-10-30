@@ -1174,8 +1174,10 @@ impl Archive {
                 (SELECT through FROM chat_removals WHERE chat = ?2), -1)
              ON CONFLICT(chat, id) DO UPDATE SET
                  content = CASE
-                     WHEN json_extract(messages.content, '$.kind') = 'revoked' THEN messages.content
-                     WHEN json_extract(excluded.content, '$.kind') = 'revoked' THEN excluded.content
+                     WHEN CASE WHEN json_valid(messages.content)
+                         THEN json_extract(messages.content, '$.kind') END = 'revoked' THEN messages.content
+                     WHEN CASE WHEN json_valid(excluded.content)
+                         THEN json_extract(excluded.content, '$.kind') END = 'revoked' THEN excluded.content
                      WHEN excluded.edited > messages.edited THEN excluded.content
                      ELSE messages.content END,
                 sender_name = COALESCE(messages.sender_name, excluded.sender_name),
@@ -3098,6 +3100,65 @@ pub(crate) mod tests {
                 !archive
                     .set_transcript(&phone_chat, "voice", "late result", "test")
                     .unwrap()
+            );
+        }
+    }
+
+    /// Malformed rows remain unreadable rather than blocking reconciliation;
+    /// a valid revocation on either side must still defeat that duplicate.
+    #[test]
+    fn malformed_message_content_does_not_block_lid_revocation_or_merge() {
+        for (lid_kind, phone_kind) in [
+            ("bad", "text"),
+            ("text", "bad"),
+            ("bad", "bad"),
+            ("revoked", "bad"),
+            ("bad", "revoked"),
+        ] {
+            let archive = Archive::in_memory().unwrap();
+            // Seed unreadable legacy/corrupt rows in this in-memory fixture.
+            // Today's JSON expression indexes otherwise reject the fixture
+            // at insertion, before either reviewed query can be exercised.
+            archive
+                .connection
+                .execute_batch("DROP INDEX messages_stickers; DROP INDEX messages_calls;")
+                .unwrap();
+            let lid = "100001";
+            let pn = "100002";
+            let lid_chat = format!("{lid}@lid");
+            let phone_chat = format!("{pn}@s.whatsapp.net");
+            for (chat, kind) in [(&lid_chat, lid_kind), (&phone_chat, phone_kind)] {
+                archive.ensure_chat(chat, "Fixture").unwrap();
+                archive
+                    .insert_message(&message(chat, "voice", 10, false), None)
+                    .unwrap();
+                if kind == "revoked" {
+                    archive
+                        .set_content(chat, "voice", &Content::Revoked, false)
+                        .unwrap();
+                } else if kind == "bad" {
+                    archive
+                        .connection
+                        .execute(
+                            "UPDATE messages SET content = '' WHERE chat = ?1 AND id = 'voice'",
+                            [chat],
+                        )
+                        .unwrap();
+                }
+            }
+            let refreshed = archive.lid_revocations(&lid_chat, &phone_chat).unwrap();
+            assert_eq!(
+                refreshed == ["voice"],
+                lid_kind == "revoked",
+                "{lid_kind}/{phone_kind}"
+            );
+            archive.put_lid(lid, pn).unwrap();
+            assert!(archive.lids().unwrap().contains(&(lid.into(), pn.into())));
+            let row = archive.message(&phone_chat, "voice").unwrap().unwrap();
+            assert_eq!(
+                matches!(row.content, Content::Revoked),
+                lid_kind == "revoked" || phone_kind == "revoked",
+                "{lid_kind}/{phone_kind}"
             );
         }
     }
