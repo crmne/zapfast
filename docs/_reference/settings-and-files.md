@@ -231,7 +231,8 @@ name or description, in the interface language or in English.
   background; restarting stays your choice. Package managers and Flatpak update
   ZapFast themselves.
 - **Proxy**: for the WhatsApp connection, media, profile pictures, GIF search,
-  Signal sticker imports, and update checks. It accepts `socks5h://host:port`
+  Signal sticker imports, link previews for the messages you write, and
+  update checks. It accepts `socks5h://host:port`
   (the proxy resolves names, as Tor expects), `socks5://host:port`, and
   `http://host:port`, each with an optional `user:password@`; a bare
   `host:port` is an HTTP proxy. Changing it reconnects at once. Empty uses

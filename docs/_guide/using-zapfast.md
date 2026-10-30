@@ -752,6 +752,16 @@ description, use your phone.
 A phone number in a message is a link: clicking it offers to start a chat
 with that number or to copy the number as it is written.
 
+When you type a web link into the composer and pause, ZapFast fetches that
+page and its picture directly from the site, through your proxy if one is set,
+and shows a preview card above the message box. The card is sent with the
+message. ZapFast identifies itself to the site as ZapFast, and some sites give
+no preview to apps they do not recognise, in which case the message goes out
+with a plain link. Links to this computer or your local network are never
+fetched. Click the cross on the card to send the link without a preview. If
+your phone has **Privacy > Advanced > Disable link previews** on, ZapFast
+makes no previews either.
+
 ZapFast registers the `whatsapp:` and `wa:` schemes, so a link that names a
 chat opens that chat here. This works from a terminal, a script, or anything
 else that hands a link to the desktop.
