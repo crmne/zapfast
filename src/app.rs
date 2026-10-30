@@ -479,7 +479,7 @@ pub struct App {
     /// The link preview above the composer.
     pub composer_preview: Option<ComposerPreview>,
     /// egui time of the last composer change, while its pause runs.
-    pub preview_typed_at: Option<f64>,
+    preview_typed_at: Option<f64>,
     /// The account, chat and composer text the preview watch saw last, to
     /// tell when it changes.
     preview_seen: Option<(AccountId, Option<ChatId>, String)>,
@@ -3361,6 +3361,10 @@ impl App {
             }
             Event::LinkPreviewsDisabled(disabled) => {
                 self.link_previews_disabled = disabled;
+                // Turned back on, the text is asked about afresh.
+                if !disabled {
+                    self.preview_seen = None;
+                }
                 // A card already above the composer goes with the setting.
                 if disabled && !self.events_hidden {
                     let account = self.account().id.clone();
@@ -5840,12 +5844,24 @@ impl App {
     /// Files a fetched preview with the request it answers. A hidden
     /// account's answer is not for the window's composer, and a phone that
     /// turned previews off since gets none.
-    fn link_preview_arrived(
+    pub(crate) fn link_preview_arrived(
         &mut self,
         url: String,
         preview: Option<crate::model::ComposedPreview>,
     ) {
         if self.events_hidden || self.link_previews_disabled {
+            // An answer dropped for being hidden must not leave its card
+            // loading: forget it and the text seen, so the pause runs and
+            // asks again on return.
+            if self.events_hidden
+                && self
+                    .composer_preview
+                    .as_ref()
+                    .is_some_and(|asked| asked.state == LinkPreviewState::Loading)
+            {
+                self.composer_preview = None;
+                self.preview_seen = None;
+            }
             return;
         }
         let account = self.account().id.clone();
@@ -19458,7 +19474,6 @@ mod tests {
         let (mut app, mut commands, _events) = composer_preview_app();
         rest_on(&mut app, "hi https://ex.com/a", 0.0);
         assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
-        let before = app.composer_preview.clone();
         app.events_hidden = true;
         app.apply_backend_event(
             Event::LinkPreview {
@@ -19468,8 +19483,28 @@ mod tests {
             false,
         );
         app.events_hidden = false;
-        assert_eq!(app.composer_preview, before);
         assert_eq!(app.current_preview(), None);
+    }
+
+    /// An answer dropped while its account was hidden does not leave the
+    /// card loading: back on the account, the pause asks again.
+    #[test]
+    fn composer_preview_hidden_account_result_is_asked_again() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::LinkPreview {
+                url: PREVIEW_URL.into(),
+                preview: Some(composed_preview(PREVIEW_URL)),
+            },
+            false,
+        );
+        app.events_hidden = false;
+        app.watch_link_preview(1.0);
+        app.watch_link_preview(1.6);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
     }
 
     #[test]
