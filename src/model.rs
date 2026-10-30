@@ -2208,6 +2208,26 @@ pub struct StickerPack {
     pub local: bool,
 }
 
+/// Markup offered for selected composer text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComposerFormat {
+    Bold,
+    Italic,
+    Strikethrough,
+    Monospace,
+}
+
+impl ComposerFormat {
+    pub fn marker(self) -> &'static str {
+        match self {
+            Self::Bold => "*",
+            Self::Italic => "_",
+            Self::Strikethrough => "~",
+            Self::Monospace => "```",
+        }
+    }
+}
+
 /// GIF search failure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GifError {
@@ -2898,6 +2918,12 @@ pub enum Action {
     },
     /// Searches GIFs or lists trending results for an empty query.
     SearchGifs(String),
+    /// Wraps the selected character range in WhatsApp markup.
+    FormatComposer {
+        format: ComposerFormat,
+        start: usize,
+        end: usize,
+    },
     SendGif(Gif),
     React {
         chat: ChatId,

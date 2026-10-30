@@ -13123,6 +13123,115 @@ mod tests {
     }
 
     #[test]
+    fn composer_format_menu_preserves_selection_for_mouse_and_keyboard() {
+        for keyboard in [false, true] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            app.composer = "Hi 👋 café!".into();
+            render(&mut app, &ctx);
+            let id = egui::Id::new("composer-text");
+            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(3),
+                    egui::text::CCursor::new(9),
+                )));
+            egui::TextEdit::store_state(&ctx, id, state);
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            render(&mut app, &ctx);
+            let rect = ctx.read_response(id).unwrap().rect;
+            let at = rect.center();
+            let secondary = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            if keyboard {
+                frame_sized(
+                    &mut app,
+                    &ctx,
+                    780.0,
+                    vec![key(egui::Key::F10, egui::Modifiers::SHIFT)],
+                );
+            } else {
+                frame_sized(
+                    &mut app,
+                    &ctx,
+                    780.0,
+                    vec![egui::Event::PointerMoved(at), secondary(true)],
+                );
+                frame_sized(&mut app, &ctx, 780.0, vec![secondary(false)]);
+            }
+            let nodes = accessible_nodes(&mut app, &ctx, vec![]);
+            let bold = nodes
+                .iter()
+                .find(|(label, _, _)| label == "Bold")
+                .expect("Bold menu item")
+                .2;
+            if keyboard {
+                frame_sized(
+                    &mut app,
+                    &ctx,
+                    780.0,
+                    vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+                );
+            } else {
+                frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerMoved(bold)]);
+                frame_sized(&mut app, &ctx, 780.0, vec![primary(bold, true)]);
+                frame_sized(&mut app, &ctx, 780.0, vec![primary(bold, false)]);
+            }
+            assert_eq!(app.composer, "Hi *👋 café*!", "keyboard={keyboard}");
+            assert_eq!(ctx.memory(|memory| memory.focused()), Some(id));
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+            );
+            assert_eq!(
+                app.composer, "Hi 👋 café!",
+                "one Undo removes the formatting"
+            );
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![key(
+                    egui::Key::Z,
+                    egui::Modifiers {
+                        command: true,
+                        shift: true,
+                        ..Default::default()
+                    },
+                )],
+            );
+            assert_eq!(app.composer, "Hi *👋 café*!");
+            if keyboard {
+                frame_sized(
+                    &mut app,
+                    &ctx,
+                    780.0,
+                    vec![key(egui::Key::F10, egui::Modifiers::SHIFT)],
+                );
+                render(&mut app, &ctx);
+                frame_sized(
+                    &mut app,
+                    &ctx,
+                    780.0,
+                    vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+                );
+                assert!(!egui::Popup::is_id_open(&ctx, id.with("popup")));
+                assert_eq!(ctx.memory(|memory| memory.focused()), Some(id));
+                assert_eq!(app.composer, "Hi *👋 café*!");
+            }
+        }
+    }
+
+    #[test]
     fn preview_navigation_overlays_the_photo_on_hover() {
         fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
             fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
