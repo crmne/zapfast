@@ -757,9 +757,11 @@ page and its picture directly from the site, through your proxy if one is set,
 and shows a preview card above the message box. The card is sent with the
 message. ZapFast identifies itself to the site as ZapFast, and some sites give
 no preview to apps they do not recognise, in which case the message goes out
-with a plain link. Links to this computer or your local network are never
-fetched. Click the cross on the card to send the link without a preview. If
-your phone has **Privacy > Advanced > Disable link previews** on, ZapFast
+with a plain link. ZapFast never looks up or contacts addresses on this
+computer or your local network itself, and refuses links that name one
+outright. With a proxy set, the proxy looks up the name instead. Click the
+cross on the card to send the link without a preview. If your phone has
+**Privacy > Advanced > Disable link previews** on, ZapFast
 makes no previews either.
 
 ZapFast registers the `whatsapp:` and `wa:` schemes, so a link that names a
