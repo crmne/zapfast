@@ -814,7 +814,8 @@ pub async fn run(
         Ok(setting) => setting.unwrap_or(false),
         Err(error) => {
             log::warn!("could not read the phone's link preview setting: {error}");
-            false
+            // A lost preview is recoverable; contacting a site is not.
+            true
         }
     };
     // Likewise only contacts synced before first names were kept lack them.
