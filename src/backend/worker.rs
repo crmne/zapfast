@@ -1176,6 +1176,18 @@ enum WithheldPage {
     Media(ChatId, u64),
 }
 
+/// What a deletion did to this account's copy of a message, for the log.
+#[derive(Debug, PartialEq)]
+enum RemovalHere {
+    /// A copy was removed; `revoked` when it already read "This message was
+    /// deleted".
+    Removed { revoked: bool },
+    /// No copy of that message was here.
+    NotFound,
+    /// The deletion could not be saved or applied.
+    Failed,
+}
+
 /// A failed attempt cannot settle any earlier attempt whose reply was lost.
 fn message_removal_outcome(
     result: Result<(), whatsapp_rust::AppStateError>,
@@ -3879,13 +3891,17 @@ impl Worker {
                 let _ = self.empty_chat(&chat, through, update.delete_media);
             }
             E::DeleteMessageForMeUpdate(update) => {
+                self.canonical_sync_chat(&update.chat_jid).await;
+                let outcome =
+                    self.delete_message_here(&update.chat_jid.to_string(), &update.message_id);
+                // One line per deletion, with no ids, numbers or contents:
+                // enough to tell one that named no copy here from one that
+                // never arrived, whichever account it came to.
                 log::info!(
-                    "message removal: phone deleted a message for me, from_me={} full_sync={}",
+                    "message removal: phone deleted a message for me, from_me={} full_sync={} here={outcome:?}",
                     update.from_me,
                     update.from_full_sync
                 );
-                self.canonical_sync_chat(&update.chat_jid).await;
-                self.delete_message_here(&update.chat_jid.to_string(), &update.message_id);
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
@@ -6754,7 +6770,9 @@ impl Worker {
                 self.message_removals_in_flight
                     .remove(&(chat.clone(), id.clone()));
                 match outcome {
-                    MessageRemovalOutcome::Accepted => self.delete_message_here(&chat, &id),
+                    MessageRemovalOutcome::Accepted => {
+                        self.delete_message_here(&chat, &id);
+                    }
                     MessageRemovalOutcome::Uncertain => self.emit(Event::Error(
                         "Could not confirm the deletion. It will be retried after reconnecting"
                             .into(),
@@ -10205,7 +10223,7 @@ impl Worker {
     }
 
     /// Persists an accepted deletion and wakes the UI, including for unseen messages.
-    fn delete_message_here(&mut self, chat: &str, id: &str) {
+    fn delete_message_here(&mut self, chat: &str, id: &str) -> RemovalHere {
         let canonical = self.canonical_str(chat);
         let mut aliases = vec![chat.to_owned(), canonical.clone()];
         if let Some(pn) = canonical.strip_suffix("@s.whatsapp.net") {
@@ -10228,7 +10246,7 @@ impl Worker {
             self.emit(Event::Error(
                 "Could not identify the account for the confirmed deletion".into(),
             ));
-            return;
+            return RemovalHere::Failed;
         };
         if self
             .archive
@@ -10238,7 +10256,7 @@ impl Worker {
             self.emit(Event::Error(
                 "Could not save the confirmed deletion for local recovery".into(),
             ));
-            return;
+            return RemovalHere::Failed;
         }
         // Whether the info panel listed it, and whether it was already deleted
         // for everyone, read before the row goes.
@@ -10252,11 +10270,6 @@ impl Worker {
         }
         match self.archive.delete_message_aliases(&aliases, id) {
             Ok(found) => {
-                // No ids or contents: enough to tell a deletion that named no
-                // copy here from one that never arrived.
-                log::info!(
-                    "message removal: removed here, found={found} deleted_for_everyone={revoked}"
-                );
                 for chat in aliases {
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
@@ -10267,10 +10280,18 @@ impl Worker {
                         self.emit(Event::ChatSharedChanged(chat));
                     }
                 }
+                if found {
+                    RemovalHere::Removed { revoked }
+                } else {
+                    RemovalHere::NotFound
+                }
             }
-            Err(_) => self.emit(Event::Error(
-                "WhatsApp accepted the deletion, but ZapFast could not remove its copy. Local cleanup is saved for restart or reconnect".to_owned(),
-            )),
+            Err(_) => {
+                self.emit(Event::Error(
+                    "WhatsApp accepted the deletion, but ZapFast could not remove its copy. Local cleanup is saved for restart or reconnect".to_owned(),
+                ));
+                RemovalHere::Failed
+            }
         }
     }
 
@@ -22966,6 +22987,30 @@ mod chat_removal_tests {
             .await;
         worker.apply_history(history(CHAT, &[100, 200]), true);
         assert_eq!(stored(&worker, CHAT), ["m200"]);
+    }
+
+    /// A deletion says what it did to the copy here, for the phone's log line.
+    #[test]
+    fn a_deletion_reports_what_it_found_here() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        worker
+            .archive
+            .set_content(CHAT, "m200", &Content::Revoked, false)
+            .unwrap();
+        assert_eq!(
+            worker.delete_message_here(CHAT, "m100"),
+            RemovalHere::Removed { revoked: false }
+        );
+        assert_eq!(
+            worker.delete_message_here(CHAT, "m200"),
+            RemovalHere::Removed { revoked: true }
+        );
+        assert_eq!(
+            worker.delete_message_here(CHAT, "m300"),
+            RemovalHere::NotFound
+        );
+        assert!(stored(&worker, CHAT).is_empty());
     }
 
     /// Late mappings remove an already visible canonical copy and notify the UI.
