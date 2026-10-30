@@ -22,6 +22,11 @@ const MAX_FRAMES: usize = 150;
 const IDLE: Duration = Duration::from_secs(20);
 /// Maximum concurrent decoders.
 const MAX_DECODERS: usize = 2;
+/// Bound source pixels before either poster decoder allocates its full canvas.
+const MAX_IMAGE_SIDE: u32 = 4096;
+/// Encoded sources and each image decoder use at most this allocation allowance.
+const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Global texture-frame budget. Least-recently-used animations are removed first.
 const MAX_RESIDENT_FRAMES: usize = 450;
 
@@ -389,10 +394,41 @@ fn decode(path: &Path, limit: usize) -> Option<Decoded> {
     }
 }
 
+/// Strict source dimensions plus a decoder allocation allowance, applied before decoding.
+fn image_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    limits.max_alloc = Some(MAX_IMAGE_BYTES);
+    limits
+}
+
+/// Read a bounded encoded source even if its file grows while it is being read.
+fn image_source(path: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= MAX_IMAGE_BYTES).then_some(bytes)
+}
+
+/// Header parsing enforces dimensions before the image or WebP canvas is allocated.
+fn image_reader(bytes: &[u8]) -> Option<image::ImageReader<std::io::Cursor<&[u8]>>> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(image_limits());
+    Some(reader)
+}
+
 /// A downloaded photo's small poster, built on the decoder thread, never the UI thread.
 fn decode_still(path: &Path) -> Option<Decoded> {
-    let image = image::ImageReader::open(path)
-        .ok()?
+    let bytes = image_source(path)?;
+    let image = image_reader(&bytes)?
         .decode()
         .ok()?
         .thumbnail(MAX_WIDTH, MAX_WIDTH)
@@ -427,7 +463,10 @@ fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
 /// Decodes animated WebP with libwebp. It returns complete canvas frames,
 /// unlike the `image` decoder, which did not apply frame disposal correctly.
 fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = image_source(path)?;
+    // libwebp allocates its canvas in Decoder::new, so inspect with the
+    // dimension-limited header reader first, including for animated files.
+    image_reader(&bytes)?.into_dimensions().ok()?;
     let decoder = webp_animation::Decoder::new(&bytes).ok()?;
     let (width, height) = decoder.dimensions();
     let mut decoded = Vec::new();
@@ -796,6 +835,58 @@ mod tests {
     }
 
     use super::*;
+
+    /// Oversized PNG and animated WebP headers fail the limit check before pixel decoding.
+    #[test]
+    fn oversized_poster_sources_are_rejected_before_decoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("huge.png");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([80, 120, 180]))
+            .save(&png)
+            .unwrap();
+        let mut bytes = std::fs::read(&png).unwrap();
+        bytes[16..20].copy_from_slice(&10_000_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&10_000_u32.to_be_bytes());
+        let mut crc = u32::MAX;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ ((crc & 1).wrapping_neg() & 0xedb8_8320);
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        std::fs::write(&png, &bytes).unwrap();
+        let webp = animated_webp(dir.path(), "huge.webp", 2);
+        let mut webp_bytes = std::fs::read(&webp).unwrap();
+        assert_eq!(&webp_bytes[12..16], b"VP8X");
+        for start in [24, 27] {
+            webp_bytes[start..start + 3].copy_from_slice(&9_999_u32.to_le_bytes()[..3]);
+        }
+        std::fs::write(&webp, &webp_bytes).unwrap();
+        for encoded in [&bytes, &webp_bytes] {
+            let dimensions = image::ImageReader::new(std::io::Cursor::new(encoded))
+                .with_guessed_format()
+                .unwrap()
+                .into_dimensions()
+                .unwrap();
+            assert_eq!(dimensions, (10_000, 10_000), "a valid oversized header");
+            assert!(
+                matches!(
+                    image_reader(encoded).unwrap().into_decoder(),
+                    Err(image::ImageError::Limits(_))
+                ),
+                "rejected by limits before decoding pixels"
+            );
+        }
+        assert!(decode_still(&png).is_none());
+        assert!(decode_webp(&webp, 1).is_none());
+        let oversized_file = dir.path().join("too-many-bytes.png");
+        std::fs::File::create(&oversized_file)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        assert!(image_source(&oversized_file).is_none());
+    }
 
     #[test]
     fn downloaded_photos_have_small_idle_posters() {

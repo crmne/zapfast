@@ -429,7 +429,8 @@ viewer** in a photo's or a video's menu does the same. The chat's photos,
 videos and interactive-card images run along the bottom: click one, press the
 Left and Right arrow keys, or hover over the picture and click the previous and
 next arrows at its sides to move between them. Downloaded photos and videos
-get a small local preview when the message did not include a thumbnail. The
+get a small local preview when the message did not include a thumbnail. Very
+large sources may keep a placeholder in the strip to limit memory use. The
 header replies, reacts,
 forwards, saves or downloads, and shows the message in the chat. A click on the
 empty space around the picture, or Escape, closes the viewer. It also closes

@@ -1083,6 +1083,71 @@ mod tile_tests {
     use crate::model::MediaItem;
     use std::path::PathBuf;
 
+    /// Exercise the generated tile's actual painted mesh, for both source orientations.
+    #[test]
+    fn downloaded_thumbnail_paint_preserves_aspect_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, height, expected) in [(160, 80, vec2(56.0, 28.0)), (80, 160, vec2(28.0, 56.0))]
+        {
+            let path = dir.path().join(format!("{width}x{height}.png"));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            let item = MediaItem {
+                id: "test".into(),
+                card: None,
+                timestamp: 0,
+                video: false,
+                path: Some(path.clone()),
+                thumbnail: None,
+            };
+            let ctx = egui::Context::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let mut texture = None;
+                let rect = Rect::from_min_size(pos2(20.0, 20.0), Vec2::splat(THUMB));
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    if let crate::animation::Frame::Ready(ready) =
+                        crate::animation::frame(ui, &path, rect, false)
+                    {
+                        texture = Some(ready.id());
+                    }
+                    thumb(
+                        ui,
+                        &crate::theme::Palette::dark(),
+                        "chat",
+                        &item,
+                        rect,
+                        false,
+                    );
+                });
+                if let Some(texture) = texture {
+                    let painted = output
+                        .shapes
+                        .iter()
+                        .find(|shape| shape.shape.texture_id() == texture)
+                        .expect("the generated thumbnail is painted")
+                        .shape
+                        .visual_bounding_rect();
+                    assert!(
+                        (painted.width() - expected.x).abs() < 0.1
+                            && (painted.height() - expected.y).abs() < 0.1,
+                        "{painted:?}"
+                    );
+                    assert_eq!(painted.center(), rect.center());
+                    output.textures_delta.clear();
+                    break;
+                }
+                output.textures_delta.clear();
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "poster did not arrive"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+
     /// Missing stored previews use downloaded photos and videos before falling back to icons.
     #[test]
     fn a_tile_prefers_the_stored_thumbnail_then_the_downloaded_file() {
@@ -1145,10 +1210,10 @@ fn thumb(
                 .paint_at(ui, rect);
         }
         (_, _, Some(texture)) => {
+            let fitted = fit_within(texture.size_vec2(), rect);
             egui::Image::from_texture(texture)
-                .fit_to_exact_size(rect.size())
                 .corner_radius(6.0)
-                .paint_at(ui, rect);
+                .paint_at(ui, fitted);
         }
         _ => {
             theme::paint_icon(
@@ -1366,8 +1431,7 @@ fn paint_sticker(
     }
 }
 
-/// The largest rect of `size`'s shape centred in `rect`. Stickers are small,
-/// so unlike photos they are enlarged to fill it.
+/// Fit a poster or sticker into its available rectangle without changing its aspect ratio.
 fn fit_within(size: Vec2, rect: Rect) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return rect;
