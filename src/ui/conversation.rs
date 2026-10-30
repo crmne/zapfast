@@ -4114,14 +4114,22 @@ fn reaction_affordance(
     let revealed = reaction_affordance_visible(pointer, shown, reach);
     // In an album the control acts on the item under the pointer, as the
     // context menu does. Remember that item: by the time the click lands, the
-    // pointer has already left it for the control.
+    // pointer has already left it for the control. It is dropped over anything
+    // else in the bubble, such as a caption, and once the controls are hidden,
+    // so Forward falls back to the message the row draws instead of forwarding
+    // an item from an earlier hover.
     let album_target = bubble.id.with("album-hover-target");
-    if revealed
-        && let Some(pos) = pointer
-        && let Some((_, id)) = tiles.iter().find(|(rect, _)| rect.contains(pos))
-    {
+    if !revealed {
         ui.ctx()
-            .data_mut(|data| data.insert_temp(album_target, id.clone()));
+            .data_mut(|data| data.remove::<String>(album_target));
+    } else if let Some(pos) = pointer {
+        if let Some((_, id)) = tiles.iter().find(|(rect, _)| rect.contains(pos)) {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(album_target, id.clone()));
+        } else if shown.contains(pos) {
+            ui.ctx()
+                .data_mut(|data| data.remove::<String>(album_target));
+        }
     }
     if ui.is_rect_visible(rect) && uncovered && revealed {
         floating_circle(ui, &view.palette, rect, response.hovered());
