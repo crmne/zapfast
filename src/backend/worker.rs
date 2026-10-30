@@ -49,6 +49,7 @@ use early_events::WaitingReaction;
 mod favorite_chats;
 mod group_admin;
 mod interactive;
+mod link_preview;
 mod link_watch;
 mod new_group;
 mod poll_history;
