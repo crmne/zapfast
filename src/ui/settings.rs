@@ -464,7 +464,7 @@ fn sections(app: &App) -> Vec<Section> {
         description.push('\n');
         description.push_str(&crate::i18n::gettext(
             locale,
-            "This copy of ZapFast does not include the speech runtime.",
+            "This copy of ZapFast does not include the speech runtime. Download ZapFast again from zapfast.rocks to add it.",
         ));
     }
     chats.row(
@@ -1981,9 +1981,13 @@ fn transcription_model(ui: &mut egui::Ui, app: &mut App) {
                 }
                 _ => gettext(locale, "Turn on transcription to download it."),
             };
-            let response = widgets::rich_text(ui, &label, theme::regular(12.0), palette.secondary);
+            widgets::rich_text(ui, &label, theme::regular(12.0), palette.secondary);
+            // What went wrong, such as a library Windows lacks, and what to do.
             if let Some(State::Failed(message)) = state {
-                response.on_hover_text(message.clone());
+                let line =
+                    widgets::line(ui, message, theme::regular(12.0), palette.secondary, 245.0, 4);
+                let (rect, _) = ui.allocate_exact_size(line.size(), egui::Sense::hover());
+                line.paint(ui, rect.min, palette.secondary);
             }
         }
     });

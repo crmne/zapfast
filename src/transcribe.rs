@@ -187,6 +187,71 @@ struct Loaded {
     engine: ParakeetTDT,
 }
 
+const RUNTIME_MISSING: &str = "This copy of ZapFast does not include the speech runtime. \
+     Download ZapFast again from https://zapfast.rocks/download/ to add it.";
+
+/// Microsoft's Windows build writes usage events to Event Tracing for Windows,
+/// which Windows' diagnostic data can collect and send to Microsoft. The
+/// switch is process-wide, and a Windows trace session that enables the
+/// provider turns it back on, so it is turned off again before each model
+/// load and each transcription. The macOS and Linux builds of 1.23 have no
+/// such events.
+fn silence_runtime_events() {
+    // SAFETY: the runtime is loaded, and DisableTelemetryEvents ignores its
+    // environment argument (onnxruntime_c_api.cc).
+    let status = unsafe { (ort::api().DisableTelemetryEvents)(std::ptr::null()) };
+    if !status.0.is_null() {
+        // SAFETY: a status the runtime returned, released once.
+        unsafe { (ort::api().ReleaseStatus)(status.0) };
+    }
+}
+
+/// Why the runtime would not load, as far as this computer can tell.
+fn runtime_failure() -> String {
+    #[cfg(windows)]
+    if let Some(library) = missing_visual_cpp_library() {
+        let installer = if cfg!(target_arch = "aarch64") {
+            "https://aka.ms/vs/17/release/vc_redist.arm64.exe"
+        } else {
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        };
+        return format!(
+            "The speech runtime needs the Microsoft Visual C++ Redistributable, \
+             and {library} is missing. Install it from {installer}."
+        );
+    }
+    "Could not start the speech runtime on this computer.".to_owned()
+}
+
+/// The first Visual C++ runtime library Microsoft's onnxruntime.dll imports
+/// that Windows cannot find. The rest of what it imports ships with Windows.
+#[cfg(windows)]
+fn missing_visual_cpp_library() -> Option<&'static str> {
+    use windows_sys::Win32::Foundation::FreeLibrary;
+    use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
+    let imported: &[&'static str] = if cfg!(target_arch = "aarch64") {
+        &["VCRUNTIME140.dll", "MSVCP140.dll", "MSVCP140_1.dll"]
+    } else {
+        &[
+            "VCRUNTIME140.dll",
+            "VCRUNTIME140_1.dll",
+            "MSVCP140.dll",
+            "MSVCP140_1.dll",
+        ]
+    };
+    imported.iter().copied().find(|name| {
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        // SAFETY: a NUL-terminated name; a module found is released at once.
+        let module = unsafe { LoadLibraryW(wide.as_ptr()) };
+        if module.is_null() {
+            return true;
+        }
+        // SAFETY: the module this call loaded.
+        unsafe { FreeLibrary(module) };
+        false
+    })
+}
+
 /// ONNX Runtime allows only one environment to be built per process, even
 /// after its last session was dropped. Keep the small runtime context alive
 /// independently of the multi-gigabyte model sessions evicted on idle or a
@@ -199,13 +264,13 @@ fn environment() -> Result<ort::environment::Environment, Error> {
     if let Some(environment) = &*current {
         return Ok(environment.clone());
     }
-    let library = runtime_library().ok_or_else(|| {
-        Error::Model("This copy of ZapFast does not include the speech runtime.".to_owned())
-    })?;
+    let library = runtime_library().ok_or_else(|| Error::Model(RUNTIME_MISSING.to_owned()))?;
     let builder = ort::init_from(&library).map_err(|error| {
         log::warn!("could not load ONNX Runtime: {error}");
-        Error::Model("Could not start the speech runtime on this computer.".to_owned())
+        Error::Model(runtime_failure())
     })?;
+    // Before the environment exists, so its start event is not written either.
+    silence_runtime_events();
     let environment = builder
         .with_name("ZapFast speech")
         .with_telemetry(false)
@@ -264,6 +329,7 @@ fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
             .with_environment(environment)
             .with_intra_threads(4)
             .with_inter_threads(1);
+        silence_runtime_events();
         let engine = ParakeetTDT::from_pretrained(directory, Some(config))
             .map_err(|_| Error::Model("Could not load the speech model. Try again.".to_owned()))?;
         check_cancel(&job.cancel)?;
@@ -282,6 +348,8 @@ fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
     if samples.is_empty() {
         return Err(Error::Audio);
     }
+    // The model is loaded, so the runtime is too.
+    silence_runtime_events();
     let mut text = String::new();
     let engine = &mut loaded.as_mut().expect("the speech model was loaded").engine;
     for part in chunks(&samples, 16_000) {

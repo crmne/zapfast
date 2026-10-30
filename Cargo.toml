@@ -296,8 +296,8 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-avf
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
-# Locale calls.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization"] }
+# Locale calls, and the libraries the speech runtime needs.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_LibraryLoader"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.
 raw-window-handle = "0.6"
 # The camera for video calls, through Media Foundation.
