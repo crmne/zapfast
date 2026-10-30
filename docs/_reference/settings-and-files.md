@@ -155,29 +155,18 @@ name or description, in the interface language or in English.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
-- **Transcribe voice messages**: off by default. After enabling it, visible
-  downloaded voice messages are transcribed locally using Parakeet; audio stays in
-  memory, never in a network request or a temporary WAV. Text stays in the
-  account's encrypted archive and remains visible and copyable when automatic
-  transcription is turned off.
-- **Transcription model**: Parakeet v3 FP32 by default (about 2.55 GB), with
-  Parakeet v3 INT8 (about 670 MB, lower memory and potentially lower accuracy)
-  and Parakeet Ultra FP32 (about 2.51 GB) as alternatives. Models download
-  directly from pinned Hugging Face revisions, with progress and SHA-256
-  verification, using the configured proxy. Public weights live under
-  `<cache>/speech-models/<model>/<revision>/`, shared across accounts and outside
-  the per-account media cache. Previous models remain cached for switching back.
-  Only weights and their names are requested; no audio, chat id or transcript
-  is sent. Hugging Face and its HTTPS download CDN receive ordinary download
-  metadata, such as the connection's IP address. Changing models does not erase
-  saved text. Selecting a model while automatic transcription is off does not
-  download or load it; **Prepare model** explicitly enables transcription and
-  requests the download. Healthy downloads have no fixed total duration limit;
-  connection/read timeouts and cancellation still bound stalls.
-  **Transcribe again** in a downloaded voice message's menu requests only that
-  message without changing the automatic setting, and replaces its text only
-  after the new transcription succeeds. Recognition has been tested locally
-  on macOS only; that does not validate Linux, Windows or their packaging.
+- **Transcribe voice messages**: off by default. Visible downloaded voice
+  messages are transcribed on this computer with Parakeet; audio stays in
+  memory, never in a network request or a temporary file, and the text stays in
+  the account's encrypted archive. Turning it on downloads the chosen model.
+- **Transcription model**: Parakeet v3 FP32 by default (about 2.55 GB), or
+  Parakeet v3 INT8 (about 670 MB) or Parakeet Ultra FP32 (about 2.51 GB),
+  downloaded straight from pinned Hugging Face revisions through the configured
+  proxy and checked by SHA-256. Weights live under
+  `<cache>/speech-models/<model>/<revision>/`, shared by accounts; other models
+  stay there for switching back. Only the weights are requested, so Hugging
+  Face sees an ordinary download, the connection's IP address included; no
+  audio, chat or text is sent. Changing models keeps saved text.
 - **Fetch older history**: off by default, and set for
   each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently

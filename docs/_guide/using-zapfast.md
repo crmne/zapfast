@@ -477,55 +477,35 @@ Starting a reply before recording includes the quoted message.
 
 ### Transcripts
 
-With automatic transcription enabled, a downloaded voice message that comes
-into view is transcribed on this computer. Its text appears under the player,
-selectable and copyable like any other message. If automatic file downloads are
-off, download the audio first; transcription does not download audio itself.
-The recognizer is Parakeet, running natively on the CPU; audio stays in memory
-and is never uploaded. Automatic transcription is off by default. Turn on
-**Transcribe voice messages** in Settings, under **Chats**, to enable it. The
-model size is shown there before you enable the download. Existing saved
-transcripts remain readable and copyable while automatic transcription is off.
+With **Transcribe voice messages** on (Settings, under **Chats**; off by
+default), a downloaded voice message that comes into view is transcribed on this
+computer, and its text appears under the player, selectable and copyable like
+any other message. Transcription does not download the audio itself. The
+recognizer is Parakeet, running on the CPU: audio stays in memory and is never
+uploaded, and the text stays in the account's encrypted archive. Saved text
+remains when transcription is turned off, and goes with a message deleted for
+everyone.
 
-**Transcription model**, in the same section, selects Parakeet v3 FP32 (the
-default, about 2.55 GB), Parakeet v3 INT8 (about 670 MB, less memory but potentially
-less accurate), or Parakeet Ultra FP32 (about 2.51 GB, a refined v3 whose results
-vary with the recording). A model downloads directly from its publisher's
-Hugging Face repository on first use, when selected while automatic transcription
-is enabled, or through **Prepare model**.
-Selecting another model while transcription is off only saves the choice; it
-does not start a download. **Prepare model** is an explicit request to download
-and enable transcription with that model. The download shows progress, uses a
-fixed revision and checks every file's size and SHA-256. Completed files are
-reused after an interrupted download, and subsequent transcription works
-offline. Healthy transfers have no fixed total time limit, so slow connections
-can finish; connection/read timeouts still bound stalls. **Pause transcription**
-stops the download and turns off automatic transcription; **Resume** prepares
-it again.
+**Transcription model**, below it, chooses Parakeet v3 FP32 (the default, about
+2.55 GB), Parakeet v3 INT8 (about 670 MB, less memory, possibly less accurate)
+or Parakeet Ultra FP32 (about 2.51 GB, a refined v3). Turning transcription on
+downloads the chosen model straight from its publisher on Hugging Face, from a
+fixed revision whose files' sizes and SHA-256 are checked, with its progress
+shown there; after that it works offline. Turning transcription off stops a
+download. The model detects the language itself and covers 25 languages,
+Portuguese, English, Spanish, French and German among them.
 
-The model detects the spoken language automatically, independently of the
-interface language. It supports 25 languages, including Portuguese, English,
-Spanish, French and German, but not every language of ZapFast's interface.
-One model is shared across accounts, and is unloaded after a minute without
-work. Its runtime context stays initialized, so transcription can resume
-after that pause or a model change without restarting ZapFast. The text
-remains isolated in each account's encrypted archive and disappears with its
-message.
+Changing models keeps saved text. To transcribe one message, or again with the
+model now chosen, right-click it and choose **Transcribe** or **Transcribe
+again**; this does not turn on automatic transcription, and the old text stays
+until the new one is saved. A message being transcribed says
+**Transcribing…**.
 
-Changing models preserves existing transcripts. To compare a saved voice note
-with the selected model, download its audio if needed, then right-click it and
-choose **Transcribe again**, or **Transcribe** for a note without saved text.
-This requests only that message, without enabling automatic transcription.
-The request continues through scrolling and stops if you leave or lock the
-chat. Its previous text stays until a new transcript is successfully saved.
-A message being transcribed says **Transcribing…**.
-
-A message deleted for everyone also loses its saved transcript. Reconciling
-the same chat under a phone number and a privacy ID cannot restore that
-revoked message or its text, even when the other copy contains an edit.
-
-The native recognizer has been tested on macOS only. Linux and Windows use
-the same engine, but their transcription and packaging have not been tested.
+Transcription works on Windows, Linux and macOS 13.4 or later, Apple silicon or
+Intel, with the speech runtime each ZapFast download carries. The deb, rpm and
+AppImage packages do not carry it yet, and a portable copy updated from a
+release before transcription needs the runtime file from a new download, beside
+`zapfast`; Settings says when it is missing.
 
 ## Calls
 
