@@ -13124,6 +13124,49 @@ mod tests {
     }
 
     #[test]
+    fn enter_retries_a_failed_gif_page_without_clearing_results() {
+        for (next, query, expected_offset, retained) in [
+            (Some(24), " cats ", 24, 6),
+            (None, "cats", 0, 0),
+            (Some(24), "dogs", 0, 0),
+        ] {
+            let mut app = app();
+            app.backend.record_demo_commands();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            apply_flags(&mut app, Some("gifs-more"));
+            app.gif_query = "cats".into();
+            app.picker_search = query.into();
+            app.gif_next_offset = next;
+            app.gif_error = Some(crate::model::GifError {
+                message: "Page failed".into(),
+                bad_key: false,
+            });
+            render(&mut app, &ctx);
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("gif-search")));
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(
+                app.gif_results.len(),
+                retained,
+                "query={query}, next={next:?}"
+            );
+            assert!(
+                app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| matches!(command,
+                crate::backend::Command::SearchGifs { offset, query: sent, .. }
+                    if *offset == expected_offset && sent == query.trim()))
+            );
+        }
+    }
+
+    #[test]
     fn a_later_gif_key_error_keeps_results_and_retries_the_same_page() {
         let mut app = app();
         app.backend.record_demo_commands();

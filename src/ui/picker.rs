@@ -1035,7 +1035,11 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         app.picker_search = query.clone();
     }
     if submit && (query.trim() != app.gif_query.trim() || app.gif_error.is_some()) {
-        app.actions.push(Action::SearchGifs(query));
+        if query.trim() == app.gif_query.trim() && app.gif_next_offset.is_some() {
+            app.actions.push(Action::MoreGifs);
+        } else {
+            app.actions.push(Action::SearchGifs(query));
+        }
     }
     if app.gif_pending {
         ui.horizontal(|ui| {
