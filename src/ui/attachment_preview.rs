@@ -11,10 +11,12 @@ use super::widgets;
 
 const TILE: f32 = 56.0;
 
+/// Keep each chat and account's file selection independent.
 fn selection_key(app: &App) -> egui::Id {
     egui::Id::new(("attachment-review", &app.account().id, &app.open_chat))
 }
 
+/// Resolve the selected attachment by identity after additions and removals.
 fn selected(app: &App, ctx: &egui::Context) -> usize {
     let id = ctx.data(|data| data.get_temp::<u64>(selection_key(app)));
     app.pending
@@ -23,6 +25,7 @@ fn selected(app: &App, ctx: &egui::Context) -> usize {
         .unwrap_or(0)
 }
 
+/// Name a file without exposing its directory.
 fn file_name(item: &Pending) -> String {
     match item {
         Pending::Picture { .. } => String::new(),
@@ -33,6 +36,7 @@ fn file_name(item: &Pending) -> String {
     }
 }
 
+/// Only photos sent as photos may enter the cropper.
 fn editable(item: &Pending) -> bool {
     match item {
         Pending::Picture { .. } => true,
@@ -50,38 +54,28 @@ fn image(ui: &egui::Ui, staged: &mut Staged) -> Option<egui::Image<'static>> {
             rgba,
             texture,
         } => {
-            let handle = texture.get_or_insert_with(|| {
-                let image = if *width > 1024 || *height > 1024 {
-                    let scale = 1024.0 / (*width).max(*height) as f32;
-                    let (w, h) = (
-                        ((*width as f32 * scale) as u32).max(1),
-                        ((*height as f32 * scale) as u32).max(1),
-                    );
-                    match image::RgbaImage::from_raw(*width as u32, *height as u32, rgba.to_vec()) {
-                        Some(full) => {
-                            let small = image::imageops::resize(
-                                &full,
-                                w,
-                                h,
-                                image::imageops::FilterType::Triangle,
-                            );
-                            egui::ColorImage::from_rgba_unmultiplied(
-                                [w as usize, h as usize],
-                                &small,
-                            )
-                        }
-                        None => egui::ColorImage::example(),
-                    }
-                } else {
-                    egui::ColorImage::from_rgba_unmultiplied([*width, *height], rgba)
-                };
-                ui.ctx().load_texture(
+            if let Some(image) = staged.preview.take() {
+                *texture = Some(ui.ctx().load_texture(
                     format!("pending-picture-{}", staged.id),
                     image,
                     egui::TextureOptions::LINEAR,
-                )
-            });
-            Some(egui::Image::from_texture(&*handle))
+                ));
+            }
+            if texture.is_none() {
+                // Larger buffers are resized by the backend before the UI sees them.
+                if *width > crate::backend::picture_edit::PREVIEW_SIDE
+                    || *height > crate::backend::picture_edit::PREVIEW_SIDE
+                {
+                    return None;
+                }
+                *texture = Some(ui.ctx().load_texture(
+                    format!("pending-picture-{}", staged.id),
+                    egui::ColorImage::from_rgba_unmultiplied([*width, *height], rgba),
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+            let handle = texture.as_ref().expect("prepared above");
+            Some(egui::Image::from_texture(handle))
         }
         Pending::File(path) if Pending::is_picture_file(path) => {
             Some(widgets::file_image(ui, path))
@@ -303,6 +297,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             } else {
                 image.max_size(rect.size()).paint_at(ui, rect);
             }
+        } else if matches!(item.item, Pending::Picture { .. }) {
+            ui.put(
+                Rect::from_center_size(rect.center(), Vec2::splat(24.0)),
+                egui::Spinner::new(),
+            );
         } else {
             let mut body = ui.new_child(
                 egui::UiBuilder::new()

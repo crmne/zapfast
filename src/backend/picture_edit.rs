@@ -16,6 +16,28 @@ pub struct Edited {
     pub extension: &'static str,
 }
 
+/// Largest side of a staged picture's review texture.
+pub(crate) const PREVIEW_SIDE: usize = 1024;
+
+/// Resize borrowed pasted pixels on a blocking worker, without cloning the full buffer.
+pub(crate) fn preview(width: usize, height: usize, rgba: &[u8]) -> Option<egui::ColorImage> {
+    let (width, height) = (u32::try_from(width).ok()?, u32::try_from(height).ok()?);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let picture = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, rgba)?;
+    let scale = (PREVIEW_SIDE as f32 / width.max(height) as f32).min(1.0);
+    let (w, h) = (
+        ((width as f32 * scale) as u32).max(1),
+        ((height as f32 * scale) as u32).max(1),
+    );
+    let small = image::imageops::resize(&picture, w, h, image::imageops::FilterType::Triangle);
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        small.as_raw(),
+    ))
+}
+
 /// A picture's size, read without keeping its pixels.
 pub fn inspect(bytes: &[u8]) -> Result<(u32, u32), String> {
     let picture = image::load_from_memory(bytes)
@@ -126,6 +148,28 @@ fn encode(picture: &image::RgbaImage) -> Result<Edited, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both orientations are bounded, alpha is retained, and malformed buffers are refused.
+    #[test]
+    fn pasted_preview_is_bounded_and_rejects_bad_pixels() {
+        for (width, height, expected) in [
+            (2048, 1024, [1024, 512]),
+            (1024, 2048, [512, 1024]),
+            (8, 4, [8, 4]),
+        ] {
+            let pixels = [80, 120, 180, 100].repeat(width * height);
+            let result = preview(width, height, &pixels).unwrap();
+            assert_eq!(result.size, expected);
+            assert_eq!(
+                result.pixels[0],
+                egui::Color32::from_rgba_unmultiplied(80, 120, 180, 100)
+            );
+            assert_eq!(&pixels[..4], &[80, 120, 180, 100]);
+        }
+        assert!(preview(0, 1, &[]).is_none());
+        assert!(preview(2, 2, &[255; 4]).is_none());
+        assert!(preview(usize::MAX, 2, &[255; 4]).is_none());
+    }
 
     /// A picture whose top-left pixel is red, so a turn can be told apart
     /// from the other direction.

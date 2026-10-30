@@ -986,15 +986,44 @@ pub type AttachmentId = u64;
 pub struct Staged {
     pub id: AttachmentId,
     pub item: Pending,
+    /// Bounded pixels waiting for the next visible frame to upload them.
+    pub preview: Option<egui::ColorImage>,
 }
 
 impl App {
     /// Stages an attachment and answers with the identity the backend names
     /// when it is done with it.
     pub fn stage(&mut self, item: Pending) -> AttachmentId {
-        let id = self.next_attachment_id();
-        self.pending.push(Staged { id, item });
+        let staged = self.prepare_staged(item);
+        let id = staged.id;
+        self.pending.push(staged);
         id
+    }
+
+    /// Give a new attachment its identity and queue any expensive preview work.
+    fn prepare_staged(&mut self, item: Pending) -> Staged {
+        let id = self.next_attachment_id();
+        if let Pending::Picture {
+            width,
+            height,
+            rgba,
+            texture: None,
+        } = &item
+            && (*width > crate::backend::picture_edit::PREVIEW_SIDE
+                || *height > crate::backend::picture_edit::PREVIEW_SIDE)
+        {
+            self.backend.send(Command::PreparePicturePreview {
+                target: id,
+                width: *width,
+                height: *height,
+                rgba: std::sync::Arc::clone(rgba),
+            });
+        }
+        Staged {
+            id,
+            item,
+            preview: None,
+        }
     }
 
     /// Whether exactly one staged photo can be sent with WhatsApp's view-once
@@ -2294,6 +2323,10 @@ impl App {
 
     /// Initializes a newly created window.
     pub fn attach(&mut self, ctx: &egui::Context) {
+        #[cfg(any(test, feature = "demo"))]
+        for account in &self.accounts {
+            account.backend.attach_demo_window(ctx);
+        }
         // A window is here, so a hidden start's wait for a panel is over.
         self.tray_wait = None;
         // Register transcript copy formatting once per egui context.
@@ -4210,6 +4243,28 @@ impl App {
                     self.dialog = Some(Dialog::StickerMaker);
                 }
             }
+            Event::PicturePreviewReady { target, image } => {
+                // A stable attachment id and this account's drafts prevent a late
+                // preview from landing on another file or account's composer.
+                let staged = if self.events_hidden {
+                    None
+                } else {
+                    self.pending.iter_mut().find(|staged| staged.id == target)
+                };
+                let staged = staged.or_else(|| {
+                    self.accounts[self.active]
+                        .attachment_drafts
+                        .values_mut()
+                        .flat_map(|draft| &mut draft.pending)
+                        .find(|staged| staged.id == target)
+                });
+                if let Some(staged) = staged
+                    && matches!(staged.item, Pending::Picture { .. })
+                {
+                    staged.preview = Some(image.unwrap_or_else(egui::ColorImage::example));
+                }
+            }
+
             Event::PictureInspected { target, result } => {
                 // Only the picture still being waited for may open the cropper.
                 // Anything else was cancelled or overtaken while its size was
@@ -4253,6 +4308,7 @@ impl App {
                     Ok(path) => match self.staged_at(target) {
                         Some(at) => {
                             self.pending[at].item = Pending::File(path);
+                            self.pending[at].preview = None;
                             if let Some(origin) = self.picture_applying.remove(&target) {
                                 self.picture_origins.insert(target, origin);
                             }
@@ -5127,10 +5183,7 @@ impl App {
             // the attachment rather than handing out a new one later.
             let staged: Vec<Staged> = pending
                 .into_iter()
-                .map(|item| {
-                    let id = self.next_attachment_id();
-                    Staged { id, item }
-                })
+                .map(|item| self.prepare_staged(item))
                 .collect();
             let draft = self.attachment_drafts.entry(chat.to_owned()).or_default();
             draft.pending.extend(staged);
@@ -7602,6 +7655,16 @@ impl App {
                 self.picture_inspecting = None;
             }
             Action::ClearPending => {
+                self.composer.clear();
+                self.composer_mentions.clear();
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.reply_to = None;
+                if let Some(chat) = self.open_chat.clone() {
+                    self.drafts.remove(&chat);
+                    self.draft_mentions.remove(&chat);
+                    self.store_draft(&chat, "");
+                }
                 self.pending.clear();
                 self.pending_view_once = false;
                 self.forget_unstaged_pictures();
@@ -11820,6 +11883,121 @@ mod tests {
         );
     }
 
+    /// Preview completions follow stable ids, and never replace removed or cropped files.
+    #[test]
+    fn pasted_preview_results_follow_attachment_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, mut commands, _) = Backend::recording_with_events();
+        let mut app = App::headless(AppDirs::under(root.path()), Settings::default()).0;
+        app.account_mut().backend = backend;
+        let rgba = std::sync::Arc::new([80, 120, 180, 255].repeat(2048 * 2));
+        let picture = || Pending::Picture {
+            width: 2048,
+            height: 2,
+            rgba: rgba.clone(),
+            texture: None,
+        };
+        let target = app.stage(picture());
+        let Command::PreparePicturePreview {
+            target: requested,
+            width,
+            height,
+            rgba: sent,
+        } = commands.try_recv().unwrap()
+        else {
+            panic!("preview command")
+        };
+        assert_eq!(requested, target);
+        assert!(
+            std::sync::Arc::ptr_eq(&rgba, &sent),
+            "staging does not copy full pixels"
+        );
+        assert!(app.pending[0].preview.is_none());
+        let ready = || Some(crate::backend::picture_edit::preview(width, height, &sent).unwrap());
+        app.apply_backend_event(
+            Event::PicturePreviewReady {
+                target,
+                image: ready(),
+            },
+            true,
+        );
+        assert_eq!(app.pending[0].preview.as_ref().unwrap().size, [1024, 1]);
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok("cropped.jpg".into()),
+            },
+            true,
+        );
+        app.apply_backend_event(
+            Event::PicturePreviewReady {
+                target,
+                image: ready(),
+            },
+            true,
+        );
+        assert!(matches!(app.pending[0].item, Pending::File(_)));
+        assert!(
+            app.pending[0].preview.is_none(),
+            "late preview cannot overwrite a crop"
+        );
+        app.apply(Action::ClearPending, &egui::Context::default());
+        let replacement = app.stage(picture());
+        assert_ne!(replacement, target);
+        app.apply_backend_event(
+            Event::PicturePreviewReady {
+                target,
+                image: ready(),
+            },
+            true,
+        );
+        assert!(
+            app.pending[0].preview.is_none(),
+            "a removed attachment cannot fill its replacement"
+        );
+    }
+
+    /// A hidden account can fill its parked draft, but cannot touch the window's composer.
+    #[test]
+    fn pasted_preview_completions_respect_hidden_account_drafts() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(root.path()), Settings::default()).0;
+        let target = app.stage(Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![255; 4]),
+            texture: None,
+        });
+        app.events_hidden = true;
+        app.apply_backend_event(
+            Event::PicturePreviewReady {
+                target,
+                image: Some(egui::ColorImage::example()),
+            },
+            false,
+        );
+        assert!(
+            app.pending[0].preview.is_none(),
+            "hidden events leave the live composer alone"
+        );
+        let pending = std::mem::take(&mut app.pending);
+        app.account_mut().attachment_drafts.insert(
+            "parked".into(),
+            AttachmentDraft {
+                pending,
+                ..Default::default()
+            },
+        );
+        app.apply_backend_event(
+            Event::PicturePreviewReady {
+                target,
+                image: Some(egui::ColorImage::example()),
+            },
+            false,
+        );
+        assert!(app.attachment_drafts["parked"].pending[0].preview.is_some());
+    }
+
     /// Identical chat IDs across accounts retain separate files, captions, mentions and reply quotes.
     #[test]
     fn attachment_drafts_keep_their_account_caption_mentions_and_quote() {
@@ -11924,6 +12102,7 @@ mod tests {
                 rgba: std::sync::Arc::new(vec![0; 4]),
                 texture: None,
             },
+            preview: None,
         }];
         assert_eq!(app.draft_preview(chat).as_deref(), Some("Image"));
         app.open_chat(chat.into());

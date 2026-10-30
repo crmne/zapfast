@@ -1357,6 +1357,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     }
 }
 
+/// Review only while the composer can send its staged files.
 fn reviewing_attachments(app: &App, chat: &Chat) -> bool {
     !app.pending.is_empty()
         && chat.can_send()

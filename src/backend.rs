@@ -715,6 +715,18 @@ pub enum Command {
         chat: Option<ChatId>,
         quoting: Option<crate::model::ReplyTarget>,
     },
+    /// Builds a bounded pasted-picture preview away from the UI thread.
+    PreparePicturePreview {
+        target: crate::app::AttachmentId,
+        width: usize,
+        height: usize,
+        rgba: Arc<Vec<u8>>,
+    },
+    /// Internal: the bounded preview produced by a blocking worker.
+    PicturePreviewReady {
+        target: crate::app::AttachmentId,
+        image: Option<egui::ColorImage>,
+    },
     /// Reads a staged picture's size, so the cropper can open on it.
     InspectPicture {
         target: crate::app::AttachmentId,
@@ -1222,6 +1234,11 @@ pub enum Event {
         height: u32,
         transparent: bool,
     },
+    /// Bounded preview pixels; only the UI uploads the texture.
+    PicturePreviewReady {
+        target: crate::app::AttachmentId,
+        image: Option<egui::ColorImage>,
+    },
     /// A staged picture's size, so the cropper can open on it.
     PictureInspected {
         target: crate::app::AttachmentId,
@@ -1537,6 +1554,10 @@ pub struct Backend {
     offline: bool,
     #[cfg(any(test, feature = "demo"))]
     demo_commands: Option<std::sync::Mutex<Vec<Command>>>,
+    #[cfg(any(test, feature = "demo"))]
+    demo_events: Option<std::sync::mpsc::Sender<Event>>,
+    #[cfg(any(test, feature = "demo"))]
+    demo_waker: Waker,
 }
 
 impl Backend {
@@ -1571,6 +1592,10 @@ impl Backend {
             offline: false,
             #[cfg(any(test, feature = "demo"))]
             demo_commands: None,
+            #[cfg(any(test, feature = "demo"))]
+            demo_events: None,
+            #[cfg(any(test, feature = "demo"))]
+            demo_waker: Waker::default(),
         }
     }
 
@@ -1587,6 +1612,10 @@ impl Backend {
                 offline: true,
                 #[cfg(any(test, feature = "demo"))]
                 demo_commands: None,
+                #[cfg(any(test, feature = "demo"))]
+                demo_events: Some(event_tx.clone()),
+                #[cfg(any(test, feature = "demo"))]
+                demo_waker: Waker::default(),
             },
             event_tx,
         )
@@ -1631,8 +1660,32 @@ impl Backend {
         self.offline
     }
 
+    /// Queue runtime work, or handle local preview work in an offline demo.
     pub fn send(&self, command: Command) {
         if self.offline && !matches!(command, Command::Shutdown) {
+            #[cfg(any(test, feature = "demo"))]
+            if let Command::PreparePicturePreview {
+                target,
+                width,
+                height,
+                rgba,
+            } = &command
+                && let Some(events) = &self.demo_events
+            {
+                let (target, width, height, rgba) = (*target, *width, *height, Arc::clone(rgba));
+                let events = events.clone();
+                let waker = self.demo_waker.clone();
+                // Offline demos use the same command/event boundary, without a WhatsApp runtime.
+                std::thread::Builder::new()
+                    .name("demo-picture-preview".into())
+                    .spawn(move || {
+                        let image = picture_edit::preview(width, height, &rgba);
+                        let _ = events.send(Event::PicturePreviewReady { target, image });
+                        waker.wake();
+                    })
+                    .ok();
+                return;
+            }
             #[cfg(any(test, feature = "demo"))]
             if let Some(commands) = &self.demo_commands {
                 commands
@@ -1643,6 +1696,12 @@ impl Backend {
             return;
         }
         let _ = self.commands.send(command);
+    }
+
+    /// Wake an offline demo when its local preview worker finishes.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn attach_demo_window(&self, ctx: &egui::Context) {
+        self.demo_waker.attach(ctx);
     }
 
     /// Captures real UI commands for an offline demo's local responder.

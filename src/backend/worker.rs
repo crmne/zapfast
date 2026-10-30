@@ -7246,6 +7246,21 @@ impl Worker {
                     self.emit(Event::Error(format!("Could not make the sticker: {error}")))
                 }
             },
+            Command::PreparePicturePreview {
+                target,
+                width,
+                height,
+                rgba,
+            } => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let image = super::picture_edit::preview(width, height, &rgba);
+                    let _ = commands.send(Command::PicturePreviewReady { target, image });
+                });
+            }
+            Command::PicturePreviewReady { target, image } => {
+                self.emit(Event::PicturePreviewReady { target, image });
+            }
             Command::InspectPicture { target, path } => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {

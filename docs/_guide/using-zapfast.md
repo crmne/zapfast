@@ -227,7 +227,7 @@ Send is at the right of the file strip. Enter still follows your send-key
 setting. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Hover a tile to remove that file. Escape or the review area's close button
-removes all staged files; your caption stays in the composer.
+discards all staged files, the caption and its reply quote.
 
 With exactly one supported photo (JPEG, PNG, or WebP) staged, select
 the **View once** icon (a 1 inside a dashed circle) beside the caption. It lights
