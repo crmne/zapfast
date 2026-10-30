@@ -3556,15 +3556,26 @@ impl Worker {
                 )));
                 let status = self.unlinked();
                 self.set_status(status);
+                // A failed phone-number request can be the last thing that
+                // connection does: its QR refs may already be spent, which
+                // leaves nothing to show and no code to scan. A fresh client
+                // brings the QR screen back instead of an empty spinner.
+                if self.qr.is_none() {
+                    let _ = self.commands.send(Command::Relink);
+                }
             }
             E::PairingQrCodesExhausted(exhausted) => {
                 self.qr = None;
                 let status = self.unlinked();
                 self.set_status(status);
-                if exhausted.disconnected
-                    && let Some(client) = self.client.clone()
-                {
-                    tokio::spawn(async move { client.reconnect_immediately().await });
+                // WhatsApp answers six QR refs and then ends the connection.
+                // A QR-only link is shut down for good at that point, and a
+                // shut-down client refuses to connect again, so reconnecting
+                // it left the linking screen on "Waiting for a code from
+                // WhatsApp…" forever. Only a new client over the same device
+                // store asks for a fresh set of refs.
+                if exhausted.disconnected {
+                    let _ = self.commands.send(Command::Relink);
                 }
             }
             E::PairSuccess(pair) => {
@@ -8014,6 +8025,10 @@ impl Worker {
                 } else {
                     self.start_bot().await;
                 }
+            }
+            Command::Relink => {
+                self.stop_bot().await;
+                self.start_bot().await;
             }
             Command::Shutdown => {}
             Command::OlderSent {
@@ -20900,6 +20915,62 @@ mod receipt_tests {
             worker.qr.as_deref(),
             Some("https://wa.me/settings/linked_devices#ref,noise,identity,adv,0")
         );
+    }
+
+    /// A spent QR-only link ends in a client the library shut down for good,
+    /// so the worker must ask for a fresh one: reconnecting the old client
+    /// left the linking screen on "Waiting for a code from WhatsApp…" forever.
+    #[tokio::test]
+    async fn spent_pairing_refs_start_a_fresh_client() {
+        let (mut worker, _events, mut commands, _wa) = worker();
+        worker.qr = Some("https://wa.me/settings/linked_devices#ref".into());
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::PairingQrCodesExhausted(
+                wa_events::PairingQrCodesExhausted::builder()
+                    .disconnected(true)
+                    .build(),
+            )))
+            .await;
+        assert!(worker.qr.is_none(), "the spent code stops being shown");
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::Relink)),
+            "a shut-down client needs a new one, not a reconnect"
+        );
+    }
+
+    /// A live phone-number flow keeps the connection it shares with the QR
+    /// rotation: its code stays valid past the refs, so nothing restarts.
+    #[tokio::test]
+    async fn a_pair_code_outliving_the_refs_keeps_its_client() {
+        let (mut worker, _events, mut commands, _wa) = worker();
+        worker.pair_code = Some("FWAP1234".into());
+        worker.pairing_phone = Some("15550001111".into());
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::PairingQrCodesExhausted(
+                wa_events::PairingQrCodesExhausted::builder()
+                    .disconnected(false)
+                    .build(),
+            )))
+            .await;
+        assert!(commands.try_recv().is_err(), "the pairing client stays");
+        assert_eq!(worker.pair_code.as_deref(), Some("FWAP1234"));
+    }
+
+    /// A failed phone-number request after the QR refs were spent leaves
+    /// nothing on screen; the worker asks for a client that can show a code.
+    #[tokio::test]
+    async fn a_failed_pair_code_request_brings_the_qr_back() {
+        let (mut worker, _events, mut commands, _wa) = worker();
+        worker.pairing_phone = Some("15550001111".into());
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::PairingCodeError(
+                wa_events::PairingCodeError::builder()
+                    .error("Synthetic refusal".into())
+                    .build(),
+            )))
+            .await;
+        assert_eq!(worker.pairing_phone.as_deref(), None);
+        assert!(matches!(commands.try_recv(), Ok(Command::Relink)));
     }
 
     #[test]

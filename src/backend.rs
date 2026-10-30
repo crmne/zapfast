@@ -863,6 +863,10 @@ pub enum Command {
     /// Unlinks this account and deletes its local folders.
     RemoveAccount,
     Reconnect,
+    /// Starts a fresh WhatsApp client over the same device store, for a link
+    /// the library ended for good (a spent QR-only pairing) and that a
+    /// reconnect therefore cannot revive.
+    Relink,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
     /// Sets aside an unreadable archive and the linked session, then starts

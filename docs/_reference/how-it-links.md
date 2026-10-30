@@ -13,6 +13,10 @@ code. New links list ZapFast under **Linked devices**; an existing link may
 retain the earlier name FastsApp until you link again. There you can unlink
 it at any time.
 
+WhatsApp answers a limited number of QR codes on one connection and then ends
+it. ZapFast opens a fresh connection for a new set, so the linking screen keeps
+showing a current code until you scan it.
+
 Each linked device can have one connection. Two clients using the same device
 keys will disconnect each other. A second ZapFast launch reopens the existing
 window instead of starting another instance.
