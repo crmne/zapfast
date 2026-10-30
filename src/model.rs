@@ -1489,6 +1489,46 @@ impl Content {
         }
     }
 
+    /// Takes the files that `other`, another copy of the same message,
+    /// downloaded where this copy has none: the attachment, a motion photo's
+    /// clip, and each carousel card's image. A file this copy has stays.
+    pub fn fill_local_paths(&mut self, other: &Content) {
+        if let (Some(new), Some(old)) = (self.media_mut(), other.media())
+            && new.path.is_none()
+        {
+            new.path = old.path.clone();
+        }
+        if let (
+            Self::Image { motion: new, .. },
+            Self::Image {
+                motion: Some(old), ..
+            },
+        ) = (&mut *self, other)
+            && new
+                .as_ref()
+                .is_none_or(|new| new.path.is_none() && old.path.is_some())
+        {
+            *new = Some(old.clone());
+        }
+        if let (
+            Self::Interactive {
+                card: Some(new), ..
+            },
+            Self::Interactive {
+                card: Some(old), ..
+            },
+        ) = (self, other)
+        {
+            for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
+                if let (Some(new), Some(old)) = (&mut new.image, &old.image)
+                    && new.path.is_none()
+                {
+                    new.path = old.path.clone();
+                }
+            }
+        }
+    }
+
     /// Forgets every downloaded file of this message kept under `dir`, so
     /// it downloads again: the attachment, a motion photo's clip, and each
     /// carousel card's picture. Files elsewhere, such as a chosen download
