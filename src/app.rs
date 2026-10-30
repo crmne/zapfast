@@ -483,6 +483,9 @@ pub struct App {
     /// The account, chat and composer text the preview watch saw last, to
     /// tell when it changes.
     preview_seen: Option<(AccountId, Option<ChatId>, String)>,
+    /// Whether attachments were staged when the watch last saw a change, so
+    /// staging or removing them makes it look again.
+    preview_staged: bool,
     /// Byte offset of the `:` starting the active emoji query.
     pub emoji_start: Option<usize>,
     /// Keyboard-highlighted emoji in suggestions or the full picker.
@@ -1456,6 +1459,7 @@ impl App {
             composer_preview: None,
             preview_typed_at: None,
             preview_seen: None,
+            preview_staged: false,
             emoji_start: None,
             emoji_selected: 0,
             mention_start: None,
@@ -5781,8 +5785,10 @@ impl App {
             .as_ref()
             .is_some_and(|(account, chat, text)| {
                 *account == self.account().id && *chat == self.open_chat && *text == self.composer
-            });
+            })
+            && self.preview_staged == !self.pending.is_empty();
         if !unchanged {
+            self.preview_staged = !self.pending.is_empty();
             self.preview_seen = Some((
                 self.account().id.clone(),
                 self.open_chat.clone(),
@@ -5801,6 +5807,7 @@ impl App {
             .filter(|chat| {
                 self.editing.is_none()
                     && !self.link_previews_disabled
+                    && self.pending.is_empty()
                     && self.chat(chat).is_some_and(Chat::can_send)
             })
             .zip(composer_link(&self.composer));
@@ -19563,6 +19570,24 @@ mod tests {
         assert_eq!(app.preview_typed_at, typed_at);
         app.watch_link_preview(2.6);
         assert!(preview_fetches(&mut commands).is_empty(), "asked once");
+    }
+
+    /// A caption never gets a card: with attachments staged nothing is
+    /// fetched, and taking them away lets the link be asked for afresh.
+    #[test]
+    fn composer_preview_staged_attachment_requests_nothing() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        app.pending.push(Staged {
+            id: 1,
+            item: Pending::File("a.png".into()),
+        });
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert!(preview_fetches(&mut commands).is_empty());
+        assert!(app.composer_preview.is_none());
+        app.pending.clear();
+        app.watch_link_preview(2.0);
+        app.watch_link_preview(2.6);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
     }
 
     #[test]
