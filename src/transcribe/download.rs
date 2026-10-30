@@ -6,9 +6,9 @@ use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -33,12 +33,41 @@ pub(super) fn ensure(
             .map_err(|_| failed("Could not protect the speech model folder."))?;
     }
     progress(State::Checking);
-    let runtime = Arc::new(
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| failed("Could not start the speech model downloader."))?,
-    );
+    // Only a missing file needs the network.
+    let mut connection = None;
+    install_files(model.assets(), &directory, cancel, progress, |asset| {
+        if connection.is_none() {
+            connection = Some(connect()?);
+        }
+        let (runtime, client) = connection.as_ref().expect("connected above");
+        let response = wait(runtime, cancel, || client.get(model.url(asset)).send())?
+            .error_for_status()
+            .map_err(|_| {
+                failed("Could not download the speech model from Hugging Face. Try again.")
+            })?;
+        if response
+            .content_length()
+            .is_some_and(|length| length != asset.bytes)
+        {
+            return Err(failed("The speech model download has an unexpected size."));
+        }
+        Ok(Box::new(Body {
+            runtime: Arc::clone(runtime),
+            response,
+            cancel: Arc::clone(cancel),
+            pending: Vec::new(),
+            at: 0,
+        }) as Box<dyn Read>)
+    })?;
+    Ok(directory)
+}
+
+/// The proxy-aware HTTPS client and the runtime it runs on.
+fn connect() -> Result<(Arc<tokio::runtime::Runtime>, reqwest::Client), Error> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| failed("Could not start the speech model downloader."))?;
     // Bound connection stalls and idle reads, not the whole multi-gigabyte
     // transfer. A fixed total timeout makes healthy slow links restart from
     // zero forever. wait() still handles explicit cancellation promptly.
@@ -59,27 +88,7 @@ pub(super) fn ensure(
     let client = builder
         .build()
         .map_err(|_| failed("Could not prepare the speech model download."))?;
-    install_files(model.assets(), &directory, cancel, progress, |asset| {
-        let response = wait(&runtime, cancel, || client.get(model.url(asset)).send())?
-            .error_for_status()
-            .map_err(|_| {
-                failed("Could not download the speech model from Hugging Face. Try again.")
-            })?;
-        if response
-            .content_length()
-            .is_some_and(|length| length != asset.bytes)
-        {
-            return Err(failed("The speech model download has an unexpected size."));
-        }
-        Ok(Box::new(Body {
-            runtime: Arc::clone(&runtime),
-            response,
-            cancel: Arc::clone(cancel),
-            pending: Vec::new(),
-            at: 0,
-        }) as Box<dyn Read>)
-    })?;
-    Ok(directory)
+    Ok((Arc::new(runtime), client))
 }
 
 /// Builds a model error from a fixed diagnostic, never a URL or private path.
@@ -149,14 +158,44 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), Error> {
     }
 }
 
+/// Size and modification time of each file this process has hashed or
+/// installed. The model is loaded again after a minute of rest; hashing its
+/// gigabytes every time would delay every voice message after a pause.
+static VERIFIED: Mutex<Vec<(PathBuf, u64, SystemTime)>> = Mutex::new(Vec::new());
+
+fn stamp(file: &File) -> Option<(u64, SystemTime)> {
+    let info = file.metadata().ok()?;
+    Some((info.len(), info.modified().ok()?))
+}
+
+fn remember(path: &Path, stamp: Option<(u64, SystemTime)>) {
+    let mut verified = VERIFIED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    verified.retain(|(known, ..)| known != path);
+    if let Some((bytes, modified)) = stamp {
+        verified.push((path.to_owned(), bytes, modified));
+    }
+}
+
 /// Checks a cached file off the interface thread. A matching length alone is
-/// not sufficient: a truncated or tampered cache is downloaded again.
+/// not sufficient: a truncated or tampered cache is downloaded again. A file
+/// unchanged since this process checked it is not hashed again.
 fn verified(path: &Path, asset: &Asset, cancel: &AtomicBool) -> Result<bool, Error> {
     let Ok(mut file) = File::open(path) else {
         return Ok(false);
     };
-    if file.metadata().map(|info| info.len()).ok() != Some(asset.bytes) {
+    let current = stamp(&file);
+    if current.map(|(bytes, _)| bytes) != Some(asset.bytes) {
         return Ok(false);
+    }
+    if VERIFIED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .any(|(known, bytes, modified)| known == path && current == Some((*bytes, *modified)))
+    {
+        return Ok(true);
     }
     let mut sha = Sha256::new();
     let mut block = [0; 128 * 1024];
@@ -170,7 +209,11 @@ fn verified(path: &Path, asset: &Asset, cancel: &AtomicBool) -> Result<bool, Err
         }
         sha.update(&block[..count]);
     }
-    Ok(crate::settings::hex(&sha.finalize()) == asset.sha256)
+    let intact = crate::settings::hex(&sha.finalize()) == asset.sha256;
+    if intact {
+        remember(path, current);
+    }
+    Ok(intact)
 }
 
 /// Keeps verified files, streams each missing asset to a private partial file,
@@ -261,6 +304,7 @@ fn install_files(
                 .map_err(|_| failed("Could not replace a damaged speech model."))?;
         }
         fs::rename(&pending, &path).map_err(|_| failed("Could not install the speech model."))?;
+        remember(&path, File::open(&path).ok().as_ref().and_then(stamp));
         received += count;
         progress(State::Downloading { received, total });
     }
@@ -389,5 +433,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fs::read(path).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn a_file_is_hashed_once_until_it_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(FIXTURE.local);
+        fs::write(&path, b"hello").unwrap();
+        let cancel = AtomicBool::new(false);
+        assert!(verified(&path, &FIXTURE, &cancel).unwrap());
+        let checked = fs::metadata(&path).unwrap().modified().unwrap();
+        let touch = |modified| {
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(modified)
+                .unwrap();
+        };
+        // Same size and time: the earlier hash stands, so the file is not
+        // read again (which this rewrite, made behind its back, shows).
+        fs::write(&path, b"other").unwrap();
+        touch(checked);
+        assert!(verified(&path, &FIXTURE, &cancel).unwrap());
+        // Any other change is hashed again.
+        touch(checked + Duration::from_secs(5));
+        assert!(!verified(&path, &FIXTURE, &cancel).unwrap());
     }
 }
