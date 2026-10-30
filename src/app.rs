@@ -5807,7 +5807,6 @@ impl App {
             .filter(|chat| {
                 self.editing.is_none()
                     && !self.link_previews_disabled
-                    && self.pending.is_empty()
                     && self.chat(chat).is_some_and(Chat::can_send)
             })
             .zip(composer_link(&self.composer));
@@ -5817,6 +5816,19 @@ impl App {
             self.composer_preview = None;
             return None;
         };
+        if !self.pending.is_empty() {
+            // A caption never gets a card, but a dismissed or finished one
+            // is kept for its link; only a fetch still running is dropped,
+            // to be asked for again once the attachments are gone.
+            if self
+                .composer_preview
+                .as_ref()
+                .is_some_and(|preview| preview.state == LinkPreviewState::Loading)
+            {
+                self.composer_preview = None;
+            }
+            return None;
+        }
         let account = self.account().id.clone();
         if self.composer_preview.as_ref().is_some_and(|preview| {
             preview.account == account && preview.chat == chat && preview.url == url
@@ -5836,7 +5848,7 @@ impl App {
     /// The composer's preview while it belongs to `text` in `chat` of the
     /// account on screen, and previews may be shown.
     fn preview_for(&self, chat: &str, text: &str) -> Option<&ComposerPreview> {
-        if self.link_previews_disabled || self.editing.is_some() {
+        if self.link_previews_disabled || self.editing.is_some() || !self.pending.is_empty() {
             return None;
         }
         let url = composer_link(text)?;
@@ -19588,6 +19600,32 @@ mod tests {
         app.watch_link_preview(2.0);
         app.watch_link_preview(2.6);
         assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+    }
+
+    /// A dismissed card stays dismissed while attachments come and go.
+    #[test]
+    fn composer_preview_dismissal_survives_staged_attachments() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        rest_on(&mut app, "hi https://ex.com/a", 0.0);
+        assert_eq!(preview_fetches(&mut commands), [PREVIEW_URL]);
+        app.composer_preview.as_mut().unwrap().state = LinkPreviewState::Dismissed;
+        app.pending.push(Staged {
+            id: 1,
+            item: Pending::File("a.png".into()),
+        });
+        app.watch_link_preview(1.0);
+        app.watch_link_preview(1.6);
+        app.pending.clear();
+        app.watch_link_preview(2.0);
+        app.watch_link_preview(2.6);
+        assert!(preview_fetches(&mut commands).is_empty());
+        assert_eq!(
+            app.composer_preview.as_ref().map(|card| &card.state),
+            Some(&LinkPreviewState::Dismissed)
+        );
+        assert_eq!(app.current_preview(), None);
+        send_composer(&mut app);
+        assert_eq!(sent_preview(&mut commands), Some(None));
     }
 
     #[test]
