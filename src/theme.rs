@@ -802,9 +802,60 @@ fn install_fonts(ctx: &egui::Context) {
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
+    add_arabic_fallback(&mut fonts);
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// Loads a system Arabic font fallback if present, ensuring Arabic script is
+/// rendered without tofu squares across Windows, Linux, and macOS.
+fn add_arabic_fallback(fonts: &mut egui::FontDefinitions) {
+    const CANDIDATES: &[&str] = &[
+        // Arch / Omarchy & Linux Noto paths
+        "/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansArabic-Regular.otf",
+        "/usr/share/fonts/google-noto/NotoSansArabic-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+        // Windows
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+        // macOS
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ];
+
+    for &path in CANDIDATES {
+        if let Ok(bytes) = std::fs::read(path) {
+            let font_name = "zapfast-arabic-fallback".to_string();
+            let data = std::sync::Arc::new(egui::FontData::from_owned(bytes.clone()));
+            fonts.font_data.insert(font_name.clone(), data);
+
+            let insert_fallback = |fam: &mut Vec<String>| {
+                let idx = if fam.len() > 1 { 1 } else { fam.len() };
+                fam.insert(idx, font_name.clone());
+            };
+
+            if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                insert_fallback(prop);
+            }
+            if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                insert_fallback(mono);
+            }
+            for weight in fastframe_fonts::Weight::ALL {
+                if let Some(fam) = fonts.families.get_mut(&weight.family()) {
+                    insert_fallback(fam);
+                }
+            }
+            log::info!("Loaded Arabic fallback font from: {path}");
+            break;
+        }
+    }
 }
 
 /// Registers Inter at each weight as the [`tabular`] families, each falling
@@ -1118,7 +1169,8 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     } else {
         palette.text
     };
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    let mut galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(&mut galley));
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -1178,7 +1230,8 @@ pub fn soft_button(
 ) -> Response {
     let font = medium(13.0);
     let color = if active { palette.accent } else { palette.text };
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    let mut galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(&mut galley));
     let icon_size = 15.0;
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
     let padding = Vec2::new(12.0, 7.0);
@@ -1217,9 +1270,10 @@ pub fn soft_button(
 
 /// Calculates [`soft_button`] width before layout.
 pub fn soft_button_width(ui: &egui::Ui, label: &str, icon: bool) -> f32 {
-    let galley = ui
+    let mut galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), medium(13.0), Color32::WHITE);
+    crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(&mut galley));
     let icon_width = if icon { 15.0 + 6.0 } else { 0.0 };
     galley.size().x + icon_width + 24.0
 }

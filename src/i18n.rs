@@ -16,6 +16,8 @@ pub enum Locale {
     #[default]
     #[serde(rename = "en")]
     English,
+    #[serde(rename = "ar")]
+    Arabic,
     #[serde(rename = "pt-BR")]
     PortugueseBrazil,
     #[serde(rename = "de")]
@@ -40,8 +42,9 @@ pub enum Locale {
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 11] = [
+    pub const ALL: [Locale; 12] = [
         Self::English,
+        Self::Arabic,
         Self::PortugueseBrazil,
         Self::German,
         Self::Spanish,
@@ -58,6 +61,7 @@ impl Locale {
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
+            Self::Arabic => "العربية",
             Self::PortugueseBrazil => "Português (Brasil)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
@@ -79,9 +83,11 @@ impl Locale {
         fastframe_i18n::LanguageTag::parse(identifier).and_then(|tag| Self::from_tag(&tag))
     }
 
+    /// Resolves a parsed language tag to a supported application [`Locale`].
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
+            "ar" => Self::Arabic,
             "pt" => Self::PortugueseBrazil,
             "de" => Self::German,
             "es" => Self::Spanish,
@@ -108,8 +114,10 @@ impl Locale {
 }
 
 impl fastframe_i18n::Locale for Locale {
+    /// Returns the compiled translation catalog for this locale, or `None` for English.
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
+            Self::Arabic => Some(&ar::Translator),
             Self::PortugueseBrazil => Some(&pt_br::Translator),
             Self::German => Some(&de::Translator),
             Self::Spanish => Some(&es::Translator),
@@ -213,6 +221,8 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("id-ID"), Some(Locale::Indonesian));
         assert_eq!(Locale::from_system("id"), Some(Locale::Indonesian));
+        assert_eq!(Locale::from_system("ar-SA"), Some(Locale::Arabic));
+        assert_eq!(Locale::from_system("ar"), Some(Locale::Arabic));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
