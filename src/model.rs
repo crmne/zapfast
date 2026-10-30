@@ -2752,6 +2752,9 @@ pub enum Action {
         message: String,
     },
     CancelReply,
+    /// Takes away the link preview above the composer, for its link only:
+    /// the message goes without one.
+    DismissLinkPreview,
     /// Starts selecting messages in the open chat with none picked yet.
     StartSelection,
     /// Adds a chat to the forwarding dialog's recipients or removes it,

@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
+use crate::app::{App, Conversation, JumpHighlight, KeyScroll, PreviewState, RowHeight};
 use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
@@ -1470,6 +1470,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     None => app.reply_to = None,
                 }
             }
+            // Nearest the pill, under a reply. A caption goes without one.
+            if app.pending.is_empty() && app.recording.is_none() {
+                link_preview_strip(app, ui);
+            }
             app.prepare_composer_undo(ui.ctx());
             let id = composer_id();
             let has_focus = ui.memory(|memory| memory.has_focus(id));
@@ -2221,6 +2225,88 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     ui.ctx()
         .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
     strip_gap(ui);
+}
+
+/// The link preview that goes with the message being written: "Loading
+/// preview…" while it is fetched, then the card with an X that sends the
+/// message without it. Nothing once dismissed.
+fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let Some(shown) = app.shown_preview() else {
+        return;
+    };
+    let mut dismiss = false;
+    let strip = match &shown.state {
+        PreviewState::Dismissed => return,
+        PreviewState::Loading => {
+            let loading = crate::i18n::gettext(app.locale, "Loading preview…");
+            widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                ui.set_width(ui.available_width().max(0.0));
+                ui.horizontal(|ui| {
+                    let (bar, _) = ui.allocate_exact_size(vec2(3.0, 18.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, palette.accent);
+                    theme::text(ui, loading, theme::regular(12.5), palette.secondary);
+                });
+            })
+        }
+        PreviewState::Ready(composed) => {
+            let remove = crate::i18n::gettext(app.locale, "Remove link preview");
+            // The card has no message: its picture is named by its chat and
+            // link instead, the same each frame.
+            let image = composer_thumbnail_id(&composed.preview.url);
+            let thumbnail = composed
+                .thumbnail
+                .as_deref()
+                .map(|bytes| (shown.chat.as_str(), image.as_str(), bytes));
+            widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                ui.set_width(ui.available_width().max(0.0));
+                ui.horizontal(|ui| {
+                    let (bar, _) = ui.allocate_exact_size(vec2(3.0, 0.0), Sense::hover());
+                    let width = (ui.available_width() - 40.0).max(0.0);
+                    let card = preview_layout(ui, &palette, &composed.preview, thumbnail, width);
+                    ui.painter().rect_filled(
+                        Rect::from_x_y_ranges(bar.x_range(), card.y_range()),
+                        2.0,
+                        palette.accent,
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let button = theme::icon_button(
+                            ui,
+                            Icon::X,
+                            16.0,
+                            palette.secondary,
+                            palette.text,
+                            remove.as_ref(),
+                        );
+                        #[cfg(test)]
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(egui::Id::new("link-preview-dismiss"), button.rect)
+                        });
+                        dismiss = button.clicked();
+                    });
+                });
+            })
+        }
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(link_preview_strip_id(), strip.response.rect));
+    if dismiss {
+        app.actions.push(Action::DismissLinkPreview);
+    }
+    strip_gap(ui);
+}
+
+/// The image id of the composer card's thumbnail for `url`.
+fn composer_thumbnail_id(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("composer-preview-{:016x}", hasher.finish())
+}
+
+/// Where the composer's link preview was drawn, for layout tests.
+pub(crate) fn link_preview_strip_id() -> egui::Id {
+    egui::Id::new("link-preview-strip")
 }
 
 /// Where the emoji or @mention suggestion list was drawn, for layout tests.
@@ -9062,16 +9148,10 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message.thumbnail.as_deref();
-    let domain = preview
-        .url
-        .split("://")
-        .nth(1)
-        .unwrap_or(&preview.url)
-        .split('/')
-        .next()
-        .unwrap_or_default()
-        .to_owned();
+    let thumbnail = message
+        .thumbnail
+        .as_deref()
+        .map(|bytes| (message.chat.as_str(), message.id.as_str(), bytes));
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
         .corner_radius(CornerRadius::same(6))
@@ -9080,46 +9160,7 @@ fn preview_card(
             // Include margins in the settled card width.
             let card_width = (width - 16.0).max(0.0);
             ui.set_width(card_width);
-            // Limit text to the space beside the thumbnail and keep it
-            // left-aligned in own bubbles.
-            let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
-            ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(card_width);
-                ui.horizontal(|ui| {
-                    if let Some(bytes) = thumbnail {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-                        // Off-screen cards are laid out too; only a visible
-                        // one keeps its thumbnail resident.
-                        if ui.is_rect_visible(rect) {
-                            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
-                            egui::Image::new(uri)
-                                .fit_to_exact_size(rect.size())
-                                .corner_radius(4.0)
-                                .paint_at(ui, rect);
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.set_width(column);
-                        if let Some(title) = &preview.title {
-                            widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
-                        }
-                        if let Some(description) = &preview.description {
-                            let line = widgets::line(
-                                ui,
-                                description,
-                                theme::regular(12.5),
-                                palette.secondary,
-                                ui.available_width(),
-                                2,
-                            );
-                            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                            line.paint(ui, rect.min, palette.secondary);
-                        }
-                        theme::text(ui, &domain, theme::regular(12.0), palette.dim);
-                    });
-                });
-            });
+            preview_layout(ui, &palette, preview, thumbnail, card_width);
         })
         .response;
     ui.ctx().data_mut(|data| {
@@ -9138,6 +9179,70 @@ fn preview_card(
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
     }
+}
+
+/// The inside of a link preview card, a bubble's or the composer's: a
+/// 64-point thumbnail (from `thumbnail`'s chat, image id and JPEG), then the
+/// title, up to two lines of description and the domain, `card_width` wide.
+/// Returns where it was laid out.
+fn preview_layout(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    preview: &LinkPreview,
+    thumbnail: Option<(&str, &str, &[u8])>,
+    card_width: f32,
+) -> Rect {
+    let domain = preview
+        .url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&preview.url)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    // Limit text to the space beside the thumbnail and keep it
+    // left-aligned in own bubbles.
+    let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
+    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(card_width);
+        ui.horizontal(|ui| {
+            if let Some((chat, id, bytes)) = thumbnail {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                // Off-screen cards are laid out too; only a visible
+                // one keeps its thumbnail resident.
+                if ui.is_rect_visible(rect) {
+                    let uri = thumbnail_uri(ui.ctx(), chat, id, bytes);
+                    egui::Image::new(uri)
+                        .fit_to_exact_size(rect.size())
+                        .corner_radius(4.0)
+                        .paint_at(ui, rect);
+                }
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.set_width(column);
+                if let Some(title) = &preview.title {
+                    widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
+                }
+                if let Some(description) = &preview.description {
+                    let line = widgets::line(
+                        ui,
+                        description,
+                        theme::regular(12.5),
+                        palette.secondary,
+                        ui.available_width(),
+                        2,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                    line.paint(ui, rect.min, palette.secondary);
+                }
+                theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+            });
+        });
+    })
+    .response
+    .rect
 }
 
 /// A location as a card: the map preview WhatsApp sent across the top, then
