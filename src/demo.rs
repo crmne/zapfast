@@ -22864,12 +22864,11 @@ mod bubble_detail_tests {
         assert!(text.contains(&crate::util::bytes(
             crate::transcribe::Model::default().total_bytes()
         )));
-        assert!(text.contains("Enable transcription or prepare the model to download it."));
-        assert!(text.contains("Prepare model"));
+        assert!(text.contains("Turn on transcription to download it."));
     }
 
     #[test]
-    /// Synthetic download progress exposes its model, source and pause action.
+    /// Synthetic download progress shows its model, source and size.
     fn transcription_settings_show_the_model_and_download_progress() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -22886,7 +22885,9 @@ mod bubble_detail_tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("Parakeet v3"));
-        assert!(text.contains("Pause transcription"));
+        assert!(text.contains(&crate::util::bytes(
+            crate::transcribe::Model::default().total_bytes()
+        )));
         assert!(text.contains("Hugging Face"));
         assert!(text.contains("Saved transcripts"));
     }

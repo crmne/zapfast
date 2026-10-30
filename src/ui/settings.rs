@@ -1972,40 +1972,19 @@ fn transcription_model(ui: &mut egui::Ui, app: &mut App) {
                 Some(State::Loading) => gettext(locale, "Loading speech model…"),
                 Some(State::Ready) => gettext(locale, "Ready"),
                 Some(State::Paused) => gettext(locale, "Paused"),
-                Some(State::Failed(_)) => {
-                    gettext(locale, "Could not prepare the speech model. Try again.")
-                }
+                Some(State::Failed(_)) => gettext(
+                    locale,
+                    "Could not prepare the speech model. Turn transcription off and on to try again.",
+                ),
                 _ if app.settings.transcribe_voice_notes => {
                     gettext(locale, "Downloads automatically on first use.")
                 }
-                _ => gettext(
-                    locale,
-                    "Enable transcription or prepare the model to download it.",
-                ),
+                _ => gettext(locale, "Turn on transcription to download it."),
             };
             let response = widgets::rich_text(ui, &label, theme::regular(12.0), palette.secondary);
             if let Some(State::Failed(message)) = state {
                 response.on_hover_text(message.clone());
             }
-        }
-        let busy = state.is_some_and(State::busy);
-        let button = if busy {
-            gettext(locale, "Pause transcription")
-        } else if matches!(state, Some(State::Failed(_))) {
-            gettext(locale, "Try again")
-        } else if matches!(state, Some(State::Paused)) {
-            gettext(locale, "Resume")
-        } else {
-            gettext(locale, "Prepare model")
-        };
-        if !matches!(state, Some(State::Ready))
-            && theme::soft_button(ui, &palette, None, &button, false).clicked()
-        {
-            app.actions.push(if busy {
-                Action::CancelTranscriptionDownload
-            } else {
-                Action::PrepareTranscriptionModel
-            });
         }
     });
 }

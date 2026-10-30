@@ -2782,8 +2782,6 @@ pub enum Action {
         ids: Vec<String>,
     },
     SetTranscriptionModel(crate::transcribe::Model),
-    PrepareTranscriptionModel,
-    CancelTranscriptionDownload,
     TranscribeAgain {
         chat: ChatId,
         message: String,

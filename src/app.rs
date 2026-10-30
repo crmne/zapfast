@@ -7450,23 +7450,6 @@ impl App {
                     self.mark_settings_dirty();
                 }
             }
-            Action::PrepareTranscriptionModel => {
-                let model = self.settings.transcription_model;
-                self.settings.transcribe_voice_notes = true;
-                self.transcription_state = Some((model, crate::transcribe::State::Queued));
-                self.backend.send(Command::PrepareTranscriptionModel(model));
-                self.mark_settings_dirty();
-            }
-            Action::CancelTranscriptionDownload => {
-                self.settings.transcribe_voice_notes = false;
-                self.cancel_transcriptions();
-                let model = self.settings.transcription_model;
-                for account in &self.accounts {
-                    account.backend.send(Command::SetTranscriptionModel(model));
-                }
-                self.transcription_state = Some((model, crate::transcribe::State::Paused));
-                self.mark_settings_dirty();
-            }
             Action::TranscribeAgain { chat, message } => {
                 let accessible = self
                     .chat(&chat)
@@ -8841,21 +8824,24 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => {
-                if !self.settings.transcribe_voice_notes
-                    && self
-                        .transcription_state
-                        .as_ref()
-                        .is_some_and(|(_, state)| state.busy())
-                {
-                    for account in &self.accounts {
-                        account.backend.send(Command::SetTranscriptionModel(
-                            self.settings.transcription_model,
-                        ));
+                use crate::transcribe::State;
+                let model = self.settings.transcription_model;
+                let state = self.transcription_state.as_ref().map(|(_, state)| state);
+                if self.settings.transcribe_voice_notes {
+                    // Turning transcription on agrees to the download, so the
+                    // model is fetched now, its progress beside the switch.
+                    // After a failure, turning it off and on tries again.
+                    if state.is_none_or(|state| *state == State::Paused) {
+                        self.transcription_state = Some((model, State::Queued));
+                        self.backend.send(Command::PrepareTranscriptionModel(model));
                     }
-                    self.transcription_state = Some((
-                        self.settings.transcription_model,
-                        crate::transcribe::State::Paused,
-                    ));
+                } else if state.is_some_and(State::busy) {
+                    for account in &self.accounts {
+                        account.backend.send(Command::SetTranscriptionModel(model));
+                    }
+                    self.transcription_state = Some((model, State::Paused));
+                } else if matches!(state, Some(State::Failed(_))) {
+                    self.transcription_state = None;
                 }
                 self.mark_settings_dirty();
             }
@@ -11727,16 +11713,40 @@ mod tests {
             "a passive choice must not prepare/download a model"
         );
 
-        app.apply(Action::PrepareTranscriptionModel, &egui::Context::default());
-        assert!(
-            app.settings.transcribe_voice_notes,
-            "Prepare model is the explicit opt-in"
-        );
+        // Turning transcription on is the opt-in, and starts the download.
+        app.settings.transcribe_voice_notes = true;
+        app.apply(Action::SettingsChanged, &egui::Context::default());
         assert!(matches!(
             commands.try_recv(),
             Ok(Command::PrepareTranscriptionModel(
                 crate::transcribe::Model::ParakeetUltra
             ))
+        ));
+        // Another setting changing meanwhile asks for nothing more.
+        app.apply(Action::SettingsChanged, &egui::Context::default());
+        assert!(commands.try_recv().is_err());
+        // Turning it off pauses the download; a failure is retried by
+        // turning it off and on.
+        app.settings.transcribe_voice_notes = false;
+        app.apply(Action::SettingsChanged, &egui::Context::default());
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::SetTranscriptionModel(_))
+        ));
+        app.transcription_state = Some((
+            crate::transcribe::Model::ParakeetUltra,
+            crate::transcribe::State::Failed("synthetic".into()),
+        ));
+        app.settings.transcribe_voice_notes = true;
+        app.apply(Action::SettingsChanged, &egui::Context::default());
+        assert!(commands.try_recv().is_err());
+        app.settings.transcribe_voice_notes = false;
+        app.apply(Action::SettingsChanged, &egui::Context::default());
+        app.settings.transcribe_voice_notes = true;
+        app.apply(Action::SettingsChanged, &egui::Context::default());
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::PrepareTranscriptionModel(_))
         ));
     }
 
