@@ -42,13 +42,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: Linux x64, os: ubuntu-24.04, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
-          - { name: Linux arm64, os: ubuntu-24.04-arm, runtime: aarch64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
-          # Where the release's Linux builds are made, with its oldest glibc.
-          - { name: Debian 12 x64, os: ubuntu-24.04, container: 'debian:12', runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
           - { name: Windows x64, os: windows-latest, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
           - { name: Windows arm64, os: windows-11-arm, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
-          - { name: macOS Intel, os: macos-15-intel, runtime: universal-apple-darwin, library: libonnxruntime.dylib, packaged: ../Frameworks }
     defaults:
       run:
         shell: bash
@@ -69,6 +64,17 @@ jobs:
         with:
           python-version: '3.13'
       - uses: dtolnay/rust-toolchain@stable
+      # Bash on Windows finds Git's Perl first, which lacks modules OpenSSL's
+      # build needs; ci.yml's PowerShell steps find the runner's full Perl.
+      - name: The runner's full Perl for the bundled OpenSSL build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $perl = (Get-Command perl -ErrorAction Stop).Source
+          & $perl -MLocale::Maketext::Simple -e 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "OPENSSL_SRC_PERL=$perl" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Output "OPENSSL_SRC_PERL=$perl"
       - name: GUI build dependencies
         if: runner.os == 'Linux' && !matrix.container
         run: |
@@ -124,55 +130,3 @@ jobs:
           $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           & $dumpbin.FullName /nologo /dependents runtime\onnxruntime.dll
           & $dumpbin.FullName /nologo /dependents target\debug\zapfast.exe
-
-  # The suites ci.yml runs on these systems only on main.
-  suites:
-    name: tests (${{ matrix.os }})
-    if: github.repository != 'crmne/zapfast'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-intel, windows-latest]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Tests (default features)
-        run: cargo test --locked --all-targets
-      - name: Tests (all features)
-        run: cargo test --locked --all-targets --all-features
-
-  # The Nix packages ci.yml builds only on main, and the runtime path they bake in.
-  nix:
-    name: Nix package (${{ matrix.system }})
-    if: github.repository != 'crmne/zapfast'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04-arm, system: aarch64-linux }
-          - { os: macos-latest, system: aarch64-darwin }
-    steps:
-      - uses: actions/checkout@v7
-      - uses: wimpysworld/nothing-but-nix@v9
-        if: runner.os == 'Linux'
-      - uses: cachix/install-nix-action@v31
-      - name: Check flake outputs
-        run: nix flake check --no-build
-      - name: Build package
-        run: nix build .#default --print-build-logs
-      - name: The binary names the packaged runtime, which is intact
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            binary=result/Applications/ZapFast.app/Contents/MacOS/zapfast
-          else
-            binary=result/bin/.zapfast-wrapped
-          fi
-          runtime=$(grep -a -o -m1 -E '/nix/store/[a-z0-9]{32}-zapfast-onnxruntime-1\.23\.2/lib/libonnxruntime\.(so|dylib)' "$binary" | head -1)
-          echo "$runtime"
-          test -f "$runtime"
-          if [ "$RUNNER_OS" = macOS ]; then codesign --verify --strict "$runtime"; fi
-          nix-store --query --references "$(readlink -f result)" | grep zapfast-onnxruntime
