@@ -1097,6 +1097,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        turn: None,
                     });
                 }
                 Err(error) => {

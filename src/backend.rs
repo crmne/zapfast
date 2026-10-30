@@ -126,6 +126,17 @@ pub struct CreatedPoll {
     pub recipients: Vec<String>,
 }
 
+/// An attachment's place in its chat's line of sends.
+#[derive(Debug)]
+pub struct SendTurn {
+    /// Resolved once the attachment has gone out or failed, so the next one
+    /// may follow it.
+    pub done: tokio::sync::oneshot::Sender<()>,
+    /// The linked session it was staged in: after a sign-out it is dropped,
+    /// never archived or sent from the account linked next.
+    pub generation: u64,
+}
+
 #[derive(Debug)]
 pub enum Command {
     RefreshPoll {
@@ -945,6 +956,9 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
+        /// Its place in the chat's line, for an attachment that waits for the
+        /// one staged before it.
+        turn: Option<SendTurn>,
     },
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {

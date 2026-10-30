@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use whatsapp_rust::download::MediaType;
 use whatsapp_rust::features::PresencePolicy;
 use whatsapp_rust::features::message_edit::{
@@ -59,7 +59,7 @@ mod sticker_pace;
 mod stickers;
 
 use super::{
-    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, Unsent, Waker,
+    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
     read_sync::ReadSync,
 };
 use crate::app::PAGE;
@@ -931,6 +931,7 @@ pub async fn run(
         older_ids_match: false,
         interactive_sending: HashMap::new(),
         awaiting_ack: HashMap::new(),
+        send_turns: HashMap::new(),
         receipts_watch: None,
         receipts_pruned: Instant::now(),
         early: Default::default(),
@@ -1241,6 +1242,8 @@ struct Worker {
     /// Messages we sent that WhatsApp has not acknowledged yet, by id, with
     /// their chat: the first ack's server time replaces their local stamp.
     awaiting_ack: HashMap<String, ChatId>,
+    /// Per chat, resolved when the attachment queued last has gone out.
+    send_turns: HashMap<ChatId, oneshot::Receiver<()>>,
     /// The group message whose "Message info" is open.
     receipts_watch: Option<(ChatId, String)>,
     /// When receipts that never found their message were last dropped.
@@ -4043,6 +4046,7 @@ impl Worker {
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.message_removals_in_flight.clear();
+        self.send_turns.clear();
         // End any call the old account was on before its data is cleared. A runtime left standing
         // would keep running for an account that is gone, hold the next account's calls off, and
         // later write its record into the archive this logout is about to clear.
@@ -6830,7 +6834,12 @@ impl Worker {
             } => self.send_pasted_image(
                 chat, width, height, rgba, view_once, caption, mentions, quoting,
             ),
-            Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
+            Command::Outbound {
+                chat,
+                row,
+                raw,
+                turn,
+            } => self.outbound(chat, *row, raw, turn),
             Command::SendSticker {
                 chat,
                 path,
@@ -8606,6 +8615,7 @@ impl Worker {
             id,
             message,
             expiration,
+            None,
         ));
     }
 
@@ -8670,6 +8680,7 @@ impl Worker {
             id,
             message,
             expiration,
+            None,
         ));
     }
 
@@ -8752,6 +8763,7 @@ impl Worker {
             id,
             message,
             expiration,
+            None,
         ));
     }
 
@@ -8777,6 +8789,7 @@ impl Worker {
             id,
             message,
             expiration,
+            None,
         ));
     }
 
@@ -10290,6 +10303,18 @@ impl Worker {
         });
     }
 
+    /// Takes the chat's next place for an attachment: the first value resolves
+    /// once the attachment queued before it has gone out or failed, and the
+    /// second goes in its `Command::Outbound` for the one queued after.
+    fn send_turn(&mut self, chat: &ChatId) -> (Option<oneshot::Receiver<()>>, SendTurn) {
+        let (done, next) = oneshot::channel();
+        let turn = SendTurn {
+            done,
+            generation: self.privacy_generation,
+        };
+        (self.send_turns.insert(chat.clone(), next), turn)
+    }
+
     /// Dispatches selected files with the first attachment carrying the caption and quote.
     fn send_files(
         &mut self,
@@ -10358,6 +10383,7 @@ impl Worker {
             } else {
                 Vec::new()
             };
+            let (previous, turn) = self.send_turn(&chat);
             tokio::spawn(async move {
                 let outcome = async {
                     let bytes = tokio::fs::read(&path)
@@ -10383,12 +10409,20 @@ impl Worker {
                     .await
                 }
                 .await;
+                // Files go out in the order they were picked, whichever was
+                // ready first.
+                if let Some(previous) = previous {
+                    let _ = previous.await;
+                }
                 match outcome {
-                    Ok((row, raw)) => {
+                    Ok((mut row, raw)) => {
+                        // Stamped now, after the one before it, so it sorts after it.
+                        row.timestamp = crate::util::now();
                         let _ = commands.send(Command::Outbound {
                             chat,
                             row: Box::new(row),
                             raw,
+                            turn: Some(turn),
                         });
                     }
                     Err(error) => {
@@ -10441,6 +10475,7 @@ impl Worker {
         {
             crate::mentions::push_everyone_id(&mut mentions);
         }
+        let (previous, turn) = self.send_turn(&chat);
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
@@ -10464,12 +10499,19 @@ impl Worker {
                 .await
             }
             .await;
+            // Pictures go out in the order they were staged.
+            if let Some(previous) = previous {
+                let _ = previous.await;
+            }
             match outcome {
-                Ok((row, raw)) => {
+                Ok((mut row, raw)) => {
+                    // Stamped now, after the one before it, so it sorts after it.
+                    row.timestamp = crate::util::now();
                     let _ = commands.send(Command::Outbound {
                         chat,
                         row: Box::new(row),
                         raw,
+                        turn: Some(turn),
                     });
                 }
                 Err(error) => {
@@ -10529,6 +10571,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        turn: None,
                     });
                 }
                 Err(error) => {
@@ -10602,6 +10645,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        turn: None,
                     });
                 }
                 Err(error) => {
@@ -10661,6 +10705,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        turn: None,
                     });
                 }
                 Err(error) => {
@@ -10674,8 +10719,15 @@ impl Worker {
         });
     }
 
-    /// Archives and sends an uploaded attachment message.
-    fn outbound(&mut self, chat: ChatId, row: Message, raw: Vec<u8>) {
+    /// Archives and sends an uploaded attachment message, then resolves its turn.
+    fn outbound(&mut self, chat: ChatId, row: Message, raw: Vec<u8>, turn: Option<SendTurn>) {
+        let done = match turn {
+            // Staged before a sign-out: the account it was meant for is gone.
+            // Dropping `done` lets the next one in line go.
+            Some(turn) if turn.generation != self.privacy_generation => return,
+            Some(turn) => Some(turn.done),
+            None => None,
+        };
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
@@ -10696,6 +10748,7 @@ impl Worker {
             id,
             message,
             expiration,
+            done,
         ));
     }
 
@@ -10892,6 +10945,7 @@ fn apply_ephemeral_expiration(message: &mut wa::Message, expiration: Option<u32>
         .then_some(expiration)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_outgoing(
     client: Arc<Client>,
     commands: mpsc::UnboundedSender<Command>,
@@ -10900,6 +10954,7 @@ async fn send_outgoing(
     id: String,
     message: wa::Message,
     ephemeral_expiration: Option<u32>,
+    done: Option<oneshot::Sender<()>>,
 ) {
     let result = async {
         if jid.is_group() {
@@ -10951,6 +11006,9 @@ async fn send_outgoing(
         Ok(())
     }
     .await;
+    if let Some(done) = done {
+        let _ = done.send(());
+    }
     let _ = commands.send(Command::Sent {
         chat,
         id,
@@ -16033,7 +16091,7 @@ mod tests {
                 Some("Original")
             );
             let id = row.id.clone();
-            worker.outbound(row.chat.clone(), row, raw.encode_to_vec());
+            worker.outbound(row.chat.clone(), row, raw.encode_to_vec(), None);
             let archived = wa::Message::decode_from_slice(
                 &worker
                     .archive
@@ -18119,6 +18177,7 @@ mod receipt_tests {
             older_ids_match: false,
             interactive_sending: HashMap::new(),
             awaiting_ack: HashMap::new(),
+            send_turns: HashMap::new(),
             receipts_watch: None,
             receipts_pruned: Instant::now(),
             early: Default::default(),
@@ -23423,6 +23482,66 @@ mod chat_removal_tests {
             })
             .await;
         assert!(worker.archive.pinned_ids(CHAT, 200).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod send_order_tests {
+    use super::*;
+    use tokio::sync::oneshot::error::TryRecvError;
+
+    #[test]
+    fn attachments_to_one_chat_go_out_one_after_another() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let chat: ChatId = "1@s.whatsapp.net".into();
+        let (first_waits, first) = worker.send_turn(&chat);
+        assert!(first_waits.is_none());
+        let (second_waits, _second) = worker.send_turn(&chat);
+        let mut second_waits = second_waits.expect("the second waits for the first");
+        assert!(matches!(second_waits.try_recv(), Err(TryRecvError::Empty)));
+        let (other_waits, _) = worker.send_turn(&"2@s.whatsapp.net".into());
+        assert!(other_waits.is_none(), "another chat does not wait");
+        first.done.send(()).unwrap();
+        assert!(second_waits.try_recv().is_ok());
+    }
+
+    #[test]
+    fn an_attachment_that_cannot_go_out_lets_the_next_one_go() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let chat: ChatId = "1@s.whatsapp.net".into();
+        let (_, turn) = worker.send_turn(&chat);
+        let (next, _) = worker.send_turn(&chat);
+        let mut next = next.unwrap();
+        let row = crate::archive::tests::message(&chat, "attachment", 100, true);
+        // The test worker has no client, so `outbound` gives up and drops `done`.
+        worker.outbound(chat, row, Vec::new(), Some(turn));
+        assert!(matches!(next.try_recv(), Err(TryRecvError::Closed)));
+    }
+
+    #[test]
+    fn an_attachment_staged_before_a_sign_out_is_dropped() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        let chat: ChatId = "1@s.whatsapp.net".into();
+        let (_, turn) = worker.send_turn(&chat);
+        let (next, _) = worker.send_turn(&chat);
+        let mut next = next.unwrap();
+        worker.privacy_generation = worker.privacy_generation.wrapping_add(1);
+        let row = crate::archive::tests::message(&chat, "attachment", 100, true);
+        worker.outbound(chat.clone(), row, Vec::new(), Some(turn));
+        assert!(matches!(next.try_recv(), Err(TryRecvError::Closed)));
+        // Dropped before the connection is looked at, so nothing is reported.
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Error(_)))
+        );
+        assert!(
+            worker
+                .archive
+                .message(&chat, "attachment")
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
