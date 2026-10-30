@@ -459,6 +459,7 @@ pub struct Settings {
     /// Transcribe voice messages as they come into view, on this computer.
     /// The model runs locally and audio never leaves the computer.
     pub transcribe_voice_notes: bool,
+    #[serde(deserialize_with = "crate::transcribe::Model::deserialize_or_default")]
     pub transcription_model: crate::transcribe::Model,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
@@ -1002,6 +1003,17 @@ mod tests {
             let restored: Settings = serde_json::from_str(&stored).unwrap();
             assert_eq!(restored.transcribe_voice_notes, enabled);
         }
+        // A model this version does not offer keeps every other setting.
+        let unknown: Settings = serde_json::from_str(
+            r#"{"theme":"light","transcribe_voice_notes":true,"transcription_model":"parakeet-later"}"#,
+        )
+        .unwrap();
+        assert_eq!(unknown.theme, ThemeChoice::Light);
+        assert!(unknown.transcribe_voice_notes);
+        assert_eq!(
+            unknown.transcription_model,
+            crate::transcribe::Model::default()
+        );
     }
 
     #[test]

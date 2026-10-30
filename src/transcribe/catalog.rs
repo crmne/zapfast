@@ -16,6 +16,15 @@ pub enum Model {
 impl Model {
     pub const ALL: [Self; 3] = [Self::ParakeetV3, Self::ParakeetV3Int8, Self::ParakeetUltra];
 
+    /// Reads a saved choice, taking a model this version does not offer as
+    /// the default rather than leaving the whole settings file unreadable.
+    pub fn deserialize_or_default<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Self, D::Error> {
+        let saved = serde_json::Value::deserialize(deserializer)?;
+        Ok(Self::deserialize(saved).unwrap_or_default())
+    }
+
     /// Stable model name shown in the picker, including weight precision.
     pub fn label(self) -> &'static str {
         match self {
