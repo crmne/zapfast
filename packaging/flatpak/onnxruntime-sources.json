@@ -1,18 +1,8 @@
 [
   {
     "type": "file",
-    "url": "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.31.0/x86_64-unknown-linux-gnu.tar.lzma2",
-    "sha256": "02aac0d3b4927026292088986d7a377c657c88761b1c068be217a67b35447678",
-    "dest": "onnxruntime",
-    "dest-filename": "onnxruntime.tar.lzma2",
-    "only-arches": ["x86_64"]
-  },
-  {
-    "type": "file",
-    "url": "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.31.0/aarch64-unknown-linux-gnu.tar.lzma2",
-    "sha256": "380c1b63eedf5671e7b39e4aa0f6c377ecc351c3a7b01ae708a707e73fb54709",
-    "dest": "onnxruntime",
-    "dest-filename": "onnxruntime.tar.lzma2",
-    "only-arches": ["aarch64"]
+    "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.0/microsoft.ml.onnxruntime.1.31.0.nupkg",
+    "sha256": "7e35fdb4f5adb62f01e60798e2e5ed05108f5fbbe1cca03fbcc37903cf7c5e3b",
+    "dest-filename": "onnxruntime.nupkg"
   }
 ]

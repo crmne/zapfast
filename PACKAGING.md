@@ -168,17 +168,19 @@ Parakeet links ONNX Runtime 1.31.0 at build time. Normal Cargo builds use the
 `ort` downloader with Rustls, not a system OpenSSL dependency. No native runtime
 binary is downloaded when the reader enables transcription, only model weights.
 
-Flatpak and Nix prefetch the same immutable CPU archives and SHA-256 hashes that
-`ort-sys` 2.0.0-rc.15 selects, before entering their network-isolated builds.
-The Linux pins are shared in `packaging/flatpak/onnxruntime-sources.json`; the
-flake also pins the matching macOS archive. Both unpack the raw LZMA2 archive
-with a 64 MiB dictionary, set `ORT_LIB_LOCATION` and disable build-script
-downloads. Model weights are not bundled.
+Flatpak and Nix prefetch Microsoft's official `Microsoft.ML.OnnxRuntime` 1.31.0
+package from the NuGet registry, before entering their network-isolated builds.
+The URL and SHA-256 pin are shared in
+`packaging/flatpak/onnxruntime-sources.json`. Both select the platform's shared
+library from the package, set `ORT_LIB_LOCATION` and `ORT_PREFER_DYNAMIC_LINK`,
+and disable build-script downloads. Flatpak installs the library and its SONAME
+link under `/app/lib`; Nix patches the library and executable to use store
+paths. No runtime is fetched at app startup, and model weights are not bundled.
 
-An `ort`/`ort-sys` update must recheck those archive pins against the new crate's
-distribution table. `packaging/flatpak/test-packaging.py` checks the pinned
-crate, TLS features, both Linux architectures, offline extraction and generated
-manifest completeness without downloading dependencies.
+An `ort`/`ort-sys` update must recheck the registry package's native API version
+and hash. `packaging/flatpak/test-packaging.py` checks the pinned registry source,
+crate, TLS features, both Linux architectures, offline extraction, shared-library
+installation and generated manifest completeness without downloading dependencies.
 
 ## Flatpak
 

@@ -45,6 +45,7 @@ build-options:
     CARGO_HOME: /run/build/zapfast/cargo
     LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
     ORT_LIB_LOCATION: /run/build/zapfast/onnxruntime
+    ORT_PREFER_DYNAMIC_LINK: '1'
     ORT_SKIP_DOWNLOAD: '1'
 modules:
   - name: zapfast
@@ -52,11 +53,23 @@ modules:
     build-commands:
       # The source stage fetches and verifies the runtime. Cargo's build
       # sandbox has no network, including for native-library build scripts.
-      - xz --decompress --stdout --format=raw --lzma2=dict=64MiB onnxruntime/onnxruntime.tar.lzma2 > onnxruntime/onnxruntime.tar
-      - tar -xf onnxruntime/onnxruntime.tar -C onnxruntime
+      - >-
+        case "$FLATPAK_ARCH" in
+        x86_64) rid=linux-x64 ;;
+        aarch64) rid=linux-arm64 ;;
+        *) echo "Unsupported ONNX Runtime architecture" >&2; exit 1 ;;
+        esac;
+        mkdir -p onnxruntime;
+        unzip -j onnxruntime.nupkg "runtimes/$rid/native/*.so" -d onnxruntime;
+        ln -s libonnxruntime.so onnxruntime/libonnxruntime.so.1
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --locked
       - install -Dm755 target/release/zapfast /app/bin/zapfast
+      - install -Dm755 onnxruntime/libonnxruntime.so /app/lib/libonnxruntime.so
+      - install -Dm755 onnxruntime/libonnxruntime_providers_shared.so /app/lib/libonnxruntime_providers_shared.so
+      - ln -s libonnxruntime.so /app/lib/libonnxruntime.so.1
+      - mkdir -p /app/share/licenses/onnxruntime
+      - unzip -j onnxruntime.nupkg LICENSE ThirdPartyNotices.txt -d /app/share/licenses/onnxruntime
       - install -Dm644 packaging/applications/*.desktop /app/share/applications/rocks.zapfast.ZapFast.desktop
       - sed -i 's/^Icon=.*$/Icon=rocks.zapfast.ZapFast/;s/^StartupWMClass=zapfast$/StartupWMClass=rocks.zapfast.ZapFast/' /app/share/applications/rocks.zapfast.ZapFast.desktop
       - install -Dm644 packaging/icons/zapfast.svg /app/share/icons/hicolor/scalable/apps/rocks.zapfast.ZapFast.svg
@@ -72,6 +85,6 @@ modules:
       # Every crate the lockfile names, for the offline build; flathub.sh
       # writes it with flatpak-cargo-generator.
       - cargo-sources.json
-      # The exact CPU runtime archives and SHA-256 hashes from ort-sys rc.15.
-      # Nix consumes the same Linux pins. No model weights are bundled.
+      # Microsoft's official NuGet package, pinned to the ort-sys ABI version.
+      # Nix consumes the same registry source/hash. No model weights bundled.
       - onnxruntime-sources.json
