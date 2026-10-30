@@ -1666,7 +1666,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 };
                                 let wrap = ui.available_width();
                                 ui.ctx().data_mut(|data| data.insert_temp(wrap_id, wrap));
-                                let output = egui::TextEdit::multiline(&mut app.composer)
+                                let selection_before = egui::TextEdit::load_state(ui.ctx(), id)
+                                    .and_then(|state| state.cursor.char_range())
+                                    .filter(|range| !range.is_empty());
+                                let mut output = egui::TextEdit::multiline(&mut app.composer)
                                     .id(id)
                                     .frame(Frame::NONE)
                                     .margin(Margin::ZERO)
@@ -1697,6 +1700,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     })
                                     .layouter(&mut layouter)
                                     .show(ui);
+                                // egui moves the caret on any pointer press, including a
+                                // secondary click. Keep the selection the menu acts on.
+                                if ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Secondary))
+                                    && output.response.response.contains_pointer()
+                                    && let Some(range) = selection_before
+                                {
+                                    output.state.cursor.set_char_range(Some(range));
+                                    output.cursor_range = Some(range);
+                                    egui::TextEdit::store_state(ui.ctx(), id, output.state.clone());
+                                }
                                 for (start, length, cluster) in &clusters {
                                     let Some(bounds) = crate::bidi::char_bounds(
                                         &output.galley,
@@ -1743,6 +1756,26 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                                 let response = output.response.response.clone().tab_stop(Stop::Composer);
                                 ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Message"));
+                                response.context_menu(|ui| {
+                                    use crate::model::ComposerFormat;
+                                    let range = output.state.cursor.char_range().map(|range| range.as_sorted_char_range());
+                                    let selected = range.as_ref().is_some_and(|range| !range.is_empty());
+                                    ui.add_enabled_ui(selected, |ui| {
+                                        for (format, label) in [
+                                            (ComposerFormat::Bold, crate::i18n::gettext(app.locale, "Bold")),
+                                            (ComposerFormat::Italic, crate::i18n::gettext(app.locale, "Italic")),
+                                            (ComposerFormat::Strikethrough, crate::i18n::gettext(app.locale, "Strikethrough")),
+                                            (ComposerFormat::Monospace, crate::i18n::gettext(app.locale, "Monospace")),
+                                        ] {
+                                            if ui.button(label).clicked() {
+                                                if let Some(range) = &range {
+                                                    app.actions.push(Action::FormatComposer { format, start: range.start.0, end: range.end.0 });
+                                                }
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                });
                                 if response.changed() {
                                     app.actions.push(Action::Composing {
                                         chat: chat.id.clone(),
