@@ -91,11 +91,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         window_chrome(app, ui);
         return;
     }
-    // Where the headers share the top edge with the window's buttons, the
-    // banner goes under the open chat's header instead.
-    if !theme::chrome_in_headers(ctx) {
-        banner(app, ui);
-    }
     let narrow = narrow(ctx);
     let list_only = narrow && list_pane_only(app);
     let view = narrow.then_some(if list_only {
@@ -187,7 +182,10 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 Page::Chats => conversation::show(app, ui),
                 // The open chat stays beside the call history.
                 Page::Calls if app.current_chat().is_some() => conversation::show(app, ui),
-                Page::Calls => calls::show(app, ui),
+                Page::Calls => {
+                    banner(app, ui);
+                    calls::show(app, ui);
+                }
                 Page::Wallpaper => settings::wallpaper_show(app, ui),
             }
         });
