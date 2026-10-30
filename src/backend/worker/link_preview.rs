@@ -214,6 +214,38 @@ fn entity(name: &str) -> Option<char> {
         "quot" => Some('"'),
         "apos" => Some('\''),
         "nbsp" => Some('\u{a0}'),
+        "ndash" => Some('\u{2013}'),
+        "mdash" => Some('\u{2014}'),
+        "hellip" => Some('\u{2026}'),
+        "lsquo" => Some('\u{2018}'),
+        "rsquo" => Some('\u{2019}'),
+        "ldquo" => Some('\u{201c}'),
+        "rdquo" => Some('\u{201d}'),
+        "laquo" => Some('\u{ab}'),
+        "raquo" => Some('\u{bb}'),
+        "middot" => Some('\u{b7}'),
+        "bull" => Some('\u{2022}'),
+        "copy" => Some('\u{a9}'),
+        "reg" => Some('\u{ae}'),
+        "trade" => Some('\u{2122}'),
+        "euro" => Some('\u{20ac}'),
+        "pound" => Some('\u{a3}'),
+        "yen" => Some('\u{a5}'),
+        "deg" => Some('\u{b0}'),
+        "times" => Some('\u{d7}'),
+        "eacute" => Some('\u{e9}'),
+        "egrave" => Some('\u{e8}'),
+        "aacute" => Some('\u{e1}'),
+        "agrave" => Some('\u{e0}'),
+        "uuml" => Some('\u{fc}'),
+        "ouml" => Some('\u{f6}'),
+        "auml" => Some('\u{e4}'),
+        "Uuml" => Some('\u{dc}'),
+        "Ouml" => Some('\u{d6}'),
+        "Auml" => Some('\u{c4}'),
+        "szlig" => Some('\u{df}'),
+        "ccedil" => Some('\u{e7}'),
+        "ntilde" => Some('\u{f1}'),
         _ => {
             let digits = name.strip_prefix('#')?;
             let code = match digits.strip_prefix(['x', 'X']) {
@@ -322,7 +354,13 @@ pub(super) fn thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     } else {
         image
     };
-    let rgb = image.to_rgb8();
+    // Transparent areas would turn black as plain RGB: lay them on white.
+    let mut rgb = image::RgbImage::new(image.width(), image.height());
+    for (x, y, pixel) in image.to_rgba8().enumerate_pixels() {
+        let [r, g, b, a] = pixel.0;
+        let over = |c: u8| ((u16::from(c) * u16::from(a) + 255 * (255 - u16::from(a))) / 255) as u8;
+        rgb.put_pixel(x, y, image::Rgb([over(r), over(g), over(b)]));
+    }
     let mut out = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
         .encode(
@@ -484,6 +522,15 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    #[test]
+    fn common_named_entities_decode() {
+        assert_eq!(
+            decode("Caf&eacute; &ndash; M&Uuml;ller&hellip; &copy; 2026 &Auml; &auml;"),
+            "Caf\u{e9} \u{2013} M\u{dc}ller\u{2026} \u{a9} 2026 \u{c4} \u{e4}"
+        );
+        assert_eq!(decode("&nosuch; &AMP;"), "&nosuch; &AMP;");
+    }
 
     #[test]
     fn socks_proxies_resolve_names_remotely() {
@@ -696,6 +743,16 @@ mod tests {
     }
 
     #[test]
+    fn thumbnail_lays_transparency_on_white() {
+        let clear = image::RgbaImage::from_pixel(100, 100, image::Rgba([0, 0, 0, 0]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        clear.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let out = thumbnail(png.get_ref()).unwrap();
+        let pixel = image::load_from_memory(&out).unwrap().to_rgb8()[(50, 50)];
+        assert!(pixel.0.iter().all(|&c| c > 240), "{pixel:?}");
+    }
+
+    #[test]
     fn thumbnail_rejects_garbage_and_pixels() {
         assert_eq!(thumbnail(b"not an image"), None);
         assert_eq!(thumbnail(&png(1, 1)), None);
@@ -711,6 +768,13 @@ mod tests {
                     .expect("refused before any connection");
             assert!(result.is_none(), "{url}");
         }
+    }
+
+    #[tokio::test]
+    async fn resolver_refuses_localhost() {
+        use reqwest::dns::Resolve;
+        let result = GuardedResolver.resolve("localhost".parse().unwrap()).await;
+        assert!(result.is_err());
     }
 
     #[test]
