@@ -1898,6 +1898,7 @@ fn custom_titlebar_switch(ui: &mut egui::Ui, app: &mut App) {
     }
 }
 
+/// Maps quality/memory trade-offs to literal gettext calls for extraction.
 fn transcription_model_description(
     locale: Locale,
     model: crate::transcribe::Model,
@@ -1920,6 +1921,8 @@ fn transcription_model_description(
     }
 }
 
+/// Draws model choice and public preparation progress; changes become actions
+/// rather than downloads or state mutations inside the view.
 fn transcription_model(ui: &mut egui::Ui, app: &mut App) {
     use crate::i18n::gettext;
     use crate::transcribe::{Model, State};

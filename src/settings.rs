@@ -978,6 +978,8 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Missing fields stay opted out while explicit settings and model choices
+    /// survive JSON round trips, including a previously saved opt-in.
     fn transcription_defaults_to_v3_and_remembers_the_selected_model() {
         let previous: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(

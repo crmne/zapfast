@@ -28,6 +28,7 @@ pub enum State {
 }
 
 impl State {
+    /// Whether preparation is queued or actively checking, downloading or loading.
     pub fn busy(&self) -> bool {
         matches!(
             self,
@@ -89,6 +90,8 @@ struct Job {
     reply: mpsc::SyncSender<Result<String, Error>>,
 }
 
+/// Serializes account requests onto the process-wide worker and waits off the UI
+/// thread. Channel failure is reported without exposing paths or audio data.
 fn submit(
     model: Model,
     audio: Option<PathBuf>,
@@ -170,6 +173,7 @@ fn worker(receiver: mpsc::Receiver<Job>) {
     }
 }
 
+/// Rejects cancelled work before another download, model load or audio chunk.
 fn check_cancel(cancel: &AtomicBool) -> Result<(), Error> {
     if cancel.load(Ordering::Relaxed) {
         Err(Error::Cancelled)
@@ -178,6 +182,8 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), Error> {
     }
 }
 
+/// Reuses only the selected model/cache pair, then decodes the downloaded Opus
+/// entirely in memory. Cancellation is checked before publishing any text.
 fn run(job: &Job, loaded: &mut Option<Loaded>) -> Result<String, Error> {
     check_cancel(&job.cancel)?;
     if loaded
@@ -264,6 +270,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Pins the process-wide context across shared users and idle eviction.
     fn the_runtime_environment_outlives_its_model_sessions() {
         use ort::AsPointer;
 
@@ -278,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures chunk boundaries neither lose samples nor exceed the work budget.
     fn chunking_preserves_every_sample_and_bounds_the_work() {
         let samples = vec![0.5; crate::voice::RATE as usize * 68];
         let pieces = chunks(&samples, crate::voice::RATE);
@@ -294,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    /// A cancelled job must touch neither the fixture path nor the model cache.
     fn cancellation_stops_before_loading_or_reading_audio() {
         let root = tempfile::tempdir().unwrap();
         let job = Job {

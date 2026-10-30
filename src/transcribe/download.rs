@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use super::catalog::Asset;
 use super::{Error, Model, State};
 
+/// Verifies the selected model's cache and installs missing assets over the
+/// proxy-aware HTTPS client. All filesystem and network work stays off the UI.
 pub(super) fn ensure(
     model: Model,
     root: &Path,
@@ -80,6 +82,7 @@ pub(super) fn ensure(
     Ok(directory)
 }
 
+/// Builds a model error from a fixed diagnostic, never a URL or private path.
 fn failed(message: &str) -> Error {
     Error::Model(message.to_owned())
 }
@@ -115,6 +118,8 @@ struct Body {
 }
 
 impl Read for Body {
+    /// Adapts asynchronous response chunks to the installer's bounded reads,
+    /// retaining cancellation during stalled network operations.
     fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
         if output.is_empty() {
             return Ok(0);
@@ -135,6 +140,7 @@ impl Read for Body {
     }
 }
 
+/// Stops the installer between file/hash operations when the reader pauses.
 fn cancelled(cancel: &AtomicBool) -> Result<(), Error> {
     if cancel.load(Ordering::Relaxed) {
         Err(Error::Cancelled)
@@ -167,6 +173,8 @@ fn verified(path: &Path, asset: &Asset, cancel: &AtomicBool) -> Result<bool, Err
     Ok(crate::settings::hex(&sha.finalize()) == asset.sha256)
 }
 
+/// Keeps verified files, streams each missing asset to a private partial file,
+/// and publishes it only after size/hash validation and a durable write.
 fn install_files(
     assets: &[Asset],
     directory: &Path,
@@ -262,6 +270,7 @@ fn install_files(
 struct Pending(PathBuf);
 
 impl Drop for Pending {
+    /// Removes only this install attempt's partial file on every exit path.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
@@ -281,6 +290,7 @@ mod tests {
     };
 
     #[test]
+    /// A pending connection must stop without waiting for the server timeout.
     fn cancellation_interrupts_a_pending_network_operation() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -298,6 +308,7 @@ mod tests {
     }
 
     #[test]
+    /// Constructs timeout-bearing futures only after entering Tokio's reactor.
     fn network_futures_are_created_inside_the_reactor() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -314,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    /// A valid cached asset must cause no network request.
     fn a_verified_file_is_reused_without_a_request() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join(FIXTURE.local), b"hello").unwrap();
@@ -328,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    /// Rejects wrong hashes and both size mismatches, cleaning every partial file.
     fn corrupt_and_oversized_files_never_become_model_inputs() {
         for bytes in [
             b"other".as_slice(),
@@ -349,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    /// Cancelling after fetch starts leaves no partially installed model input.
     fn a_cancelled_download_keeps_no_partial_file() {
         let root = tempfile::tempdir().unwrap();
         let cancel = AtomicBool::new(false);
@@ -361,6 +375,7 @@ mod tests {
     }
 
     #[test]
+    /// Matching length alone cannot make a corrupted cache entry reusable.
     fn a_same_size_corrupt_cache_is_repaired() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(FIXTURE.local);

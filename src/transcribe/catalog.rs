@@ -16,6 +16,7 @@ pub enum Model {
 impl Model {
     pub const ALL: [Self; 3] = [Self::ParakeetV3, Self::ParakeetV3Int8, Self::ParakeetUltra];
 
+    /// Stable model name shown in the picker, including weight precision.
     pub fn label(self) -> &'static str {
         match self {
             Self::ParakeetV3 => "Parakeet v3 · FP32",
@@ -24,6 +25,7 @@ impl Model {
         }
     }
 
+    /// Filesystem-safe identity separating each model's cache and provenance.
     pub fn key(self) -> &'static str {
         match self {
             Self::ParakeetV3 => "parakeet-v3-fp32",
@@ -32,6 +34,7 @@ impl Model {
         }
     }
 
+    /// Publisher repository containing the verified model assets, not code.
     pub fn repository(self) -> &'static str {
         match self {
             Self::ParakeetV3 | Self::ParakeetV3Int8 => "istupakov/parakeet-tdt-0.6b-v3-onnx",
@@ -39,6 +42,7 @@ impl Model {
         }
     }
 
+    /// Immutable publisher revision covered by this catalog's asset hashes.
     pub fn revision(self) -> &'static str {
         match self {
             Self::ParakeetV3 | Self::ParakeetV3Int8 => "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
@@ -52,10 +56,12 @@ impl Model {
         format!("{}/{}/native-1", self.key(), &self.revision()[..8])
     }
 
+    /// Full verified download size shown before the reader opts in.
     pub fn total_bytes(self) -> u64 {
         self.assets().iter().map(|asset| asset.bytes).sum()
     }
 
+    /// Complete native-engine input set; no unlisted file is downloaded.
     pub(super) fn assets(self) -> &'static [Asset] {
         match self {
             Self::ParakeetV3 => V3,
@@ -64,10 +70,12 @@ impl Model {
         }
     }
 
+    /// Revision-specific public cache, outside every account's private folders.
     pub(super) fn directory(self, root: &std::path::Path) -> std::path::PathBuf {
         root.join(self.key()).join(self.revision())
     }
 
+    /// Direct HTTPS asset URL pinned to the catalog's publisher commit.
     pub(super) fn url(self, asset: &Asset) -> String {
         format!(
             "https://huggingface.co/{}/resolve/{}/{}",
@@ -169,6 +177,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Requires immutable commits, verified non-code assets and distinct caches.
     fn the_catalog_is_pinned_and_never_runs_remote_code() {
         for model in Model::ALL {
             assert_eq!(model.revision().len(), 40);

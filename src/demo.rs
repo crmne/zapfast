@@ -22843,6 +22843,7 @@ mod bubble_detail_tests {
     }
 
     #[test]
+    /// Model cost/source and explicit preparation are visible before opt-in.
     fn transcription_settings_explain_the_download_before_opt_in() {
         let mut app = app();
         let ctx = egui::Context::default();
@@ -22868,6 +22869,7 @@ mod bubble_detail_tests {
     }
 
     #[test]
+    /// Synthetic download progress exposes its model, source and pause action.
     fn transcription_settings_show_the_model_and_download_progress() {
         let mut app = app();
         let ctx = egui::Context::default();

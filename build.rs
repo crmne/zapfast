@@ -1,5 +1,6 @@
 //! Compiles translations and embeds Windows icon and version information.
 
+/// Compiles bundled catalogs and adds only the current platform's link/resources.
 fn main() {
     fastframe_i18n::build::compile_catalogs("assets/i18n");
     link_macos_availability_runtime();

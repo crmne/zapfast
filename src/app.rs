@@ -3299,6 +3299,8 @@ impl App {
         }
     }
 
+    /// Applies one event to its originating account. Only live-account events
+    /// may alter process-wide navigation, dialogs or transcription requests.
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
             Event::StorageStats {
@@ -10456,6 +10458,8 @@ impl App {
         self.toast_error(format!("Could not record: {error}"));
     }
 
+    /// Draws the current account, then applies its actions and schedules only
+    /// the settled viewport's automatic work. Locked content is never drawn.
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
@@ -11651,6 +11655,7 @@ mod tests {
     }
 
     #[test]
+    /// A model switch routes the new choice without deleting archived words.
     fn changing_the_transcription_model_preserves_saved_words_and_routes_the_choice() {
         let mut app = app();
         app.settings.transcribe_voice_notes = true;
@@ -11693,6 +11698,7 @@ mod tests {
     }
 
     #[test]
+    /// A passive choice cannot opt in; the explicit prepare action still can.
     fn choosing_a_model_while_transcription_is_off_does_not_prepare_or_enable_it() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -11739,6 +11745,8 @@ mod tests {
     }
 
     #[test]
+    /// The menu's post-draw navigation must not cancel a one-message retry or
+    /// enable automatic work, and another account cannot finish that retry.
     fn a_manual_transcription_from_a_starred_row_survives_the_opening_frame() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
@@ -11820,6 +11828,7 @@ mod tests {
     }
 
     #[test]
+    /// Every view/privacy departure cancels the manual request's account work.
     fn leaving_or_locking_the_chat_cancels_a_manual_transcription() {
         for departure in ["chat", "page", "window", "lock", "folder", "account"] {
             let mut app = app();
@@ -11862,6 +11871,7 @@ mod tests {
     }
 
     #[test]
+    /// Viewport scheduling uses in-memory paths, leaving filesystem I/O off UI.
     fn automatic_transcription_leaves_file_checks_to_the_worker() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
