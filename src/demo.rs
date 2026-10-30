@@ -13123,7 +13123,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_navigation_overlays_the_photo_on_hover() {
+    fn preview_navigation_stays_at_the_stage_edges() {
         fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
             fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
                 match shape {
@@ -13202,8 +13202,8 @@ mod tests {
             vec![egui::Event::PointerMoved(beside)],
         );
         assert!(
-            controls(&hidden).is_empty(),
-            "beside the photo hides the arrows"
+            controls(&hidden).len() == 2,
+            "the stage beside the photo also shows the arrows"
         );
         frame_sized(
             &mut app,
@@ -13215,12 +13215,13 @@ mod tests {
         let buttons = controls(&shown);
         assert_eq!(buttons.len(), 2);
         assert!(
-            buttons.iter().all(|button| picture.contains_rect(*button)),
-            "the arrows sit on the photo"
+            buttons[0].left() < picture.left() && buttons[1].right() > picture.right(),
+            "the arrows sit at the stage edges, outside this photo"
         );
         assert!(buttons[0].center().x < picture.center().x);
         assert!(buttons[1].center().x > picture.center().x);
 
+        let original_buttons = buttons.clone();
         let next = buttons[1].center();
         frame_sized(&mut app, &ctx, 780.0, vec![egui::Event::PointerMoved(next)]);
         let hovered = frame_sized(&mut app, &ctx, 780.0, vec![]);
@@ -13240,7 +13241,7 @@ mod tests {
             initial
         );
         assert!(app.image_preview.as_ref().unwrap().is_fit());
-        let other = preview_frame(
+        preview_frame(
             &mut app,
             &ctx,
             vec![egui::Event::PointerMoved(picture.center())],
@@ -13248,9 +13249,9 @@ mod tests {
         let shown = frame_sized(&mut app, &ctx, 780.0, vec![]);
         let buttons = controls(&shown);
         assert_eq!(buttons.len(), 2);
-        assert!(
-            buttons.iter().all(|button| other.contains_rect(*button)),
-            "the arrows follow the photo on screen"
+        assert_eq!(
+            buttons, original_buttons,
+            "changing photo preserves button positions"
         );
         let previous = buttons[0].center();
         frame_sized(
