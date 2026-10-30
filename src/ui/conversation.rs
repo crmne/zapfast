@@ -1701,9 +1701,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     .layouter(&mut layouter)
                                     .show(ui);
                                 // egui moves the caret on any pointer press, including a
-                                // secondary click. Keep the selection the menu acts on.
-                                if ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Secondary))
-                                    && output.response.response.contains_pointer()
+                                // secondary click. A modal menu also disables the field.
+                                // Keep the selection the menu acts on until it closes.
+                                if (egui::Popup::is_id_open(ui.ctx(), id.with("popup"))
+                                    || (ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Secondary))
+                                        && output.response.response.contains_pointer()))
                                     && let Some(range) = selection_before
                                 {
                                     output.state.cursor.set_char_range(Some(range));
@@ -1756,7 +1758,22 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 }
                                 let response = output.response.response.clone().tab_stop(Stop::Composer);
                                 ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Message"));
-                                response.context_menu(|ui| {
+                                let keyboard_menu = response.has_focus()
+                                    && ui.input_mut(|input| super::keys::take_exact(input, Modifiers::SHIFT, Key::F10));
+                                let menu_id = egui::Popup::default_response_id(&response);
+                                // The first popup pass only measures its items.
+                                let focus_pending_id = menu_id.with("focus-pending");
+                                if keyboard_menu {
+                                    egui::Popup::open_id(ui.ctx(), menu_id);
+                                    ui.ctx().data_mut(|data| data.insert_temp(focus_pending_id, true));
+                                }
+                                let mut menu = egui::Popup::context_menu(&response);
+                                // Keyboard opening has no saved pointer position.
+                                if !response.secondary_clicked() && egui::Popup::position_of_id(ui.ctx(), menu_id).is_none() {
+                                    menu = menu.at_position(response.rect.left_bottom());
+                                }
+                                let mut first_item = None;
+                                let shown_menu = menu.show(|ui| {
                                     use crate::model::ComposerFormat;
                                     let range = output.state.cursor.char_range().map(|range| range.as_sorted_char_range());
                                     let selected = range.as_ref().is_some_and(|range| !range.is_empty());
@@ -1767,7 +1784,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                             (ComposerFormat::Strikethrough, crate::i18n::gettext(app.locale, "Strikethrough")),
                                             (ComposerFormat::Monospace, crate::i18n::gettext(app.locale, "Monospace")),
                                         ] {
-                                            if ui.button(label).clicked() {
+                                            let button = ui.button(label);
+                                            if format == ComposerFormat::Bold && ui.is_visible() {
+                                                first_item = Some(button.id);
+                                            }
+                                            if button.clicked() {
                                                 if let Some(range) = &range {
                                                     app.actions.push(Action::FormatComposer { format, start: range.start.0, end: range.end.0 });
                                                 }
@@ -1776,6 +1797,22 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                         }
                                     });
                                 });
+                                let focus_pending = ui.ctx().data(|data| data.get_temp::<bool>(focus_pending_id));
+                                if let Some(menu) = shown_menu {
+                                    if focus_pending.is_some() {
+                                        ui.memory_mut(|memory| memory.set_modal_layer(menu.response.layer_id));
+                                    }
+                                    if focus_pending == Some(true) && let Some(first) = first_item {
+                                        ui.memory_mut(|memory| memory.request_focus(first));
+                                        ui.ctx().data_mut(|data| data.insert_temp(focus_pending_id, false));
+                                    }
+                                }
+                                if !egui::Popup::is_id_open(ui.ctx(), menu_id) && focus_pending.is_some() {
+                                    ui.ctx().data_mut(|data| data.remove::<bool>(focus_pending_id));
+                                    if !ui.input(|input| input.pointer.any_pressed() || input.pointer.any_click()) {
+                                        response.request_focus();
+                                    }
+                                }
                                 if response.changed() {
                                     app.actions.push(Action::Composing {
                                         chat: chat.id.clone(),
