@@ -33,6 +33,18 @@ the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
 including the stickers used on the phone.
 
+When you type a web link into the composer and pause, ZapFast fetches that
+page and its picture directly from the site, through your proxy if one is set,
+and shows a preview card above the message box, for the first link. The card
+is sent with the message. ZapFast identifies itself to the site as ZapFast, and
+some sites give no preview to apps they do not recognise, in which case the
+message goes out with a plain link. ZapFast never looks up or contacts
+addresses on this computer or your local network itself, and refuses links that
+name one outright. With a proxy set, the proxy looks up the name instead. Click
+the cross on the card to send the link without a preview. If your phone has
+**Privacy > Advanced > Disable link previews** on, ZapFast makes no previews
+either.
+
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it. When
@@ -751,18 +763,6 @@ description, use your phone.
 
 A phone number in a message is a link: clicking it offers to start a chat
 with that number or to copy the number as it is written.
-
-When you type a web link into the composer and pause, ZapFast fetches that
-page and its picture directly from the site, through your proxy if one is set,
-and shows a preview card above the message box. The card is sent with the
-message. ZapFast identifies itself to the site as ZapFast, and some sites give
-no preview to apps they do not recognise, in which case the message goes out
-with a plain link. ZapFast never looks up or contacts addresses on this
-computer or your local network itself, and refuses links that name one
-outright. With a proxy set, the proxy looks up the name instead. Click the
-cross on the card to send the link without a preview. If your phone has
-**Privacy > Advanced > Disable link previews** on, ZapFast
-makes no previews either.
 
 ZapFast registers the `whatsapp:` and `wa:` schemes, so a link that names a
 chat opens that chat here. This works from a terminal, a script, or anything
