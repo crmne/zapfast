@@ -3879,6 +3879,11 @@ impl Worker {
                 let _ = self.empty_chat(&chat, through, update.delete_media);
             }
             E::DeleteMessageForMeUpdate(update) => {
+                log::info!(
+                    "message removal: phone deleted a message for me, from_me={} full_sync={}",
+                    update.from_me,
+                    update.from_full_sync
+                );
                 self.canonical_sync_chat(&update.chat_jid).await;
                 self.delete_message_here(&update.chat_jid.to_string(), &update.message_id);
             }
@@ -10235,16 +10240,23 @@ impl Worker {
             ));
             return;
         }
-        // Whether the info panel listed it, read before the row goes.
-        let listed = aliases.iter().any(|alias| {
-            self.archive
-                .message(alias, id)
-                .ok()
-                .flatten()
-                .is_some_and(|old| old.content.listable())
-        });
+        // Whether the info panel listed it, and whether it was already deleted
+        // for everyone, read before the row goes.
+        let mut listed = false;
+        let mut revoked = false;
+        for alias in &aliases {
+            if let Ok(Some(old)) = self.archive.message(alias, id) {
+                listed |= old.content.listable();
+                revoked |= matches!(old.content, Content::Revoked);
+            }
+        }
         match self.archive.delete_message_aliases(&aliases, id) {
-            Ok(_) => {
+            Ok(found) => {
+                // No ids or contents: enough to tell a deletion that named no
+                // copy here from one that never arrived.
+                log::info!(
+                    "message removal: removed here, found={found} deleted_for_everyone={revoked}"
+                );
                 for chat in aliases {
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
