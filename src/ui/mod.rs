@@ -1,6 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+mod attachment_preview;
 pub mod call;
 pub mod calls;
 pub mod chats;

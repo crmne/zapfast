@@ -11825,6 +11825,183 @@ mod tests {
         }
     }
 
+    fn click_review_button(app: &mut App, ctx: &egui::Context, label: &str) {
+        let at = accessible_nodes(app, ctx, Vec::new())
+            .into_iter()
+            .find(|(text, role, _)| text == label && *role == egui::accesskit::Role::Button)
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .2;
+        frame_sized(app, ctx, 780.0, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            frame_sized(
+                app,
+                ctx,
+                780.0,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        render(app, ctx);
+    }
+
+    #[test]
+    fn attachment_review_switches_files_preserves_cropping_and_cancels_without_losing_text() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        app.backend.record_demo_commands();
+        render(&mut app, &ctx);
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(
+            picture_rect(&shapes).area() > 100_000.0,
+            "the selected picture is large"
+        );
+        assert!(
+            app.copy_rows.lock().unwrap().is_empty(),
+            "the transcript is replaced"
+        );
+        assert_eq!(app.composer, "Look at these");
+        let original = app.pending[0].id;
+        let photo = app.pending[1].id;
+        click_review_button(&mut app, &ctx, "Add attachments");
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::PickFiles { .. }))
+        );
+        let name = match &app.pending[1].item {
+            crate::app::Pending::File(path) => {
+                path.file_name().unwrap().to_string_lossy().into_owned()
+            }
+            _ => unreachable!(),
+        };
+        click_review_button(&mut app, &ctx, &format!("Attachment 2: {name}"));
+        click_review_button(&mut app, &ctx, "Edit picture");
+        assert_eq!(
+            app.picture_inspecting,
+            Some(photo),
+            "editing follows the selected file"
+        );
+        app.actions.push(crate::model::Action::CancelPictureEdit);
+        render(&mut app, &ctx);
+        click_review_button(&mut app, &ctx, &format!("Attachment 3: {name}"));
+        let labels = accessible_labels(&mut app, &ctx);
+        assert!(
+            !labels.iter().any(|label| label == "Edit picture"),
+            "a document is never cropped"
+        );
+        click_review_button(&mut app, &ctx, "Remove attachment");
+        assert_eq!(app.pending.len(), 3);
+        assert_eq!(
+            app.pending[0].id, original,
+            "removing the selected document keeps the other files"
+        );
+        assert_eq!(app.composer, "Look at these");
+        click_review_button(&mut app, &ctx, "Discard attachments");
+        assert!(app.pending.is_empty());
+        assert_eq!(
+            app.composer, "Look at these",
+            "cancelling keeps the typed draft"
+        );
+        render(&mut app, &ctx);
+        assert!(
+            !app.copy_rows.lock().unwrap().is_empty(),
+            "the transcript returns"
+        );
+        app.stage(crate::app::Pending::Picture {
+            width: 2,
+            height: 2,
+            rgba: std::sync::Arc::new(vec![200; 16]),
+            texture: None,
+        });
+        render(&mut app, &ctx);
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.pending.is_empty(), "Escape cancels the review too");
+        assert_eq!(app.composer, "Look at these");
+    }
+
+    #[test]
+    fn attachment_review_controls_join_the_keyboard_cycle() {
+        use crate::ui::focus::{self, Stop};
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        render(&mut app, &ctx);
+        let stops = [
+            Stop::ReviewFile(1),
+            Stop::ReviewAdd,
+            Stop::ReviewEdit,
+            Stop::ReviewClose,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..60 {
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+            );
+            if let Some(id) = ctx.memory(|memory| memory.focused()) {
+                seen.insert(id);
+            }
+        }
+        for stop in stops {
+            assert!(
+                seen.contains(&focus::control(&ctx, stop).expect("review control")),
+                "Tab missed {stop:?}"
+            );
+        }
+        let close = focus::control(&ctx, Stop::ReviewClose).unwrap();
+        ctx.memory_mut(|memory| memory.request_focus(close));
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![key(egui::Key::Space, egui::Modifiers::NONE)],
+        );
+        assert!(
+            app.pending.is_empty(),
+            "Space activates the focused close control"
+        );
+    }
+
+    #[test]
+    fn attachment_review_send_button_uses_the_existing_caption_send_path() {
+        use crate::backend::Command;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        app.pending.truncate(2);
+        app.backend.record_demo_commands();
+        render(&mut app, &ctx);
+        app.backend.take_demo_commands();
+        click_review_button(&mut app, &ctx, "Send");
+        let commands = app.backend.take_demo_commands();
+        assert!(commands.iter().any(|command| matches!(command, Command::SendImage { caption: Some(caption), .. } if caption == "Look at these")));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::SendFiles { .. }))
+        );
+        assert!(app.pending.is_empty());
+        assert!(app.composer.is_empty());
+    }
+
     #[test]
     fn the_send_shortcut_submits_newly_staged_images_and_files_before_message_controls() {
         for image in [false, true] {
@@ -11993,12 +12170,15 @@ mod tests {
                     })
                     .unwrap();
                 assert!(caption.right() <= toggle.left(), "{page} {width}");
-                assert!(toggle.right() <= send.left(), "{page} {width}");
+                assert!(pill.contains_rect(toggle), "{page} {width}");
                 assert!(
-                    pill.contains_rect(toggle) && pill.contains_rect(send),
-                    "{page} {width}"
+                    send.top() >= pill.bottom(),
+                    "Send is below the caption: {page} {width}"
                 );
-                assert!((toggle.center().y - send.center().y).abs() < 1.0);
+                assert!(
+                    ctx.content_rect().contains_rect(send),
+                    "Send fits: {page} {width}"
+                );
             }
         }
     }
