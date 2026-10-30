@@ -2586,19 +2586,36 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let cursor_id = cursor.map(|index| conversation.messages[index].id.clone());
     let typing = app.typing_in(&chat.id);
     let mut avatars = HashMap::new();
+    let mut senders = HashSet::new();
     if shows_sender_pictures(chat) {
-        let mut senders: HashSet<String> = conversation
-            .messages
-            .iter()
-            .filter(|message| !message.from_me)
-            .map(|message| message.sender.clone())
-            .collect();
+        senders.extend(
+            conversation
+                .messages
+                .iter()
+                .filter(|message| !message.from_me)
+                .map(|message| message.sender.clone()),
+        );
         // A typing participant may not have a visible message.
         senders.extend(typing.iter().map(|(id, _)| id.clone()));
-        for sender in senders {
-            let picture = app.avatar(&sender);
-            avatars.insert(sender, picture);
-        }
+    }
+    // Reaction-only participants and our own picture appear in the popup in
+    // direct chats too, where message-sender avatars are not drawn.
+    senders.extend(
+        conversation
+            .messages
+            .iter()
+            .flat_map(|message| &message.reactions)
+            .map(|reaction| {
+                if reaction.from_me {
+                    app.me.clone().unwrap_or_else(|| reaction.sender.clone())
+                } else {
+                    reaction.sender.clone()
+                }
+            }),
+    );
+    for sender in senders {
+        let picture = app.avatar(&sender);
+        avatars.insert(sender, picture);
     }
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);

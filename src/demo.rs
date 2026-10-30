@@ -13130,10 +13130,30 @@ mod tests {
         app.attach(&ctx);
         render(&mut app, &ctx);
         let chat = app.open_chat.clone().unwrap();
+        let reactor = "15550009999@s.whatsapp.net";
+        app.conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .iter_mut()
+            .find(|message| message.id == "ada-photo")
+            .unwrap()
+            .reactions
+            .push(crate::model::Reaction {
+                sender: reactor.into(),
+                from_me: false,
+                emoji: "👍".into(),
+            });
+        app.me = Some("15550000000@s.whatsapp.net".into());
+
         let id = "ada-photo";
         let bubble = crate::ui::conversation::bubble_id(&chat, id);
         for _ in 0..4 {
             render(&mut app, &ctx);
+        }
+        let requests = app.backend.take_demo_commands();
+        for expected in [reactor, "15550000000@s.whatsapp.net"] {
+            assert!(requests.iter().any(|command| matches!(command, crate::backend::Command::FetchAvatar { id, full: false } if id == expected)), "missing avatar request for {expected}");
         }
         let response = ctx
             .read_response(bubble.with("reactions"))
