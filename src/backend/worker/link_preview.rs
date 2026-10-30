@@ -2,7 +2,20 @@
 //! refuse hosts that point at the reader's own machine or network.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
+use std::time::Duration;
 
+use crate::model::{ComposedPreview, LinkPreview};
+
+const USER_AGENT: &str = concat!("ZapFast/", env!("CARGO_PKG_VERSION"));
+/// Page and picture together.
+const TOTAL_TIME: Duration = Duration::from_secs(5);
+const MAX_PAGE: usize = 512 * 1024;
+const MAX_IMAGE: usize = 2 * 1024 * 1024;
+const MAX_REDIRECTS: usize = 5;
+const THUMB_SIDE: u32 = 300;
+const MIN_SIDE: u32 = 16;
+const JPEG_QUALITY: u8 = 70;
 const TITLE_CHARS: usize = 300;
 const DESCRIPTION_CHARS: usize = 600;
 
@@ -177,7 +190,10 @@ fn decode(text: &str) -> String {
             .and_then(|n| entity(&rest[1..1 + n]).map(|c| (c, n + 2)));
         match decoded {
             Some((c, used)) => {
-                out.push(c);
+                // `&#0;` and the like would put control characters in a title.
+                if !c.is_control() {
+                    out.push(c);
+                }
                 rest = &rest[used..];
             }
             None => {
@@ -229,23 +245,44 @@ pub(super) fn is_local_ip(ip: IpAddr) -> bool {
 }
 
 fn local_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
+    let [a, b, c, _] = ip.octets();
     ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
         || ip.is_unspecified()
+        || ip.is_multicast()
+        // 240.0.0.0/4 reserved, which includes the broadcast address.
+        || a >= 240
         // 100.64.0.0/10, carrier-grade NAT.
         || (a == 100 && b & 0xc0 == 64)
+        // 192.0.0.0/24, protocol assignments.
+        || (a == 192 && b == 0 && c == 0)
+        // 198.18.0.0/15, benchmarking.
+        || (a == 198 && b & 0xfe == 18)
 }
 
 fn local_v6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
+    let seg = ip.segments();
+    let first = seg[0];
+    let embedded = |high: u16, low: u16| {
+        let [a, b] = high.to_be_bytes();
+        let [c, d] = low.to_be_bytes();
+        local_v4(Ipv4Addr::new(a, b, c, d))
+    };
     ip.is_loopback()
         || ip.is_unspecified()
-        // fc00::/7 unique-local and fe80::/10 link-local.
+        // fc00::/7 unique-local, fe80::/10 link-local and fec0::/10 site-local.
         || first & 0xfe00 == 0xfc00
         || first & 0xffc0 == 0xfe80
+        || first & 0xffc0 == 0xfec0
+        // ff00::/8 multicast.
+        || first & 0xff00 == 0xff00
         || ip.to_ipv4_mapped().is_some_and(local_v4)
+        // ::a.b.c.d, the deprecated IPv4-compatible form.
+        || seg[..6] == [0; 6]
+        // 64:ff9b::/96 (NAT64) and 2002::/16 (6to4) reach their embedded address.
+        || (seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] && embedded(seg[6], seg[7]))
+        || (first == 0x2002 && embedded(seg[1], seg[2]))
 }
 
 /// `localhost`, `*.localhost` and `*.local` (mDNS), in any case, with or
@@ -270,6 +307,170 @@ pub(super) fn literal_host_allowed(url: &reqwest::Url) -> bool {
         Ok(ip) => !is_local_ip(ip),
         Err(_) => !is_local_name(host),
     }
+}
+
+/// Shrink a picture to at most 300 px on its long side and encode it as JPEG.
+/// Pictures too small to be worth showing, and anything undecodable, give `None`.
+pub(super) fn thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    if image.width() < MIN_SIDE || image.height() < MIN_SIDE {
+        return None;
+    }
+    // `thumbnail` would also enlarge a small picture.
+    let image = if image.width() > THUMB_SIDE || image.height() > THUMB_SIDE {
+        image.thumbnail(THUMB_SIDE, THUMB_SIDE)
+    } else {
+        image
+    };
+    let rgb = image.to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
+        .encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .ok()?;
+    Some(out)
+}
+
+/// Resolves names itself so that a name pointing at the reader's own network
+/// is refused, and the connection goes to the addresses that were checked.
+struct GuardedResolver;
+
+impl reqwest::dns::Resolve for GuardedResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let found: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((name.as_str(), 0)).await?.collect();
+            if found.is_empty() || found.iter().any(|addr| is_local_ip(addr.ip())) {
+                return Err("the address is not public".into());
+            }
+            Ok(Box::new(found.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// The body up to `limit` bytes, and whether more followed.
+async fn read_body(mut response: reqwest::Response, limit: usize) -> Option<(Vec<u8>, bool)> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        body.extend_from_slice(&chunk);
+        if body.len() > limit {
+            body.truncate(limit);
+            return Some((body, true));
+        }
+    }
+    Some((body, false))
+}
+
+fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS || !literal_host_allowed(attempt.url()) {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .no_proxy();
+    let proxied = if let Some(proxy) = crate::proxy::reqwest_proxy() {
+        builder = builder.proxy(proxy);
+        true
+    } else if let Some(proxy) = url.host_str().and_then(crate::proxy::from_env) {
+        // Only the redacted address is public; one with a password is unusable.
+        let address = proxy.redacted();
+        if address.contains("***") {
+            return None;
+        }
+        builder = builder.proxy(reqwest::Proxy::all(address).ok()?);
+        true
+    } else {
+        false
+    };
+    if !proxied {
+        builder = builder.dns_resolver(Arc::new(GuardedResolver));
+    }
+    builder.build().ok()
+}
+
+/// Read the page at `url` and, if it describes itself, its picture. Only the
+/// linked site is contacted. Gives `None` on any failure or when the page says
+/// nothing; nothing about the link is logged.
+pub(super) async fn fetch(url: String) -> Option<ComposedPreview> {
+    tokio::time::timeout(TOTAL_TIME, fetch_inner(url))
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn fetch_inner(url: String) -> Option<ComposedPreview> {
+    // The preview names the address that was asked for, not where it led.
+    let requested = crate::safety::preview_url(&url)?;
+    let parsed = reqwest::Url::parse(&requested).ok()?;
+    if !literal_host_allowed(&parsed) {
+        return None;
+    }
+    let client = client(&parsed)?;
+
+    let response = client.get(parsed).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let is_html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("text/html")
+        });
+    if !is_html {
+        return None;
+    }
+    let base = response.url().clone();
+    let (bytes, _) = read_body(response, MAX_PAGE).await?;
+    let meta = parse_page(&String::from_utf8_lossy(&bytes), &base);
+    if meta.title.is_none() && meta.description.is_none() && meta.image.is_none() {
+        return None;
+    }
+
+    let thumbnail = match meta.image.as_deref() {
+        Some(image) => fetch_image(&client, image).await,
+        None => None,
+    };
+    Some(ComposedPreview {
+        preview: LinkPreview {
+            url: requested,
+            title: meta.title,
+            description: meta.description,
+        },
+        thumbnail,
+    })
+}
+
+async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
+    let url = reqwest::Url::parse(url).ok()?;
+    // A literal address skips the resolver, so check it here.
+    if !literal_host_allowed(&url) {
+        return None;
+    }
+    let response = client.get(url).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let (bytes, truncated) = read_body(response, MAX_IMAGE).await?;
+    if truncated {
+        return None;
+    }
+    tokio::task::spawn_blocking(move || thumbnail(&bytes))
+        .await
+        .ok()
+        .flatten()
 }
 
 #[cfg(test)]
@@ -333,6 +534,11 @@ mod tests {
             &base(),
         );
         assert_eq!(meta.title.as_deref(), Some("x A <"));
+        let meta = parse_page(
+            r#"<meta property="og:title" content="a&#0;b&#7;c&#x1b;d">"#,
+            &base(),
+        );
+        assert_eq!(meta.title.as_deref(), Some("abcd"));
     }
 
     #[test]
@@ -409,11 +615,79 @@ mod tests {
             "fe80::1",
             "::ffff:192.168.0.1",
             "100.64.0.1",
+            "255.255.255.255",
+            "224.0.0.1",
+            "239.255.255.250",
+            "240.0.0.1",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.255",
+            "ff02::1",
+            "fec0::1",
+            "::192.168.0.1",
+            "::8.8.8.8",
+            "64:ff9b::c0a8:101",
+            "64:ff9b::7f00:1",
+            "2002:c0a8:101::1",
+            "2002:7f00:1::",
         ] {
             assert!(is_local_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
         }
-        for ip in ["1.1.1.1", "2606:4700::1111", "100.128.0.1"] {
+        for ip in [
+            "1.1.1.1",
+            "2606:4700::1111",
+            "100.128.0.1",
+            "198.20.0.1",
+            "192.0.1.1",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
             assert!(!is_local_ip(ip.parse::<IpAddr>().unwrap()), "{ip}");
+        }
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    fn decoded(jpeg: &[u8]) -> (image::ImageFormat, u32, u32) {
+        let format = image::guess_format(jpeg).unwrap();
+        let image = image::load_from_memory(jpeg).unwrap();
+        (format, image.width(), image.height())
+    }
+
+    #[test]
+    fn thumbnail_shrinks_to_300() {
+        let out = thumbnail(&png(1200, 600)).unwrap();
+        assert_eq!(decoded(&out), (image::ImageFormat::Jpeg, 300, 150));
+    }
+
+    #[test]
+    fn thumbnail_keeps_small() {
+        let out = thumbnail(&png(200, 100)).unwrap();
+        assert_eq!(decoded(&out), (image::ImageFormat::Jpeg, 200, 100));
+    }
+
+    #[test]
+    fn thumbnail_rejects_garbage_and_pixels() {
+        assert_eq!(thumbnail(b"not an image"), None);
+        assert_eq!(thumbnail(&png(1, 1)), None);
+        assert_eq!(thumbnail(&png(15, 400)), None);
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_local_without_network() {
+        for url in ["http://127.0.0.1:9/", "http://printer.local/"] {
+            let result =
+                tokio::time::timeout(std::time::Duration::from_millis(100), fetch(url.into()))
+                    .await
+                    .expect("refused before any connection");
+            assert!(result.is_none(), "{url}");
         }
     }
 

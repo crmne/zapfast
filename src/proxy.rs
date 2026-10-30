@@ -313,7 +313,7 @@ fn bypassed(host: &str, no_proxy: &str) -> bool {
     })
 }
 
-fn from_env(host: &str) -> Option<Proxy> {
+pub(crate) fn from_env(host: &str) -> Option<Proxy> {
     let no_proxy = std::env::var("NO_PROXY")
         .or_else(|_| std::env::var("no_proxy"))
         .unwrap_or_default();
