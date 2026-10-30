@@ -1204,6 +1204,36 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 for chat in &chats {
                     let reveal = ui.is_enabled()
                         && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
+                    // A letter matches most chats. Laying every one of them
+                    // out makes the whole window slow while the search is
+                    // open, so a row nothing would show keeps its height and
+                    // nothing else. The row reached with the arrows is always
+                    // laid out, so it can ask to be scrolled to.
+                    if !reveal && offscreen(ui, theme::ROW_HEIGHT) {
+                        // Out of the layout, like the virtualized chat list,
+                        // but still announced: a screen reader keeps reading
+                        // the results as it does everywhere else.
+                        let title = app.chat_title(chat);
+                        ui.push_id(("chat", &chat.id), |ui| {
+                            let (_, placed) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), theme::ROW_HEIGHT),
+                                Sense::click(),
+                            );
+                            placed.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::SelectableLabel,
+                                    ui.is_enabled(),
+                                    unread_announcement(&title, chat),
+                                )
+                            });
+                            // A screen reader can activate the node: open the
+                            // chat as a click on a drawn row does.
+                            if placed.clicked() {
+                                app.actions.push(Action::OpenChat(chat.id.clone()));
+                            }
+                        });
+                        continue;
+                    }
                     let response = ui
                         .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
                         .inner;
@@ -1230,6 +1260,14 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             }
             ui.add_space(8.0);
         });
+}
+
+/// Whether a row of `height` about to be laid out at the cursor lies
+/// entirely outside the viewport.
+fn offscreen(ui: &egui::Ui, height: f32) -> bool {
+    let clip = ui.clip_rect();
+    let top = ui.cursor().min.y;
+    top + height <= clip.top() || top >= clip.bottom()
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {

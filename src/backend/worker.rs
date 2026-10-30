@@ -718,6 +718,51 @@ fn sticker_hash(sha256: Option<&[u8]>, enc_sha256: Option<&[u8]>) -> Option<Stri
     Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// What a scan does with the commands queued behind it.
+struct BehindASearch {
+    /// The newest search typed while the scan ran, dropped when the queue
+    /// ends the worker.
+    pending: Option<String>,
+    /// The other commands, in the order they arrived.
+    run: Vec<Command>,
+    /// A shutdown is waiting behind them.
+    shutdown: bool,
+    /// The account is being removed behind them.
+    removed: bool,
+}
+
+/// Sorts what was queued behind a running scan: the newest search replaces
+/// the older ones, the other commands keep their order, and a shutdown is
+/// reported last so running them cannot be skipped by it. A queue that ends
+/// the worker takes the scan with it, since the window joins it while it
+/// would run.
+fn behind_a_search(queued: Vec<Command>) -> BehindASearch {
+    let mut sorted = BehindASearch {
+        pending: None,
+        run: Vec::new(),
+        shutdown: false,
+        removed: false,
+    };
+    for command in queued {
+        match command {
+            Command::SearchMessages { query } => sorted.pending = Some(query),
+            Command::Shutdown => {
+                sorted.shutdown = true;
+                break;
+            }
+            Command::RemoveAccount => {
+                sorted.removed = true;
+                sorted.run.push(Command::RemoveAccount);
+            }
+            other => sorted.run.push(other),
+        }
+    }
+    if sorted.shutdown || sorted.removed {
+        sorted.pending = None;
+    }
+    sorted
+}
+
 /// Runs the protocol worker, receiving commands and waking the interface for emitted events.
 pub async fn run(
     dirs: AccountDirs,
@@ -956,7 +1001,7 @@ pub async fn run(
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
-    loop {
+    'commands: loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
@@ -969,6 +1014,48 @@ pub async fn run(
             command = inbox.recv() => {
                 match command {
                     Some(Command::Shutdown) | None => break,
+                    Some(Command::SearchMessages { query }) => {
+                        // Scanning the archive takes seconds, and everything
+                        // else the worker does waits behind it: keep only the
+                        // newest query the reader typed, so one scan replaces
+                        // the queue. Commands that are not searches run first,
+                        // in the order they arrived, and the inbox is read
+                        // again afterwards, since a retained command can wait
+                        // on the network while the reader types.
+                        let mut queued = vec![Command::SearchMessages { query }];
+                        let mut pending = None;
+                        let mut removed = false;
+                        loop {
+                            queued.extend(std::iter::from_fn(|| inbox.try_recv().ok()));
+                            if queued.is_empty() {
+                                break;
+                            }
+                            let BehindASearch {
+                                pending: newest,
+                                run,
+                                shutdown,
+                                removed: gone,
+                            } = behind_a_search(std::mem::take(&mut queued));
+                            // The removal outlives the pass that reported it:
+                            // the logout before it can take a while, and a
+                            // search typed meanwhile must not scan the account
+                            // the window is waiting to join.
+                            removed |= gone;
+                            pending = if removed { None } else { newest.or(pending) };
+                            // A shutdown behind the search still runs the
+                            // commands queued before it: quitting must not
+                            // lose a draft.
+                            for next in run {
+                                worker.handle_command(next).await;
+                            }
+                            if shutdown {
+                                break 'commands;
+                            }
+                        }
+                        if let Some(query) = pending {
+                            worker.handle_command(Command::SearchMessages { query }).await;
+                        }
+                    }
                     Some(command) => worker.handle_command(command).await,
                 }
             }
@@ -13111,6 +13198,59 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// A shutdown queued behind a search keeps the commands before it, which
+    /// is how an unsent draft survives quitting while the search was scanning.
+    #[test]
+    fn a_shutdown_behind_a_search_keeps_the_commands_queued_before_it() {
+        let behind = behind_a_search(vec![
+            Command::SearchMessages { query: "a".into() },
+            Command::SearchMessages { query: "ab".into() },
+            Command::SaveDraft {
+                chat: "1@s.whatsapp.net".into(),
+                text: "unsent".into(),
+            },
+            Command::Shutdown,
+        ]);
+        assert!(behind.shutdown, "the shutdown is reported after the rest");
+        assert!(behind.pending.is_none(), "a shutdown drops the scan");
+        assert!(
+            matches!(
+                behind.run.as_slice(),
+                [Command::SaveDraft { text, .. }] if text == "unsent"
+            ),
+            "the draft queued before the shutdown still runs: {:?}",
+            behind.run
+        );
+    }
+
+    /// Removing the account ends the worker and the window joins it, so a
+    /// scan queued behind the removal is dropped rather than freezing it.
+    #[test]
+    fn a_search_behind_an_account_removal_is_dropped() {
+        let behind = behind_a_search(vec![
+            Command::SearchMessages { query: "a".into() },
+            Command::RemoveAccount,
+        ]);
+        assert!(behind.removed, "the removal is reported");
+        assert!(behind.pending.is_none(), "the removal drops the scan");
+        assert!(
+            matches!(behind.run.as_slice(), [Command::RemoveAccount]),
+            "the removal itself still runs: {:?}",
+            behind.run
+        );
+    }
+
+    /// Nothing in the queue ends the worker: the newest search runs.
+    #[test]
+    fn a_queue_that_does_not_end_the_worker_keeps_the_newest_search() {
+        let behind = behind_a_search(vec![
+            Command::SearchMessages { query: "a".into() },
+            Command::SearchMessages { query: "ab".into() },
+        ]);
+        assert_eq!(behind.pending.as_deref(), Some("ab"));
+        assert!(behind.run.is_empty(), "{:?}", behind.run);
+    }
 
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]
