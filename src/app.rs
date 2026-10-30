@@ -3300,8 +3300,6 @@ impl App {
         }
     }
 
-    /// Applies one event to its originating account. Only live-account events
-    /// may alter process-wide navigation, dialogs or transcription requests.
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
             Event::StorageStats {
@@ -10445,8 +10443,6 @@ impl App {
         self.toast_error(format!("Could not record: {error}"));
     }
 
-    /// Draws the current account, then applies its actions and schedules only
-    /// the settled viewport's automatic work. Locked content is never drawn.
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
