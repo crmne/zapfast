@@ -427,12 +427,16 @@ fn image_reader(bytes: &[u8]) -> Option<image::ImageReader<std::io::Cursor<&[u8]
 
 /// A downloaded photo's small poster, built on the decoder thread, never the UI thread.
 fn decode_still(path: &Path) -> Option<Decoded> {
+    use image::ImageDecoder;
     let bytes = image_source(path)?;
-    let image = image_reader(&bytes)?
-        .decode()
-        .ok()?
-        .thumbnail(MAX_WIDTH, MAX_WIDTH)
-        .to_rgba8();
+    let mut decoder = image_reader(&bytes)?.into_decoder().ok()?;
+    let orientation = decoder.orientation().ok()?;
+    let mut limits = image_limits();
+    limits.reserve(decoder.total_bytes()).ok()?;
+    decoder.set_limits(limits).ok()?;
+    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    image.apply_orientation(orientation);
+    let image = image.thumbnail(MAX_WIDTH, MAX_WIDTH).to_rgba8();
     Some(Decoded {
         frames: vec![(to_color_image(&image), Duration::ZERO)],
     })
@@ -476,6 +480,13 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         let image = image::RgbaImage::from_raw(width, height, frame.data().to_vec())?;
         let delay = (i64::from(frame.timestamp()) - previous).max(20) as u64;
         previous = i64::from(frame.timestamp());
+        let image = if limit == 1 {
+            image::DynamicImage::ImageRgba8(image)
+                .thumbnail(MAX_WIDTH, MAX_WIDTH)
+                .to_rgba8()
+        } else {
+            image
+        };
         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
     }
     // Single-frame files use the static-image path.
@@ -835,6 +846,66 @@ mod tests {
     }
 
     use super::*;
+
+    /// Tall animated posters stay bounded while playback retains its previous resolution.
+    #[test]
+    fn animated_webp_posters_bound_both_sides_without_shrinking_playback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tall.webp");
+        let mut encoder = webp_animation::Encoder::new((320, 4096)).unwrap();
+        for (index, shade) in [40, 200].into_iter().enumerate() {
+            let frame = image::RgbaImage::from_pixel(320, 4096, image::Rgba([shade, 0, 0, 255]));
+            encoder.add_frame(&frame, index as i32 * 100).unwrap();
+        }
+        std::fs::write(&path, &*encoder.finalize(200).unwrap()).unwrap();
+        let poster = decode(&path, 1).unwrap();
+        assert_eq!(poster.frames.len(), 1);
+        let size = poster.frames[0].0.size;
+        assert!(size.into_iter().all(|side| side <= MAX_WIDTH as usize));
+        assert!((size[0] as f32 / size[1] as f32 - 320.0 / 4096.0).abs() < 0.005);
+        let playback = decode(&path, MAX_FRAMES).unwrap();
+        assert_eq!(playback.frames.len(), 2);
+        assert_eq!(playback.frames[0].0.size, [320, 4096]);
+        assert_eq!(poster.frames[0].1, playback.frames[0].1);
+    }
+
+    /// JPEG orientation rotates the poster's pixels, not just its reported dimensions.
+    #[test]
+    fn downloaded_jpeg_poster_applies_exif_orientation() {
+        use image::ImageEncoder;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rotated.jpg");
+        let image = image::RgbImage::from_fn(800, 400, |x, _| {
+            image::Rgb(if x < 400 {
+                [240, 10, 10]
+            } else {
+                [10, 10, 240]
+            })
+        });
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
+        // Little-endian TIFF IFD: one SHORT Orientation entry, value 6 (90 degrees clockwise).
+        encoder
+            .set_exif_metadata(vec![
+                0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0,
+                0, 0,
+            ])
+            .unwrap();
+        encoder
+            .encode(&image, 800, 400, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let decoded = decode(&path, 1).unwrap();
+        let poster = &decoded.frames[0].0;
+        assert_eq!(poster.size, [160, 320]);
+        let top = poster.pixels[80 * 160 + 80];
+        let bottom = poster.pixels[240 * 160 + 80];
+        assert!(top.r() > 200 && top.b() < 30, "red rotates to the top");
+        assert!(
+            bottom.b() > 200 && bottom.r() < 30,
+            "blue rotates to the bottom"
+        );
+    }
 
     /// Oversized PNG and animated WebP headers fail the limit check before pixel decoding.
     #[test]
