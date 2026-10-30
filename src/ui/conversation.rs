@@ -6112,66 +6112,151 @@ fn footer(
     }
 }
 
+/// Groups most-used emoji first; stable ties preserve their first-seen order.
+fn reaction_groups(message: &Message) -> Vec<(&str, Vec<&crate::model::Reaction>)> {
+    let mut groups: Vec<(&str, Vec<&crate::model::Reaction>)> = Vec::new();
+    for reaction in &message.reactions {
+        if let Some((_, people)) = groups
+            .iter_mut()
+            .find(|(emoji, _)| *emoji == reaction.emoji)
+        {
+            people.push(reaction);
+        } else {
+            groups.push((&reaction.emoji, vec![reaction]));
+        }
+    }
+    groups.sort_by_key(|(_, people)| std::cmp::Reverse(people.len()));
+    groups
+}
+
 fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
-    let mut counts: Vec<(String, u32, bool, Vec<String>)> = Vec::new();
-    for reaction in &message.reactions {
-        let who = if reaction.from_me {
-            "You".to_owned()
+    let groups = reaction_groups(message);
+    let mine = message.reactions.iter().any(|reaction| reaction.from_me);
+    let label = format!(
+        "{} {}",
+        groups
+            .iter()
+            .take(3)
+            .map(|(emoji, _)| *emoji)
+            .collect::<Vec<_>>()
+            .join(" "),
+        message.reactions.len()
+    );
+    let line = widgets::line(ui, &label, theme::regular(13.0), palette.text, 200.0, 1);
+    let (_, rect) = ui.allocate_space(line.size() + vec2(12.0, 6.0));
+    let response = ui.interact(
+        rect,
+        bubble_id(&message.chat, &message.id).with("reactions"),
+        Sense::click(),
+    );
+    if ui.is_rect_visible(rect) {
+        let mut shadow = palette.bubble_shadow();
+        shadow.color = shadow.color.gamma_multiply(0.6);
+        ui.painter()
+            .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
+        ui.painter()
+            .rect_filled(rect, rect.height() / 2.0, palette.overlay);
+        ui.painter().rect_stroke(
+            rect,
+            rect.height() / 2.0,
+            Stroke::new(1.0, if mine { palette.accent } else { palette.chat }),
+            egui::StrokeKind::Inside,
+        );
+        line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+    }
+    let name = |reaction: &crate::model::Reaction| {
+        if reaction.from_me {
+            crate::i18n::gettext(view.locale, "You").into_owned()
         } else {
             (view.names_or)(&reaction.sender, None)
-        };
-        match counts
-            .iter_mut()
-            .find(|(emoji, _, _, _)| *emoji == reaction.emoji)
-        {
-            Some((_, count, mine, names)) => {
-                *count += 1;
-                *mine |= reaction.from_me;
-                names.push(who);
-            }
-            None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
         }
-    }
-    ui.spacing_mut().item_spacing.x = 3.0;
-    for (emoji, count, mine, names) in counts {
-        let label = if count > 1 {
-            format!("{emoji} {count}")
-        } else {
-            emoji.clone()
-        };
-        let line = widgets::line(ui, &label, theme::regular(13.0), palette.text, 200.0, 1);
-        let size = line.size() + vec2(12.0, 6.0);
-        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        if ui.is_rect_visible(rect) {
-            // Lifted as gently as a hovered chat-list row, so the pill
-            // stands off the bubble it overlaps.
-            let mut shadow = palette.bubble_shadow();
-            shadow.color = shadow.color.gamma_multiply(0.6);
-            ui.painter()
-                .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
-            ui.painter()
-                .rect_filled(rect, rect.height() / 2.0, palette.overlay);
-            ui.painter().rect_stroke(
-                rect,
-                rect.height() / 2.0,
-                Stroke::new(1.0, if mine { palette.accent } else { palette.chat }),
-                egui::StrokeKind::Inside,
-            );
-            line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
-        }
-        let response = response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(names.join(", "));
-        if response.clicked() {
-            // Clicking our reaction removes it; clicking another adds it.
-            actions.push(Action::React {
-                chat: view.chat.id.clone(),
-                message: message.id.clone(),
-                emoji: if mine { String::new() } else { emoji },
-            });
-        }
-    }
+    };
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(
+            groups
+                .iter()
+                .map(|(emoji, people)| {
+                    format!(
+                        "{emoji}: {}",
+                        people
+                            .iter()
+                            .map(|reaction| name(reaction))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    egui::Popup::menu(&response)
+        .id(bubble_id(&message.chat, &message.id).with("reaction-list"))
+        .width(280.0)
+        .frame(widgets::menu_frame(&palette))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("reaction-summary")
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (emoji, people) in &groups {
+                            widgets::rich_text(
+                                ui,
+                                &format!("{emoji} {}", people.len()),
+                                theme::regular(13.0),
+                                palette.text,
+                            );
+                        }
+                    });
+                });
+            widgets::menu_separator(ui, &palette);
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for (emoji, people) in &groups {
+                        for reaction in people {
+                            ui.horizontal(|ui| {
+                                let who = name(reaction);
+                                let id = if reaction.from_me {
+                                    view.me.unwrap_or(&reaction.sender)
+                                } else {
+                                    &reaction.sender
+                                };
+                                widgets::avatar(
+                                    ui,
+                                    &palette,
+                                    &who,
+                                    id,
+                                    28.0,
+                                    view.avatars.get(id).and_then(|path| path.as_deref()),
+                                );
+                                if reaction.from_me {
+                                    if ui
+                                        .add_enabled(view.chat.can_send(), egui::Button::new(&who))
+                                        .on_hover_text(crate::i18n::gettext(
+                                            view.locale,
+                                            "Remove reaction",
+                                        ))
+                                        .clicked()
+                                    {
+                                        actions.push(Action::React {
+                                            chat: view.chat.id.clone(),
+                                            message: message.id.clone(),
+                                            emoji: String::new(),
+                                        });
+                                        ui.close();
+                                    }
+                                } else {
+                                    theme::text(ui, who, theme::regular(13.0), palette.text);
+                                }
+                                widgets::rich_text(ui, emoji, theme::regular(16.0), palette.text);
+                            });
+                        }
+                    }
+                });
+        });
 }
 
 const QUICK_REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -12134,6 +12219,30 @@ mod reaction_tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    #[test]
+    fn reaction_groups_keep_every_person_and_rank_counts_with_stable_ties() {
+        let message = with_reactions(vec![
+            reaction(false, "❤️"),
+            reaction(true, "👍"),
+            reaction(false, "😂"),
+            reaction(false, "👍"),
+            reaction(false, "🙏"),
+        ]);
+        let groups = reaction_groups(&message);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|(emoji, people)| (*emoji, people.len()))
+                .collect::<Vec<_>>(),
+            [("👍", 2), ("❤️", 1), ("😂", 1), ("🙏", 1)]
+        );
+        assert!(groups[0].1.iter().any(|reaction| reaction.from_me));
+        assert_eq!(
+            groups.iter().map(|(_, people)| people.len()).sum::<usize>(),
+            5
+        );
     }
 
     fn reaction(from_me: bool, emoji: &str) -> Reaction {
