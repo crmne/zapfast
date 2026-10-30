@@ -810,6 +810,13 @@ pub async fn run(
             (None, true)
         }
     };
+    let link_previews_disabled = match archive.link_previews_disabled() {
+        Ok(setting) => setting.unwrap_or(false),
+        Err(error) => {
+            log::warn!("could not read the phone's link preview setting: {error}");
+            false
+        }
+    };
     // Likewise only contacts synced before first names were kept lack them.
     let first_names_recovered = archive
         .meta(contact_names::FIRST_NAMES_RECOVERED)
@@ -889,6 +896,7 @@ pub async fn run(
         keep_chats_archived: true,
         phone_unarchive_chats,
         phone_unarchive_unread,
+        link_previews_disabled,
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
@@ -1328,6 +1336,9 @@ struct Worker {
     /// The phone's own "Keep chats archived", inverted as WhatsApp sends it
     /// (`Some(true)`: a new message unarchives). It wins over Settings'.
     phone_unarchive_chats: Option<bool>,
+    /// The phone's own "Disable link previews": while on, nothing is fetched
+    /// for a link we send.
+    link_previews_disabled: bool,
     /// The stored phone setting could not be read at startup; it is read
     /// again when needed, and chats stay archived until it is.
     phone_unarchive_unread: bool,
@@ -2256,6 +2267,7 @@ impl Worker {
         if self.me_pn.is_some() || self.me_lid.is_some() {
             self.emit(self.me_event());
         }
+        self.emit(Event::LinkPreviewsDisabled(self.link_previews_disabled));
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
         self.emit_chats();
     }
@@ -3955,6 +3967,20 @@ impl Worker {
                     }
                 }
             }
+            E::DisableLinkPreviewsUpdate(update) => {
+                match self.archive.set_link_previews_disabled_at(
+                    update.previews_disabled,
+                    update.timestamp.timestamp_millis(),
+                ) {
+                    Ok(disabled) => {
+                        self.link_previews_disabled = disabled;
+                        self.emit(Event::LinkPreviewsDisabled(disabled));
+                    }
+                    Err(error) => {
+                        log::warn!("could not store the phone's link preview setting: {error}")
+                    }
+                }
+            }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
@@ -4106,6 +4132,8 @@ impl Worker {
         self.privacy_snapshot = false;
         self.phone_unarchive_chats = None;
         self.phone_unarchive_unread = false;
+        self.link_previews_disabled = false;
+        self.emit(Event::LinkPreviewsDisabled(false));
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
         self.early.clear();
@@ -18077,6 +18105,7 @@ mod receipt_tests {
             keep_chats_archived: true,
             phone_unarchive_chats: None,
             phone_unarchive_unread: false,
+            link_previews_disabled: false,
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,
@@ -20985,6 +21014,29 @@ mod receipt_tests {
         worker.handle_wa_event(setting(false)).await;
         worker.store_message(incoming("kept", 500), None, None);
         assert!(archived(&worker));
+    }
+
+    #[tokio::test]
+    async fn link_preview_setting_follows_the_phone() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        let mut action = wa::sync_action_value::PrivacySettingDisableLinkPreviewsAction::default();
+        action.is_previews_disabled = Some(true);
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DisableLinkPreviewsUpdate(
+                wa_events::DisableLinkPreviewsUpdate::builder()
+                    .previews_disabled(true)
+                    .timestamp(whatsapp_rust::wacore::time::now_utc())
+                    .action(Box::new(action))
+                    .from_full_sync(false)
+                    .build(),
+            )))
+            .await;
+        assert!(worker.link_previews_disabled);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::LinkPreviewsDisabled(true)))
+        );
     }
 
     #[test]

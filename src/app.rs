@@ -3309,6 +3309,7 @@ impl App {
                 self.me_name = name;
                 self.me_about = about;
             }
+            Event::LinkPreviewsDisabled(disabled) => self.link_previews_disabled = disabled,
             Event::Call(update) => self.handle_call_update(*update),
             Event::PhoneOnlyCall(update) => self.handle_phone_only_call(*update),
             Event::CallDevices(devices) => self.call_devices = *devices,

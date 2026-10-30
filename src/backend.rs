@@ -1047,6 +1047,8 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// The phone's "Disable link previews", sent at start and on every change.
+    LinkPreviewsDisabled(bool),
     InteractiveReplyState {
         chat: ChatId,
         message: String,
