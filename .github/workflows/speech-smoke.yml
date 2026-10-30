@@ -48,7 +48,7 @@ jobs:
           - { name: Debian 12 x64, os: ubuntu-24.04, container: 'debian:12', runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast, carried: true, exe: zapfast }
           - { name: Windows x64, os: windows-latest, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll, packaged: ., carried: true, exe: zapfast.exe }
           - { name: Windows arm64, os: windows-11-arm, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll, packaged: ., carried: true, exe: zapfast.exe }
-          - { name: macOS Intel, os: macos-15-intel, runtime: universal-apple-darwin, library: libonnxruntime.dylib, packaged: ../Frameworks, carried: false, exe: zapfast }
+          - { name: macOS Intel, os: macos-15-intel, runtime: universal-apple-darwin, library: libonnxruntime.dylib, packaged: ../Frameworks, carried: false, exe: zapfast, webp: '1' }
     defaults:
       run:
         shell: bash
@@ -56,8 +56,8 @@ jobs:
       ZAPFAST_ASR_EXPECTED: dog
       # The release workflow's setting: Linux and Windows builds carry the runtime.
       ZAPFAST_ONNXRUNTIME_EMBED: runtime
-      # This runner's Homebrew webp does not link; the crate's own build does.
-      LIBWEBP_SYS_STATIC: ${{ runner.os == 'macOS' && '1' || '' }}
+      # The Intel runner's Homebrew webp does not link; the crate's own build does.
+      LIBWEBP_SYS_STATIC: ${{ matrix.webp }}
     steps:
       - name: Debian build dependencies
         if: matrix.container
