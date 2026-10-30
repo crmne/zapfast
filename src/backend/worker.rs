@@ -1024,6 +1024,7 @@ pub async fn run(
                         // on the network while the reader types.
                         let mut queued = vec![Command::SearchMessages { query }];
                         let mut pending = None;
+                        let mut removed = false;
                         loop {
                             queued.extend(std::iter::from_fn(|| inbox.try_recv().ok()));
                             if queued.is_empty() {
@@ -1033,13 +1034,14 @@ pub async fn run(
                                 pending: newest,
                                 run,
                                 shutdown,
-                                removed,
+                                removed: gone,
                             } = behind_a_search(std::mem::take(&mut queued));
-                            if removed {
-                                // The scan kept so far goes with the account.
-                                pending = None;
-                            }
-                            pending = newest.or(pending);
+                            // The removal outlives the pass that reported it:
+                            // the logout before it can take a while, and a
+                            // search typed meanwhile must not scan the account
+                            // the window is waiting to join.
+                            removed |= gone;
+                            pending = if removed { None } else { newest.or(pending) };
                             // A shutdown behind the search still runs the
                             // commands queued before it: quitting must not
                             // lose a draft.
