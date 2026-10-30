@@ -18,14 +18,14 @@ jobs:
   fixture:
     name: synthetic speech
     if: github.repository != 'crmne/zapfast'
-    runs-on: macos-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Speak and encode a sentence as a WhatsApp voice message would be
         run: |
-          brew install opus-tools
-          sentence="The quick brown fox jumps over the lazy dog. Please meet me at the train station at seven."
-          say -v Samantha -o speech.aiff "$sentence" || say -o speech.aiff "$sentence"
-          afconvert -f WAVE -d LEI16@48000 -c 1 speech.aiff speech.wav
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng opus-tools
+          espeak-ng -v en-us -s 140 -w speech.wav \
+            "The quick brown fox jumps over the lazy dog. Please meet me at the train station at seven."
           opusenc --quiet --bitrate 32 speech.wav speech.ogg
       - uses: actions/upload-artifact@v7
         with:
@@ -33,30 +33,27 @@ jobs:
           path: speech.ogg
 
   recognize:
-    name: recognize (${{ matrix.target }})
+    name: recognize (${{ matrix.name }})
     needs: fixture
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, runtime: aarch64-unknown-linux-gnu, library: libonnxruntime.so }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll }
-          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll }
-          - { os: macos-latest, target: aarch64-apple-darwin, runtime: universal-apple-darwin, library: libonnxruntime.dylib }
-          - { os: macos-15-intel, target: x86_64-apple-darwin, runtime: universal-apple-darwin, library: libonnxruntime.dylib }
+          - { name: Linux x64, os: ubuntu-24.04, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
+          - { name: Linux arm64, os: ubuntu-24.04-arm, runtime: aarch64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
           # Where the release's Linux builds are made, with its oldest glibc.
-          - { os: ubuntu-24.04, container: 'debian:12', target: x86_64-unknown-linux-gnu, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so }
-    container: ${{ matrix.container }}
+          - { name: Debian 12 x64, os: ubuntu-24.04, container: 'debian:12', runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so, packaged: ../lib/zapfast }
+          - { name: Windows x64, os: windows-latest, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
+          - { name: Windows arm64, os: windows-11-arm, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll, packaged: . }
+          - { name: macOS Intel, os: macos-15-intel, runtime: universal-apple-darwin, library: libonnxruntime.dylib, packaged: ../Frameworks }
     defaults:
       run:
         shell: bash
     env:
-      ZAPFAST_ASR_FIXTURE: ${{ github.workspace }}/speech/speech.ogg
-      ZAPFAST_ASR_MODELS: ${{ github.workspace }}/models
-      ZAPFAST_ASR_EXPECTED: lazy dog
+      ZAPFAST_ASR_EXPECTED: dog
     steps:
       - name: Debian build dependencies
         if: matrix.container
@@ -90,19 +87,24 @@ jobs:
       - name: Build the tests
         run: cargo test --locked --lib --no-run
       - name: Runtime, idle reload and a model switch (v3 FP32, then INT8)
-        env:
-          ORT_DYLIB_PATH: ${{ github.workspace }}/runtime/${{ matrix.library }}
-          ZAPFAST_ASR_SWITCH_MODEL: parakeet-v3-int8
-        run: cargo test --locked --lib -- --ignored --test-threads=1 --nocapture 'transcribe::tests::'
-      - name: The runtime found beside the executable, as packages place it
         run: |
-          cp runtime/${{ matrix.library }} target/debug/deps/
-          cargo test --locked --lib -- --ignored --exact --nocapture transcribe::tests::native_model_transcribes_an_explicit_fixture
+          export ORT_DYLIB_PATH="$PWD/runtime/${{ matrix.library }}"
+          export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
+          export ZAPFAST_ASR_SWITCH_MODEL=parakeet-v3-int8
+          cargo test --locked --lib -- --ignored --test-threads=1 --nocapture 'transcribe::tests::'
+      - name: The runtime found where packages put it, relative to the executable
+        run: |
+          export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
+          mkdir -p "target/debug/deps/${{ matrix.packaged }}"
+          cp "runtime/${{ matrix.library }}" "target/debug/deps/${{ matrix.packaged }}/"
+          cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
       - name: Parakeet Ultra
-        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'x86_64-pc-windows-msvc'
-        env:
-          ZAPFAST_ASR_MODEL: parakeet-ultra-fp32
-        run: cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
+        if: matrix.name == 'Linux x64' || matrix.name == 'Windows x64'
+        run: |
+          export ORT_DYLIB_PATH="$PWD/runtime/${{ matrix.library }}"
+          export ZAPFAST_ASR_FIXTURE="$PWD/speech/speech.ogg" ZAPFAST_ASR_MODELS="$PWD/models"
+          export ZAPFAST_ASR_MODEL=parakeet-ultra-fp32
+          cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
       - name: The app starts with the telemetry guard and prints its version
         run: |
           cargo build --locked
@@ -114,22 +116,25 @@ jobs:
           codesign --verify --strict --deep "$RUNNER_TEMP/ZapFast.app"
           lipo -info "$RUNNER_TEMP/ZapFast.app/Contents/Frameworks/libonnxruntime.dylib"
           ls "$RUNNER_TEMP/ZapFast.app/Contents/Resources"/onnxruntime-*
-      - name: Windows runtime signature and dependencies
+      - name: What the Windows runtime imports, and its signature
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Get-AuthenticodeSignature runtime\onnxruntime.dll | Format-List Status, SignerCertificate
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          & $dumpbin.FullName /nologo /dependents runtime\onnxruntime.dll
+          & $dumpbin.FullName /nologo /dependents target\debug\zapfast.exe
 
   # The suites ci.yml runs on these systems only on main.
   suites:
     name: tests (${{ matrix.os }})
     if: github.repository != 'crmne/zapfast'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-15-intel, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
