@@ -1008,8 +1008,11 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 if response.changed() {
                     app.actions.push(Action::SettingsChanged);
                 }
-                if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
-                    app.actions.push(Action::SearchGifs(String::new()));
+                if response.lost_focus()
+                    && !app.settings.giphy_key.trim().is_empty()
+                    && app.gif_results.is_empty()
+                {
+                    app.actions.push(Action::SearchGifs(app.gif_query.clone()));
                 }
                 response
             });
@@ -1019,7 +1022,9 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             field.response.rect,
             f32::from(theme::RADIUS),
         );
-        return;
+        if app.gif_results.is_empty() {
+            return;
+        }
     }
     let mut query = app.picker_search.clone();
     let submit = ui.memory(|memory| memory.has_focus(egui::Id::new("gif-search")))
@@ -1029,8 +1034,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if query != app.picker_search {
         app.picker_search = query.clone();
     }
-    if submit && query.trim() != app.gif_query.trim() {
-        app.actions.push(Action::SearchGifs(query));
+    if submit && (query.trim() != app.gif_query.trim() || app.gif_error.is_some()) {
+        if query.trim() == app.gif_query.trim() && app.gif_next_offset.is_some() {
+            app.actions.push(Action::MoreGifs);
+        } else {
+            app.actions.push(Action::SearchGifs(query));
+        }
     }
     if app.gif_pending {
         ui.horizontal(|ui| {
@@ -1042,7 +1051,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 palette.secondary,
             );
         });
-    } else if let Some(error) = &app.gif_error {
+    } else if let Some(error) = app.gif_error.as_ref().filter(|error| !error.bad_key) {
         theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
     }
     let results = app.gif_results.clone();
@@ -1087,6 +1096,16 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     }
                 });
+            }
+            if !app.gif_pending && app.gif_next_offset.is_some() {
+                let label = if app.gif_error.is_some() {
+                    gettext(app.locale, "Retry")
+                } else {
+                    gettext(app.locale, "Load more")
+                };
+                if theme::soft_button(ui, palette, None, &label, false).clicked() {
+                    app.actions.push(Action::MoreGifs);
+                }
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
                 ui.add_space(20.0);
