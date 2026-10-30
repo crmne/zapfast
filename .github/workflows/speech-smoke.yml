@@ -1,0 +1,104 @@
+# Temporary, for review of voice message transcription: recognises synthetic
+# speech with the packaged runtime and a pinned model on every platform.
+# It runs in the contributor's fork only, and goes before the branch merges.
+name: Speech smoke
+
+on:
+  push:
+    branches: [voice-transcription]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fixture:
+    name: synthetic speech
+    if: github.repository != 'crmne/zapfast'
+    runs-on: macos-latest
+    steps:
+      - name: Speak and encode a sentence as a WhatsApp voice message would be
+        run: |
+          brew install opus-tools
+          sentence="The quick brown fox jumps over the lazy dog. Please meet me at the train station at seven."
+          say -v Samantha -o speech.aiff "$sentence" || say -o speech.aiff "$sentence"
+          afconvert -f WAVE -d LEI16@48000 -c 1 speech.aiff speech.wav
+          opusenc --quiet --bitrate 32 speech.wav speech.ogg
+      - uses: actions/upload-artifact@v7
+        with:
+          name: speech
+          path: speech.ogg
+
+  recognize:
+    name: recognize (${{ matrix.target }})
+    needs: fixture
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, runtime: x86_64-unknown-linux-gnu, library: libonnxruntime.so }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, runtime: aarch64-unknown-linux-gnu, library: libonnxruntime.so }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, runtime: x86_64-pc-windows-msvc, library: onnxruntime.dll }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, runtime: aarch64-pc-windows-msvc, library: onnxruntime.dll }
+          - { os: macos-latest, target: aarch64-apple-darwin, runtime: universal-apple-darwin, library: libonnxruntime.dylib }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, runtime: universal-apple-darwin, library: libonnxruntime.dylib }
+    defaults:
+      run:
+        shell: bash
+    env:
+      ZAPFAST_ASR_FIXTURE: ${{ github.workspace }}/speech/speech.ogg
+      ZAPFAST_ASR_MODELS: ${{ github.workspace }}/models
+      ZAPFAST_ASR_EXPECTED: lazy dog
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: actions/download-artifact@v7
+        with:
+          name: speech
+          path: speech
+      - name: The runtime the release puts beside ZapFast
+        run: |
+          python packaging/onnxruntime.py ${{ matrix.runtime }} runtime
+          ls -l runtime
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: Runtime, idle reload and a model switch (v3 FP32, then INT8)
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}/runtime/${{ matrix.library }}
+          ZAPFAST_ASR_SWITCH_MODEL: parakeet-v3-int8
+        run: cargo test --locked --lib -- --ignored --test-threads=1 --nocapture 'transcribe::tests::'
+      - name: The runtime found beside the executable, as packages place it
+        run: |
+          cp runtime/${{ matrix.library }} target/debug/deps/
+          cargo test --locked --lib -- --ignored --exact --nocapture transcribe::tests::native_model_transcribes_an_explicit_fixture
+      - name: Parakeet Ultra
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'x86_64-pc-windows-msvc'
+        env:
+          ZAPFAST_ASR_MODEL: parakeet-ultra-fp32
+        run: cargo test --locked --lib -- --ignored --exact --nocapture 'transcribe::tests::native_model_transcribes_an_explicit_fixture'
+      - name: The macOS bundle carries and signs the runtime
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked
+          bash packaging/macos/bundle.sh target/debug/zapfast "$RUNNER_TEMP/ZapFast.app" 0.0.0 runtime
+          codesign --verify --strict --deep "$RUNNER_TEMP/ZapFast.app"
+          lipo -info "$RUNNER_TEMP/ZapFast.app/Contents/Frameworks/libonnxruntime.dylib"
+          ls "$RUNNER_TEMP/ZapFast.app/Contents/Resources"/onnxruntime-*
+      - name: Windows runtime signature and dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-AuthenticodeSignature runtime\onnxruntime.dll | Format-List Status, SignerCertificate
