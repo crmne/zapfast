@@ -1,6 +1,7 @@
 //! Crops and turns a picture on its way out, so an attachment can be trimmed
 //! before it is sent.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::model::{PictureCrop, PictureSource};
@@ -14,6 +15,37 @@ const QUALITY: u8 = 92;
 pub struct Edited {
     pub bytes: Vec<u8>,
     pub extension: &'static str,
+}
+
+/// Largest side of a staged picture's review texture.
+pub(crate) const PREVIEW_SIDE: usize = 1024;
+
+/// Resize pasted pixels on a blocking worker, premultiplying transparent colours first.
+pub(crate) fn preview(width: usize, height: usize, rgba: &[u8]) -> Option<egui::ColorImage> {
+    let (width, height) = (u32::try_from(width).ok()?, u32::try_from(height).ok()?);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    // Validate before allocating; opaque pastes can keep borrowing their source.
+    image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, rgba)?;
+    let mut pixels = Cow::Borrowed(rgba);
+    if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
+        for pixel in pixels.to_mut().as_chunks_mut::<4>().0 {
+            *pixel = egui::Color32::from_rgba_unmultiplied(pixel[0], pixel[1], pixel[2], pixel[3])
+                .to_array();
+        }
+    }
+    let picture = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, &*pixels)?;
+    let scale = (PREVIEW_SIDE as f32 / width.max(height) as f32).min(1.0);
+    let (w, h) = (
+        ((width as f32 * scale) as u32).max(1),
+        ((height as f32 * scale) as u32).max(1),
+    );
+    let small = image::imageops::resize(&picture, w, h, image::imageops::FilterType::Triangle);
+    Some(egui::ColorImage::from_rgba_premultiplied(
+        [w as usize, h as usize],
+        small.as_raw(),
+    ))
 }
 
 /// A picture's size, read without keeping its pixels.
@@ -126,6 +158,47 @@ fn encode(picture: &image::RgbaImage) -> Result<Edited, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both orientations are bounded, alpha is retained, and malformed buffers are refused.
+    #[test]
+    fn pasted_preview_is_bounded_and_rejects_bad_pixels() {
+        for (width, height, expected) in [
+            (2048, 1024, [1024, 512]),
+            (1024, 2048, [512, 1024]),
+            (8, 4, [8, 4]),
+        ] {
+            let pixels = [80, 120, 180, 100].repeat(width * height);
+            let result = preview(width, height, &pixels).unwrap();
+            assert_eq!(result.size, expected);
+            assert_eq!(
+                result.pixels[0],
+                egui::Color32::from_rgba_unmultiplied(80, 120, 180, 100)
+            );
+            assert_eq!(&pixels[..4], &[80, 120, 180, 100]);
+        }
+        assert!(preview(0, 1, &[]).is_none());
+        assert!(preview(2, 2, &[255; 4]).is_none());
+        assert!(preview(usize::MAX, 2, &[255; 4]).is_none());
+    }
+
+    /// Hidden RGB values cannot bleed through a transparent edge during downsampling.
+    #[test]
+    fn pasted_preview_transparent_edges_ignore_hidden_colour() {
+        let pixels = |hidden: [u8; 4]| {
+            [vec![255, 0, 0, 255], hidden.to_vec()]
+                .concat()
+                .repeat(1024)
+        };
+        let blue = preview(2048, 1, &pixels([0, 0, 255, 0])).unwrap();
+        let black = preview(2048, 1, &pixels([0, 0, 0, 0])).unwrap();
+        assert_eq!(blue.pixels, black.pixels);
+        for pixel in blue.pixels {
+            let [red, green, blue, alpha] = pixel.to_array();
+            assert_eq!(red, alpha);
+            assert_eq!((green, blue), (0, 0));
+            assert!((100..=155).contains(&alpha));
+        }
+    }
 
     /// A picture whose top-left pixel is red, so a turn can be told apart
     /// from the other direction.

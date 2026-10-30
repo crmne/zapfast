@@ -11,6 +11,12 @@ pub enum Stop {
     Send,
     Attach,
     Emoji,
+    /// Staged-file review: the file strip and its controls.
+    ReviewFile(usize),
+    ReviewRemove(usize),
+    ReviewAdd,
+    ReviewEdit,
+    ReviewClose,
     PhoneLink(u32),
     /// The chat header's Search, then the search pane's controls in reading
     /// order. The arrows walk its results from the field.

@@ -67,7 +67,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         empty(app, ui);
         return;
     };
-    wallpaper::paint(ui, &app.wallpaper());
+    if reviewing_attachments(app, &chat) {
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, app.palette.surface);
+    } else {
+        wallpaper::paint(ui, &app.wallpaper());
+    }
     // On a vibrant window the messages scroll on under the header, as in
     // Messages: the header and any banner go on a layer above them.
     if app.palette.vibrant() {
@@ -93,7 +98,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 bar
             })
             .inner;
-        composer(app, ui, &chat);
+        let review = attachment_review(app, ui, &chat);
+        composer(app, ui, &chat, review);
+        if review.is_some() {
+            super::attachment_preview::show(app, ui);
+            return;
+        }
         let list = ui.available_rect_before_wrap().with_min_y(bar.top());
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
             messages(app, ui, &chat, bar.height());
@@ -106,8 +116,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         super::banner(app, ui);
     }
     pin_banner(app, ui, &chat);
-    composer(app, ui, &chat);
-    messages(app, ui, &chat, 0.0);
+    let review = attachment_review(app, ui, &chat);
+    composer(app, ui, &chat, review);
+    if review.is_some() {
+        super::attachment_preview::show(app, ui);
+    } else {
+        messages(app, ui, &chat, 0.0);
+    }
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -1342,8 +1357,21 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     }
 }
 
+/// Review only while the composer can send its staged files.
+fn reviewing_attachments(app: &App, chat: &Chat) -> bool {
+    !app.pending.is_empty()
+        && chat.can_send()
+        && app.selection.is_none()
+        && app.editing.is_none()
+        && app.recording.is_none()
+}
+
+fn attachment_review(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Option<bool> {
+    reviewing_attachments(app, chat).then(|| super::attachment_preview::bar(app, ui))
+}
+
 /// Draws the composer and queues sends with the originating account and selected mentions.
-fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<bool>) {
     let palette = app.palette;
     let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
@@ -1483,9 +1511,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 };
                 (has_focus && typed(":"), has_focus && typed("@"))
             });
-            if !app.pending.is_empty() {
-                pending_strip(app, ui);
-            }
             if app.recording.is_some() {
                 widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
                     recording_strip(app, ui)
@@ -1519,7 +1544,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     });
                     sent
                 });
-            let mut send_click = false;
+            let mut send_click = review_send.unwrap_or(false);
             let line_height = ui
                 .painter()
                 .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
@@ -1533,7 +1558,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let line = (line_height + COMPOSER_PADDING)
                 .round()
                 .max(COMPOSER_CONTROL);
-            let button_width = line;
+            let button_width = if review_send.is_some() { 0.0 } else { line };
             let view_once = app.editing.is_none()
                 && (app.pending_supports_view_once() || app.pending_view_once);
             let view_once_width = if view_once { COMPOSER_CONTROL + ui.spacing().item_spacing.x } else { 0.0 };
@@ -1822,6 +1847,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 } else {
                     (palette.surface, palette.surface_hover, palette.dim)
                 };
+                if review_send.is_none() {
                 last_line(ui, line, |ui| if !ready && app.editing.is_none() {
                     // An empty composer changes the send button to record.
                     if theme::circle_button(
@@ -1851,6 +1877,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         send_click = true;
                     }
                 });
+                }
             },
                     );
                 });
@@ -1882,7 +1909,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.actions.push(Action::SendRecording);
                 app.focus_composer = true;
             }
-            if app.settings.show_shortcut_hints {
+            if app.settings.show_shortcut_hints && review_send.is_none() {
                 let hint_text = if enter_sends {
                     crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
                 } else {
@@ -12552,171 +12579,6 @@ mod reaction_tests {
         assert!(labels.iter().any(|label| label == "Markierung entfernen"));
         assert!(labels.iter().any(|label| label == "Markieren"));
     }
-}
-
-/// Pending attachment tiles above the composer.
-fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    let tile = 72.0;
-    let mut remove = None;
-    let mut open = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-        for (index, item) in app.pending.iter_mut().enumerate() {
-            // A picture can be cropped before it goes out. Anything else
-            // cannot, and does not pretend to be clickable.
-            let editable = match &item.item {
-                crate::app::Pending::Picture { .. } => true,
-                crate::app::Pending::File(path) => crate::app::Pending::is_picture_file(path),
-                // A document goes as the file it is, so it is not edited here.
-                crate::app::Pending::Document(_) => false,
-            };
-            let sense = if editable {
-                Sense::click()
-            } else {
-                Sense::hover()
-            };
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), sense);
-            if ui.is_rect_visible(rect) {
-                // Lifted off the chat like a bubble, with a bubble's corners.
-                let radius = CornerRadius::same(widgets::BUBBLE_RADIUS);
-                ui.painter()
-                    .add(palette.bubble_shadow().as_shape(rect, radius));
-                ui.painter().rect_filled(
-                    rect.translate(vec2(0.0, -theme::RAISED_EDGE)),
-                    radius,
-                    palette.raised_edge(palette.surface),
-                );
-                ui.painter().rect_filled(rect, radius, palette.surface);
-                // A document shows as the file it arrives as, even a picture.
-                let document = matches!(item.item, crate::app::Pending::Document(_));
-                match &mut item.item {
-                    crate::app::Pending::Picture {
-                        width,
-                        height,
-                        rgba,
-                        texture,
-                    } => {
-                        let handle = texture.get_or_insert_with(|| {
-                            // Limit thumbnails to the GPU's maximum texture size.
-                            let image = if *width > 1024 || *height > 1024 {
-                                let scale = 1024.0 / (*width).max(*height) as f32;
-                                let (w, h) = (
-                                    ((*width as f32 * scale) as u32).max(1),
-                                    ((*height as f32 * scale) as u32).max(1),
-                                );
-                                match image::RgbaImage::from_raw(
-                                    *width as u32,
-                                    *height as u32,
-                                    rgba.to_vec(),
-                                ) {
-                                    Some(full) => {
-                                        let small = image::imageops::resize(
-                                            &full,
-                                            w,
-                                            h,
-                                            image::imageops::FilterType::Triangle,
-                                        );
-                                        egui::ColorImage::from_rgba_unmultiplied(
-                                            [w as usize, h as usize],
-                                            &small,
-                                        )
-                                    }
-                                    None => egui::ColorImage::example(),
-                                }
-                            } else {
-                                egui::ColorImage::from_rgba_unmultiplied([*width, *height], rgba)
-                            };
-                            ui.ctx().load_texture(
-                                format!("pending-picture-{index}"),
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            )
-                        });
-                        // Preserve aspect ratio while filling the tile.
-                        let side = tile - 8.0;
-                        let scale =
-                            (side / (*width).max(1) as f32).min(side / (*height).max(1) as f32);
-                        let fitted = vec2(*width as f32 * scale, *height as f32 * scale);
-                        let inner = Rect::from_center_size(rect.center(), fitted);
-                        egui::Image::from_texture((handle.id(), fitted))
-                            .corner_radius(6.0)
-                            .paint_at(ui, inner);
-                    }
-                    crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
-                        if !document && crate::app::Pending::is_picture_file(path) {
-                            widgets::file_image(ui, path)
-                                .fit_to_exact_size(Vec2::splat(tile - 8.0))
-                                .corner_radius(6.0)
-                                .paint_at(ui, rect.shrink(4.0));
-                        } else {
-                            let icon = Rect::from_center_size(
-                                rect.center() - vec2(0.0, 10.0),
-                                Vec2::splat(24.0),
-                            );
-                            theme::paint_icon(ui, Icon::FileText, icon, 22.0, palette.secondary);
-                            let name = path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let line = widgets::line(
-                                ui,
-                                &name,
-                                theme::regular(10.5),
-                                palette.text,
-                                tile - 8.0,
-                                1,
-                            );
-                            line.paint(
-                                ui,
-                                egui::pos2(
-                                    rect.center().x - line.size().x / 2.0,
-                                    rect.bottom() - 18.0,
-                                ),
-                                palette.text,
-                            );
-                        }
-                    }
-                }
-                if editable && response.hovered() {
-                    // A picture that can be cropped says so, rather than
-                    // looking like every other tile.
-                    let dim = palette.shadow.gamma_multiply(1.4);
-                    ui.painter().rect_filled(rect, radius, dim);
-                    theme::paint_icon(
-                        ui,
-                        Icon::Pencil,
-                        Rect::from_center_size(rect.center(), Vec2::splat(22.0)),
-                        20.0,
-                        palette.text,
-                    );
-                }
-                // Remove button in the corner.
-                let close =
-                    Rect::from_center_size(rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
-                let close_response =
-                    ui.interact(close, ui.id().with(("unstage", item.id)), Sense::click());
-                ui.painter()
-                    .circle_filled(close.center(), 9.0, palette.overlay);
-                theme::paint_icon(ui, Icon::X, close, 12.0, palette.text);
-                if close_response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    remove = Some(index);
-                } else if response.clicked() {
-                    open = Some(item.id);
-                }
-            }
-        }
-    });
-    if let Some(index) = remove {
-        app.actions.push(Action::RemovePending(index));
-    }
-    if let Some(target) = open {
-        app.actions.push(Action::EditPicture(target));
-    }
-    ui.add_space(4.0);
 }
 
 /// A photo's view-once choice stays beside its caption and Send, with the

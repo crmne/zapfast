@@ -219,14 +219,19 @@ when pressed straight after pasting, and a quick Ctrl+V tap pastes a picture
 just as a held one does. Other text fields, such as search, paste only text,
 and nothing is staged while a menu, the picker, a recording, or a full-size
 video is open.
-They stay above the composer until you send them, with the typed text as a
-caption. To reply with an attachment, start a reply and then attach the file.
+Staged files open a review area below the chat header. The selected photo
+is shown large and fitted whole; other files show their name and size. Click
+a tile along the bottom to review another file, or **+** to add more. The
+normal composer stays below the preview for your caption, emoji and mentions;
+Send is at the right of the file strip. Enter still follows your send-key
+setting. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
-one. Press Escape or click a file's close button to remove it.
+one. Hover a tile to remove that file. Escape or the review area's close button
+discards all staged files, the caption and its reply quote.
 
 With exactly one supported photo (JPEG, PNG, or WebP) staged, select
-the **View once** icon (a 1 inside a dashed circle) beside Send. It lights up
-when enabled, and sends the photo as a WhatsApp view-once message. You can still
+the **View once** icon (a 1 inside a dashed circle) beside the caption. It lights
+up when enabled, and sends the photo as a WhatsApp view-once message. You can still
 add a caption. The sent message appears as a view-once placeholder in ZapFast;
 the recipient opens it on their phone. This option is not available for
 documents or batches of attachments.
@@ -238,7 +243,7 @@ Pictures sent this way become photos, which WhatsApp shows inline but
 compresses: transparency and the file's metadata are lost. To send a picture as
 it is, choose **Send as document** in the plus menu beside the message field
 instead. The files you select there go as documents with their own name and
-bytes, pictures included, and show as files above the composer until you send
+bytes, pictures included, and show as files in the review area until you send
 them.
 
 Videos go as playable video messages only when they are MP4. WhatsApp does
@@ -258,8 +263,8 @@ or clearing it keeps its draft priority until you leave again. Within each
 group, chats keep their usual latest-message order. The Favorites chip keeps
 the phone's favorites order below pins.
 
-Click a picture above the composer to crop it before you send it. The picture
-opens over the window with the region to keep marked, and you can drag that
+Select a picture in the review area and click **Edit picture** to crop it
+before sending. The picture opens over the window with the region to keep marked, and you can drag that
 region by its edges and corners or move it whole. **Turn left** and **Turn
 right** turn the picture a quarter at a time, and **Reset** puts it back the way
 it started. Press Enter or click the check to keep the crop, or Escape or the

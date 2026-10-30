@@ -1021,7 +1021,7 @@ fn open_cropper(trace: &mut Trace, target: crate::app::AttachmentId, photo: &std
 /// The cropper, opened from the keys, takes focus on "Keep this crop" and
 /// keeps Tab among its own controls, never the chat under it. Enter presses
 /// the focused button: Cancel leaves the picture as it was and gives focus
-/// back to the message list, Turn left turns it, and Keep keeps the crop.
+/// back to the attachment review, Turn left turns it, and Keep keeps the crop.
 /// Before, the cropper took no focus and Enter kept the crop whatever was
 /// focused.
 #[test]
@@ -1030,7 +1030,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
     let (photo, _) = super::sample_files(&app);
     let target = app.stage(crate::app::Pending::File(photo.clone()));
     let mut trace = Trace::new(app);
-    focus_stop(&mut trace, Stop::Messages);
+    focus_stop(&mut trace, Stop::ReviewEdit);
     let row = trace.last().clone();
     let editor = crate::ui::image_editor::area_id();
     let from = trace.mark();
@@ -1058,7 +1058,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
         );
     }
     // Enter on Cancel cancels: nothing is kept, and the reader is back on
-    // the message list.
+    // the attachment review.
     for _ in 0..8 {
         if trace.last().name.contains("Cancel") {
             break;
@@ -1075,7 +1075,11 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
         "Enter on Cancel keeps nothing"
     );
     trace.assert_clean(from, "the cropper cancelled");
-    assert_eq!(trace.last().effective, row.effective, "back on the list");
+    assert_eq!(
+        trace.last().effective,
+        row.effective,
+        "back on the attachment review"
+    );
     // Enter on Turn left turns the picture and stays.
     open_cropper(&mut trace, target, &photo);
     for _ in 0..8 {
@@ -1113,7 +1117,7 @@ fn the_cropper_follows_focus_as_it_was_asked_for() {
         let (photo, _) = super::sample_files(&app);
         let target = app.stage(crate::app::Pending::File(photo.clone()));
         let mut trace = Trace::new(app);
-        focus_stop(&mut trace, Stop::Messages);
+        focus_stop(&mut trace, Stop::ReviewEdit);
         trace.app.actions.push(Action::EditPicture(target));
         trace.action += 1;
         if pointer {
