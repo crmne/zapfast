@@ -1772,6 +1772,12 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.invalidate_composer_undo();
+        self.gif_request = self.gif_request.wrapping_add(1);
+        self.gif_query.clear();
+        self.gif_results.clear();
+        self.gif_next_offset = None;
+        self.gif_pending = false;
+        self.gif_error = None;
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -11480,6 +11486,22 @@ mod tests {
         assert!(!app.gif_pending);
         assert!(app.gif_error.is_none());
         assert!(app.gif_next_offset.is_none());
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        let old_account = app.gif_request;
+        app.apply_backend_event(page(old_account, 0, &["old-account"], Some(24)), false);
+        app.apply(Action::MoreGifs, &ctx);
+        let late = app.gif_request;
+        app.clear_account_ui();
+        assert!(app.gif_results.is_empty());
+        assert!(app.gif_query.is_empty());
+        assert!(app.gif_next_offset.is_none());
+        assert!(!app.gif_pending);
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        app.apply_backend_event(page(late, 24, &["late-old-account"], None), false);
+        assert!(app.gif_pending);
+        assert!(app.gif_results.is_empty());
+        app.apply_backend_event(page(app.gif_request, 0, &["new-account"], None), false);
+        assert_eq!(app.gif_results[0].id, "new-account");
     }
 
     /// While recording, the light, the timer and the waveform ask for a

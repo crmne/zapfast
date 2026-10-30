@@ -1008,8 +1008,11 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 if response.changed() {
                     app.actions.push(Action::SettingsChanged);
                 }
-                if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
-                    app.actions.push(Action::SearchGifs(String::new()));
+                if response.lost_focus()
+                    && !app.settings.giphy_key.trim().is_empty()
+                    && app.gif_results.is_empty()
+                {
+                    app.actions.push(Action::SearchGifs(app.gif_query.clone()));
                 }
                 response
             });
@@ -1019,7 +1022,9 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             field.response.rect,
             f32::from(theme::RADIUS),
         );
-        return;
+        if app.gif_results.is_empty() {
+            return;
+        }
     }
     let mut query = app.picker_search.clone();
     let submit = ui.memory(|memory| memory.has_focus(egui::Id::new("gif-search")))
@@ -1042,7 +1047,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 palette.secondary,
             );
         });
-    } else if let Some(error) = &app.gif_error {
+    } else if let Some(error) = app.gif_error.as_ref().filter(|error| !error.bad_key) {
         theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
     }
     let results = app.gif_results.clone();
