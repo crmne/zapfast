@@ -3118,7 +3118,7 @@ pub(crate) mod tests {
             let archive = Archive::in_memory().unwrap();
             // Seed unreadable legacy/corrupt rows in this in-memory fixture.
             // Today's JSON expression indexes otherwise reject the fixture
-            // at insertion, before either reviewed query can be exercised.
+            // at insertion, before the merge can be exercised.
             archive
                 .connection
                 .execute_batch("DROP INDEX messages_stickers; DROP INDEX messages_calls;")
@@ -3146,12 +3146,6 @@ pub(crate) mod tests {
                         .unwrap();
                 }
             }
-            let refreshed = archive.lid_revocations(&lid_chat, &phone_chat).unwrap();
-            assert_eq!(
-                refreshed == ["voice"],
-                lid_kind == "revoked",
-                "{lid_kind}/{phone_kind}"
-            );
             archive.put_lid(lid, pn).unwrap();
             assert!(archive.lids().unwrap().contains(&(lid.into(), pn.into())));
             let row = archive.message(&phone_chat, "voice").unwrap().unwrap();

@@ -411,45 +411,6 @@ mod tests {
         );
     }
 
-    /// A canonical message already drawn with saved words must receive the
-    /// newly learned LID revocation, not wait for a history page to reload it.
-    #[test]
-    fn a_lid_revocation_refreshes_the_canonical_row_already_on_screen() {
-        let (mut worker, events, _, _) = worker();
-        let lid = "100001";
-        let pn = "100002";
-        let lid_chat = format!("{lid}@lid");
-        let phone_chat = format!("{pn}@s.whatsapp.net");
-        for chat in [&lid_chat, &phone_chat] {
-            worker.archive.ensure_chat(chat, "Fixture").unwrap();
-            worker
-                .archive
-                .insert_message(
-                    &crate::archive::tests::message(chat, "voice", 10, false),
-                    None,
-                )
-                .unwrap();
-        }
-        worker
-            .archive
-            .set_transcript(&phone_chat, "voice", "saved fixture", "test")
-            .unwrap();
-        worker
-            .archive
-            .set_content(&lid_chat, "voice", &Content::Revoked, false)
-            .unwrap();
-
-        worker.learn_lid(lid, pn);
-
-        assert!(
-            events
-                .try_iter()
-                .any(|event| matches!(event, Event::MessageUpdated(row)
-            if row.chat == phone_chat && row.id == "voice"
-                && matches!(row.content, Content::Revoked) && row.transcript.is_none()))
-        );
-    }
-
     #[test]
     /// Switching generations invalidates both preparation and inference tokens.
     fn changing_models_cancels_old_jobs_and_preparations() {

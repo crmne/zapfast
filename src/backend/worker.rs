@@ -3071,8 +3071,6 @@ impl Worker {
 
     // --- ids -------------------------------------------------------------
 
-    /// Reconciles a newly learned identity mapping in the account archive,
-    /// then refreshes canonical revocations through the normal privacy gate.
     fn learn_lid(&mut self, lid: &str, pn: &str) {
         if lid.is_empty() || pn.is_empty() {
             return;
@@ -3080,15 +3078,6 @@ impl Worker {
         if self.lid_to_pn.get(lid).is_some_and(|known| known == pn) {
             return;
         }
-        let chat = format!("{pn}@s.whatsapp.net");
-        let lid_chat = format!("{lid}@lid");
-        let revoked = match self.archive.lid_revocations(&lid_chat, &chat) {
-            Ok(ids) => ids,
-            Err(_) => {
-                log::warn!("could not check revocations before merging an id mapping");
-                return;
-            }
-        };
         let changed = match self.archive.put_lid(lid, pn) {
             Ok(changed) => changed,
             Err(error) => {
@@ -3100,11 +3089,8 @@ impl Worker {
         if changed {
             self.emit_chats();
         }
-        // Refresh canonical rows already on screen, not just their chat names.
-        // emit_message retains the normal privacy-recovery event gate.
-        for id in revoked {
-            self.emit_message(&chat, &id);
-        }
+        let chat = format!("{pn}@s.whatsapp.net");
+        let lid_chat = format!("{lid}@lid");
         match self.archive.removed_message_ids(&chat) {
             Ok(ids) => {
                 for id in ids {
