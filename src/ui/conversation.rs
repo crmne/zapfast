@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight, KeyScroll, PreviewState, RowHeight};
+use crate::app::{App, Conversation, JumpHighlight, KeyScroll, LinkPreviewState, RowHeight};
 use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
@@ -2237,8 +2237,8 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
     };
     let mut dismiss = false;
     let strip = match &shown.state {
-        PreviewState::Dismissed => return,
-        PreviewState::Loading => {
+        LinkPreviewState::Dismissed => return,
+        LinkPreviewState::Loading => {
             let loading = crate::i18n::gettext(app.locale, "Loading preview…");
             widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
                 ui.set_width(ui.available_width().max(0.0));
@@ -2249,7 +2249,7 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
                 });
             })
         }
-        PreviewState::Ready(composed) => {
+        LinkPreviewState::Ready(composed) => {
             let remove = crate::i18n::gettext(app.locale, "Remove link preview");
             // The card has no message: its picture is named by its chat and
             // link instead, the same each frame.

@@ -11,7 +11,7 @@ use crate::account::Account;
 use crate::audio::{Player, Recorder};
 use crate::backend::{Backend, Command, Event, LinkStatus, Refusal, Unsent, Waker};
 use crate::i18n::Locale;
-use crate::image_preview::PreviewState as ViewerState;
+use crate::image_preview::PreviewState;
 use crate::model::{
     AccountId, Action, Chat, ChatFilter, ChatId, ChatMedia, Contact, Content, Delivery, Dialog,
     Gif, GifError, InfoPanel, InfoView, Label, Media, MediaState, Message, Page, PickerTab, Scroll,
@@ -408,21 +408,21 @@ pub struct ComposerPreview {
     pub account: AccountId,
     pub chat: ChatId,
     pub url: String,
-    pub state: PreviewState,
+    pub state: LinkPreviewState,
 }
 
 impl ComposerPreview {
     /// The preview, once it has come and was not dismissed.
     pub fn ready(&self) -> Option<&crate::model::ComposedPreview> {
         match &self.state {
-            PreviewState::Ready(preview) => Some(preview),
-            PreviewState::Loading | PreviewState::Dismissed => None,
+            LinkPreviewState::Ready(preview) => Some(preview),
+            LinkPreviewState::Loading | LinkPreviewState::Dismissed => None,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum PreviewState {
+pub enum LinkPreviewState {
     /// Asked for; the card says it is loading.
     Loading,
     /// Shown above the composer, and sent with the message.
@@ -656,7 +656,7 @@ pub struct App {
     /// Only the real app pauses other apps' media, never tests or demos.
     pauses_media: bool,
     /// Image currently shown in the native preview.
-    pub image_preview: Option<ViewerState>,
+    pub image_preview: Option<PreviewState>,
     /// The motion photo whose clip plays over it: its chat and message.
     pub motion_playing: Option<(ChatId, String)>,
     /// Sticker currently shown large.
@@ -2487,7 +2487,7 @@ impl App {
         if self.info.as_ref().is_some_and(|info| info.chat == id) {
             self.close_info();
         }
-        if self.image_preview.as_ref().map(ViewerState::chat) == Some(id) {
+        if self.image_preview.as_ref().map(PreviewState::chat) == Some(id) {
             self.image_preview = None;
         }
         if matches!(
@@ -3494,7 +3494,7 @@ impl App {
                     && self
                         .image_preview
                         .as_ref()
-                        .map(ViewerState::chat)
+                        .map(PreviewState::chat)
                         .is_some_and(|id| {
                             self.chat(id)
                                 .is_none_or(|chat| chat.locked && !self.locked_folder_open())
@@ -5809,7 +5809,7 @@ impl App {
             account,
             chat,
             url: url.clone(),
-            state: PreviewState::Loading,
+            state: LinkPreviewState::Loading,
         });
         self.backend.send(Command::FetchLinkPreview { url });
         None
@@ -5850,12 +5850,12 @@ impl App {
         }
         let account = self.account().id.clone();
         if let Some(asked) = self.composer_preview.as_mut().filter(|asked| {
-            asked.account == account && asked.url == url && asked.state == PreviewState::Loading
+            asked.account == account && asked.url == url && asked.state == LinkPreviewState::Loading
         }) {
             asked.state = match preview {
-                Some(preview) => PreviewState::Ready(preview),
+                Some(preview) => LinkPreviewState::Ready(preview),
                 // Nothing usable: no card, and no asking again.
-                None => PreviewState::Dismissed,
+                None => LinkPreviewState::Dismissed,
             };
         }
     }
@@ -7116,7 +7116,7 @@ impl App {
             } => {
                 if crate::image_preview::can_view(&path) && path.is_file() {
                     self.open_viewer(
-                        ViewerState::new(Some(path), chat, message).with_card(card),
+                        PreviewState::new(Some(path), chat, message).with_card(card),
                         ctx,
                     );
                 } else {
@@ -7399,7 +7399,7 @@ impl App {
                     && self.preview_for(&chat, &self.composer).is_some()
                     && let Some(shown) = self.composer_preview.as_mut()
                 {
-                    shown.state = PreviewState::Dismissed;
+                    shown.state = LinkPreviewState::Dismissed;
                 }
             }
             Action::SetStar {
@@ -9993,7 +9993,7 @@ impl App {
     /// Opens the full-window viewer on `preview`, and asks for the album
     /// around it, so stepping through the chat's photos and clips works from
     /// the first frame.
-    fn open_viewer(&mut self, preview: ViewerState, ctx: &egui::Context) {
+    fn open_viewer(&mut self, preview: PreviewState, ctx: &egui::Context) {
         // The viewer takes the screen: a clip playing in the chat behind it
         // would keep its sound over whatever opens here.
         if self.video.message() != Some(preview.message()) {
@@ -10051,8 +10051,8 @@ impl App {
             .is_some_and(|preview| preview.chat() == chat && preview.message() == message);
         if !showing {
             let preview = match &photo {
-                Some(photo) => ViewerState::new(Some(photo.clone()), chat, message.clone()),
-                None => ViewerState::new_clip(path.clone(), chat, message.clone()),
+                Some(photo) => PreviewState::new(Some(photo.clone()), chat, message.clone()),
+                None => PreviewState::new_clip(path.clone(), chat, message.clone()),
             };
             self.open_viewer(preview, ctx);
         }
@@ -15041,7 +15041,7 @@ mod tests {
 
     /// Opens the viewer on one item of that album.
     fn open_viewer(app: &mut App, index: usize) {
-        app.image_preview = Some(ViewerState::new(
+        app.image_preview = Some(PreviewState::new(
             Some(PathBuf::from(format!("/fixture/{index}.png"))),
             "1@s.whatsapp.net".into(),
             format!("m{index}"),
@@ -15424,7 +15424,7 @@ mod tests {
         };
         app.viewer_media = vec![item("m0"), item("m1")];
         app.viewer_media_chat = Some(chat.into());
-        app.image_preview = Some(ViewerState::new(
+        app.image_preview = Some(PreviewState::new(
             Some(PathBuf::from("/fixture/m0.png")),
             chat.into(),
             "m0".into(),
@@ -15462,7 +15462,7 @@ mod tests {
             "another account's failed download is not the viewer's"
         );
         assert_eq!(
-            app.image_preview.as_ref().map(ViewerState::message),
+            app.image_preview.as_ref().map(PreviewState::message),
             Some("m0")
         );
         assert!(
@@ -15474,7 +15474,7 @@ mod tests {
     #[test]
     fn a_video_in_the_viewer_keeps_clipboard_and_control_focus() {
         let (mut app, ctx) = clipboard_app();
-        app.image_preview = Some(ViewerState::new_clip(
+        app.image_preview = Some(PreviewState::new_clip(
             PathBuf::from("/cache/clip.mp4"),
             "fixture@s.whatsapp.net".into(),
             "m1".into(),
@@ -15817,7 +15817,7 @@ mod tests {
                             app.settings.set_chat_lock_code(Some("fixture-code"));
                             app.enter_locked_folder();
                         }
-                        let preview = ViewerState::new(
+                        let preview = PreviewState::new(
                             Some("fixture.png".into()),
                             "fixture".into(),
                             "photo".into(),
