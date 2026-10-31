@@ -955,7 +955,7 @@ pub async fn run(
     discard_attachment_staging(&worker.dirs.saved_sticker_dir());
     worker.start_bot().await;
     let mut wa_events = wa_events;
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut tick = tokio::time::interval(link_watch::CHECK_INTERVAL);
     loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
@@ -2194,11 +2194,8 @@ impl Worker {
                     quiet.as_secs()
                 );
             }
-            link_watch::Verdict::SocketLost(lost) => {
-                log::warn!(
-                    "link: socket disconnected for {} s while reported connected, reconnecting",
-                    lost.as_secs()
-                );
+            link_watch::Verdict::SocketLost => {
+                log::warn!("link: socket disconnected while reported connected, reconnecting");
             }
         }
         self.set_status(LinkStatus::Connecting);
@@ -13136,17 +13133,8 @@ mod tests {
         let bot = Bot::builder().with_backend(store).build().await.unwrap();
         let client = bot.client();
         assert!(!client.is_socket_connected());
-        worker.client = Some(client.clone());
+        worker.client = Some(client);
         worker.status = LinkStatus::Connected;
-        assert_eq!(
-            worker.link_watch.check(
-                Instant::now() - link_watch::SOCKET_GRACE,
-                std::time::SystemTime::now() - link_watch::SOCKET_GRACE,
-                Some(client.stats().frames_received),
-                false,
-            ),
-            link_watch::Verdict::Healthy
-        );
 
         worker.watch_link();
         assert!(matches!(worker.status, LinkStatus::Connecting));
