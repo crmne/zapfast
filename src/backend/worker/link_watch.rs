@@ -21,6 +21,9 @@
 //!   keep the received-frame counter moving. A network change can wedge a
 //!   link without any sleep, and a wake the system did not report is caught
 //!   here too.
+//! - Does the interface still say connected after the client's socket went
+//!   away? Request a reconnect on the first check, even if buffered traffic
+//!   keeps the received-frame counter moving.
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -33,6 +36,9 @@ pub(super) const SLEEP_GAP: Duration = Duration::from_secs(30);
 /// working one answers a keepalive at least every minute or so.
 pub(super) const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
+/// Check the link every five seconds, without another delay after socket loss.
+pub(super) const CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
     Healthy,
@@ -40,6 +46,8 @@ pub(super) enum Verdict {
     Slept(Duration),
     /// Nothing arrived for this long.
     Silent(Duration),
+    /// The interface still says connected, but the client's socket is gone.
+    SocketLost,
 }
 
 pub(super) struct LinkWatch {
@@ -68,13 +76,15 @@ const RESUME_REPORTED: bool = cfg!(any(target_os = "linux", target_os = "windows
 impl LinkWatch {
     /// Checks the link at a tick. `frames_received` is the library's
     /// cumulative received-frame count while the link is connected, `None`
-    /// otherwise; a verdict other than `Healthy` asks for a reconnect and
-    /// restarts the watch.
+    /// otherwise. `socket_connected` is the client's current transport state,
+    /// independent of the last connection event. A verdict other than `Healthy`
+    /// asks for a reconnect and restarts the corresponding timer.
     pub fn check(
         &mut self,
         now: Instant,
         wall: SystemTime,
         frames_received: Option<u64>,
+        socket_connected: bool,
     ) -> Verdict {
         let slept = self
             .last_tick
@@ -89,6 +99,12 @@ impl LinkWatch {
             self.frames = None;
             return Verdict::Healthy;
         };
+        if !socket_connected {
+            // Buffered inbound traffic must not postpone recovery of a socket
+            // that the send guard already considers disconnected.
+            self.frames = Some((frames, now));
+            return Verdict::SocketLost;
+        }
         if let Some(gap) = slept {
             self.frames = Some((frames, now));
             return Verdict::Slept(gap);
@@ -111,7 +127,7 @@ impl LinkWatch {
 mod tests {
     use super::*;
 
-    const TICK: Duration = Duration::from_secs(5);
+    const TICK: Duration = CHECK_INTERVAL;
 
     /// A watch that checks the clock, as on macOS.
     fn watch() -> LinkWatch {
@@ -146,7 +162,7 @@ mod tests {
         }
 
         fn check(&self, watch: &mut LinkWatch, frames: Option<u64>) -> Verdict {
-            watch.check(self.now, self.wall, frames)
+            watch.check(self.now, self.wall, frames, true)
         }
     }
 
@@ -158,6 +174,45 @@ mod tests {
             assert_eq!(clocks.check(&mut watch, Some(frames)), Verdict::Healthy);
             clocks.awake(TICK);
         }
+    }
+
+    #[test]
+    fn a_lost_socket_recovers_on_the_next_tick_even_with_buffered_frames() {
+        let mut clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(TICK, Duration::from_secs(5));
+        assert_eq!(clocks.check(&mut watch, Some(1)), Verdict::Healthy);
+        // A loss just after a healthy check is caught at the next tick.
+        clocks.awake(TICK);
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(2), false),
+            Verdict::SocketLost
+        );
+    }
+
+    #[test]
+    fn a_lost_socket_on_the_first_check_needs_no_previous_tick() {
+        let clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(1), false),
+            Verdict::SocketLost
+        );
+    }
+
+    #[test]
+    fn a_known_disconnect_leaves_recovery_to_the_library() {
+        let mut clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(clocks.check(&mut watch, Some(1)), Verdict::Healthy);
+        for _ in 0..3 {
+            clocks.awake(TICK);
+            assert_eq!(
+                watch.check(clocks.now, clocks.wall, None, false),
+                Verdict::Healthy
+            );
+        }
+        assert_eq!(clocks.check(&mut watch, Some(2)), Verdict::Healthy);
     }
 
     #[test]

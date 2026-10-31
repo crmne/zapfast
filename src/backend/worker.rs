@@ -955,7 +955,7 @@ pub async fn run(
     discard_attachment_staging(&worker.dirs.saved_sticker_dir());
     worker.start_bot().await;
     let mut wa_events = wa_events;
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut tick = tokio::time::interval(link_watch::CHECK_INTERVAL);
     loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
@@ -2161,16 +2161,22 @@ impl Worker {
 
     /// Reconnects a link that the machine slept under (macOS, where the
     /// system does not report the wake yet), or that has received nothing
-    /// for longer than a working one can. See `link_watch`.
+    /// for longer than a working one can, or whose socket was lost without a
+    /// matching disconnect event. See `link_watch`.
     fn watch_link(&mut self) {
         let client = self
             .client
             .clone()
             .filter(|_| matches!(self.status, LinkStatus::Connected));
         let frames = client.as_ref().map(|client| client.stats().frames_received);
-        let verdict = self
-            .link_watch
-            .check(Instant::now(), std::time::SystemTime::now(), frames);
+        let verdict = self.link_watch.check(
+            Instant::now(),
+            std::time::SystemTime::now(),
+            frames,
+            client
+                .as_ref()
+                .is_some_and(|client| client.is_socket_connected()),
+        );
         let Some(client) = client else {
             return;
         };
@@ -2187,6 +2193,9 @@ impl Worker {
                     "link: nothing received for {} s, reconnecting",
                     quiet.as_secs()
                 );
+            }
+            link_watch::Verdict::SocketLost => {
+                log::warn!("link: socket disconnected while reported connected, reconnecting");
             }
         }
         self.set_status(LinkStatus::Connecting);
@@ -13111,6 +13120,31 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[tokio::test]
+    async fn a_lost_socket_without_a_disconnect_event_starts_reconnecting() {
+        let (mut worker, events, _commands, _wa) = super::receipt_tests::worker();
+        let directory = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::open(
+            directory.path().join("session.db").to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let bot = Bot::builder().with_backend(store).build().await.unwrap();
+        let client = bot.client();
+        assert!(!client.is_socket_connected());
+        worker.client = Some(client);
+        worker.status = LinkStatus::Connected;
+
+        worker.watch_link();
+        assert!(matches!(worker.status, LinkStatus::Connecting));
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Event::Link(LinkStatus::Connecting)
+        ));
+        worker.watch_link();
+        assert!(events.try_recv().is_err(), "only one recovery is requested");
+    }
 
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]

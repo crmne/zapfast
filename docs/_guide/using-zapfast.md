@@ -12,6 +12,12 @@ Undo and redo in the message field apply to its current chat and account.
 Switching chats or accounts, closing a chat, or unlinking clears the editor's
 undo history. Saved drafts remain available when you return to their chat.
 
+ZapFast reconnects automatically after a lost connection. If the window still
+reports a connection after the client's socket has closed, it requests a
+reconnect on the next connection check, which runs every five seconds, without
+an additional waiting period. Text refused while offline returns to the
+composer; send it again once the connection is restored.
+
 Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
