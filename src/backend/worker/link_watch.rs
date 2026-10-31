@@ -21,6 +21,9 @@
 //!   keep the received-frame counter moving. A network change can wedge a
 //!   link without any sleep, and a wake the system did not report is caught
 //!   here too.
+//! - Does the interface still say connected after the client's socket went
+//!   away? Allow a short transport replacement, then request a reconnect even
+//!   if buffered traffic keeps the received-frame counter moving.
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -33,6 +36,10 @@ pub(super) const SLEEP_GAP: Duration = Duration::from_secs(30);
 /// working one answers a keepalive at least every minute or so.
 pub(super) const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
+/// Let a normal transport replacement finish before intervening when the
+/// interface still says connected but the client has lost its socket.
+pub(super) const SOCKET_GRACE: Duration = Duration::from_secs(15);
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
     Healthy,
@@ -40,6 +47,8 @@ pub(super) enum Verdict {
     Slept(Duration),
     /// Nothing arrived for this long.
     Silent(Duration),
+    /// The interface still says connected, but the client's socket is gone.
+    SocketLost(Duration),
 }
 
 pub(super) struct LinkWatch {
@@ -50,6 +59,7 @@ pub(super) struct LinkWatch {
     last_tick: Option<(Instant, SystemTime)>,
     /// The received-frame count, and when it was first seen at that value.
     frames: Option<(u64, Instant)>,
+    socket_lost: Option<Instant>,
 }
 
 impl Default for LinkWatch {
@@ -58,6 +68,7 @@ impl Default for LinkWatch {
             clock_check: !RESUME_REPORTED,
             last_tick: None,
             frames: None,
+            socket_lost: None,
         }
     }
 }
@@ -68,13 +79,15 @@ const RESUME_REPORTED: bool = cfg!(any(target_os = "linux", target_os = "windows
 impl LinkWatch {
     /// Checks the link at a tick. `frames_received` is the library's
     /// cumulative received-frame count while the link is connected, `None`
-    /// otherwise; a verdict other than `Healthy` asks for a reconnect and
-    /// restarts the watch.
+    /// otherwise. `socket_connected` is the client's current transport state,
+    /// independent of the last connection event. A verdict other than `Healthy`
+    /// asks for a reconnect and restarts the corresponding timer.
     pub fn check(
         &mut self,
         now: Instant,
         wall: SystemTime,
         frames_received: Option<u64>,
+        socket_connected: bool,
     ) -> Verdict {
         let slept = self
             .last_tick
@@ -87,8 +100,22 @@ impl LinkWatch {
             .filter(|_| self.clock_check);
         let Some(frames) = frames_received else {
             self.frames = None;
+            self.socket_lost = None;
             return Verdict::Healthy;
         };
+        if socket_connected {
+            self.socket_lost = None;
+        } else {
+            // Buffered inbound work can keep the frame counter moving after
+            // the socket is lost. It must not reset this independent clock.
+            let since = self.socket_lost.get_or_insert(now);
+            let lost = now.saturating_duration_since(*since);
+            if lost >= SOCKET_GRACE {
+                *since = now;
+                self.frames = Some((frames, now));
+                return Verdict::SocketLost(lost);
+            }
+        }
         if let Some(gap) = slept {
             self.frames = Some((frames, now));
             return Verdict::Slept(gap);
@@ -146,7 +173,7 @@ mod tests {
         }
 
         fn check(&self, watch: &mut LinkWatch, frames: Option<u64>) -> Verdict {
-            watch.check(self.now, self.wall, frames)
+            watch.check(self.now, self.wall, frames, true)
         }
     }
 
@@ -158,6 +185,70 @@ mod tests {
             assert_eq!(clocks.check(&mut watch, Some(frames)), Verdict::Healthy);
             clocks.awake(TICK);
         }
+    }
+
+    #[test]
+    fn a_lost_socket_recovers_even_while_buffered_frames_keep_arriving() {
+        let mut clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(clocks.check(&mut watch, Some(1)), Verdict::Healthy);
+        for frames in 2..=5 {
+            let expected = if frames == 5 {
+                Verdict::SocketLost(SOCKET_GRACE)
+            } else {
+                Verdict::Healthy
+            };
+            assert_eq!(
+                watch.check(clocks.now, clocks.wall, Some(frames), false),
+                expected
+            );
+            clocks.awake(TICK);
+        }
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(6), false),
+            Verdict::Healthy,
+            "a recovery request must not fire every tick"
+        );
+    }
+
+    #[test]
+    fn a_socket_restored_during_the_grace_period_cancels_recovery() {
+        let mut clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(1), false),
+            Verdict::Healthy
+        );
+        clocks.awake(SOCKET_GRACE - TICK);
+        assert_eq!(clocks.check(&mut watch, Some(2)), Verdict::Healthy);
+        clocks.awake(TICK);
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(3), false),
+            Verdict::Healthy,
+            "a second transport loss starts a fresh grace period"
+        );
+        clocks.awake(SOCKET_GRACE);
+        assert_eq!(clocks.check(&mut watch, Some(4)), Verdict::Healthy);
+    }
+
+    #[test]
+    fn a_disconnect_event_clears_the_socket_loss_timer() {
+        let mut clocks = Clocks::new();
+        let mut watch = watch();
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(1), false),
+            Verdict::Healthy
+        );
+        clocks.awake(SOCKET_GRACE);
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, None, false),
+            Verdict::Healthy,
+            "a known disconnect belongs to the library's reconnect loop"
+        );
+        assert_eq!(
+            watch.check(clocks.now, clocks.wall, Some(2), false),
+            Verdict::Healthy
+        );
     }
 
     #[test]
