@@ -837,7 +837,11 @@ Shift+Tab bring the focused button into view, too.
 
 Closing the window keeps ZapFast linked in the tray. On macOS, click the menu
 bar icon to open its menu, then choose **Show or hide ZapFast** to reopen the
-window. On Linux and Windows, click the tray icon to reopen it. Launching the
+window. To keep the Dock tidy, turn off **Show in the Dock while closed** in
+Settings > System: while the window is closed, ZapFast then leaves the Dock and
+the Command-Tab switcher and lives in the menu bar alone, as its taskbar button
+goes with the window on Windows and Linux, and it returns with the window. On
+Linux and Windows, click the tray icon to reopen it. Launching the
 app again reopens the window on every platform. To quit, use **Quit** in the
 tray menu, or **Quit** in the Dock icon's menu on macOS, or on Linux **Quit ZapFast** in the
 launcher's right-click menu (KDE Plasma's task manager and application menu,
@@ -852,7 +856,8 @@ taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
 does not count toasts remaining in Windows notification history. On macOS, the
 Dock icon shows the number of unread chats in a red badge. The icon and
-badge stay with the app when its window is closed and reopened. A macOS
+badge stay with the app when its window is closed and reopened, unless
+**Show in the Dock while closed** is off. A macOS
 source build run through Cargo uses ZapFast's icon too. Starting hidden
 lets you open the first window from the menu-bar menu. On Linux and
 Windows, notifications show the chat picture. On Linux, Windows, and macOS, a

@@ -478,6 +478,9 @@ pub struct Settings {
     pub giphy_key: String,
     /// Keep the app linked in the tray when the window closes.
     pub keep_running_in_background: bool,
+    /// macOS: keep ZapFast in the Dock and Cmd-Tab while its window is
+    /// closed. Off, the menu-bar icon alone brings the window back.
+    pub mac_dock_while_closed: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
     /// Notifications name the chat and sender and show the message. Off,
@@ -578,6 +581,7 @@ impl Default for Settings {
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
+            mac_dock_while_closed: true,
             notifications: true,
             notification_content: true,
             message_sound: NotificationSound::Receive,
