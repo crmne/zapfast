@@ -656,6 +656,15 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
         |settings| &mut settings.keep_running_in_background,
     );
+    #[cfg(target_os = "macos")]
+    system.toggle(
+        translated(locale, "Show in the Dock while closed"),
+        translated(
+            locale,
+            "Off, only the menu-bar icon stays, without the Dock's unread badge.",
+        ),
+        |settings| &mut settings.mac_dock_while_closed,
+    );
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),

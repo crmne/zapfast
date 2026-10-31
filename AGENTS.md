@@ -584,7 +584,12 @@ protocol. These notes are for coding agents and new contributors.
   gets the embedded icon, while a packaged app keeps its bundle icon. The
   unread-chat count stays in ZapFast and survives window replacement.
   Clicking the macOS menu-bar icon opens its menu; **Show or hide ZapFast**
-  toggles the window, and clicking the Dock icon shows it.
+  toggles the window, and clicking the Dock icon shows it. With
+  `settings.mac_dock_while_closed` off (Settings > System, macOS only), a
+  window hidden to the menu bar takes the app out of the Dock and Cmd-Tab
+  (`fastframe_dock::set_dock_icon_visible`, from `App::window_gone`), as the
+  taskbar button goes with the window elsewhere; `App::attach` puts it back
+  before the native menus, which an app outside the Dock has no menu bar for.
   Closing keeps ZapFast running only while `Tray::is_shown`: on Linux the
   item exists before a panel shows it (a start at login beats the panel, and
   GNOME's tray watcher) and registers once one appears. A hidden start with

@@ -220,6 +220,10 @@ name or description, in the interface language or in English.
 **System**
 
 - **Keep running when the window closes**: keep ZapFast linked in the tray.
+- **Show in the Dock while closed** (macOS): on by default. Off, a closed
+  window takes ZapFast out of the Dock and the Command-Tab switcher, and its
+  unread badge with it; the menu-bar icon brings the window back, and the Dock
+  icon returns with it.
 - **Start at login**: start in the tray without a window, where the platform
   supports it. If the desktop's tray is not up yet, ZapFast waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could

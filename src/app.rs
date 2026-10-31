@@ -852,6 +852,9 @@ pub struct App {
     /// its command line tool.
     #[cfg(test)]
     test_raised: bool,
+    /// Stands in for the macOS Dock icon, which tests leave alone.
+    #[cfg(test)]
+    test_in_dock: bool,
     /// Whether the tray menu offers "Lock ZapFast": whether an app lock
     /// password was set when it last changed.
     tray_lockable: bool,
@@ -1594,6 +1597,8 @@ impl App {
             test_tray_shown: None,
             #[cfg(test)]
             test_raised: false,
+            #[cfg(test)]
+            test_in_dock: true,
             tray_lockable,
             window_hidden: false,
             hide_intent: false,
@@ -1969,6 +1974,21 @@ impl App {
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
+        // Out of the Dock and Cmd-Tab when Settings say so (macOS), as the
+        // taskbar's button goes with the window elsewhere. Without a menu-bar
+        // item the Dock stays the way back.
+        self.show_in_dock(self.settings.mac_dock_while_closed || !self.tray_shown());
+    }
+
+    /// Puts ZapFast in the macOS Dock and the Cmd-Tab switcher, or takes it
+    /// out of both while it lives in the menu bar alone. Nothing elsewhere.
+    fn show_in_dock(&mut self, shown: bool) {
+        #[cfg(test)]
+        {
+            self.test_in_dock = shown;
+        }
+        #[cfg(not(test))]
+        fastframe_dock::set_dock_icon_visible(shown);
     }
 
     /// What the conversation shows behind its bubbles, for the chat and the
@@ -2338,6 +2358,9 @@ impl App {
         // focus in the last one does not hold it back from the composer.
         self.messages_focused = false;
         self.refocus_composer(ctx);
+        // Back in the Dock, where a hidden window left the app, before the
+        // native menus: an app outside the Dock has no menu bar for them.
+        self.show_in_dock(true);
         // Before the tray: muda keeps the first menu handler it is given, and
         // the tray installs one when it makes its item on the first window.
         // Ours hands the tray its own events (#215).
@@ -15788,6 +15811,32 @@ mod tests {
         app.settings.keep_running_in_background = false;
         assert!(!app.hides_to_tray(), "the setting still decides");
         assert!(!Resident::start_hidden(&mut app));
+    }
+
+    /// ZapFast stays in the macOS Dock with its window closed unless Settings
+    /// say otherwise; then a window hidden to the menu bar takes the app out
+    /// of the Dock and Cmd-Tab, and the next window puts it back. Without a
+    /// tray item to come back through, the Dock stays.
+    #[test]
+    fn a_window_hidden_to_the_tray_leaves_the_dock_when_asked() {
+        use fastframe_shell::Resident;
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        assert!(app.settings.mac_dock_while_closed, "on by default");
+        Resident::window_gone(&mut app);
+        assert!(app.test_in_dock, "the Dock stays by default");
+
+        app.attach(&ctx);
+        app.settings.mac_dock_while_closed = false;
+        Resident::window_gone(&mut app);
+        assert!(!app.test_in_dock, "out of the Dock while hidden");
+        app.attach(&ctx);
+        assert!(app.test_in_dock, "back with the window");
+
+        app.test_tray_shown = Some(false);
+        Resident::window_gone(&mut app);
+        assert!(app.test_in_dock, "no menu-bar item: the Dock stays");
     }
 
     /// At login on GNOME the tray watcher comes up after ZapFast (#429): a
