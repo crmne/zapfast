@@ -10598,6 +10598,19 @@ impl App {
         self.toast_error(format!("Could not record: {error}"));
     }
 
+    /// Replace a macOS window when the selected theme needs a different surface.
+    #[cfg(target_os = "macos")]
+    pub fn match_window_transparency(&mut self, ctx: &egui::Context, transparent: bool) {
+        let wanted = crate::backdrop::transparent_window(
+            self.palette.vibrant(),
+            self.palette.window.a() < 255,
+        );
+        if wanted != transparent && !self.reopen && !self.window_hidden {
+            self.reopen = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
@@ -10611,9 +10624,11 @@ impl App {
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = None;
         self.apply_theme(ctx);
-        if ctx.input(|input| input.events.iter().any(is_user_input)) {
+        let user_input = ctx.input(|input| input.events.iter().any(is_user_input));
+        if user_input {
             self.app_lock.note_input();
         }
+        crate::motion::idle_text_cursor(ui, user_input);
         let locked = self.app_lock.is_locked();
         // Behind the lock screen nobody is reading; unlocking counts as
         // coming back to the window.
@@ -16903,6 +16918,33 @@ mod tests {
         app.apply(Action::SetCustomTitlebar(false), &ctx);
         assert!(!app.settings.custom_titlebar);
         assert!(!app.reopen);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn switching_transparency_reopens_the_window_without_losing_the_chat() {
+        use fastframe_shell::{Closed, Resident};
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.open_chat = Some("test-chat".into());
+        app.palette = crate::theme::Palette::messages();
+        app.match_window_transparency(&ctx, false);
+        assert_eq!(app.closed(), Closed::Reopen);
+        assert_eq!(app.open_chat.as_deref(), Some("test-chat"));
+
+        app.reopen = false;
+        app.match_window_transparency(&ctx, true);
+        assert!(!app.reopen, "a matching window stays open");
+        app.palette = crate::theme::Palette::dark();
+        app.match_window_transparency(&ctx, true);
+        assert_eq!(app.closed(), Closed::Reopen);
+        assert_eq!(app.open_chat.as_deref(), Some("test-chat"));
+
+        app.reopen = false;
+        app.window_hidden = true;
+        app.palette = crate::theme::Palette::messages();
+        app.match_window_transparency(&ctx, false);
+        assert!(!app.reopen, "a hidden window needs no replacement");
     }
 
     #[test]

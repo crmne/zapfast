@@ -130,7 +130,8 @@ name or description, in the interface language or in English.
   where an unblurred desktop behind the sidebar would cost its text
   contrast, and in a window opened before choosing it on Windows or Linux,
   the window is opaque in the theme's colours; it turns translucent from
-  the next window.
+  the next window. On macOS, changing between an opaque and translucent
+  theme replaces the window while keeping the current chat and connection.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.

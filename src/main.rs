@@ -438,7 +438,7 @@ fn run() -> eframe::Result<()> {
             // later.
             let transparent = lease.peek(|app: &app::App| {
                 zapfast::backdrop::transparent_window(
-                    app.settings.theme == zapfast::settings::ThemeChoice::Messages,
+                    app.palette.vibrant(),
                     app.palette.window.a() < 255,
                 )
             });
@@ -822,6 +822,8 @@ impl Shell {
             egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
+        #[cfg(target_os = "macos")]
+        app.match_window_transparency(ui.ctx(), self.transparent);
         let startups: Vec<_> = app
             .accounts
             .iter_mut()
