@@ -630,6 +630,8 @@ pub struct App {
     pub selection_view: std::sync::Arc<std::sync::Mutex<Option<egui::Rect>>>,
     pub gif_query: String,
     pub gif_results: Vec<Gif>,
+    pub gif_next_offset: Option<usize>,
+    gif_request: u64,
     /// Whether a GIF search is active.
     pub gif_pending: bool,
     pub gif_error: Option<GifError>,
@@ -1497,6 +1499,8 @@ impl App {
             selection_view: Default::default(),
             gif_query: String::new(),
             gif_results: Vec::new(),
+            gif_next_offset: None,
+            gif_request: 0,
             gif_pending: false,
             gif_error: None,
             sticker_shelf: StickerShelf::default(),
@@ -1768,6 +1772,12 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.invalidate_composer_undo();
+        self.gif_request = self.gif_request.wrapping_add(1);
+        self.gif_query.clear();
+        self.gif_results.clear();
+        self.gif_next_offset = None;
+        self.gif_pending = false;
+        self.gif_error = None;
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -3795,16 +3805,35 @@ impl App {
                         .map(|previous| crate::util::image_uri(&previous)),
                 );
             }
-            Event::Gifs { query, results } => {
-                if query == self.gif_query {
+            Event::Gifs {
+                query,
+                offset,
+                request,
+                results,
+            } => {
+                if query == self.gif_query && request == self.gif_request && self.gif_pending {
                     self.gif_pending = false;
                     match results {
                         Ok(results) => {
-                            self.gif_results = results;
+                            self.gif_next_offset = results.next_offset;
+                            if offset == 0 {
+                                self.gif_results = results.gifs;
+                            } else {
+                                let mut ids: std::collections::HashSet<_> =
+                                    self.gif_results.iter().map(|gif| gif.id.clone()).collect();
+                                self.gif_results.extend(
+                                    results
+                                        .gifs
+                                        .into_iter()
+                                        .filter(|gif| ids.insert(gif.id.clone())),
+                                );
+                            }
                             self.gif_error = None;
                         }
                         Err(error) => {
-                            self.gif_results.clear();
+                            if offset == 0 {
+                                self.gif_results.clear();
+                            }
                             self.gif_error = Some(error);
                         }
                     }
@@ -8005,13 +8034,17 @@ impl App {
                 }
             }
             Action::SearchGifs(query) => {
-                self.gif_query = query.clone();
-                self.gif_pending = true;
-                self.gif_error = None;
-                self.backend.send(Command::SearchGifs {
-                    query,
-                    key: self.settings.effective_giphy_key().unwrap_or_default(),
-                });
+                self.gif_query = query.trim().to_owned();
+                self.gif_results.clear();
+                self.gif_next_offset = None;
+                self.request_gif_page(0);
+            }
+            Action::MoreGifs => {
+                if !self.gif_pending
+                    && let Some(offset) = self.gif_next_offset
+                {
+                    self.request_gif_page(offset);
+                }
             }
             Action::SendGif(gif) => {
                 if let Some(chat) = self.open_chat.clone() {
@@ -10423,6 +10456,18 @@ impl App {
         }
     }
 
+    fn request_gif_page(&mut self, offset: usize) {
+        self.gif_request = self.gif_request.wrapping_add(1);
+        self.gif_pending = true;
+        self.gif_error = None;
+        self.backend.send(Command::SearchGifs {
+            query: self.gif_query.clone(),
+            key: self.settings.effective_giphy_key().unwrap_or_default(),
+            offset,
+            request: self.gif_request,
+        });
+    }
+
     /// Inserts text at the composer cursor or end.
     fn insert_in_composer(&mut self, ctx: &egui::Context, text: &str) {
         let id = egui::Id::new("composer-text");
@@ -11462,6 +11507,82 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn gif_pages_append_retry_and_ignore_overtaken_searches() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let gif = |id: &str| Gif {
+            id: id.into(),
+            still: None,
+            mp4: "https://example.test/gif.mp4".into(),
+            width: 100,
+            height: 100,
+        };
+        let page = |request, offset, ids: &[&str], next_offset| Event::Gifs {
+            query: "cats".into(),
+            request,
+            offset,
+            results: Ok(crate::model::GifPage {
+                gifs: ids.iter().map(|id| gif(id)).collect(),
+                next_offset,
+            }),
+        };
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        let first = app.gif_request;
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        let current = app.gif_request;
+        app.apply_backend_event(page(first, 0, &["stale"], None), false);
+        assert!(app.gif_pending);
+        assert!(app.gif_results.is_empty());
+        app.apply_backend_event(page(current, 0, &["one", "two"], Some(24)), false);
+        app.apply(Action::MoreGifs, &ctx);
+        let more = app.gif_request;
+        app.apply(Action::MoreGifs, &ctx);
+        assert_eq!(app.gif_request, more, "one page request at a time");
+        app.apply_backend_event(
+            Event::Gifs {
+                query: "cats".into(),
+                offset: 24,
+                request: more,
+                results: Err(GifError {
+                    message: "offline".into(),
+                    bad_key: false,
+                }),
+            },
+            false,
+        );
+        assert_eq!(app.gif_results.len(), 2);
+        assert_eq!(app.gif_next_offset, Some(24));
+        app.apply(Action::MoreGifs, &ctx);
+        app.apply_backend_event(page(app.gif_request, 24, &["two", "three"], None), false);
+        assert_eq!(
+            app.gif_results
+                .iter()
+                .map(|gif| gif.id.as_str())
+                .collect::<Vec<_>>(),
+            ["one", "two", "three"]
+        );
+        assert!(!app.gif_pending);
+        assert!(app.gif_error.is_none());
+        assert!(app.gif_next_offset.is_none());
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        let old_account = app.gif_request;
+        app.apply_backend_event(page(old_account, 0, &["old-account"], Some(24)), false);
+        app.apply(Action::MoreGifs, &ctx);
+        let late = app.gif_request;
+        app.clear_account_ui();
+        assert!(app.gif_results.is_empty());
+        assert!(app.gif_query.is_empty());
+        assert!(app.gif_next_offset.is_none());
+        assert!(!app.gif_pending);
+        app.apply(Action::SearchGifs("cats".into()), &ctx);
+        app.apply_backend_event(page(late, 24, &["late-old-account"], None), false);
+        assert!(app.gif_pending);
+        assert!(app.gif_results.is_empty());
+        app.apply_backend_event(page(app.gif_request, 0, &["new-account"], None), false);
+        assert_eq!(app.gif_results[0].id, "new-account");
     }
 
     /// While recording, the light, the timer and the waveform ask for a

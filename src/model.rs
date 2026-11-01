@@ -2230,6 +2230,13 @@ pub struct GifError {
     pub bad_key: bool,
 }
 
+/// One page from GIPHY, with an offset based on all returned API entries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GifPage {
+    pub gifs: Vec<Gif>,
+    pub next_offset: Option<usize>,
+}
+
 /// A GIF found through GIPHY.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Gif {
@@ -2912,6 +2919,7 @@ pub enum Action {
     },
     /// Searches GIFs or lists trending results for an empty query.
     SearchGifs(String),
+    MoreGifs,
     SendGif(Gif),
     React {
         chat: ChatId,

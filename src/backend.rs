@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::model::{
-    Chat, ChatActivity, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack,
+    Chat, ChatActivity, ChatId, Contact, Gif, GifError, GifPage, Message, PollDraft, StickerPack,
     StorageStats,
 };
 use crate::paths::AccountDirs;
@@ -807,6 +807,8 @@ pub enum Command {
     SearchGifs {
         query: String,
         key: String,
+        offset: usize,
+        request: u64,
     },
     /// Loads recent and saved stickers for the picker.
     RecentStickers,
@@ -937,7 +939,9 @@ pub enum Command {
     /// Internal GIPHY result.
     GifResults {
         query: String,
-        results: Result<Vec<Gif>, GifError>,
+        offset: usize,
+        request: u64,
+        results: Result<GifPage, GifError>,
     },
     /// Measures this account's media cache for Settings, answered by
     /// `Event::StorageStats` with the same `token`.
@@ -1238,7 +1242,9 @@ pub enum Event {
     /// GIF search results or failure.
     Gifs {
         query: String,
-        results: Result<Vec<Gif>, GifError>,
+        offset: usize,
+        request: u64,
+        results: Result<GifPage, GifError>,
     },
     /// A picture chosen for the sticker maker: its file, size, and whether it
     /// has see-through pixels.
