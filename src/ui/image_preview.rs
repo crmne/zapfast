@@ -29,6 +29,9 @@ pub(crate) fn modal_id() -> egui::Id {
     egui::Id::new("image-preview")
 }
 
+/// Draws the open viewer for this frame: the header, the stage with the
+/// picture or clip, the album strip along the bottom, and the clicks that
+/// move between items or close it.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     // The album carries every thumbnail of the chat, so it is moved out for
     // the frame and put back at the end instead of being copied: a copy per
@@ -120,7 +123,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 preview.path()
             }
             .map(Path::to_path_buf);
-            if clip {
+            let drawn = if clip {
                 video(
                     app,
                     &mut body,
@@ -145,6 +148,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     &mut actions,
                 )
             };
+            // Zoomed, the stage's scrollbars sit in the field and take its clicks.
+            if let Some(drawn) = drawn.filter(|_| clip || preview.is_fit()) {
+                field_click(ui, stage, drawn, &mut actions);
+            }
             if strip {
                 navigation_overlay(ui, stage, &palette, app.locale, clip, &mut actions);
                 let mut bar = ui.new_child(UiBuilder::new().max_rect(strip_rect));
@@ -183,6 +190,37 @@ fn panes(window: Rect, strip: bool) -> (Rect, Rect, Rect) {
         pos2(window.max.x, strip_rect.min.y),
     );
     (header, stage, strip_rect)
+}
+
+/// Closes the viewer on a click on the field the picture leaves uncovered:
+/// the pan area under it holds the whole stage, so the strip beside a picture
+/// would otherwise swallow the click. The controls laid over the picture are
+/// added after this, so they keep their own clicks.
+fn field_click(ui: &mut egui::Ui, stage: Rect, drawn: Rect, actions: &mut Vec<Action>) {
+    for (index, panel) in field_panels(stage, drawn).into_iter().enumerate() {
+        if ui
+            .interact(
+                panel,
+                egui::Id::new(("image-preview-field", index)),
+                // Not a stop in the modal's Tab order.
+                Sense::CLICK,
+            )
+            .clicked()
+        {
+            actions.push(Action::CloseImagePreview);
+        }
+    }
+}
+
+/// The four parts of the stage around the picture, empty where it covers them.
+fn field_panels(stage: Rect, drawn: Rect) -> [Rect; 4] {
+    let drawn = drawn.intersect(stage);
+    [
+        Rect::from_x_y_ranges(stage.x_range(), stage.min.y..=drawn.min.y),
+        Rect::from_x_y_ranges(stage.x_range(), drawn.max.y..=stage.max.y),
+        Rect::from_x_y_ranges(stage.min.x..=drawn.min.x, drawn.y_range()),
+        Rect::from_x_y_ranges(drawn.max.x..=stage.max.x, drawn.y_range()),
+    ]
 }
 
 /// Title, the actions that reach the message, and the zoom controls.
@@ -1606,5 +1644,31 @@ mod tests {
         // because the row is wider than the strip.
         assert_eq!(pad(40), 0.0);
         assert!(row(40) > inner.width());
+    }
+
+    /// The parts of the stage the picture leaves uncovered are the viewer's:
+    /// one click there closes it, and none of them covers the picture.
+    #[test]
+    fn the_field_beside_the_picture_takes_the_click_that_closes_it() {
+        let stage = Rect::from_min_size(pos2(0.0, 56.0), vec2(800.0, 400.0));
+        let picture = Rect::from_min_size(pos2(300.0, 156.0), vec2(200.0, 200.0));
+        let panels = field_panels(stage, picture);
+        for panel in panels {
+            assert_eq!(
+                panel.intersect(picture).area(),
+                0.0,
+                "{panel:?} covers the picture"
+            );
+            assert!(stage.contains_rect(panel), "{panel:?} leaves the stage");
+        }
+        let in_field = |pos: egui::Pos2| panels.iter().any(|panel| panel.contains(pos));
+        assert!(in_field(pos2(100.0, 200.0)), "the margin beside it");
+        assert!(!in_field(picture.center()), "the picture keeps its clicks");
+        // A picture as big as the stage leaves no field at all.
+        assert!(
+            field_panels(stage, stage)
+                .iter()
+                .all(|panel| panel.area() == 0.0)
+        );
     }
 }

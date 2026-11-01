@@ -127,6 +127,11 @@ impl AppDirs {
     /// back. SQLite's side files move before their database, so an
     /// interrupted move is finished by the next start rather than leaving a
     /// write-ahead log behind.
+    ///
+    /// When the account folder already holds a linked session, the files at
+    /// the root are not a setup waiting to move: nothing here writes there,
+    /// so a build from before 0.19 made them after the move (#620). Both stay
+    /// as they are and the account folder is the one used.
     pub fn adopt_single_account(&self) -> std::io::Result<()> {
         self.adopt_single_account_with(|from, to| {
             crate::archive::copy_archive_key(from, to)
@@ -154,6 +159,13 @@ impl AppDirs {
             .filter(|name| self.state.join(name).exists())
             .collect();
         let dest = self.account(&AccountId::first());
+        if !pending.is_empty() && dest.session_db().exists() {
+            log::warn!(
+                "single-account files beside a linked account folder are left alone: an older \
+                 ZapFast may still be installed"
+            );
+            return Ok(());
+        }
         if !pending.is_empty() {
             self.adopt_databases(&dest, &pending, copy_key)?;
         }
@@ -695,6 +707,28 @@ mod tests {
             b"committed"
         );
         assert!(!dirs.archive_db().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_linked_account_folder_wins_and_leaves_the_older_files_alone() {
+        let (root, dirs) = legacy("linked-already");
+        let account = dirs.account(&AccountId::first());
+        account.ensure().unwrap();
+        std::fs::write(account.session_db(), b"linked").unwrap();
+        std::fs::write(account.archive_db(), b"another history").unwrap();
+        dirs.adopt_single_account_with(|_, _| panic!("no key is copied"))
+            .unwrap();
+        assert_eq!(std::fs::read(dirs.session_db()).unwrap(), b"session");
+        assert_eq!(
+            std::fs::read(dirs.archive_db()).unwrap(),
+            b"encrypted pages"
+        );
+        assert_eq!(std::fs::read(account.session_db()).unwrap(), b"linked");
+        assert_eq!(
+            std::fs::read(account.archive_db()).unwrap(),
+            b"another history"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

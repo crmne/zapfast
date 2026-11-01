@@ -70,7 +70,9 @@ Quit FastsApp first; launching ZapFast while it is running brings the existing
 window forward. A single-number setup from before 0.19 moves into
 `accounts/1/` on first start, keyring key included; if that cannot finish (a
 locked keyring, or a folder already in the way), ZapFast stops without moving
-anything and says why in its log.
+anything and says why in its log. If `accounts/1/` already holds a linked
+session, ZapFast uses it and leaves any older files beside it alone; an older
+ZapFast still installed can leave such files.
 
 On Linux and macOS, ZapFast restricts its configuration, state, and cache
 directories to your user (`0700`) and stops at startup if it cannot. Windows

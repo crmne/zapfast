@@ -8987,12 +8987,16 @@ impl Worker {
         };
         // whatsapp-rust owns the forwarding rules: unwrap transient wrappers,
         // strip quote chains and secrets, and retain reusable media metadata.
-        let (message, expiration) = outgoing_forward(&original, self.ephemeral_expiration(to_chat));
+        // Our own words are not marked forwarded, as on the phone, unless
+        // they were a forward to begin with.
+        let own = source.from_me && !original.get_base_message().is_forwarded();
+        let (message, expiration) =
+            outgoing_forward(&original, self.ephemeral_expiration(to_chat), own);
         let client = self.client.clone()?;
         let id = client.generate_message_id().into_string();
         let mentions = self.mentions_of(&recorded_mention_ids(&message));
         let thumbnail = thumbnail_of(&message).or_else(|| source.thumbnail.clone());
-        let row = forwarded_row(
+        let mut row = forwarded_row(
             source,
             to_chat.clone(),
             self.me(),
@@ -9001,6 +9005,7 @@ impl Worker {
             mentions,
             thumbnail,
         );
+        row.forwarded = !own;
         self.store_message(row, Some(message.encode_to_vec()), None);
         Some((id, message, expiration))
     }
@@ -10990,7 +10995,11 @@ impl Worker {
 
 // --- free helpers ----------------------------------------------------------
 
-fn outgoing_forward(original: &wa::Message, expiration: Option<u32>) -> (wa::Message, Option<u32>) {
+fn outgoing_forward(
+    original: &wa::Message,
+    expiration: Option<u32>,
+    own: bool,
+) -> (wa::Message, Option<u32>) {
     let mut message = original.get_base_message().prepare_for_forward();
     if let Some(mut context) = context_of(&message).cloned() {
         // A forward belongs to the destination chat. The library retains the
@@ -11001,6 +11010,10 @@ fn outgoing_forward(original: &wa::Message, expiration: Option<u32>) -> (wa::Mes
         // A forward keeps the visible `@all` and drops the notify bit, so the
         // destination chat is not mentioned. Other bits stay.
         silence_everyone(&mut context);
+        if own {
+            context.is_forwarded = None;
+            context.forwarding_score = None;
+        }
         message.set_context_info(context);
     }
     let expiration = apply_ephemeral_expiration(&mut message, expiration);
@@ -16596,13 +16609,23 @@ mod tests {
     }
 
     #[test]
+    fn forwarding_our_own_message_carries_no_forwarded_mark() {
+        let original = wa::Message::text_with_context("good morning", wa::ContextInfo::default());
+        let (forward, _) = outgoing_forward(&original, None, true);
+        assert!(!forward.is_forwarded());
+        assert_eq!(context_of(&forward).unwrap().forwarding_score, None);
+        let (forward, _) = outgoing_forward(&original, None, false);
+        assert!(forward.is_forwarded());
+    }
+
+    #[test]
     fn forwarding_clears_only_the_everyone_bit() {
         let original = wa::Message::text_with_context("hello @all", {
             let mut proto = wa::ContextInfo::default();
             proto.non_jid_mentions = Some(3);
             proto
         });
-        let (forward, _) = outgoing_forward(&original, None);
+        let (forward, _) = outgoing_forward(&original, None, false);
         let context = context_of(&forward).expect("forward context");
         assert_eq!(context.non_jid_mentions, Some(2));
         assert_eq!(context.is_forwarded, Some(true));
@@ -16815,7 +16838,7 @@ mod tests {
         for original in [text, image, contacts] {
             for timer in [None, Some(0), Some(86_400)] {
                 let expected = timer.filter(|value| *value > 0);
-                let (forward, expiration) = outgoing_forward(&original, timer);
+                let (forward, expiration) = outgoing_forward(&original, timer, false);
                 assert_eq!(expiration, expected);
                 assert_eq!(forward.get_ephemeral_expiration(), expected);
                 let context = context_of(&forward).unwrap();

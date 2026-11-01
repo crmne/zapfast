@@ -205,11 +205,14 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         }
                         header_title(
                             ui,
-                            if app.locked_folder {
-                                "Locked chats"
-                            } else {
-                                "Archived"
-                            },
+                            &crate::i18n::gettext(
+                                app.locale,
+                                if app.locked_folder {
+                                    "Locked chats"
+                                } else {
+                                    "Archived"
+                                },
+                            ),
                             theme::bold(20.0),
                             palette.text,
                             buttons_width,
@@ -537,11 +540,14 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     }
                     header_title(
                         ui,
-                        if app.locked_folder {
-                            "Locked chats"
-                        } else {
-                            "Archived"
-                        },
+                        &crate::i18n::gettext(
+                            app.locale,
+                            if app.locked_folder {
+                                "Locked chats"
+                            } else {
+                                "Archived"
+                            },
+                        ),
                         theme::bold(16.0),
                         palette.text,
                         header_buttons_width(ui, &buttons),
@@ -1087,7 +1093,7 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
         ui.painter().text(
             pos2(rect.left() + 76.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "Locked chats",
+            crate::i18n::gettext(app.locale, "Locked chats"),
             theme::medium(14.5),
             palette.text,
         );
@@ -1918,11 +1924,12 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
 /// The collapsed form of the entry the secret code reveals.
 fn compact_locked_entry(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let label = crate::i18n::gettext(app.locale, "Locked chats");
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), COMPACT_CELL), Sense::click());
     theme::reveal_focus(&response);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Locked chats")
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
     });
     if ui.is_rect_visible(rect) {
         if response.hovered() {
@@ -1940,7 +1947,7 @@ fn compact_locked_entry(app: &mut App, ui: &mut egui::Ui) {
         .data_mut(|data| data.insert_temp(compact_locked_id(), response.rect));
     if response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Locked chats")
+        .on_hover_text(label.as_ref())
         .clicked()
     {
         app.actions.push(Action::OpenLockedFolder);
