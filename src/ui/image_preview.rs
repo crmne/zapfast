@@ -123,7 +123,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 preview.path()
             }
             .map(Path::to_path_buf);
-            if clip {
+            let drawn = if clip {
                 video(
                     app,
                     &mut body,
@@ -148,7 +148,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     &mut actions,
                 )
             };
-            if let Some(drawn) = drawn {
+            // Zoomed, the stage's scrollbars sit in the field and take its clicks.
+            if let Some(drawn) = drawn.filter(|_| clip || preview.is_fit()) {
                 field_click(ui, stage, drawn, &mut actions);
             }
             if strip {
@@ -201,7 +202,8 @@ fn field_click(ui: &mut egui::Ui, stage: Rect, drawn: Rect, actions: &mut Vec<Ac
             .interact(
                 panel,
                 egui::Id::new(("image-preview-field", index)),
-                Sense::click(),
+                // Not a stop in the modal's Tab order.
+                Sense::CLICK,
             )
             .clicked()
         {
