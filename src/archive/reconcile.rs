@@ -74,6 +74,7 @@ impl Archive {
                     AND c.parent = messages.id AND c.sender = messages.sender)",
             [target],
         )?;
+        super::history_import::merge_alias(transaction, source, target)?;
         Ok(())
     }
 }
