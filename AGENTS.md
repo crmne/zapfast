@@ -105,7 +105,8 @@ protocol. These notes are for coding agents and new contributors.
   remembered chat is not being read, so it sends no receipts). Process-wide
   settings (download folder, proxy) go to every backend. `paths.rs` moves a
   single-account layout into `accounts/1/` at startup, after logging starts:
-  it refuses when anything is in the way, copies and reads back the archive's
+  it refuses when anything is in the way (a linked `accounts/1/` wins, and
+  files beside it stay untouched: only an older build makes them), copies and reads back the archive's
   keyring key before moving it, and moves SQLite side files before their
   database. Removing an account deletes its folders after its backend has
   stopped, then its keyring entry.

@@ -3750,7 +3750,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "sticker-pack-message" | "sticker-pack-view" => {
                 shared_pack_sample(app, part == "sticker-pack-view")
             }
-            "gifs" => {
+            "gifs" | "gifs-more" => {
+                app.gif_next_offset = (part == "gifs-more").then_some(24);
                 app.picker = Some(crate::model::PickerTab::Gifs);
                 app.settings.giphy_key = "demo".into();
                 app.gif_results = (0..6)
@@ -13398,6 +13399,101 @@ mod tests {
     }
 
     #[test]
+    fn enter_retries_a_failed_gif_page_without_clearing_results() {
+        for (next, query, expected_offset, retained) in [
+            (Some(24), " cats ", 24, 6),
+            (None, "cats", 0, 0),
+            (Some(24), "dogs", 0, 0),
+        ] {
+            let mut app = app();
+            app.backend.record_demo_commands();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            apply_flags(&mut app, Some("gifs-more"));
+            app.gif_query = "cats".into();
+            app.picker_search = query.into();
+            app.gif_next_offset = next;
+            app.gif_error = Some(crate::model::GifError {
+                message: "Page failed".into(),
+                bad_key: false,
+            });
+            render(&mut app, &ctx);
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("gif-search")));
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(
+                app.gif_results.len(),
+                retained,
+                "query={query}, next={next:?}"
+            );
+            assert!(
+                app.backend
+                    .take_demo_commands()
+                    .iter()
+                    .any(|command| matches!(command,
+                crate::backend::Command::SearchGifs { offset, query: sent, .. }
+                    if *offset == expected_offset && sent == query.trim()))
+            );
+        }
+    }
+
+    #[test]
+    fn a_later_gif_key_error_keeps_results_and_retries_the_same_page() {
+        let mut app = app();
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("gifs-more"));
+        app.gif_error = Some(crate::model::GifError {
+            message: "Key rejected".into(),
+            bad_key: true,
+        });
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        assert_eq!(app.gif_results.len(), 6);
+        app.settings.giphy_key = "corrected-offline-demo".into();
+        let search = ctx.read_response(egui::Id::new("gif-search")).unwrap().rect;
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(search.center().x, search.bottom() + 40.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -1000.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, vec![]);
+        let retry = nodes
+            .iter()
+            .find(|(label, _, _)| label == "Retry")
+            .expect("Retry stays visible with the key prompt")
+            .2;
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(retry)],
+        );
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(retry, true)]);
+        frame_sized(&mut app, &ctx, 780.0, vec![primary(retry, false)]);
+        assert_eq!(app.gif_results.len(), 6);
+        assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command,
+            crate::backend::Command::SearchGifs { offset: 24, key, .. } if key == "corrected-offline-demo")));
+    }
+
+    #[test]
     fn preview_navigation_stays_at_the_stage_edges() {
         fn controls(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
             fn collect(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
@@ -16048,6 +16144,65 @@ mod tests {
         );
         assert!(app.reaction_target.is_some(), "the picker stays open");
         assert!(app.reply_to.is_none(), "the click does not start a reply");
+    }
+
+    /// Forward sits a step past reply and opens the same dialog the context
+    /// menu does, for the message it is drawn beside.
+    #[test]
+    fn clicking_the_hover_forward_control_opens_the_forward_dialog() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "forward-me",
+            false,
+            100,
+            Content::text("Forward me"),
+        )];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+
+        let id = crate::ui::conversation::bubble_id(&chat, "forward-me");
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the bubble publishes its rect");
+        let forward = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("forward-rect")))
+            .expect("the forward control publishes its rect");
+        assert!(
+            !forward.intersects(bubble),
+            "the control {forward:?} overlaps the bubble {bubble:?}"
+        );
+
+        let pos = forward.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert!(
+            matches!(
+                &app.dialog,
+                Some(Dialog::Forward { messages, .. }) if messages == &["forward-me".to_owned()]
+            ),
+            "the control forwards this message, got {:?}",
+            app.dialog
+        );
     }
 
     /// The hover control is beside the bubble, so double-click reply and the

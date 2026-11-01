@@ -42,7 +42,10 @@ again. A group where an unread message mentions you, or everyone, shows **@**
 beside its unread count in the chat list, even when muted, and opening it shows
 the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
-including the stickers used on the phone.
+including the stickers used on the phone. GIF searches and trending results
+load 24 at a time; **Load more** below the grid fetches the next page. A failed
+page keeps the earlier results and offers **Retry**; pressing Enter with the
+same search also retries that page.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
@@ -956,7 +959,7 @@ In the chat view, Tab moves through the message input and its buttons, phone
 numbers in messages, chat search, the chat info panel, the message list, the
 rail, the chat list's header, search and the chat filters, then returns to the
 input. Shift+Tab goes back; hidden controls are skipped. Single messages,
-reactions and chat rows are not stops. The React and Reply buttons that
-appear beside a hovered message are for the pointer only; keyboard and
-screen-reader users reach both from the message menu. Alt+Up/Down switches
+reactions and chat rows are not stops. The React, Reply and Forward buttons
+that appear beside a hovered message are for the pointer only; keyboard and
+screen-reader users reach them from the message menu. Alt+Up/Down switches
 conversations.

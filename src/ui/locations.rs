@@ -18,8 +18,15 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
-                .clicked()
+            if theme::icon_button(
+                ui,
+                Icon::X,
+                16.0,
+                palette.secondary,
+                palette.text,
+                &crate::i18n::gettext(app.locale, "Close"),
+            )
+            .clicked()
             {
                 app.actions.push(Action::CloseDialog);
             }
