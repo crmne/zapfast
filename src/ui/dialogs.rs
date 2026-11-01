@@ -545,7 +545,10 @@ pub(super) fn contact_choices(app: &App, needle: &str) -> Vec<crate::model::Cont
                 && app.me.as_deref() != Some(contact.id.as_str())
                 && !app.chat(&contact.id).is_some_and(|chat| chat.locked)
                 && (needle.is_empty()
-                    || crate::util::search_key(&app.display_name(&contact.id)).contains(needle)
+                    || crate::util::search_matches(
+                        &crate::util::search_key(&app.display_name(&contact.id)),
+                        needle,
+                    )
                     || crate::model::phone_of(&contact.id)
                         .is_some_and(|phone| phone.contains(needle)))
         })

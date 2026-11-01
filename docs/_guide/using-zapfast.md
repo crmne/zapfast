@@ -604,6 +604,11 @@ any caption; their files are not copied. Copying keeps the selection open.
 
 ## Chats
 
+To find a contact in **New chat**, type part of their name or number. Each
+word you type matches the start of a word in the name, in order: `will shak`
+finds William Shakespeare, and `j d` finds John Doe. A plain part of the name
+also works, such as `liam`.
+
 To message someone without saving their number, open **New chat**, choose
 **Add contact**, enter the number with its country code, leave the name blank,
 and choose **Message**. A leading `+`, spaces, hyphens and brackets are fine;

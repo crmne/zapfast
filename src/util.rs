@@ -529,6 +529,29 @@ pub fn search_key(text: &str) -> String {
         .collect()
 }
 
+/// Whether a contact search finds `name`. The whole `needle` may appear
+/// anywhere in it, or each of its words may start a word of `name`, in
+/// order: "will shak" finds "William Shakespeare", and "j d" finds
+/// "John Doe". Both are search keys.
+pub fn search_matches(name: &str, needle: &str) -> bool {
+    if name.contains(needle) {
+        return true;
+    }
+    let mut parts = search_words(needle).peekable();
+    if parts.peek().is_none() {
+        return false;
+    }
+    let mut words = search_words(name);
+    parts.all(|part| words.any(|word| word.starts_with(part)))
+}
+
+/// The words of a name or query. Spaces and ASCII punctuation separate them,
+/// so "~John Doe" and "John-Doe" both have "john" and "doe".
+fn search_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+        .filter(|word| !word.is_empty())
+}
+
 /// Duration such as "0:12".
 pub fn duration(seconds: u32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -959,6 +982,52 @@ mod tests {
         assert_eq!(initials("ada"), "A");
         assert_eq!(initials("  "), "#");
         assert_eq!(initials("🎉 Party Planning"), "PP");
+    }
+
+    #[test]
+    fn a_contact_search_matches_words_in_order() {
+        let name = search_key("William Shakespeare");
+        assert!(search_matches(&name, "will shak"));
+        assert!(search_matches(&name, "w s"));
+        assert!(search_matches(&name, "shake"));
+        assert!(
+            search_matches(&name, "liam"),
+            "a plain substring still finds"
+        );
+        assert!(search_matches(&name, ""));
+        assert!(
+            !search_matches(&name, "-"),
+            "a query with no words matches nothing"
+        );
+        assert!(
+            !search_matches(&name, "shak will"),
+            "words keep their order"
+        );
+        assert!(!search_matches(&name, "will x"));
+        assert!(!search_matches(&name, "w w"), "one word cannot start two");
+        let name = search_key("Ângela Ávila");
+        assert!(search_matches(&name, "ang avi"), "accents are ignored");
+        let name = search_key("John-Doe");
+        assert!(search_matches(&name, "j d"), "a hyphen starts a new word");
+        assert!(
+            search_matches(&name, "-"),
+            "punctuation alone still matches as a plain substring"
+        );
+        assert!(
+            !search_matches(&search_key("Ada Lovelace"), "-"),
+            "but never a name without it"
+        );
+        let name = search_key("~John Doe");
+        assert!(
+            search_matches(&name, "j d"),
+            "a profile name's tilde is no word"
+        );
+        assert!(search_matches(&name, "jo"));
+        let name = search_key("O'Brien");
+        assert!(
+            search_matches(&name, "o b"),
+            "an apostrophe starts a new word"
+        );
     }
 
     #[test]

@@ -2710,7 +2710,7 @@ impl App {
             "Message yourself",
         ]
         .iter()
-        .any(|text| crate::util::search_key(text).contains(needle))
+        .any(|text| crate::util::search_matches(&crate::util::search_key(text), needle))
             || crate::model::phone_of(me).is_some_and(|phone| phone.contains(needle))
     }
 
