@@ -57,7 +57,9 @@ programs.zapfast = {
 [Settings & Files](/settings-and-files/)). They are merged into the file on
 every activation, so the window size, recent emoji, and lock verifiers the app
 keeps there are left alone. A declared key that is changed in the app is reset
-on the next activation. Restart ZapFast after activating: it reads the file at
+on the next activation. Per-account preferences such as read receipts and
+notifications live in each account's own file and cannot be declared here.
+Restart ZapFast after activating: it reads the file at
 start, and its next save writes back the values it already had.
 
 Values in `settings` are copied to the Nix store, which every user on the

@@ -49,7 +49,9 @@ in
         Keys merged into ZapFast's `settings.json` on every activation. Keys
         left out keep whatever the app last saved, so window geometry, recent
         emoji and the lock verifiers survive. A key declared here is reset on
-        the next activation if it is changed in the app. Restart ZapFast after
+        the next activation if it is changed in the app. Per-account preferences
+        such as read receipts live in each account's own file and cannot be
+        declared here. Restart ZapFast after
         activation: it reads the file at start, and its next save writes back
         the values it holds in memory.
 
