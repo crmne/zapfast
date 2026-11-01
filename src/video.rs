@@ -12,6 +12,7 @@ use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -564,6 +565,8 @@ struct Session {
     /// Every frame of the current decode has arrived.
     decoded: bool,
     texture: Option<TextureHandle>,
+    /// The last frame can be uploaded again if the window is replaced.
+    last_frame: Option<Arc<ColorImage>>,
     clock: Clock,
     sound: Option<Sound>,
     /// When to open the sound again after its output failed (#507), and how
@@ -648,12 +651,18 @@ impl Session {
     }
 
     fn show(&mut self, ctx: &egui::Context, image: ColorImage) {
+        let image = Arc::new(image);
         match &mut self.texture {
-            Some(texture) => texture.set(image, TextureOptions::LINEAR),
+            Some(texture) => texture.set(Arc::clone(&image), TextureOptions::LINEAR),
             None => {
-                self.texture = Some(ctx.load_texture("video-frame", image, TextureOptions::LINEAR))
+                self.texture = Some(ctx.load_texture(
+                    "video-frame",
+                    Arc::clone(&image),
+                    TextureOptions::LINEAR,
+                ))
             }
         }
+        self.last_frame = Some(image);
     }
 }
 
@@ -675,6 +684,14 @@ pub struct Player {
 }
 
 impl Player {
+    /// Re-upload the current frame when the player moves to a new window.
+    pub fn attach(&mut self, ctx: &egui::Context) {
+        if let Some(session) = &mut self.session {
+            session.texture = session.last_frame.as_ref().map(|image| {
+                ctx.load_texture("video-frame", Arc::clone(image), TextureOptions::LINEAR)
+            });
+        }
+    }
     pub fn new(waker: Waker) -> Self {
         Self {
             waker,
@@ -916,6 +933,7 @@ impl Player {
             queue: VecDeque::new(),
             decoded: false,
             texture: None,
+            last_frame: None,
             clock,
             sound: self
                 .audible
@@ -1470,6 +1488,27 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn attaching_a_window_reuploads_the_current_video_frame() {
+        let old_ctx = egui::Context::default();
+        let mut player = Player::new(Waker::default());
+        player.silence();
+        player.toggle("clip", Path::new(SAMPLE));
+        let image = ColorImage::example();
+        player
+            .session
+            .as_mut()
+            .unwrap()
+            .show(&old_ctx, image.clone());
+        let new_ctx = egui::Context::default();
+        player.attach(&new_ctx);
+        let session = player.session.as_ref().unwrap();
+        let texture = session.texture.as_ref().expect("frame reuploaded");
+        assert_eq!(texture.size(), image.size);
+        assert_eq!(session.last_frame.as_deref(), Some(&image));
+        assert!(new_ctx.tex_manager().read().meta(texture.id()).is_some());
     }
 
     #[test]

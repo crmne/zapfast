@@ -41,11 +41,22 @@ impl CursorActivity {
     }
 }
 
+/// Restores the context style after the frame, including on early returns.
+pub struct CursorStyleGuard(egui::Context);
+
+impl Drop for CursorStyleGuard {
+    fn drop(&mut self) {
+        self.0
+            .global_style_mut(|style| style.visuals.text_cursor.blink = true);
+    }
+}
+
 /// Stop blinking after inactivity, and restart on input or a focus change.
 /// The state belongs to the egui context so a replacement window starts fresh.
-pub fn idle_text_cursor(ui: &mut egui::Ui, user_input: bool) {
+/// Keep the returned guard alive while drawing, including top-level modals.
+pub fn idle_text_cursor(ui: &mut egui::Ui, user_input: bool) -> Option<CursorStyleGuard> {
     if !ui.visuals().text_cursor.blink {
-        return;
+        return None;
     }
     let ctx = ui.ctx().clone();
     let (now, window_focused) = ctx.input(|input| (input.time, input.focused));
@@ -59,6 +70,12 @@ pub fn idle_text_cursor(ui: &mut egui::Ui, user_input: bool) {
     let blink = activity.blinking(now, focus, user_input);
     ctx.data_mut(|data| data.insert_temp(id, activity));
     ui.style_mut().visuals.text_cursor.blink = blink;
+    if !blink && ctx.global_style().visuals.text_cursor.blink {
+        ctx.global_style_mut(|style| style.visuals.text_cursor.blink = false);
+        Some(CursorStyleGuard(ctx))
+    } else {
+        None
+    }
 }
 
 /// Whether a screen reader, or another assistive client, reads the window.
@@ -158,7 +175,7 @@ pub(crate) mod tests {
         ctx.memory_mut(|memory| memory.request_focus(field));
         let mut text = String::new();
         let mut draw = |ui: &mut egui::Ui| {
-            idle_text_cursor(ui, false);
+            let _cursor_style = idle_text_cursor(ui, false);
             ui.add(egui::TextEdit::singleline(&mut text).id(field));
         };
         let _ = delay_after(&ctx, 1.0, &mut draw);
@@ -166,10 +183,29 @@ pub(crate) mod tests {
         assert!(idle > Duration::from_secs(1), "idle redraw in {idle:?}");
 
         let (active, _) = delay_after(&ctx, 8.0, |ui| {
-            idle_text_cursor(ui, true);
+            let _cursor_style = idle_text_cursor(ui, true);
             ui.add(egui::TextEdit::singleline(&mut text).id(field));
         });
         assert!(active < Duration::from_secs(1), "cursor did not resume");
+    }
+
+    #[test]
+    fn idle_modal_field_stops_blinking_and_restores_the_context_style() {
+        let ctx = reading(false);
+        let field = egui::Id::new("modal-field");
+        let mut text = String::new();
+        let mut draw = |ui: &mut egui::Ui| {
+            let _cursor_style = idle_text_cursor(ui, false);
+            egui::Modal::new(egui::Id::new("modal")).show(ui.ctx(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(field));
+            });
+        };
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        let _ = delay_after(&ctx, 1.0, &mut draw);
+        let _ = delay_after(&ctx, 2.0, &mut draw);
+        let (idle, _) = delay_after(&ctx, 7.0, &mut draw);
+        assert!(idle > Duration::from_secs(1), "modal redraw in {idle:?}");
+        assert!(ctx.global_style().visuals.text_cursor.blink);
     }
 
     /// Runs one pass at `time` and returns how long egui asks the window to

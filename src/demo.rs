@@ -12158,7 +12158,8 @@ mod tests {
         app.pending[0].preview =
             std::thread::spawn(move || crate::backend::picture_edit::preview(width, height, &rgba))
                 .join()
-                .unwrap();
+                .unwrap()
+                .map(std::sync::Arc::new);
         assert_eq!(app.pending[0].id, target);
         render(&mut app, &ctx);
         let crate::app::Pending::Picture {
@@ -12169,6 +12170,18 @@ mod tests {
             panic!("uploaded bounded preview")
         };
         assert_eq!(texture.size(), [1024, 512]);
+        let new_ctx = egui::Context::default();
+        app.attach(&new_ctx);
+        render(&mut app, &new_ctx);
+        let crate::app::Pending::Picture {
+            texture: Some(texture),
+            ..
+        } = &app.pending[0].item
+        else {
+            panic!("preview reuploaded to the new window")
+        };
+        assert_eq!(texture.size(), [1024, 512]);
+        assert!(new_ctx.tex_manager().read().meta(texture.id()).is_some());
     }
 
     /// Tab reaches review controls and Space activates the focused close button.

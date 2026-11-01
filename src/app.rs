@@ -993,8 +993,8 @@ pub type AttachmentId = u64;
 pub struct Staged {
     pub id: AttachmentId,
     pub item: Pending,
-    /// Bounded pixels waiting for the next visible frame to upload them.
-    pub preview: Option<egui::ColorImage>,
+    /// Bounded pixels retained so a replacement window can upload them again.
+    pub preview: Option<std::sync::Arc<egui::ColorImage>>,
 }
 
 impl App {
@@ -2346,6 +2346,23 @@ impl App {
 
     /// Initializes a newly created window.
     pub fn attach(&mut self, ctx: &egui::Context) {
+        // Texture handles belong to the window's egui context. Keep the
+        // underlying pictures and recreate handles for the new window.
+        self.call_local_texture = None;
+        self.call_remote_texture = None;
+        self.call_member_textures.clear();
+        self.picture_texture = None;
+        for staged in self.pending.iter_mut().chain(
+            self.accounts
+                .iter_mut()
+                .flat_map(|account| account.attachment_drafts.values_mut())
+                .flat_map(|draft| draft.pending.iter_mut()),
+        ) {
+            if let Pending::Picture { texture, .. } = &mut staged.item {
+                *texture = None;
+            }
+        }
+        self.video.attach(ctx);
         #[cfg(any(test, feature = "demo"))]
         for account in &self.accounts {
             account.backend.attach_demo_window(ctx);
@@ -4360,7 +4377,9 @@ impl App {
                 if let Some(staged) = staged
                     && matches!(staged.item, Pending::Picture { .. })
                 {
-                    staged.preview = Some(image.unwrap_or_else(egui::ColorImage::example));
+                    staged.preview = Some(std::sync::Arc::new(
+                        image.unwrap_or_else(egui::ColorImage::example),
+                    ));
                 }
             }
 
@@ -10628,7 +10647,7 @@ impl App {
         if user_input {
             self.app_lock.note_input();
         }
-        crate::motion::idle_text_cursor(ui, user_input);
+        let _cursor_style = crate::motion::idle_text_cursor(ui, user_input);
         let locked = self.app_lock.is_locked();
         // Behind the lock screen nobody is reading; unlocking counts as
         // coming back to the window.
@@ -16945,6 +16964,42 @@ mod tests {
         app.palette = crate::theme::Palette::messages();
         app.match_window_transparency(&ctx, false);
         assert!(!app.reopen, "a hidden window needs no replacement");
+    }
+
+    #[test]
+    fn attaching_a_new_window_releases_call_textures_but_keeps_frames() {
+        let mut app = app();
+        let old_ctx = egui::Context::default();
+        let image = std::sync::Arc::new(egui::ColorImage::example());
+        app.call_local_frame = Some(image.clone());
+        app.call_local_texture = Some(CallTexture {
+            texture: old_ctx.load_texture("old-call", image.clone(), egui::TextureOptions::LINEAR),
+            frame: image.clone(),
+        });
+        app.call_member_frames
+            .insert("member".into(), image.clone());
+        app.call_member_textures.insert(
+            "member".into(),
+            CallTexture {
+                texture: old_ctx.load_texture(
+                    "old-member",
+                    image.clone(),
+                    egui::TextureOptions::LINEAR,
+                ),
+                frame: image.clone(),
+            },
+        );
+        app.attach(&egui::Context::default());
+        assert!(app.call_local_texture.is_none());
+        assert!(app.call_member_textures.is_empty());
+        assert!(std::sync::Arc::ptr_eq(
+            app.call_local_frame.as_ref().unwrap(),
+            &image
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &app.call_member_frames["member"],
+            &image
+        ));
     }
 
     #[test]

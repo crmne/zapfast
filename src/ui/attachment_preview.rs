@@ -54,10 +54,12 @@ fn image(ui: &egui::Ui, staged: &mut Staged) -> Option<egui::Image<'static>> {
             rgba,
             texture,
         } => {
-            if let Some(image) = staged.preview.take() {
+            if texture.is_none()
+                && let Some(image) = &staged.preview
+            {
                 *texture = Some(ui.ctx().load_texture(
                     format!("pending-picture-{}", staged.id),
-                    image,
+                    std::sync::Arc::clone(image),
                     egui::TextureOptions::LINEAR,
                 ));
             }
