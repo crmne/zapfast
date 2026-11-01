@@ -4,6 +4,7 @@
 //! active account through `App`'s `Deref`. Each account has its own backend
 //! thread, archive, and folders.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -56,6 +57,14 @@ pub struct Account {
     pub search: String,
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
+    /// When the text last typed into the chat list's search is scanned for.
+    /// Waiting out the typing makes a word cost one scan, not one per letter.
+    pub search_due: Option<Instant>,
+    /// Normalized forms of the names and previews the chat list's search
+    /// compares, keyed by the text they came from. Normalizing ICU text costs
+    /// microseconds, and repeating it for every chat on every frame made the
+    /// whole window slow for as long as the search was open.
+    pub search_keys: RefCell<HashMap<String, String>>,
     pub typing: HashMap<ChatId, Vec<(String, ChatActivity, Instant)>>,
     pub presence: HashMap<String, crate::app::Presence>,
     pub account_receipts_off: bool,
@@ -178,6 +187,8 @@ impl Account {
             search: String::new(),
             search_selected: None,
             search_hits: Vec::new(),
+            search_due: None,
+            search_keys: RefCell::new(HashMap::new()),
             typing: HashMap::new(),
             presence: HashMap::new(),
             account_receipts_off: false,
