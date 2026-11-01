@@ -36,11 +36,13 @@ pub enum Locale {
     Turkish,
     #[serde(rename = "id")]
     Indonesian,
+    #[serde(rename = "nl")]
+    Dutch,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 11] = [
+    pub const ALL: [Locale; 12] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -52,6 +54,7 @@ impl Locale {
         Self::ChineseTraditional,
         Self::Turkish,
         Self::Indonesian,
+        Self::Dutch,
     ];
 
     /// The language's own name, for the picker.
@@ -68,6 +71,7 @@ impl Locale {
             Self::ChineseTraditional => "繁體中文",
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
+            Self::Dutch => "Nederlands",
         }
     }
 
@@ -90,6 +94,7 @@ impl Locale {
             "ru" => Self::Russian,
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
+            "nl" => Self::Dutch,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
                 // Simplified and names a region where Traditional is the
@@ -120,6 +125,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::ChineseTraditional => Some(&zh_hant::Translator),
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
+            Self::Dutch => Some(&nl::Translator),
             Self::English => None,
         }
     }
@@ -147,6 +153,47 @@ pub fn resolve(interface_language: Option<Locale>) -> Locale {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dutch_is_detected_and_preserved_as_a_language_choice() {
+        for identifier in ["nl", "nl-NL", "nl-BE", "nl_NL.UTF-8", "nl_BE.UTF-8"] {
+            assert_eq!(Locale::from_system(identifier), Some(Locale::Dutch));
+        }
+        assert!(Locale::ALL.contains(&Locale::Dutch));
+        assert_eq!(Locale::Dutch.label(), "Nederlands");
+        assert_eq!(serde_json::to_string(&Locale::Dutch).unwrap(), "\"nl\"");
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"nl\"").unwrap(),
+            Locale::Dutch
+        );
+        assert_eq!(resolve(Some(Locale::Dutch)), Locale::Dutch);
+    }
+
+    #[test]
+    fn dutch_catalog_translates_plain_contextual_and_plural_messages() {
+        assert_eq!(gettext(Locale::Dutch, "Search"), "Zoeken");
+        assert_eq!(gettext(Locale::Dutch, "Settings"), "Instellingen");
+        assert_eq!(
+            gettext(Locale::Dutch, "Reply privately"),
+            "Privé beantwoorden"
+        );
+        assert_eq!(gettext(Locale::Dutch, "About"), "Over");
+        assert_eq!(pgettext(Locale::Dutch, "profile", "About"), "Info");
+        assert_eq!(pgettext(Locale::Dutch, "mention", "all"), "iedereen");
+        let missing = "A string nobody has translated";
+        assert_eq!(gettext(Locale::Dutch, missing), missing);
+        for (count, expected) in [
+            (0, "{} leden"),
+            (1, "{} lid"),
+            (2, "{} leden"),
+            (21, "{} leden"),
+        ] {
+            assert_eq!(
+                ngettext(Locale::Dutch, "{} member", "{} members", count),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn system_locales_map_to_the_right_catalog() {
