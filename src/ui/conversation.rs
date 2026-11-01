@@ -4195,7 +4195,8 @@ pub(crate) fn open_reaction_picker_action(chat: &str, message: &str, from_list: 
     }
 }
 
-/// Draws a Smile control beside a hovered message and opens the existing picker.
+/// Draws the Smile, Reply and Forward controls beside a hovered message; the
+/// Smile opens the existing picker.
 /// These hover controls are for the pointer only. They use `Sense::CLICK`, which
 /// is not focusable and adds no accessibility node; the message menu and the
 /// message keys give keyboard and screen-reader users the same actions.
@@ -4204,6 +4205,7 @@ fn reaction_affordance(
     view: &View<'_>,
     message: &Message,
     bubble: &egui::Response,
+    tiles: &[(Rect, String)],
     actions: &mut Vec<Action>,
 ) {
     let bounds = ui.clip_rect().shrink(2.0);
@@ -4253,12 +4255,42 @@ fn reaction_affordance(
     };
     let reply_rect = rect.translate(vec2(outward, 0.0));
     let reply_fits = can_reply && bounds.contains_rect(reply_rect);
-    let reach = if reply_fits {
+    // Forward takes the next free slot outwards: past reply where the chat can
+    // reply, and reply's own place where it cannot, so every message the
+    // forward dialog accepts offers the control.
+    let forward_rect = rect.translate(vec2(outward * if reply_fits { 2.0 } else { 1.0 }, 0.0));
+    let forward_fits =
+        crate::app::can_select(&message.content) && bounds.contains_rect(forward_rect);
+    let reach = if forward_fits {
+        rect.union(forward_rect)
+    } else if reply_fits {
         rect.union(reply_rect)
     } else {
         rect
     };
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble.id.with("forward-rect"), forward_rect);
+    });
     let revealed = reaction_affordance_visible(pointer, shown, reach);
+    // In an album the control acts on the item under the pointer, as the
+    // context menu does. Remember that item: by the time the click lands, the
+    // pointer has already left it for the control. It is dropped over anything
+    // else in the bubble, such as a caption, and once the controls are hidden,
+    // so Forward falls back to the message the row draws instead of forwarding
+    // an item from an earlier hover.
+    let album_target = bubble.id.with("album-hover-target");
+    if !revealed {
+        ui.ctx()
+            .data_mut(|data| data.remove::<String>(album_target));
+    } else if let Some(pos) = pointer {
+        if let Some((_, id)) = tiles.iter().find(|(rect, _)| rect.contains(pos)) {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(album_target, id.clone()));
+        } else if shown.contains(pos) {
+            ui.ctx()
+                .data_mut(|data| data.remove::<String>(album_target));
+        }
+    }
     if ui.is_rect_visible(rect) && uncovered && revealed {
         floating_circle(ui, &view.palette, rect, response.hovered());
         theme::paint_icon(
@@ -4284,30 +4316,62 @@ fn reaction_affordance(
             false,
         ));
     }
-    if !reply_fits {
-        return;
+    if reply_fits {
+        let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::CLICK);
+        if ui.is_rect_visible(reply_rect) && uncovered && revealed {
+            floating_circle(ui, &view.palette, reply_rect, reply.hovered());
+            theme::paint_icon(
+                ui,
+                Icon::Reply,
+                reply_rect.shrink(5.0),
+                15.0,
+                if reply.hovered() {
+                    view.palette.text
+                } else {
+                    view.palette.secondary
+                },
+            );
+        }
+        if reply
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(crate::i18n::gettext(view.locale, "Reply"))
+            .clicked()
+        {
+            actions.push(Action::Reply(message.id.clone()));
+        }
     }
-    let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::CLICK);
-    if ui.is_rect_visible(reply_rect) && uncovered && revealed {
-        floating_circle(ui, &view.palette, reply_rect, reply.hovered());
-        theme::paint_icon(
-            ui,
-            Icon::Reply,
-            reply_rect.shrink(5.0),
-            15.0,
-            if reply.hovered() {
-                view.palette.text
-            } else {
-                view.palette.secondary
-            },
-        );
-    }
-    if reply
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(crate::i18n::gettext(view.locale, "Reply"))
-        .clicked()
-    {
-        actions.push(Action::Reply(message.id.clone()));
+    if forward_fits {
+        let forward = ui.interact(forward_rect, bubble.id.with("forward"), Sense::CLICK);
+        if ui.is_rect_visible(forward_rect) && uncovered && revealed {
+            floating_circle(ui, &view.palette, forward_rect, forward.hovered());
+            theme::paint_icon(
+                ui,
+                Icon::Forward,
+                forward_rect.shrink(5.0),
+                15.0,
+                if forward.hovered() {
+                    view.palette.text
+                } else {
+                    view.palette.secondary
+                },
+            );
+        }
+        if forward
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(crate::i18n::gettext(view.locale, "Forward").as_ref())
+            .clicked()
+        {
+            // An album forwards the item the control is beside, not always
+            // its first member.
+            let target = ui
+                .ctx()
+                .data(|data| data.get_temp::<String>(album_target))
+                .unwrap_or_else(|| message.id.clone());
+            actions.push(Action::ShowDialog(Dialog::Forward {
+                chat: view.chat.id.clone(),
+                messages: vec![target],
+            }));
+        }
     }
 }
 
@@ -5222,7 +5286,7 @@ fn bubble_frame(
     // and footer. Double-click on the body keeps selecting the word.
     reply_on_double_click(&bubble, message, actions);
 
-    reaction_affordance(ui, view, message, &bubble, actions);
+    reaction_affordance(ui, view, message, &bubble, &tiles, actions);
     // Read right-click from input because inner widgets own their responses.
     // The whole row counts, the empty strip beside the bubble included, as in
     // other messaging apps (#240). Count only the part inside the transcript's

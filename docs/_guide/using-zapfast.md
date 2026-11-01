@@ -956,7 +956,7 @@ In the chat view, Tab moves through the message input and its buttons, phone
 numbers in messages, chat search, the chat info panel, the message list, the
 rail, the chat list's header, search and the chat filters, then returns to the
 input. Shift+Tab goes back; hidden controls are skipped. Single messages,
-reactions and chat rows are not stops. The React and Reply buttons that
-appear beside a hovered message are for the pointer only; keyboard and
-screen-reader users reach both from the message menu. Alt+Up/Down switches
+reactions and chat rows are not stops. The React, Reply and Forward buttons
+that appear beside a hovered message are for the pointer only; keyboard and
+screen-reader users reach them from the message menu. Alt+Up/Down switches
 conversations.

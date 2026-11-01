@@ -16050,6 +16050,65 @@ mod tests {
         assert!(app.reply_to.is_none(), "the click does not start a reply");
     }
 
+    /// Forward sits a step past reply and opens the same dialog the context
+    /// menu does, for the message it is drawn beside.
+    #[test]
+    fn clicking_the_hover_forward_control_opens_the_forward_dialog() {
+        let mut app = app();
+        let chat = sample_ids()[0].to_owned();
+        app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+            &chat,
+            "forward-me",
+            false,
+            100,
+            Content::text("Forward me"),
+        )];
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+
+        let id = crate::ui::conversation::bubble_id(&chat, "forward-me");
+        let bubble = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
+            .expect("the bubble publishes its rect");
+        let forward = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("forward-rect")))
+            .expect("the forward control publishes its rect");
+        assert!(
+            !forward.intersects(bubble),
+            "the control {forward:?} overlaps the bubble {bubble:?}"
+        );
+
+        let pos = forward.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(bubble.center())],
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        frame_with(&mut app, &ctx, vec![press(false)]);
+        assert!(
+            matches!(
+                &app.dialog,
+                Some(Dialog::Forward { messages, .. }) if messages == &["forward-me".to_owned()]
+            ),
+            "the control forwards this message, got {:?}",
+            app.dialog
+        );
+    }
+
     /// The hover control is beside the bubble, so double-click reply and the
     /// right-click context menu keep working while it is registered.
     #[test]
