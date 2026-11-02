@@ -549,6 +549,9 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                 super::chats::self_row(app, ui);
             }
             if contacts.is_empty() && !offer_self {
+                // No row is drawn to forget the one scrolled into view last.
+                ui.ctx()
+                    .data_mut(|data| data.remove::<String>(super::chats::revealed_row_id()));
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "No matching contacts"),

@@ -1411,6 +1411,11 @@ pub(super) fn self_row(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// The contact whose row New chat last scrolled into view as its first match.
+pub(super) fn revealed_row_id() -> egui::Id {
+    egui::Id::new("person-row-revealed")
+}
+
 /// A row that starts something, drawn like a person's: an icon on the
 /// accent colour where the photo would be. New chat's New group and Add
 /// contact.
@@ -1466,7 +1471,7 @@ fn person_row(
     // The highlighted row is scrolled into view once each time it changes, so
     // Enter never opens a chat the list has scrolled past. Scrolling again
     // every frame would fight the reader.
-    let revealed = egui::Id::new("person-row-revealed");
+    let revealed = revealed_row_id();
     if selected {
         if ui
             .ctx()
