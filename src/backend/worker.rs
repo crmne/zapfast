@@ -4383,6 +4383,22 @@ impl Worker {
                 {
                     self.emit_chat(&chat);
                 }
+                // An admin removing us is a leave, as our own is: the notice
+                // names us, and nothing else marks the group left.
+                if let GroupNotificationAction::Remove { participants, .. } = &*update.action
+                    && participants.iter().any(|participant| {
+                        [
+                            Some(&participant.jid),
+                            participant.phone_number.as_ref(),
+                            participant.lid.as_ref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|jid| self.is_me(&self.canonical(jid)))
+                    })
+                {
+                    self.finish_leave(&chat, false);
+                }
                 self.request_group_info(&chat, true);
             }
             E::ArchiveUpdate(update) => {
@@ -18900,6 +18916,54 @@ mod receipt_tests {
                 "the metadata is refreshed too"
             );
         }
+    }
+
+    /// An admin removing us leaves the group as our own leave does; a notice
+    /// removing someone else does not.
+    #[tokio::test]
+    async fn a_remove_notice_naming_us_leaves_the_group() {
+        use whatsapp_rust::wacore::stanza::groups::{
+            GroupNotificationAction, GroupParticipantInfo,
+        };
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-654@g.us";
+        worker.me_pn = Some(ME.into());
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        let members = [PEER.to_owned(), ME.to_owned()];
+        worker
+            .archive
+            .set_group_info(group, None, &members, false)
+            .unwrap();
+        let removed = |member: &str| {
+            let participant = GroupParticipantInfo {
+                jid: member.parse().unwrap(),
+                phone_number: None,
+                display_name: None,
+                r#type: None,
+                lid: None,
+                username: None,
+                join_time: None,
+                group_history_sent_state: None,
+            };
+            wa_events::Event::GroupUpdate(
+                wa_events::GroupUpdate::builder()
+                    .group_jid(group.parse().unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+                    .is_lid_addressing_mode(false)
+                    .action(Box::new(GroupNotificationAction::Remove {
+                        participants: vec![participant],
+                        reason: None,
+                    }))
+                    .build(),
+            )
+        };
+        worker.handle_wa_event(Arc::new(removed(PEER))).await;
+        assert!(!worker.archive.chat(group).unwrap().unwrap().left);
+        worker.handle_wa_event(Arc::new(removed(ME))).await;
+        let chat = worker.archive.chat(group).unwrap().unwrap();
+        assert!(chat.left);
+        assert!(chat.read_only);
+        assert_eq!(chat.participants, [PEER]);
     }
 
     /// A group created on the phone gets a chat row before its first message.
