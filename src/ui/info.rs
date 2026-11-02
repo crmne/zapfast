@@ -723,6 +723,13 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         ui.add_space(8.0);
         media_row(app, ui, id, overlay);
     }
+    if !shown.group && !shown.channel && !mine {
+        let groups = groups_in_common(app, id);
+        if !groups.is_empty() {
+            ui.add_space(8.0);
+            common_groups(app, ui, &groups);
+        }
+    }
     if shown.can_manage {
         ui.add_space(4.0);
         let label = crate::i18n::gettext(app.locale, "Group permissions");
@@ -1084,6 +1091,101 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
         && Some(member.as_str()) != app.me.as_deref()
     {
         app.actions.push(Action::OpenInfo(member));
+    }
+}
+
+/// The groups `person` shares with us, by name, as `(id, name)`: those whose
+/// member list includes them. Groups we left are not shared any more, and a
+/// locked group stays in the locked folder rather than showing here.
+fn groups_in_common(app: &App, person: &str) -> Vec<(String, String)> {
+    let mut groups: Vec<(String, String)> = app
+        .chats
+        .iter()
+        .filter(|chat| chat.is_group() && !chat.left && !chat.locked)
+        .filter(|chat| chat.participants.iter().any(|member| member == person))
+        .map(|chat| (chat.id.clone(), app.chat_title(chat)))
+        .collect();
+    groups.sort_by_key(|(_, name)| name.to_lowercase());
+    groups
+}
+
+/// The groups in common, each opening its chat.
+fn common_groups(app: &mut App, ui: &mut egui::Ui, groups: &[(String, String)]) {
+    let palette = app.palette;
+    theme::text(
+        ui,
+        crate::i18n::ngettext(
+            app.locale,
+            "{} group in common",
+            "{} groups in common",
+            groups.len() as u32,
+        )
+        .replace("{}", &groups.len().to_string()),
+        theme::medium(12.5),
+        palette.secondary,
+    );
+    ui.add_space(4.0);
+    let row_height = 30.0;
+    let mut open = None;
+    ui.scope(|ui| {
+        // `show_rows` reads the spacing from outside its closure.
+        ui.spacing_mut().item_spacing.y = 0.0;
+        egui::ScrollArea::vertical()
+            .id_salt("groups-in-common")
+            .max_height(row_height * 6.0)
+            .auto_shrink([false, true])
+            .show_rows(ui, row_height, groups.len(), |ui, range| {
+                for (group, name) in &groups[range] {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), row_height),
+                        egui::Sense::click(),
+                    );
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
+                    });
+                    if ui.is_rect_visible(rect) {
+                        if response.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
+                        }
+                        let picture = app.avatar(group);
+                        let avatar = egui::Rect::from_center_size(
+                            egui::pos2(rect.left() + 16.0, rect.center().y),
+                            egui::Vec2::splat(24.0),
+                        );
+                        widgets::paint_avatar(
+                            ui,
+                            &palette,
+                            avatar,
+                            name,
+                            group,
+                            picture.as_deref(),
+                        );
+                        let line = widgets::line(
+                            ui,
+                            name,
+                            theme::regular(13.0),
+                            palette.text,
+                            (rect.width() - 38.0).max(20.0),
+                            1,
+                        );
+                        line.paint(
+                            ui,
+                            egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
+                            palette.text,
+                        );
+                    }
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        open = Some(group.clone());
+                    }
+                }
+            });
+    });
+    if let Some(group) = open {
+        app.actions
+            .extend([Action::OpenChat(group), Action::CloseInfo]);
     }
 }
 
@@ -2261,5 +2363,40 @@ mod tests {
             domain("https://user:pass@www.attacker.example:8080/"),
             "attacker.example"
         );
+    }
+
+    #[test]
+    fn groups_in_common_are_the_groups_we_still_share_by_name() {
+        use crate::model::Chat;
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) = crate::app::App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let ada = "1@s.whatsapp.net";
+        let group = |id: &str, name: &str, members: &[&str]| {
+            let mut chat = Chat::new(id.into(), name.into());
+            chat.group_subject_known = true;
+            chat.participants = members.iter().map(|member| (*member).to_owned()).collect();
+            chat
+        };
+        let mut left = group("3@g.us", "Left", &[ada]);
+        left.left = true;
+        let mut locked = group("4@g.us", "Locked", &[ada]);
+        locked.locked = true;
+        app.chats = vec![
+            group("1@g.us", "Zeta", &[ada, "2@s.whatsapp.net"]),
+            group("2@g.us", "alpha", &[ada]),
+            group("5@g.us", "Without Ada", &["2@s.whatsapp.net"]),
+            left,
+            locked,
+            Chat::new(ada.into(), "Ada".into()),
+        ];
+        let names: Vec<String> = super::groups_in_common(&app, ada)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(names, ["alpha", "Zeta"]);
+        assert!(super::groups_in_common(&app, "9@s.whatsapp.net").is_empty());
     }
 }
