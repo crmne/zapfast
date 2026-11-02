@@ -26,7 +26,8 @@ const ROW_HEIGHT: f32 = 60.0;
 /// group photo, the rename pencil, the name editor's check, the action
 /// buttons, the media row, the group's permissions row, Add members, the
 /// invite link's buttons, the media view's tabs (or the permission
-/// switches), Leave, and Try again.
+/// switches), Leave, and Try again; a person's groups in common come last, one
+/// stop per row.
 const PHOTO_STOP: u8 = 0;
 const PENCIL_STOP: u8 = 1;
 const NAME_CHECK_STOP: u8 = 2;
@@ -41,6 +42,7 @@ const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
 const TIMER_STOP: u8 = 32;
+const GROUPS_STOP: u8 = 40;
 
 /// The media view's title, and the overview row that opens it.
 fn media_title(app: &App) -> String {
@@ -1135,18 +1137,26 @@ fn common_groups(app: &mut App, ui: &mut egui::Ui, person: &str, groups: &[(Stri
     let row_height = 30.0;
     let mut open = None;
     ui.scope(|ui| {
-        // `show_rows` reads the spacing from outside its closure.
         ui.spacing_mut().item_spacing.y = 0.0;
-        egui::ScrollArea::vertical()
+        // Every row is laid out, not only the visible ones, so Tab reaches
+        // each group and the list scrolls to the one with the focus.
+        let mut focused = false;
+        let list = egui::ScrollArea::vertical()
             .id_salt(("groups-in-common", person))
             .max_height(row_height * 6.0)
             .auto_shrink([false, true])
-            .show_rows(ui, row_height, groups.len(), |ui, range| {
-                for (group, name) in &groups[range] {
+            .show(ui, |ui| {
+                for (index, (group, name)) in groups.iter().enumerate() {
                     let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), row_height),
                         egui::Sense::click(),
                     );
+                    let slot = u8::try_from(index).unwrap_or(u8::MAX);
+                    let stop = Stop::InfoControl(GROUPS_STOP.saturating_add(slot));
+                    let response = response.tab_stop(stop);
+                    focused |= response.gained_focus();
+                    theme::reveal_focus(&response);
+                    theme::focus_outline(ui, response.id, rect, 6.0);
                     response.widget_info(|| {
                         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
                     });
@@ -1189,6 +1199,11 @@ fn common_groups(app: &mut App, ui: &mut egui::Ui, person: &str, groups: &[(Stri
                     }
                 }
             });
+        // The list's own scrolling stops at its edge, so the panel brings the
+        // list into view too when Tab lands on a row below its fold.
+        if focused {
+            ui.scroll_to_rect(list.inner_rect, None);
+        }
     });
     if let Some(group) = open {
         app.actions
