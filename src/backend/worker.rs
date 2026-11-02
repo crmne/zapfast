@@ -4397,6 +4397,18 @@ impl Worker {
                         .any(|jid| self.is_me(&self.canonical(jid)))
                     })
                 {
+                    // The notice can come before the group has a row, and the
+                    // history that files it later would not know we left. The
+                    // row is dated by the notice; a chat deleted here stays
+                    // deleted.
+                    if self.archive.chat(&chat).ok().flatten().is_none()
+                        && self.archive.removal_point(&chat).ok().flatten().is_none()
+                    {
+                        self.ensure_chat(&chat, None);
+                        let _ = self
+                            .archive
+                            .touch_activity(&chat, update.timestamp.timestamp());
+                    }
                     self.finish_leave(&chat, false);
                 }
                 self.request_group_info(&chat, true);
@@ -18918,23 +18930,17 @@ mod receipt_tests {
         }
     }
 
-    /// An admin removing us leaves the group as our own leave does; a notice
-    /// removing someone else does not.
+    /// An admin removing us leaves the group as our own leave does, even when
+    /// the notice comes before the group has a row; a notice removing someone
+    /// else does not, and one for a chat deleted here leaves it deleted.
     #[tokio::test]
     async fn a_remove_notice_naming_us_leaves_the_group() {
         use whatsapp_rust::wacore::stanza::groups::{
             GroupNotificationAction, GroupParticipantInfo,
         };
         let (mut worker, _events, _inbox, _wa) = worker();
-        let group = "123-654@g.us";
         worker.me_pn = Some(ME.into());
-        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
-        let members = [PEER.to_owned(), ME.to_owned()];
-        worker
-            .archive
-            .set_group_info(group, None, &members, false)
-            .unwrap();
-        let removed = |member: &str| {
+        let removed = |group: &str, member: &str, at: i64| {
             let participant = GroupParticipantInfo {
                 jid: member.parse().unwrap(),
                 phone_number: None,
@@ -18948,7 +18954,7 @@ mod receipt_tests {
             wa_events::Event::GroupUpdate(
                 wa_events::GroupUpdate::builder()
                     .group_jid(group.parse().unwrap())
-                    .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
                     .is_lid_addressing_mode(false)
                     .action(Box::new(GroupNotificationAction::Remove {
                         participants: vec![participant],
@@ -18957,13 +18963,51 @@ mod receipt_tests {
                     .build(),
             )
         };
-        worker.handle_wa_event(Arc::new(removed(PEER))).await;
+
+        let group = "123-654@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        let members = [PEER.to_owned(), ME.to_owned()];
+        worker
+            .archive
+            .set_group_info(group, None, &members, false)
+            .unwrap();
+        worker
+            .handle_wa_event(Arc::new(removed(group, PEER, 100)))
+            .await;
         assert!(!worker.archive.chat(group).unwrap().unwrap().left);
-        worker.handle_wa_event(Arc::new(removed(ME))).await;
+        worker
+            .handle_wa_event(Arc::new(removed(group, ME, 100)))
+            .await;
         let chat = worker.archive.chat(group).unwrap().unwrap();
         assert!(chat.left);
         assert!(chat.read_only);
         assert_eq!(chat.participants, [PEER]);
+
+        // Before history files the group, the notice makes its row, and the
+        // history that files it later finds it left.
+        let unfiled = "123-655@g.us";
+        worker
+            .handle_wa_event(Arc::new(removed(unfiled, ME, 100)))
+            .await;
+        worker.ensure_chat(unfiled, None);
+        let chat = worker.archive.chat(unfiled).unwrap().unwrap();
+        assert!(chat.left);
+        assert!(chat.read_only);
+        assert_eq!(chat.last_activity, 100, "dated by the notice");
+
+        let deleted = "123-656@g.us";
+        worker.archive.ensure_chat(deleted, "Deleted").unwrap();
+        worker
+            .archive
+            .remove_chat_through(deleted, 200, true)
+            .unwrap();
+        worker
+            .handle_wa_event(Arc::new(removed(deleted, ME, 250)))
+            .await;
+        assert!(
+            worker.archive.chat(deleted).unwrap().is_none(),
+            "even a notice newer than the deletion does not refile the chat"
+        );
     }
 
     /// A group created on the phone gets a chat row before its first message.
