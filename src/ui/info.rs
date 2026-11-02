@@ -1147,10 +1147,12 @@ fn common_groups(app: &mut App, ui: &mut egui::Ui, person: &str, groups: &[(Stri
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for (index, (group, name)) in groups.iter().enumerate() {
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), row_height),
-                        egui::Sense::click(),
-                    );
+                    // The id comes from the group alone, not its place in the
+                    // list, so focus stays with the group when the list reorders.
+                    let size = egui::vec2(ui.available_width(), row_height);
+                    let (_, rect) = ui.allocate_space(size);
+                    let id = ui.make_persistent_id(group);
+                    let response = ui.interact(rect, id, egui::Sense::click());
                     let slot = u8::try_from(index).unwrap_or(u8::MAX);
                     let stop = Stop::InfoControl(GROUPS_STOP.saturating_add(slot));
                     let response = response.tab_stop(stop);
