@@ -18918,37 +18918,37 @@ mod receipt_tests {
         }
     }
 
-    /// An admin removing us leaves the group as our own leave does; a notice
-    /// removing someone else does not.
+    /// An admin removing us leaves the group as our own leave does, whether
+    /// the notice names us by our id, our phone number or our privacy id; a
+    /// notice removing someone else does not.
     #[tokio::test]
     async fn a_remove_notice_naming_us_leaves_the_group() {
         use whatsapp_rust::wacore::stanza::groups::{
             GroupNotificationAction, GroupParticipantInfo,
         };
         let (mut worker, _events, _inbox, _wa) = worker();
-        let group = "123-654@g.us";
+        let our_lid = "15550009999@lid";
         worker.me_pn = Some(ME.into());
-        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        worker.me_lid = Some(our_lid.into());
         let members = [PEER.to_owned(), ME.to_owned()];
-        worker
-            .archive
-            .set_group_info(group, None, &members, false)
-            .unwrap();
-        let removed = |member: &str| {
-            let participant = GroupParticipantInfo {
-                jid: member.parse().unwrap(),
-                phone_number: None,
+        let member = |jid: &str, phone_number: Option<&str>, lid: Option<&str>| {
+            let parse = |jid: &str| jid.parse().unwrap();
+            GroupParticipantInfo {
+                jid: parse(jid),
+                phone_number: phone_number.map(parse),
                 display_name: None,
                 r#type: None,
-                lid: None,
+                lid: lid.map(parse),
                 username: None,
                 join_time: None,
                 group_history_sent_state: None,
-            };
+            }
+        };
+        let removed = |group: &str, participant: GroupParticipantInfo, at: i64| {
             wa_events::Event::GroupUpdate(
                 wa_events::GroupUpdate::builder()
                     .group_jid(group.parse().unwrap())
-                    .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
                     .is_lid_addressing_mode(false)
                     .action(Box::new(GroupNotificationAction::Remove {
                         participants: vec![participant],
@@ -18957,13 +18957,31 @@ mod receipt_tests {
                     .build(),
             )
         };
-        worker.handle_wa_event(Arc::new(removed(PEER))).await;
-        assert!(!worker.archive.chat(group).unwrap().unwrap().left);
-        worker.handle_wa_event(Arc::new(removed(ME))).await;
-        let chat = worker.archive.chat(group).unwrap().unwrap();
-        assert!(chat.left);
-        assert!(chat.read_only);
-        assert_eq!(chat.participants, [PEER]);
+
+        // Named by our id, by our phone number beside a privacy id, and by our
+        // privacy id beside a phone number.
+        for (group, us) in [
+            ("123-654@g.us", member(ME, None, None)),
+            ("123-655@g.us", member(PEER_LID, Some(ME), None)),
+            ("123-656@g.us", member(PEER, None, Some(our_lid))),
+        ] {
+            worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+            worker
+                .archive
+                .set_group_info(group, None, &members, false)
+                .unwrap();
+            worker
+                .handle_wa_event(Arc::new(removed(group, member(PEER, None, None), 100)))
+                .await;
+            assert!(!worker.archive.chat(group).unwrap().unwrap().left);
+            worker
+                .handle_wa_event(Arc::new(removed(group, us, 100)))
+                .await;
+            let chat = worker.archive.chat(group).unwrap().unwrap();
+            assert!(chat.left, "{group}");
+            assert!(chat.read_only, "{group}");
+            assert_eq!(chat.participants, [PEER], "{group}");
+        }
     }
 
     /// A group created on the phone gets a chat row before its first message.
