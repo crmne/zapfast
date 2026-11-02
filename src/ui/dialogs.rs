@@ -533,8 +533,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("new-chat-contacts")
         .max_height(list_height)
-        .min_scrolled_height(list_height)
-        .auto_shrink([false, false])
+        .auto_shrink([false, true])
         .show(ui, |ui| {
             // New group and Add contact head the list, then "Message
             // yourself", as on the phone.
