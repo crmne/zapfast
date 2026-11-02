@@ -666,11 +666,24 @@ fn sections(app: &App) -> Vec<Section> {
     }
 
     let mut system = Section::new(translated(locale, "System"));
-    system.toggle(
-        translated(locale, "Keep running when the window closes"),
-        keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
-        |settings| &mut settings.keep_running_in_background,
-    );
+    // A closed Mac app stays in the Dock, which brings its window back, so
+    // on macOS the same setting decides only the menu-bar item.
+    if cfg!(target_os = "macos") {
+        system.toggle(
+            translated(locale, "Show in the menu bar"),
+            keyed(translated(
+                locale,
+                "Closing the window keeps ZapFast in the Dock. Quit with Ctrl+Q.",
+            )),
+            |settings| &mut settings.keep_running_in_background,
+        );
+    } else {
+        system.toggle(
+            translated(locale, "Keep running when the window closes"),
+            keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+            |settings| &mut settings.keep_running_in_background,
+        );
+    }
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
