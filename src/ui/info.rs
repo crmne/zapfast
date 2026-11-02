@@ -1095,14 +1095,20 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
 }
 
 /// The groups `person` shares with us, by name, as `(id, name)`: those whose
-/// member list includes them. Groups we left are not shared any more, and a
-/// locked group stays in the locked folder rather than showing here.
+/// member list includes them and us. Groups we left are not shared any more,
+/// and a locked group stays in the locked folder rather than showing here.
 fn groups_in_common(app: &App, person: &str) -> Vec<(String, String)> {
+    let ours = app.our_ids();
     let mut groups: Vec<(String, String)> = app
         .chats
         .iter()
         .filter(|chat| chat.is_group() && !chat.left && !chat.locked)
-        .filter(|chat| chat.participants.iter().any(|member| member == person))
+        // An admin removing us leaves the group unmarked, with a member list
+        // that still names them but no longer us.
+        .filter(|chat| {
+            let has = |id: &str| chat.participants.iter().any(|member| member == id);
+            has(person) && ours.iter().copied().any(has)
+        })
         .map(|chat| (chat.id.clone(), app.chat_title(chat)))
         .collect();
     groups.sort_by_key(|(_, name)| name.to_lowercase());
@@ -2373,6 +2379,8 @@ mod tests {
             crate::paths::AppDirs::under(directory.path()),
             crate::settings::Settings::default(),
         );
+        let me = "15550001111@s.whatsapp.net";
+        app.me = Some(me.to_owned());
         let ada = "1@s.whatsapp.net";
         let group = |id: &str, name: &str, members: &[&str]| {
             let mut chat = Chat::new(id.into(), name.into());
@@ -2380,14 +2388,16 @@ mod tests {
             chat.participants = members.iter().map(|member| (*member).to_owned()).collect();
             chat
         };
-        let mut left = group("3@g.us", "Left", &[ada]);
+        let mut left = group("3@g.us", "Left", &[ada, me]);
         left.left = true;
-        let mut locked = group("4@g.us", "Locked", &[ada]);
+        let mut locked = group("4@g.us", "Locked", &[ada, me]);
         locked.locked = true;
         app.chats = vec![
-            group("1@g.us", "Zeta", &[ada, "2@s.whatsapp.net"]),
-            group("2@g.us", "alpha", &[ada]),
-            group("5@g.us", "Without Ada", &["2@s.whatsapp.net"]),
+            group("1@g.us", "Zeta", &[ada, "2@s.whatsapp.net", me]),
+            group("2@g.us", "alpha", &[ada, me]),
+            group("5@g.us", "Without Ada", &["2@s.whatsapp.net", me]),
+            // Removed by an admin: Ada is still in it, we are not.
+            group("6@g.us", "Removed", &[ada]),
             left,
             locked,
             Chat::new(ada.into(), "Ada".into()),
