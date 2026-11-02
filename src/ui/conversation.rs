@@ -6900,7 +6900,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
                     theme::regular(13.0),
                     color,
                     ui.spacing().tooltip_width,
-                    REACTION_TOOLTIP_ROWS,
+                    usize::MAX,
                 );
                 let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
                 line.paint(ui, rect.min, color);
@@ -6979,10 +6979,6 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
                 });
         });
 }
-
-/// How many rows one emoji's line of names may wrap to in the reactions
-/// tooltip before it ends in an ellipsis. The list of reactions shows them all.
-const REACTION_TOOLTIP_ROWS: usize = 6;
 
 /// The reactions tooltip's lines, one per emoji: "😂: Ada, Grace". Each name
 /// is isolated so a right-to-left one keeps its words in reading order and
