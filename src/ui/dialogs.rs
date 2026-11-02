@@ -490,22 +490,13 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     let width = ui.available_width();
     let search_hint = crate::i18n::gettext(app.locale, "Search contacts");
     let field = egui::Id::new("new-chat-search");
-    let needle = crate::util::search_key(app.new_chat_search.trim());
-    let contacts = contact_choices(app, &needle);
-    let offer_self = app.offers_self(&needle);
     // Enter opens the first match the list highlights. It is taken before
-    // the field reads the key, so the field does not lose focus first.
-    let open_first = !needle.is_empty()
+    // the field reads the key, so the field does not lose focus first. The
+    // matches are worked out after the field, so they include this frame's
+    // typing.
+    let open_first = !app.new_chat_search.trim().is_empty()
         && ui.memory(|memory| memory.has_focus(field))
         && ui.input_mut(|input| super::keys::take_plain(input, egui::Key::Enter));
-    if let Some(contact) = contacts.first().filter(|_| open_first) {
-        let name = app.display_name(&contact.id);
-        app.actions.push(Action::StartChat {
-            id: contact.id.clone(),
-            name,
-            dismiss_dialog: true,
-        });
-    }
     let search = super::widgets::search_field(
         ui,
         &palette,
@@ -516,6 +507,20 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     );
     if ui.memory(|memory| memory.focused().is_none()) {
         search.request_focus();
+    }
+    let needle = crate::util::search_key(app.new_chat_search.trim());
+    let contacts = contact_choices(app, &needle);
+    let offer_self = app.offers_self(&needle);
+    if let Some(contact) = contacts
+        .first()
+        .filter(|_| open_first && !needle.is_empty())
+    {
+        let name = app.display_name(&contact.id);
+        app.actions.push(Action::StartChat {
+            id: contact.id.clone(),
+            name,
+            dismiss_dialog: true,
+        });
     }
     // The list is as tall as its rows, up to the space the dialog has, so a
     // search with few matches gives a short list and many give a full one.
