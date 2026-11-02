@@ -727,7 +727,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         let groups = groups_in_common(app, id);
         if !groups.is_empty() {
             ui.add_space(8.0);
-            common_groups(app, ui, &groups);
+            common_groups(app, ui, id, &groups);
         }
     }
     if shown.can_manage {
@@ -1103,8 +1103,8 @@ fn groups_in_common(app: &App, person: &str) -> Vec<(String, String)> {
         .chats
         .iter()
         .filter(|chat| chat.is_group() && !chat.left && !chat.locked)
-        // An admin removing us leaves the group unmarked, with a member list
-        // that still names them but no longer us.
+        // A member list without us is a group we are out of, however we got
+        // out of it.
         .filter(|chat| {
             let has = |id: &str| chat.participants.iter().any(|member| member == id);
             has(person) && ours.iter().copied().any(has)
@@ -1115,8 +1115,8 @@ fn groups_in_common(app: &App, person: &str) -> Vec<(String, String)> {
     groups
 }
 
-/// The groups in common, each opening its chat.
-fn common_groups(app: &mut App, ui: &mut egui::Ui, groups: &[(String, String)]) {
+/// The groups in common with `person`, each opening its chat.
+fn common_groups(app: &mut App, ui: &mut egui::Ui, person: &str, groups: &[(String, String)]) {
     let palette = app.palette;
     theme::text(
         ui,
@@ -1137,7 +1137,7 @@ fn common_groups(app: &mut App, ui: &mut egui::Ui, groups: &[(String, String)]) 
         // `show_rows` reads the spacing from outside its closure.
         ui.spacing_mut().item_spacing.y = 0.0;
         egui::ScrollArea::vertical()
-            .id_salt("groups-in-common")
+            .id_salt(("groups-in-common", person))
             .max_height(row_height * 6.0)
             .auto_shrink([false, true])
             .show_rows(ui, row_height, groups.len(), |ui, range| {
@@ -2396,7 +2396,7 @@ mod tests {
             group("1@g.us", "Zeta", &[ada, "2@s.whatsapp.net", me]),
             group("2@g.us", "alpha", &[ada, me]),
             group("5@g.us", "Without Ada", &["2@s.whatsapp.net", me]),
-            // Removed by an admin: Ada is still in it, we are not.
+            // A member list without us: Ada is still in it, we are not.
             group("6@g.us", "Removed", &[ada]),
             left,
             locked,
