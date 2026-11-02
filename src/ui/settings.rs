@@ -712,6 +712,14 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.download_updates_automatically,
     );
+    system.row(
+        translated(locale, "User agent"),
+        translated(
+            locale,
+            "Companion identity: ZapFast (default), Chrome, Firefox, or Custom. Restart ZapFast to apply; existing linked-device labels may need pairing again.",
+        ),
+        user_agent_picker,
+    );
     let environment = app
         .settings
         .proxy
@@ -1191,6 +1199,63 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     theme::reveal_focus(&response.response);
+}
+
+fn user_agent_picker(ui: &mut egui::Ui, app: &mut App) {
+    use crate::settings::UserAgent;
+
+    let id = egui::Id::new("settings-user-agent-draft");
+    let mut draft = ui
+        .data(|data| data.get_temp::<UserAgent>(id))
+        .unwrap_or_else(|| app.settings.user_agent.clone());
+    ui.vertical(|ui| {
+        let response = egui::ComboBox::from_id_salt("user_agent")
+            .selected_text(crate::i18n::gettext(app.locale, draft.label()))
+            .width(200.0_f32.min(ui.available_width()))
+            .show_ui(ui, |ui| {
+                for choice in [
+                    UserAgent::ZapFast,
+                    UserAgent::Chrome,
+                    UserAgent::Firefox,
+                    UserAgent::Custom(String::new()),
+                ] {
+                    let selected =
+                        std::mem::discriminant(&draft) == std::mem::discriminant(&choice);
+                    if ui
+                        .selectable_label(
+                            selected,
+                            crate::i18n::gettext(app.locale, choice.label()),
+                        )
+                        .clicked()
+                        && !selected
+                    {
+                        draft = choice;
+                    }
+                }
+            });
+        theme::reveal_focus(&response.response);
+        if let UserAgent::Custom(name) = &mut draft {
+            ui.add(
+                egui::TextEdit::singleline(name)
+                    .hint_text(crate::i18n::gettext(app.locale, "Custom user agent"))
+                    .font(theme::regular(13.0))
+                    .text_color(app.palette.text)
+                    .desired_width(200.0),
+            );
+        }
+        if ui
+            .add_enabled(
+                draft != app.settings.user_agent && draft.clone().validated().is_ok(),
+                egui::Button::new(crate::i18n::gettext(app.locale, "Apply")),
+            )
+            .clicked()
+        {
+            app.actions.push(Action::SetUserAgent(draft.clone()));
+            ui.data_mut(|data| data.remove::<UserAgent>(id));
+        } else {
+            ui.data_mut(|data| data.insert_temp(id, draft));
+        }
+    });
 }
 
 fn language_picker(ui: &mut egui::Ui, app: &mut App) {

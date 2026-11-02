@@ -404,6 +404,40 @@ pub enum NotificationSound {
     Custom(std::path::PathBuf),
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserAgent {
+    #[default]
+    ZapFast,
+    Chrome,
+    Firefox,
+    Custom(String),
+}
+
+impl UserAgent {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ZapFast => "ZapFast (default)",
+            Self::Chrome => "Chrome",
+            Self::Firefox => "Firefox",
+            Self::Custom(_) => "Custom",
+        }
+    }
+
+    pub fn validated(self) -> Result<Self, &'static str> {
+        match self {
+            Self::Custom(name) => {
+                let name = name.trim();
+                if name.is_empty() || name.chars().any(char::is_control) {
+                    return Err("Enter a non-empty custom user agent without control characters.");
+                }
+                Ok(Self::Custom(name.to_owned()))
+            }
+            other => Ok(other),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -501,6 +535,7 @@ pub struct Settings {
     /// Proxy for WhatsApp, media, and updates, such as
     /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
     pub proxy: String,
+    pub user_agent: UserAgent,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
@@ -586,6 +621,7 @@ impl Default for Settings {
             download_folder: None,
             keep_chats_archived: true,
             proxy: String::new(),
+            user_agent: UserAgent::default(),
             check_for_updates: true,
             download_updates_automatically: false,
             save_contacts_to_phone: true,
@@ -970,6 +1006,39 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_agent_defaults_and_choices_round_trip() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.user_agent, UserAgent::ZapFast);
+        for user_agent in [
+            UserAgent::ZapFast,
+            UserAgent::Chrome,
+            UserAgent::Firefox,
+            UserAgent::Custom("My companion".into()),
+        ] {
+            let settings = Settings {
+                user_agent: user_agent.clone(),
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&settings).unwrap();
+            let restored: Settings = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.user_agent, user_agent);
+        }
+    }
+
+    #[test]
+    fn custom_user_agent_is_trimmed_and_requires_non_control_text() {
+        assert_eq!(
+            UserAgent::Custom("  My companion  ".into())
+                .validated()
+                .unwrap(),
+            UserAgent::Custom("My companion".into())
+        );
+        for name in ["", "   ", "line\nbreak", "nul\0byte"] {
+            assert!(UserAgent::Custom(name.into()).validated().is_err());
+        }
+    }
 
     #[test]
     fn theme_defaults_to_follow_system_for_new_and_missing_settings() {

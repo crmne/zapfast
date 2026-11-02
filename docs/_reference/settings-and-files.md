@@ -80,6 +80,36 @@ On Linux and macOS, ZapFast restricts its configuration, state, and cache
 directories to your user (`0700`) and stops at startup if it cannot. Windows
 uses the permissions inherited from your user profile.
 
+## User agent
+
+**Settings > System > User agent** selects the companion identity for every
+account: **ZapFast (default)**, **Chrome**, **Firefox**, or **Custom**. Click
+**Apply** to save it, then restart ZapFast to use the choice without unlinking
+an account. New accounts use the saved choice immediately.
+
+ZapFast keeps the existing `ZapFast (<hostname>)` name, application version,
+and desktop companion type. Chrome and Firefox use the library's corresponding
+browser companion type and the operating-system name (Linux, macOS, or Windows),
+without ZapFast's name, release version, or hostname. Custom uses the name you
+enter and the desktop companion type, without adding the hostname or ZapFast's
+release version. A custom name must contain visible text and no control characters.
+Browser and custom choices retain the protocol library's default device-property
+version and existing web client profile and capabilities.
+
+This setting changes companion-device metadata, not HTTP User-Agent headers,
+WebSocket or TLS behavior. ZapFast remains an unofficial native client; choosing
+a browser does not make it indistinguishable from that browser or prevent bans.
+
+WhatsApp reads the linked-device label at pairing, so an existing device may
+keep its previous label even after restarting. ZapFast never unlinks accounts,
+rotates keys, or deletes archives when this setting changes. Relinking manually
+may update the label, but unlinking deletes the local archive and caches; back
+up what you need first. Browser labels also omit the hostname that distinguishes
+multiple computers using the default identity.
+
+In `settings.json`, `"user_agent"` accepts `"zapfast"` (the default when absent),
+`"chrome"`, `"firefox"`, or `{"custom": "My companion"}`.
+
 ## Archive encryption
 
 The message archive is a SQLCipher database. Its key is a random 256-bit
