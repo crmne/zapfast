@@ -108,7 +108,8 @@ up what you need first. Browser labels also omit the hostname that distinguishes
 multiple computers using the default identity.
 
 In `settings.json`, `"user_agent"` accepts `"zapfast"` (the default when absent),
-`"chrome"`, `"firefox"`, or `{"custom": "My companion"}`.
+`"chrome"`, `"firefox"`, or `{"custom": "My companion"}`. Invalid custom names
+fall back to ZapFast when the file is loaded, keeping other settings intact.
 
 ## Archive encryption
 

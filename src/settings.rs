@@ -428,8 +428,17 @@ impl UserAgent {
         match self {
             Self::Custom(name) => {
                 let name = name.trim();
-                if name.is_empty() || name.chars().any(char::is_control) {
-                    return Err("Enter a non-empty custom user agent without control characters.");
+                let invisible = icu_properties::CodePointSetData::new::<
+                    icu_properties::props::DefaultIgnorableCodePoint,
+                >();
+                if !name
+                    .chars()
+                    .any(|c| !c.is_whitespace() && !invisible.contains(c))
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(
+                        "Enter a custom user agent with visible text and no control characters.",
+                    );
                 }
                 Ok(Self::Custom(name.to_owned()))
             }
@@ -718,6 +727,7 @@ impl Settings {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<Self>(&contents) {
                 Ok(mut settings) => {
+                    settings.user_agent = settings.user_agent.validated().unwrap_or_default();
                     settings.migrate();
                     settings.fold_legacy_media_pause();
                     if let Some(code) = settings.chat_lock_code.take() {
@@ -1035,8 +1045,61 @@ mod tests {
                 .unwrap(),
             UserAgent::Custom("My companion".into())
         );
-        for name in ["", "   ", "line\nbreak", "nul\0byte"] {
+        for name in [
+            "",
+            "   ",
+            "line\nbreak",
+            "nul\0byte",
+            "\u{200b}",
+            " \u{200b}\u{200d}\u{feff}\u{fe0f} ",
+            "\u{3164}",
+        ] {
             assert!(UserAgent::Custom(name.into()).validated().is_err());
+        }
+    }
+
+    #[test]
+    fn custom_user_agent_preserves_visible_unicode_names() {
+        for name in [
+            "Computador do João",
+            "火狐",
+            "جهازي",
+            "🧑‍💻",
+            "Desk\u{200b}top",
+        ] {
+            assert_eq!(
+                UserAgent::Custom(name.into()).validated().unwrap(),
+                UserAgent::Custom(name.into())
+            );
+        }
+    }
+
+    #[test]
+    fn loaded_user_agent_is_validated_without_resetting_other_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for name in ["", "   ", "\u{200b}", "bad\0name"] {
+            let json = serde_json::json!({
+                "user_agent": { "custom": name },
+                "proxy": "socks5h://127.0.0.1:9050",
+            });
+            std::fs::write(&path, json.to_string()).unwrap();
+            let loaded = Settings::load(&path);
+            assert_eq!(loaded.user_agent, UserAgent::ZapFast);
+            assert_eq!(loaded.proxy, "socks5h://127.0.0.1:9050");
+        }
+        for user_agent in [
+            UserAgent::ZapFast,
+            UserAgent::Chrome,
+            UserAgent::Firefox,
+            UserAgent::Custom("  火狐 🧑‍💻  ".into()),
+        ] {
+            let json = serde_json::json!({ "user_agent": user_agent });
+            std::fs::write(&path, json.to_string()).unwrap();
+            assert_eq!(
+                Settings::load(&path).user_agent,
+                user_agent.validated().unwrap()
+            );
         }
     }
 
