@@ -1463,6 +1463,29 @@ fn person_row(
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    // The highlighted row is scrolled into view once each time it changes, so
+    // Enter never opens a chat the list has scrolled past. Scrolling again
+    // every frame would fight the reader.
+    let revealed = egui::Id::new("person-row-revealed");
+    if selected {
+        if ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(revealed))
+            .as_deref()
+            != Some(id)
+        {
+            response.scroll_to_me(Some(egui::Align::Center));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(revealed, id.to_owned()));
+        }
+    } else if ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(revealed))
+        .as_deref()
+        == Some(id)
+    {
+        ui.ctx().data_mut(|data| data.remove::<String>(revealed));
+    }
     if ui.is_rect_visible(rect) {
         if selected {
             widgets::row_highlight(ui, &palette, rect, palette.surface_active);
