@@ -112,6 +112,18 @@ pub fn base_rtl(text: &str) -> bool {
         .is_some_and(|paragraph| paragraph.level.is_rtl())
 }
 
+/// `text` as a bidi isolate, for a name or other text that is placed inside
+/// an interface string, such as "Name: " before a message.
+///
+/// Laid out bare, a right-to-left name sets the direction of the whole
+/// line, which moves the string's own punctuation to the other side of it:
+/// "بابا: " read as ":بابا". Isolated, the name takes its direction from its
+/// own first strong letter and leaves the line's direction to the string
+/// around it. The isolate marks are invisible and take no space.
+pub fn isolate(text: &str) -> String {
+    format!("\u{2068}{text}\u{2069}")
+}
+
 /// Whether the first strong character, in any paragraph, is right to left.
 ///
 /// This picks the side a multi-line message is aligned to.
