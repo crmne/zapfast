@@ -723,7 +723,8 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         ui.add_space(8.0);
         media_row(app, ui, id, overlay);
     }
-    if !shown.group && !shown.channel && !mine {
+    // Our own details, under either of our ids, share no groups with us.
+    if !shown.group && !shown.channel && !app.our_ids().contains(&id) {
         let groups = groups_in_common(app, id);
         if !groups.is_empty() {
             ui.add_space(8.0);
