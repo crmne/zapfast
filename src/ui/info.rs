@@ -165,7 +165,8 @@ fn header(
     focus: bool,
 ) {
     let palette = app.palette;
-    Frame::new()
+    let top = ui.cursor().top();
+    let frame = Frame::new()
         .inner_margin(Margin::symmetric(14, 8))
         .show(ui, |ui| {
             let room = pane::caption_header(ui, vec2(14.0, 8.0));
@@ -184,12 +185,37 @@ fn header(
                 ui.add_space(6.0);
                 theme::text(ui, title, theme::semibold(16.0), palette.text);
             });
-        });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, palette.outline),
-    );
+        })
+        .response
+        .rect;
+    // The edge lines up with the chat header's beside it, which its name and
+    // subtitle can make taller than this row.
+    let chat_header = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(super::conversation::header_rect_id()));
+    let bottom = chat_header
+        .filter(|chat| (chat.top() - top).abs() < 1.0)
+        .map_or(frame.bottom(), |chat| frame.bottom().max(chat.bottom()));
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(header_edge_id(), bottom));
+    let short = bottom - ui.cursor().top();
+    if short > 0.0 {
+        ui.add_space(short);
+    }
+    // A vibrant chat header has no edge (its messages scroll on under it),
+    // so this one draws none either.
+    if !palette.vibrant() {
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            bottom,
+            Stroke::new(1.0, palette.outline),
+        );
+    }
+}
+
+/// Where the pane header's edge was last drawn, for layout tests.
+pub(crate) fn header_edge_id() -> egui::Id {
+    egui::Id::new("info-header-edge")
 }
 
 /// What the overview shows of the chat, read once per frame from the chat

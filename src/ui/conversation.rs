@@ -430,7 +430,7 @@ fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
-    egui::Panel::top("chat-header")
+    let rect = egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -976,7 +976,16 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
         })
         .response
-        .rect
+        .rect;
+    // The info panel beside the chat ends its header where this one ends.
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(header_rect_id(), rect));
+    rect
+}
+
+/// Where the chat header was last laid out, for the panes beside it.
+pub(crate) fn header_rect_id() -> egui::Id {
+    egui::Id::new("conversation-header")
 }
 
 /// Where a narrow window's Back was laid out, for interaction tests.

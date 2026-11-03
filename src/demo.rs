@@ -11140,6 +11140,27 @@ mod tests {
         assert!(!listing.media.is_empty(), "the group's photo");
     }
 
+    /// The info panel's header ends where the chat header beside it ends, so
+    /// their edges meet in one line (#639), in the plain themes and the
+    /// vibrant ones.
+    #[test]
+    fn the_info_panel_header_ends_level_with_the_chat_header() {
+        for page in ["group-info", "light,group-info", "messages,group-info"] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            apply_flags(&mut app, Some(page));
+            render(&mut app, &ctx);
+            let chat = ctx
+                .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::header_rect_id()))
+                .expect("the chat header");
+            let edge = ctx
+                .data(|data| data.get_temp::<f32>(crate::ui::info::header_edge_id()))
+                .expect("the info header");
+            assert_eq!(edge, chat.bottom(), "{page}");
+        }
+    }
+
     /// The group dialog offers the pencil and the photo menu only when we may
     /// change the group's info, and not while a change is on its way.
     #[test]
