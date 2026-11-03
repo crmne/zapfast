@@ -171,7 +171,8 @@ pub(super) fn script() -> Vec<Cue> {
     add(10.3, Click(left));
     add(12.0, Move(OldestHit));
     add(12.4, Click(left));
-    add(14.8, esc("Esc · Close search"));
+    // Picking a result closes search on its own, so no Escape here: it
+    // would close the chat.
 
     // Photos open in the app.
     add(15.4, Key(K::End, command(), "Ctrl + End · Latest messages"));
