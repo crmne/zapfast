@@ -863,6 +863,10 @@ mod tests {
             "<SCRIPT type=\"x\">a<b='</Script><a>"
         );
         assert_eq!(end("<script>a<b='<meta>"), "<script>");
+        assert_eq!(
+            end("<script>a</scripture><b c='</script><meta>"),
+            "<script>a</scripture><b c='</script><meta>"
+        );
         assert_eq!(end("<scripts><a x='>"), "<scripts>");
     }
 
