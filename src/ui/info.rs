@@ -31,7 +31,6 @@ const PHOTO_STOP: u8 = 0;
 const PENCIL_STOP: u8 = 1;
 const NAME_CHECK_STOP: u8 = 2;
 const ACTION_STOP: u8 = 3;
-const BLOCK_STOP: u8 = 9;
 pub const MEDIA_ROW_STOP: u8 = 10;
 const PERMISSIONS_STOP: u8 = 11;
 const ADD_MEMBERS_STOP: u8 = 12;
@@ -663,7 +662,6 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     ui.add_space(4.0);
     actions(app, ui, shown, mine, editable);
-    ui.vertical_centered(|ui| super::blocking::button(app, ui, id, Stop::InfoControl(BLOCK_STOP)));
     let describing = app.group_description_edit.take().filter(|_| group_editable);
     if let Some(mut draft) = describing {
         ui.add_space(8.0);
@@ -837,16 +835,24 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             ],
         ));
     }
+    let block_label = crate::blocking::eligible(id, app.me.as_deref(), app.me_lid.as_deref())
+        .then(|| super::blocking::label(app, id));
+    let widths: Vec<_> = buttons
+        .iter()
+        .map(|(_, label, _)| *label)
+        .chain(block_label.as_deref())
+        .map(|label| theme::soft_button_width(ui, label, true))
+        .collect();
     let spacing = ui.spacing().item_spacing.x;
     let available = ui.available_width();
     let mut fired: Option<Vec<Action>> = None;
     let mut start = 0;
-    while start < buttons.len() {
+    while start < widths.len() {
         // Fit and center as many buttons as each row allows.
         let mut end = start;
         let mut total = 0.0;
-        while end < buttons.len() {
-            let width = theme::soft_button_width(ui, buttons[end].1, true);
+        while end < widths.len() {
+            let width = widths[end];
             let grown = if end == start {
                 width
             } else {
@@ -860,9 +866,14 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         }
         ui.horizontal(|ui| {
             ui.add_space((available - total).max(0.0) / 2.0);
-            for (index, (icon, label, actions)) in buttons[start..end].iter().enumerate() {
+            for index in start..end {
+                let stop = Stop::InfoControl(ACTION_STOP + index as u8);
+                let Some((icon, label, actions)) = buttons.get(index) else {
+                    super::blocking::button(app, ui, id, stop);
+                    continue;
+                };
                 if theme::soft_button(ui, &palette, Some(*icon), label, false)
-                    .tab_stop(Stop::InfoControl(ACTION_STOP + (start + index) as u8))
+                    .tab_stop(stop)
                     .clicked()
                 {
                     fired = Some(actions.clone());
