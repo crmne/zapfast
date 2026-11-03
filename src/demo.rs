@@ -11151,6 +11151,7 @@ mod tests {
             app.attach(&ctx);
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
+            let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
             let chat = ctx
                 .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::header_rect_id()))
                 .expect("the chat header");
@@ -11158,6 +11159,17 @@ mod tests {
                 .data(|data| data.get_temp::<f32>(crate::ui::info::header_edge_id()))
                 .expect("the info header");
             assert_eq!(edge, chat.bottom(), "{page}");
+            let info = egui::PanelState::load(&ctx, egui::Id::new("chat-info-pane"))
+                .expect("the docked info panel")
+                .outer_rect;
+            for header in [chat, info] {
+                let divider = egui::Rect::from_x_y_ranges(header.x_range(), edge - 1.0..=edge);
+                let painted = shapes.iter().any(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Rect(shape)
+                        if shape.rect == divider && shape.fill == app.palette.outline)
+                });
+                assert_eq!(painted, !app.palette.vibrant(), "{page}: {divider:?}");
+            }
         }
     }
 
