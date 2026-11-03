@@ -7596,7 +7596,7 @@ fn context_menu(
                 ) {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
-                        name: attachment_name(&message.content, path),
+                        name: attachment_name(&message.content, message.timestamp, path),
                     });
                 }
                 if let Some(folder) = path.parent()
@@ -8971,7 +8971,10 @@ fn album_content(
         .iter()
         .filter_map(|message| {
             let path = message.content.media()?.path.as_ref()?;
-            Some((path.clone(), attachment_name(&message.content, path)))
+            Some((
+                path.clone(),
+                attachment_name(&message.content, message.timestamp, path),
+            ))
         })
         .collect();
     if !files.is_empty()
@@ -11753,17 +11756,28 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
 }
 
 /// The file name to suggest when saving an attachment: the sender's name for
-/// documents, the cached file's name otherwise. Path separators are dropped so
-/// a crafted name cannot point the dialog somewhere else.
-fn attachment_name(content: &Content, path: &Path) -> String {
-    let name = match content {
-        Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
-        _ => path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "attachment".to_owned()),
+/// documents, else its kind and send time, after the names WhatsApp Web gives
+/// its downloads (#801); the cached file's own name is the chat and message
+/// ids, which sort by nothing. Path separators are dropped from a document's
+/// name so a crafted name cannot point the dialog somewhere else.
+fn attachment_name(content: &Content, timestamp: i64, path: &Path) -> String {
+    let kind = match content {
+        Content::Document { file_name, .. } if !file_name.trim().is_empty() => {
+            return file_name.replace(['/', '\\'], "_");
+        }
+        Content::Document { .. } => "Document",
+        Content::Video { .. } => "Video",
+        Content::Audio { .. } => "Audio",
+        Content::Sticker { .. } => "Sticker",
+        // A photo, or an interactive message's card picture.
+        _ => "Image",
     };
-    name.replace(['/', '\\'], "_")
+    crate::util::saved_file_name(kind, timestamp, path).unwrap_or_else(|| {
+        path.file_name().map_or_else(
+            || "attachment".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    })
 }
 
 /// Whether a conversation has visible content. Used by tests.
@@ -12127,13 +12141,84 @@ mod tests {
             caption: None,
             pages: None,
         };
+        let _clock = crate::util::fixed_clock::set(crate::util::fixed_clock::Clock {
+            now: 0,
+            zone: jiff::tz::TimeZone::UTC,
+            twelve_hour: false,
+        });
+        let sent = 1_786_046_869; // 2026-08-06 at 20.07.49 UTC
         let cached = Path::new("/cache/media/abc123.pdf");
-        assert_eq!(attachment_name(&document("Notes.pdf"), cached), "Notes.pdf");
         assert_eq!(
-            attachment_name(&document("../../.bashrc"), cached),
+            attachment_name(&document("Notes.pdf"), sent, cached),
+            "Notes.pdf"
+        );
+        assert_eq!(
+            attachment_name(&document("../../.bashrc"), sent, cached),
             ".._.._.bashrc"
         );
-        assert_eq!(attachment_name(&document("  "), cached), "abc123.pdf");
+        assert_eq!(
+            attachment_name(&document("  "), sent, cached),
+            "WhatsApp Document 2026-08-06 at 20.07.49.pdf"
+        );
+    }
+
+    /// Anything without a name of its own is named by its kind and send time,
+    /// as WhatsApp Web names its downloads, never by the cache's chat and
+    /// message ids (#801).
+    #[test]
+    fn saved_media_is_named_by_kind_and_send_time() {
+        let _clock = crate::util::fixed_clock::set(crate::util::fixed_clock::Clock {
+            now: 0,
+            zone: jiff::tz::TimeZone::UTC,
+            twelve_hour: false,
+        });
+        let sent = 1_786_046_869; // 2026-08-06 at 20.07.49 UTC
+        let name = |content: &Content, file: &str| {
+            attachment_name(
+                content,
+                sent,
+                &Path::new("/cache/media")
+                    .join(format!("15550101234_s_whatsapp_net-AB1C23.{file}")),
+            )
+        };
+        let voice = Content::Audio {
+            media: media(None, None),
+            seconds: Some(4),
+            voice_note: true,
+            waveform: Vec::new(),
+        };
+        assert_eq!(
+            name(&voice, "ogg"),
+            "WhatsApp Audio 2026-08-06 at 20.07.49.ogg"
+        );
+        let photo = Content::Image {
+            caption: None,
+            media: media(Some(4), Some(3)),
+            motion: None,
+        };
+        assert_eq!(
+            name(&photo, "jpg"),
+            "WhatsApp Image 2026-08-06 at 20.07.49.jpg"
+        );
+        let gif = Content::Video {
+            caption: None,
+            media: media(Some(4), Some(3)),
+            seconds: Some(2),
+            gif: true,
+            note: false,
+        };
+        assert_eq!(
+            name(&gif, "mp4"),
+            "WhatsApp Video 2026-08-06 at 20.07.49.mp4"
+        );
+        let sticker = Content::Sticker {
+            media: media(Some(512), Some(512)),
+            animated: false,
+        };
+        assert_eq!(
+            name(&sticker, "webp"),
+            "WhatsApp Sticker 2026-08-06 at 20.07.49.webp"
+        );
     }
 
     /// Builds synthetic attachment metadata for media-state and album regression tests.

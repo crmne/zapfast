@@ -227,6 +227,21 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
         .unwrap_or_default()
 }
 
+/// The name Save as offers a file without one of its own: its kind and local
+/// send time, after the names WhatsApp Web gives its downloads (#801), such as
+/// `WhatsApp Audio 2026-08-06 at 20.07.49.ogg`. Always a 24-hour clock with
+/// dots between the fields, so files of one kind sort by date and every file
+/// system takes the name. The cached file lends its extension.
+pub fn saved_file_name(kind: &str, unix_seconds: i64, cached: &std::path::Path) -> Option<String> {
+    let stamp = zoned(unix_seconds)?.strftime("%Y-%m-%d at %H.%M.%S");
+    Some(
+        match cached.extension().and_then(|extension| extension.to_str()) {
+            Some(extension) => format!("WhatsApp {kind} {stamp}.{extension}"),
+            None => format!("WhatsApp {kind} {stamp}"),
+        },
+    )
+}
+
 /// Chat-row timestamp: time today, weekday this week, or date.
 pub fn chat_stamp(locale: Locale, unix_seconds: i64) -> String {
     let Some(when) = zoned(unix_seconds) else {
@@ -978,6 +993,40 @@ mod tests {
         assert_eq!(key("ΟΣ"), key("Οσ"));
         assert_eq!(key("ΜΆΙΟΣ"), "μαιοσ");
         assert!(key("ΜΆΙΟΣ").contains(&key("Σ")));
+    }
+
+    /// Save as names a file by its kind and local send time, as WhatsApp Web
+    /// does, on a 24-hour clock whatever the system's, so a folder sorts by
+    /// date (#801).
+    #[test]
+    fn a_saved_file_is_named_by_kind_and_local_send_time() {
+        use std::path::Path;
+        let berlin = jiff::tz::TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").expect("a zone");
+        let _clock = super::fixed_clock::set(super::fixed_clock::Clock {
+            now: 0,
+            zone: berlin,
+            twelve_hour: true,
+        });
+        let sent = "2026-08-06T18:07:49Z"
+            .parse::<jiff::Timestamp>()
+            .expect("a timestamp")
+            .as_second();
+        let cached = Path::new("/cache/media/15550101234_s_whatsapp_net-AB1C23.ogg");
+        assert_eq!(
+            super::saved_file_name("Audio", sent, cached).as_deref(),
+            Some("WhatsApp Audio 2026-08-06 at 20.07.49.ogg")
+        );
+        assert_eq!(
+            super::saved_file_name("Image", sent - 12 * 3600, Path::new("/cache/a.jpg")).as_deref(),
+            Some("WhatsApp Image 2026-08-06 at 08.07.49.jpg"),
+            "the morning keeps its leading zero and no AM"
+        );
+        assert_eq!(
+            super::saved_file_name("Video", sent, Path::new("/cache/clip")).as_deref(),
+            Some("WhatsApp Video 2026-08-06 at 20.07.49"),
+            "a file without an extension gets no trailing dot"
+        );
+        assert_eq!(super::saved_file_name("Audio", i64::MAX, cached), None);
     }
 
     #[test]

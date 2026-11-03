@@ -346,7 +346,9 @@ the quoted text, the preview uses one of those copies.
 **Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
-without replacing existing files. Open an item to view it individually, and
+without replacing existing files, named by kind and send time as **Save as…**
+names them, with a number added to items sent in the same second. Open an
+item to view it individually, and
 right-click it to reply to, react to, forward or delete that item alone. A
 download that fails marks only its own item; click it to retry.
 
@@ -504,7 +506,10 @@ forwards, saves or downloads, and shows the message in the chat. A click on the
 empty space around the picture, or Escape, closes the viewer. It also closes
 when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
-right-click menu keeps a copy wherever you choose.
+right-click menu keeps a copy wherever you choose. A document keeps the name
+it was sent with; anything else is offered a name with its kind and the time
+it was sent, such as `WhatsApp Audio 2026-08-06 at 20.07.49.ogg`, so saved
+files of one kind sort by date.
 
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click
