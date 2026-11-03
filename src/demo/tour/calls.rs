@@ -24,7 +24,7 @@
 //! | 22.6        | Rust Berlin opens                                                |
 //! | 23.8        | Its header's Video call button: a group call, Connecting…        |
 //! | 24.4 - 25.4 | Calling the group: everyone on it reads Invited                  |
-//! | 25.4 - 26.9 | Jonas, Mira, Ada and Tom join, one tile each, with ours          |
+//! | 25.4 - 26.9 | Jonas, Mira, Ada and Tom (camera off) join, with our own tile   |
 //! | 26.9 - 33.0 | The group's video call runs                                      |
 //! | 33.0        | Hang up                                                          |
 //! | 34.2 - 39.0 | The Calls page: today's three calls on top of the history        |
@@ -58,7 +58,7 @@ fn caller() -> &'static str {
     super::super::SAMPLES[2].id
 }
 
-/// Rust Berlin's call: the members and whether each turns up.
+/// Rust Berlin's call: the members, in roster order.
 const ROSTER: [&str; 4] = [
     "491701111111@s.whatsapp.net",
     "491702222222@s.whatsapp.net",
@@ -167,7 +167,8 @@ fn join(app: &mut App, index: usize) {
             .and_then(|group| group.participants.get_mut(index))
         {
             person.joined = true;
-            person.video = call.video;
+            // Tom keeps his camera off: his tile shows his picture.
+            person.video = call.video && index != TOM;
         }
         if call.phase != CallPhase::Active {
             call.phase = CallPhase::Active;
@@ -175,6 +176,9 @@ fn join(app: &mut App, index: usize) {
         }
     });
 }
+
+/// Tom's place on the roster.
+const TOM: usize = 3;
 
 fn join_0(app: &mut App) {
     join(app, 0);

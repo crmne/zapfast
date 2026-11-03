@@ -55,9 +55,11 @@ pub fn prepare(app: &mut App) {
     app.settings.interface_language = Some(crate::i18n::Locale::English);
     app.locale = crate::i18n::Locale::English;
     let dir = super::media::dir(app);
-    for photo in PHOTOS {
-        super::super::stock::save_photo(&dir, photo);
+    for (photo, name) in PHOTOS.into_iter().zip(DROPPED) {
+        super::super::stock::save(&dir, name, photo.bytes);
     }
+    // Each GIF result moves on its own picture.
+    super::media::animate_gifs(app);
     // A work account beside this one, for the switcher.
     super::super::apply_flags(app, Some("accounts-closed"));
     app.blocklist.ids = Some(Default::default());

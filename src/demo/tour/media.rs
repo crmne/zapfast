@@ -39,6 +39,57 @@ pub fn dir(app: &App) -> std::path::PathBuf {
     app.account().dirs.media_cache_dir().join("tour")
 }
 
+/// Gives each GIF result an animation of its own picture, a slow push in
+/// and back out, in place of the one shared sticker.
+pub fn animate_gifs(app: &mut App) {
+    let dir = dir(app);
+    for (index, gif) in app.gif_results.iter_mut().enumerate() {
+        let path = dir.join(format!("reaction-{index}.gif"));
+        let made = path.is_file()
+            || gif
+                .still
+                .as_deref()
+                .is_some_and(|still| push_in(still, &path).is_ok());
+        if made {
+            gif.animated = Some(path);
+        }
+    }
+}
+
+/// Writes the picture at `still` as a looping GIF that zooms in and out.
+fn push_in(still: &std::path::Path, path: &std::path::Path) -> Result<()> {
+    use image::codecs::gif::{GifEncoder, Repeat};
+    const FRAMES: u32 = 16;
+    let picture = image::open(still)?.to_rgba8();
+    let (width, height) = picture.dimensions();
+    let mut encoder = GifEncoder::new_with_speed(std::fs::File::create(path)?, 30);
+    encoder.set_repeat(Repeat::Infinite)?;
+    for step in 0..FRAMES {
+        // Up to an eighth closer at the middle of the loop.
+        let phase = (step as f32 / FRAMES as f32 * std::f32::consts::TAU).cos();
+        let zoom = 1.0 + 0.0625 * (1.0 - phase);
+        let (crop_width, crop_height) =
+            ((width as f32 / zoom) as u32, (height as f32 / zoom) as u32);
+        let crop = image::imageops::crop_imm(
+            &picture,
+            (width - crop_width) / 2,
+            (height - crop_height) / 2,
+            crop_width,
+            crop_height,
+        )
+        .to_image();
+        let frame =
+            image::imageops::resize(&crop, width, height, image::imageops::FilterType::Triangle);
+        encoder.encode_frame(image::Frame::from_parts(
+            frame,
+            0,
+            0,
+            image::Delay::from_numer_denom_ms(80, 1),
+        ))?;
+    }
+    Ok(())
+}
+
 pub fn populate(app: &mut App) -> Result<()> {
     let dir = dir(app);
     std::fs::create_dir_all(&dir)?;

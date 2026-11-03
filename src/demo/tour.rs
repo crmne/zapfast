@@ -449,8 +449,6 @@ pub struct Tour {
     pointer: Pos2,
     motion: Option<(f32, Pos2, Pos2)>,
     labels: HashMap<String, Pos2>,
-    /// Every painted text and where, including repeats that `labels` folds.
-    spots: Vec<(String, Pos2)>,
     trace: Vec<Trace>,
     trace_path: Option<PathBuf>,
     saved: bool,
@@ -495,7 +493,6 @@ impl Tour {
             pointer: pos2(680.0, 440.0),
             motion: None,
             labels: HashMap::new(),
-            spots: Vec::new(),
             trace: Vec::new(),
             trace_path,
             saved: false,
@@ -574,19 +571,12 @@ impl Tour {
                 let id = egui::Id::new(("chat-search-day", day.year(), day.month(), day.day()));
                 ctx.read_response(id).map(|r| r.rect.center())
             }
+            // The pane's row for the oldest result, by where it was drawn
+            // rather than by its text, which another font may lay out apart.
             Target::OldestHit => {
-                // The hit's line is painted in the pane, and may be in its
-                // bubble too; the pane is the one outside the transcript.
-                let query = app.chat_search.trim().to_lowercase();
-                let view = (*app.selection_view.lock().unwrap_or_else(|p| p.into_inner()))?;
-                self.spots
-                    .iter()
-                    .filter(|(text, pos)| {
-                        let text = text.to_lowercase();
-                        text != query && text.contains(&query) && !view.contains(*pos)
-                    })
-                    .map(|(_, pos)| *pos)
-                    .max_by(|a, b| a.y.total_cmp(&b.y))
+                let key = crate::ui::pane::hit_row_id(&app.chat_search_hits.last()?.id);
+                let row = ctx.data(|data| data.get_temp::<egui::Id>(key))?;
+                ctx.read_response(row).map(|r| r.rect.center())
             }
             Target::Shelf(index) => {
                 let shelf = match index {
@@ -813,7 +803,6 @@ impl Tour {
     pub fn observe(&mut self, app: &mut App, ctx: &egui::Context) {
         session::respond(app);
         self.labels.clear();
-        self.spots.clear();
         let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
         for layer in layers {
             let transform = ctx.layer_transform_to_global(layer).unwrap_or_default();
@@ -825,7 +814,6 @@ impl Tour {
                             if rect.intersects(clipped.clip_rect) {
                                 let spot = transform * rect.center();
                                 self.labels.insert(text.galley.text().to_owned(), spot);
-                                self.spots.push((text.galley.text().to_owned(), spot));
                             }
                         }
                     }
@@ -2113,7 +2101,7 @@ mod tests {
             "incoming voice call",
             "voice call answered",
             "everyone invited",
-            "group video call with four cameras",
+            "group video call, three cameras and Tom without",
             "call history",
         ];
         let mut seen = [false; 12];
@@ -2148,8 +2136,15 @@ mod tests {
                     !group.participants.is_empty()
                         && group.participants.iter().all(|person| !person.joined)
                 }),
-                group_call.is_some()
-                    && app.call_member_frames.len() == 4
+                group_call.is_some_and(|group| {
+                    group.participants.iter().all(|person| person.joined)
+                        && group
+                            .participants
+                            .iter()
+                            .filter(|person| person.video)
+                            .count()
+                            == 3
+                }) && app.call_member_frames.len() == 3
                     && app.call_local_frame.is_some(),
                 app.page == Page::Calls
                     && app
@@ -2230,7 +2225,11 @@ mod tests {
                             }
                         )
                 }),
-                app.pending.len() == 2,
+                // Files on disk, so the review shows the pictures.
+                app.pending.len() == 2
+                    && app.pending.iter().all(|staged| {
+                        matches!(&staged.item, crate::app::Pending::File(path) if path.is_file())
+                    }),
                 app.pending.len() == 2 && app.composer == whats_new_21::CAPTION,
                 app.uploads.len() == 2,
                 app.uploads.len() == 1 && app.uploads[0].percent >= 71,
@@ -2241,7 +2240,16 @@ mod tests {
                     && egui::Popup::is_any_open(ctx),
                 last_text(group).contains("*tonight*"),
                 app.picker == Some(PickerTab::Gifs) && gifs > 0,
-                first_gifs.is_some_and(|first| gifs > first),
+                first_gifs.is_some_and(|first| gifs > first)
+                    && app.gif_results.iter().all(|gif| {
+                        gif.animated.as_ref().is_some_and(|path| path.is_file())
+                    })
+                    && app.gif_results[..6]
+                        .iter()
+                        .map(|gif| gif.animated.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                        == 6,
                 app.chat(katherine)
                     .and_then(|chat| chat.ephemeral_expiration)
                     == Some(604_800),
