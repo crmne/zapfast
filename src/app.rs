@@ -1482,6 +1482,16 @@ impl App {
         (app, events)
     }
 
+    /// Repaints through `waker`, the one the shell attaches to each window.
+    /// [`App::headless`] makes a waker of its own that no window ever
+    /// attaches, so an offline demo would otherwise only redraw on input:
+    /// the recorder's waveform and timer, and voice playback, stood still
+    /// while the pointer did.
+    #[cfg(feature = "demo")]
+    pub fn wake_through(&mut self, waker: &Waker) {
+        self.waker = waker.clone();
+    }
+
     /// Starts without a window (`--start-hidden`). The link and the archive
     /// start now: they otherwise wait for a first frame, which a hidden start
     /// only draws once the tray or another launch shows the window.
