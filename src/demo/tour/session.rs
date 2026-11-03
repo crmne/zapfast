@@ -69,8 +69,11 @@ pub fn respond(app: &mut App) {
                 }
                 app.poll_voting.remove(&(chat, message));
             }
-            // No network offline: the card settles on no preview.
-            Command::FetchLinkPreview { url } => app.link_preview_arrived(url, None),
+            // No network offline: only the sample's own site has a card.
+            Command::FetchLinkPreview { url } => {
+                let preview = link_preview(&url);
+                app.link_preview_arrived(url, preview);
+            }
             Command::SendText {
                 chat,
                 text,
@@ -177,10 +180,49 @@ pub fn respond(app: &mut App) {
                 row.quoted = quoting.and_then(|id| quote(app, &chat, id));
                 append(app, row);
             }
+            // A further page: the same pictures again, as new results.
+            Command::SearchGifs {
+                query,
+                offset,
+                request,
+                ..
+            } if offset > 0 => {
+                let gifs = app
+                    .gif_results
+                    .iter()
+                    .rev()
+                    .map(|gif| crate::model::Gif {
+                        id: format!("{}-{offset}", gif.id),
+                        ..gif.clone()
+                    })
+                    .collect();
+                app.backend.deliver_demo_event(crate::backend::Event::Gifs {
+                    query,
+                    offset,
+                    request,
+                    results: Ok(crate::model::GifPage {
+                        gifs,
+                        next_offset: None,
+                    }),
+                });
+            }
             Command::SearchGifs { .. } => {
                 // The offline results were rendered before the tour began.
                 app.gif_pending = false;
                 app.gif_error = None;
+            }
+            Command::SetBlocked { chat, blocked } => {
+                let ids = app.blocklist.ids.get_or_insert_with(Default::default);
+                if blocked {
+                    ids.insert(chat);
+                } else {
+                    ids.remove(&chat);
+                }
+            }
+            Command::SetDisappearingTimer { chat, seconds } => {
+                if let Some(known) = app.chat_mut(&chat) {
+                    known.ephemeral_expiration = Some(seconds);
+                }
             }
             Command::RecentStickers => app.stickers_pending = false,
             Command::SearchChatMessages {
@@ -271,11 +313,6 @@ pub fn respond(app: &mut App) {
                     }
                 }
             }
-            Command::SetDisappearingTimer { chat, seconds } => {
-                if let Some(known) = app.chat_mut(&chat) {
-                    known.ephemeral_expiration = Some(seconds);
-                }
-            }
             // The engine's answers to the call screen's own controls: the
             // call as it now is, as the worker reports it.
             Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),
@@ -303,6 +340,22 @@ pub fn respond(app: &mut App) {
             _ => {}
         }
     }
+}
+
+/// The card for a link to the sample's own site, as the worker would make it.
+fn link_preview(url: &str) -> Option<crate::model::ComposedPreview> {
+    url.contains("spotifast.rocks")
+        .then(|| crate::model::ComposedPreview {
+            preview: crate::model::LinkPreview {
+                url: url.to_owned(),
+                title: Some("spotifast.rocks".into()),
+                description: Some(
+                    "Spotify, native and fast. A lightweight Spotify client written in Rust with egui."
+                        .into(),
+                ),
+            },
+            thumbnail: Some(super::super::stock::thumbnail(super::super::stock::SPOTIFAST)),
+        })
 }
 
 /// Delivers the call on screen, changed by `change`, as the worker's next

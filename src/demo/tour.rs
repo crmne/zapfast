@@ -6,6 +6,7 @@ mod feeds;
 pub(super) mod media;
 mod session;
 mod whats_new;
+mod whats_new_21;
 
 pub use capture::Capture;
 pub use session::respond;
@@ -21,6 +22,7 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -39,17 +41,20 @@ pub enum Script {
     /// A one-to-one video call, a voice call answered, and a group's video
     /// call, about 40 seconds.
     Calls,
+    /// What ZapFast 0.21 added, about 45 seconds.
+    WhatsNew21,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 3] = ["launch", "whats-new", "calls"];
+    pub const NAMES: [&str; 4] = ["launch", "whats-new", "calls", "whats-new-21"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
             "calls" => Some(Self::Calls),
+            "whats-new-21" => Some(Self::WhatsNew21),
             _ => None,
         }
     }
@@ -60,6 +65,7 @@ impl Script {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
             Self::Calls => calls::DURATION,
+            Self::WhatsNew21 => whats_new_21::DURATION,
         }
     }
 
@@ -69,6 +75,7 @@ impl Script {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
             Self::Calls => calls::prepare(app),
+            Self::WhatsNew21 => whats_new_21::prepare(app),
         }
     }
 
@@ -77,6 +84,7 @@ impl Script {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
             Self::Calls => calls::script(),
+            Self::WhatsNew21 => whats_new_21::script(),
         }
     }
 
@@ -84,7 +92,7 @@ impl Script {
     fn scrolls(self) -> &'static [(f32, f32, f32)] {
         match self {
             Self::Launch => &[(3.6, 4.6, 340.0)],
-            Self::WhatsNew | Self::Calls => &[],
+            Self::WhatsNew | Self::Calls | Self::WhatsNew21 => &[],
         }
     }
 }
@@ -207,6 +215,8 @@ enum Target {
     Shelf(usize),
     /// An icon button without text, by its tooltip.
     Button(&'static str),
+    /// The reactions under a message in the open chat.
+    Reactions(&'static str),
 }
 
 enum Gesture {
@@ -223,6 +233,9 @@ enum Gesture {
     /// What the other side of a call or the network does, which no input
     /// here causes: the demo backend's part, delivered as the worker would.
     Remote(fn(&mut App)),
+    /// Drops files from the tour's media folder where the pointer is,
+    /// captioned.
+    Drop(&'static [&'static str], &'static str),
 }
 
 struct Cue {
@@ -587,6 +600,11 @@ impl Tour {
             Target::Button(tooltip) => ctx
                 .read_response(crate::ui::focus::named_button(ctx, tooltip)?)
                 .map(|r| r.rect.center()),
+            Target::Reactions(message) => {
+                let id = crate::ui::conversation::bubble_id(app.open_chat.as_deref()?, message)
+                    .with("reactions");
+                ctx.read_response(id).map(|r| r.rect.center())
+            }
         }
     }
 
@@ -665,6 +683,14 @@ impl Tour {
                     phase: egui::TouchPhase::Move,
                 }),
                 Gesture::Remote(act) => act(app),
+                Gesture::Drop(names, label) => {
+                    let dir = media::dir(app);
+                    input.dropped_files.extend(names.iter().map(|name| {
+                        Arc::new(Dropped(dir.join(name)))
+                            as Arc<dyn egui::DroppedFile + Send + Sync>
+                    }));
+                    self.caption(at, label);
+                }
             }
             self.next += 1;
         }
@@ -806,6 +832,20 @@ impl Tour {
                 }
             });
         }
+    }
+}
+
+/// A file the tour drops on the window, from its own media folder.
+#[derive(Debug)]
+struct Dropped(PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|error| error.to_string())
     }
 }
 
@@ -2127,6 +2167,98 @@ mod tests {
         assert!(app.call.is_none(), "every call hung up");
         assert!(filed(&app, grace) && filed(&app, group));
         assert!(!app.call_devices_open);
+        assert!(app.backend.is_offline());
+    }
+
+    #[test]
+    fn the_whats_new_21_tour_reaches_every_feature_through_real_input() {
+        use crate::model::Content;
+        let features = [
+            "link card above the field",
+            "link card on the sent bubble",
+            "two photos under review",
+            "caption typed",
+            "two upload strips",
+            "one upload cancelled",
+            "photo sent",
+            "who reacted",
+            "format menu",
+            "bold word sent",
+            "GIF results",
+            "more GIFs loaded",
+            "disappearing messages on",
+            "contact blocked",
+            "export dialog",
+            "attachments ticked and unticked",
+            "account muted",
+        ];
+        let mut seen = [false; 17];
+        let ada = super::super::SAMPLES[0].id;
+        let group = super::super::SAMPLES[1].id;
+        let katherine = super::super::SAMPLES[3].id;
+        let mut first_gifs = None;
+        let mut exports = [false; 2];
+        let app = play(Script::WhatsNew21, |app, tour, ctx| {
+            let last_text = |chat: &str| {
+                app.conversations[chat]
+                    .messages
+                    .last()
+                    .map(|row| row.content.full_summary())
+                    .unwrap_or_default()
+            };
+            let gifs = app.gif_results.len();
+            if app.picker == Some(PickerTab::Gifs) {
+                first_gifs.get_or_insert(gifs);
+            }
+            if let Some(Dialog::ExportChat { include_media, .. }) = &app.dialog {
+                exports[usize::from(*include_media)] = true;
+            }
+            let reactions =
+                crate::ui::conversation::bubble_id(group, "group-photo").with("reaction-list");
+            let checks = [
+                matches!(
+                    app.composer_preview.as_ref().map(|preview| &preview.state),
+                    Some(crate::app::LinkPreviewState::Ready(_))
+                ),
+                app.conversations[ada].messages.iter().any(|row| {
+                    row.id.starts_with("tour-")
+                        && matches!(
+                            &row.content,
+                            Content::Text {
+                                preview: Some(_),
+                                ..
+                            }
+                        )
+                }),
+                app.pending.len() == 2,
+                app.pending.len() == 2 && app.composer == whats_new_21::CAPTION,
+                app.uploads.len() == 2,
+                app.uploads.len() == 1 && app.uploads[0].percent >= 71,
+                app.conversations[ada].message("tour-photo").is_some(),
+                egui::Popup::is_id_open(ctx, reactions),
+                tour.labels.contains_key("Bold")
+                    && tour.labels.contains_key("Monospace")
+                    && egui::Popup::is_any_open(ctx),
+                last_text(group).contains("*tonight*"),
+                app.picker == Some(PickerTab::Gifs) && gifs > 0,
+                first_gifs.is_some_and(|first| gifs > first),
+                app.chat(katherine)
+                    .and_then(|chat| chat.ephemeral_expiration)
+                    == Some(604_800),
+                app.blocklist.contains(katherine),
+                exports.iter().any(|seen| *seen),
+                exports == [true; 2],
+                app.accounts.len() > 1 && !app.accounts[1].settings.notifications,
+            ];
+            for (seen, check) in seen.iter_mut().zip(checks) {
+                *seen |= check;
+            }
+        });
+        never_shown(&features, &seen);
+        assert_eq!(app.page, Page::Chats);
+        assert_eq!(app.open_chat.as_deref(), Some(katherine));
+        assert!(app.dialog.is_none());
+        assert!(app.uploads.is_empty());
         assert!(app.backend.is_offline());
     }
 

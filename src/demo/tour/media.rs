@@ -34,8 +34,13 @@ pub(crate) fn emoji_image(character: char, side: u32) -> Result<RgbaImage> {
     ))
 }
 
+/// Where the tour keeps its media, which a tour can drop on the window.
+pub fn dir(app: &App) -> std::path::PathBuf {
+    app.account().dirs.media_cache_dir().join("tour")
+}
+
 pub fn populate(app: &mut App) -> Result<()> {
-    let dir = app.account().dirs.media_cache_dir().join("tour");
+    let dir = dir(app);
     std::fs::create_dir_all(&dir)?;
     let animated = stock::save(&dir, "reaction-animated.webp", stock::ANIMATED_STICKER);
     let gifs = stock::GIFS

@@ -38,6 +38,8 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
             widgets::clickable_avatar(ui, &palette, &name, &me, size, picture.as_deref(), &label)
         })
         .inner;
+    #[cfg(any(test, feature = "demo"))]
+    super::focus::name_button(ui.ctx(), &label, response.id);
     let elsewhere = app.unread_chat_count_elsewhere();
     if elsewhere > 0 {
         // Ringed in the panel colour so it reads on any picture.
@@ -194,6 +196,8 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> Option<RowClick> 
         Vec2::splat(BELL),
     );
     let bell = ui.interact(bell_rect, response.id.with("bell"), Sense::click());
+    #[cfg(any(test, feature = "demo"))]
+    super::focus::name_button(ui.ctx(), &bell_label(app, entry), bell.id);
     theme::reveal_focus(&bell);
     bell.widget_info(|| {
         egui::WidgetInfo::selected(
