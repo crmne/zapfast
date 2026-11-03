@@ -43,7 +43,8 @@ struct Cli {
     /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
     /// added, 86 seconds), `calls` (39 seconds; `ZAPFAST_DEMO_CALL_FEEDS`
     /// puts video clips in its call tiles) or `whats-new-21` (what 0.21
-    /// added, 49 seconds).
+    /// added, 49 seconds). `ZAPFAST_DEMO_FONT=inter` draws any tour in the
+    /// bundled Inter.
     #[cfg(feature = "demo")]
     #[arg(
         long,
