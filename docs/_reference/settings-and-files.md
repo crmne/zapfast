@@ -243,7 +243,10 @@ name or description, in the interface language or in English.
   Signal sticker imports, link previews for the messages you write, and update
   checks. It accepts `socks5h://host:port` (the proxy resolves names, as Tor
   expects), `socks5://host:port`, and `http://host:port`, each with an optional
-  `user:password@`; a bare `host:port` is an HTTP proxy. Changing it reconnects
+  `user:password@`; a bare `host:port` is an HTTP proxy. An address that the
+  download client cannot use is rejected. If an invalid address is already
+  saved, the connection and HTTP requests fail instead of connecting directly.
+  Changing it reconnects
   at once. Empty uses `ALL_PROXY` or `HTTPS_PROXY` from the environment and
   honors `NO_PROXY`. A call's signaling goes through the proxy, but its audio
   and video do not: they travel over UDP straight to WhatsApp's call relays,

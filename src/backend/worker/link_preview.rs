@@ -444,7 +444,7 @@ fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
             }
         }))
         .no_proxy();
-    let proxied = if let Some(proxy) = crate::proxy::from_settings() {
+    let proxied = if let Some(proxy) = crate::proxy::from_settings().ok()? {
         builder = builder.proxy(reqwest::Proxy::all(proxy_url_for_preview(proxy.url())).ok()?);
         true
     } else if let Some(proxy) = url.host_str().and_then(crate::proxy::from_env) {

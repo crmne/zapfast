@@ -716,7 +716,7 @@ fn sections(app: &App) -> Vec<Section> {
         .settings
         .proxy
         .is_empty()
-        .then(crate::proxy::for_whatsapp)
+        .then(|| crate::proxy::from_env("web.whatsapp.com"))
         .flatten();
     let description = match environment {
         Some(proxy) => {

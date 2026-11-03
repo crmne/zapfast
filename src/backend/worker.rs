@@ -3120,26 +3120,34 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
+        let agent = match crate::proxy::agent() {
+            Ok(agent) => agent,
+            Err(error) => {
+                self.set_status(LinkStatus::Failed(error));
+                return;
+            }
+        };
         let builder = host_owned_presence(Bot::builder().with_backend(store))
+            .with_http_client(whatsapp_rust::http::UreqHttpClient::with_agent(agent))
             .with_watched_ab_props([
                 abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE,
                 abprops::web::ENABLE_WEB_CALLING,
                 abprops::web::ENABLE_WEB_GROUP_CALLING,
             ]);
         let builder = match crate::proxy::for_whatsapp() {
-            Some(proxy) => {
+            Ok(Some(proxy)) => {
                 log::info!("connecting through the proxy {}", proxy.redacted());
-                builder
-                    .with_transport_factory(crate::proxy::ProxyTransportFactory::new(proxy))
-                    .with_http_client(whatsapp_rust::http::UreqHttpClient::with_agent(
-                        crate::proxy::agent(),
-                    ))
+                builder.with_transport_factory(crate::proxy::ProxyTransportFactory::new(proxy))
             }
             // Every address the host resolves to is dialed, not only the first
             // one, so a network whose IPv6 does not answer still links over
             // IPv4 (#212).
-            None => builder
+            Ok(None) => builder
                 .with_transport_factory(crate::transport::HappyEyeballsTransportFactory::new()),
+            Err(error) => {
+                self.set_status(LinkStatus::Failed(error));
+                return;
+            }
         };
         let bot = builder
             // WhatsApp reads the linked-device name, version, and icon at pairing.
@@ -11786,7 +11794,7 @@ impl Worker {
             let outcome = async {
                 let url = gif.mp4.clone();
                 let bytes = tokio::task::spawn_blocking(move || {
-                    crate::proxy::agent()
+                    crate::proxy::agent()?
                         .get(&url)
                         .call()
                         .and_then(|mut response| response.body_mut().read_to_vec())
@@ -13189,7 +13197,7 @@ fn last_avatar(path: &Path) -> Option<PathBuf> {
 
 async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> {
     let bytes = tokio::task::spawn_blocking(move || {
-        crate::proxy::agent()
+        crate::proxy::agent()?
             .get(&url)
             .call()
             .and_then(|mut response| response.body_mut().read_to_vec())
@@ -13721,6 +13729,7 @@ fn search_gifs(query: &str, key: &str, dir: &Path, offset: usize) -> Result<GifP
         )
     };
     let body = match crate::proxy::agent()
+        .map_err(plain)?
         .get(&url)
         .config()
         .timeout_global(Some(GIF_TIMEOUT))
@@ -13862,6 +13871,7 @@ fn gif_rendition(images: &serde_json::Value) -> Option<(String, &'static str)> {
 /// Downloads one GIF thumbnail, returning its path once written.
 fn fetch_gif(url: &str, path: &Path) -> Option<PathBuf> {
     let bytes = crate::proxy::agent()
+        .ok()?
         .get(url)
         .config()
         .timeout_global(Some(GIF_TIMEOUT))
