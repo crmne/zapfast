@@ -10,7 +10,9 @@ use crate::model::{ComposedPreview, LinkPreview};
 const USER_AGENT: &str = concat!("ZapFast/", env!("CARGO_PKG_VERSION"));
 /// Page and picture together.
 const TOTAL_TIME: Duration = Duration::from_secs(5);
-const MAX_PAGE: usize = 512 * 1024;
+/// Reading stops where the head ends; this bounds a page whose head does not.
+/// Some heads are long: YouTube's tags start about 760 KiB in.
+const MAX_PAGE: usize = 2 * 1024 * 1024;
 const MAX_IMAGE: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
 const THUMB_SIDE: u32 = 300;
@@ -408,6 +410,34 @@ impl reqwest::dns::Resolve for GuardedResolver {
     }
 }
 
+/// The page up to where its head ends, which is all `parse_page` reads, or
+/// `MAX_PAGE` bytes.
+async fn read_head(mut response: reqwest::Response) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        let scanned = body.len();
+        body.extend_from_slice(&chunk);
+        if body.len() >= MAX_PAGE || head_ends_after(&body, scanned) {
+            body.truncate(MAX_PAGE);
+            break;
+        }
+    }
+    Some(body)
+}
+
+/// Whether `</head>` or `<body` starts in `body` after its first `scanned`
+/// bytes, including a marker split across that point.
+fn head_ends_after(body: &[u8], scanned: usize) -> bool {
+    const MARKERS: [&[u8]; 2] = [b"</head>", b"<body"];
+    let from = scanned.saturating_sub(b"</head>".len() - 1);
+    (from..body.len()).any(|at| {
+        MARKERS.iter().any(|marker| {
+            body.get(at..at + marker.len())
+                .is_some_and(|found| found.eq_ignore_ascii_case(marker))
+        })
+    })
+}
+
 /// The body up to `limit` bytes, and whether more followed.
 async fn read_body(mut response: reqwest::Response, limit: usize) -> Option<(Vec<u8>, bool)> {
     let mut body = Vec::new();
@@ -496,7 +526,7 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
         return None;
     }
     let base = response.url().clone();
-    let (bytes, _) = read_body(response, MAX_PAGE).await?;
+    let bytes = read_head(response).await?;
     // Parsing a large page is CPU work no timeout or abort can interrupt.
     let meta =
         tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
@@ -553,6 +583,40 @@ mod tests {
         assert_eq!(decode(&text), text);
         let wide = "&é".repeat(1024);
         assert_eq!(decode(&wide), wide);
+    }
+
+    /// YouTube's tags start about 760 KiB into the page; a page like that
+    /// has to fit, tags and all.
+    #[test]
+    fn a_head_as_long_as_youtubes_is_read_whole() {
+        let html = format!(
+            "<html><head><script>{}</script>\
+             <meta property=\"og:title\" content=\"A video\">\
+             <meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">\
+             </head><body></body></html>",
+            "x".repeat(800 * 1024)
+        );
+        let end = html.find("</head>").expect("the head ends");
+        assert!(end < MAX_PAGE);
+        let base = reqwest::Url::parse("https://www.example.com/watch").expect("valid");
+        let meta = parse_page(&html[..end], &base);
+        assert_eq!(meta.title.as_deref(), Some("A video"));
+        assert_eq!(meta.image.as_deref(), Some("https://i.example.com/v.jpg"));
+    }
+
+    #[test]
+    fn the_head_end_is_found_across_chunks() {
+        let first = b"<head><title>t</title></HE".to_vec();
+        assert!(!head_ends_after(&first, 0));
+        let mut both = first.clone();
+        both.extend_from_slice(b"AD><p>");
+        assert!(head_ends_after(&both, first.len()));
+        assert!(head_ends_after(b"<head></head>", 0));
+        assert!(head_ends_after(b"<title>t</title><BODY>", 0));
+        assert!(!head_ends_after(
+            b"<head><meta name=\"a\" content=\"b\">",
+            0
+        ));
     }
 
     #[test]
