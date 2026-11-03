@@ -2236,7 +2236,7 @@ mod tests {
     fn blocking_action_joins_the_centered_rows_and_follows_archive_in_tab_order() {
         use super::{ACTION_STOP, Shown, actions};
         use crate::app::App;
-        use crate::model::Chat;
+        use crate::model::{Action, Chat, Dialog};
         use crate::paths::AppDirs;
         use crate::settings::Settings;
         use crate::ui::focus::{Stop, control, stops};
@@ -2250,25 +2250,31 @@ mod tests {
         let shown = Shown::of(&app, id);
         let ctx = egui::Context::default();
         app.attach(&ctx);
+        let frame = |app: &mut App, width, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 240.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::ui::focus::begin(ui.ctx(), true);
+                    actions(app, ui, &shown, false, true);
+                    crate::ui::focus::finish(ui.ctx(), true);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
 
         for (blocked, label) in [(false, "Block contact"), (true, "Unblock contact")] {
             app.blocklist.ids = Some(blocked.then(|| id.to_owned()).into_iter().collect());
 
             for (width, wraps) in [(900.0, false), (165.0, true)] {
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(width, 240.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        crate::ui::focus::begin(ui.ctx(), true);
-                        actions(&mut app, ui, &shown, false, true);
-                        crate::ui::focus::finish(ui.ctx(), true);
-                    },
-                );
+                let mut output = frame(&mut app, width, Vec::new());
 
                 assert!(output.shapes.iter().any(|clipped| {
                     matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == label)
@@ -2288,6 +2294,26 @@ mod tests {
                 } else {
                     assert!((block.center().y - archive.center().y).abs() < 1.0);
                     assert!(block.left() >= archive.right());
+
+                    let pos = block.center();
+                    let pointer = |pressed| egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    };
+                    app.actions.clear();
+                    frame(&mut app, width, vec![egui::Event::PointerMoved(pos)]);
+                    frame(&mut app, width, vec![pointer(true)]);
+                    frame(&mut app, width, vec![pointer(false)]);
+                    assert!(
+                        app.actions
+                            .contains(&Action::ShowDialog(Dialog::ConfirmBlock {
+                                chat: id.to_owned(),
+                                blocked: !blocked,
+                                from_list: false,
+                            }))
+                    );
                 }
 
                 if !blocked && !wraps {
@@ -2312,28 +2338,17 @@ mod tests {
                     let block_id = control(&ctx, Stop::InfoControl(ACTION_STOP + 6))
                         .expect("Block contact Tab stop");
                     ctx.memory_mut(|memory| memory.request_focus(archive_id));
-                    let mut output = ctx.run_ui(
-                        egui::RawInput {
-                            screen_rect: Some(egui::Rect::from_min_size(
-                                egui::Pos2::ZERO,
-                                egui::vec2(width, 240.0),
-                            )),
-                            events: vec![egui::Event::Key {
-                                key: egui::Key::Tab,
-                                physical_key: None,
-                                pressed: true,
-                                repeat: false,
-                                modifiers: egui::Modifiers::NONE,
-                            }],
-                            ..Default::default()
-                        },
-                        |ui| {
-                            crate::ui::focus::begin(ui.ctx(), true);
-                            actions(&mut app, ui, &shown, false, true);
-                            crate::ui::focus::finish(ui.ctx(), true);
-                        },
+                    frame(
+                        &mut app,
+                        width,
+                        vec![egui::Event::Key {
+                            key: egui::Key::Tab,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
                     );
-                    output.textures_delta.clear();
                     assert!(ctx.memory(|memory| memory.has_focus(block_id)));
                 }
             }
