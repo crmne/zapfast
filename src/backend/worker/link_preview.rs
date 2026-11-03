@@ -411,19 +411,20 @@ impl reqwest::dns::Resolve for GuardedResolver {
 }
 
 /// The page up to where its head ends, which is all `parse_page` reads, or
-/// `MAX_PAGE` bytes. A head cut short, by the cap or at `deadline`, keeps only
-/// its whole tags, so a page that stalls still gives what its head named.
-async fn read_head(
-    mut response: reqwest::Response,
-    deadline: tokio::time::Instant,
-) -> Option<Vec<u8>> {
+/// `MAX_PAGE` bytes. A head cut short, by the cap, at `deadline` or by a failed
+/// read, keeps only its whole tags, so a page that stalls or breaks off still
+/// gives what its head named.
+async fn read_head(mut response: reqwest::Response, deadline: tokio::time::Instant) -> Vec<u8> {
     let mut body = Vec::new();
     loop {
-        let Ok(next) = tokio::time::timeout_at(deadline, response.chunk()).await else {
-            body.truncate(whole_tags_end(&body));
-            break;
+        let chunk = match tokio::time::timeout_at(deadline, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => chunk,
+            Ok(Ok(None)) => break,
+            Ok(Err(_)) | Err(_) => {
+                body.truncate(whole_tags_end(&body));
+                break;
+            }
         };
-        let Some(chunk) = next.ok()? else { break };
         let scanned = body.len();
         body.extend_from_slice(&chunk);
         if let Some(end) = head_end_after(&body, scanned).filter(|&end| end <= MAX_PAGE) {
@@ -436,7 +437,7 @@ async fn read_head(
             break;
         }
     }
-    Some(body)
+    body
 }
 
 /// Where `</head>` or `<body` first starts in `body` after its first `scanned`
@@ -454,34 +455,61 @@ fn head_end_after(body: &[u8], scanned: usize) -> Option<usize> {
 
 /// How much of `head` runs through the last `>` that closes a tag. A `>`
 /// inside a quoted attribute value closes nothing, so a cut there cannot leave
-/// half a value for `parse_page` to read as a title.
+/// half a value for `parse_page` to read as a title. A script's text is not
+/// markup, so its `<` and quotes open nothing either.
 fn whole_tags_end(head: &[u8]) -> usize {
+    const SCRIPT_END: &[u8] = b"</script";
     let mut end = 0;
-    let mut in_tag = false;
+    let mut tag_start = None;
     // As `attributes` reads them: a quote opens a value only right after `=`.
     let mut after_equals = false;
     let mut quote = None;
-    for (at, &byte) in head.iter().enumerate() {
+    let mut at = 0;
+    while let Some(&byte) = head.get(at) {
         if let Some(open) = quote {
             if byte == open {
                 quote = None;
             }
-        } else if !in_tag {
-            in_tag = byte == b'<';
-        } else if byte == b'>' {
-            in_tag = false;
-            after_equals = false;
-            end = at + 1;
-        } else if after_equals && matches!(byte, b'"' | b'\'') {
-            quote = Some(byte);
-            after_equals = false;
-        } else if byte == b'=' {
-            after_equals = true;
-        } else if !byte.is_ascii_whitespace() {
-            after_equals = false;
+        } else if let Some(start) = tag_start {
+            if byte == b'>' {
+                tag_start = None;
+                after_equals = false;
+                end = at + 1;
+                if opens_script(&head[start..]) {
+                    let text = &head[at + 1..];
+                    match text
+                        .windows(SCRIPT_END.len())
+                        .position(|found| found.eq_ignore_ascii_case(SCRIPT_END))
+                    {
+                        // Resume at the closing tag's `<`.
+                        Some(length) => at += length,
+                        None => break,
+                    }
+                }
+            } else if after_equals && matches!(byte, b'"' | b'\'') {
+                quote = Some(byte);
+                after_equals = false;
+            } else if byte == b'=' {
+                after_equals = true;
+            } else if !byte.is_ascii_whitespace() {
+                after_equals = false;
+            }
+        } else if byte == b'<' {
+            tag_start = Some(at);
         }
+        at += 1;
     }
     end
+}
+
+/// Whether `tag`, from its `<`, is a `script` start tag.
+fn opens_script(tag: &[u8]) -> bool {
+    const NAME: &[u8] = b"<script";
+    tag.get(..NAME.len())
+        .is_some_and(|found| found.eq_ignore_ascii_case(NAME))
+        && tag
+            .get(NAME.len())
+            .is_some_and(|&next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'))
 }
 
 /// The body up to `limit` bytes, and whether more followed.
@@ -583,7 +611,7 @@ async fn preview_from(
         return None;
     }
     let base = response.url().clone();
-    let bytes = read_head(response, deadline).await?;
+    let bytes = read_head(response, deadline).await;
     // Parsing a large page is CPU work no timeout or abort can interrupt.
     let meta =
         tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
@@ -666,32 +694,63 @@ mod tests {
     /// A page served on this machine: `sent`, under a length of `length`
     /// bytes. A length past `sent` leaves the page stalled after it.
     async fn local_page(sent: String, length: usize) -> reqwest::Url {
-        use tokio::io::AsyncWriteExt;
+        serve(sent, length, false).await
+    }
+
+    /// `local_page`, but the connection closes after `sent`, short of `length`.
+    async fn broken_page(sent: String, length: usize) -> reqwest::Url {
+        serve(sent, length, true).await
+    }
+
+    async fn serve(sent: String, length: usize, close: bool) -> reqwest::Url {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
+            // Read the whole request first: closing on an unread one resets the
+            // connection before the client has its answer.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            while !request.windows(4).any(|found| found == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
             let head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {length}\r\n\r\n"
             );
             socket.write_all(head.as_bytes()).await.unwrap();
             // The reader may stop before the end; that is not this server's failure.
             let _ = socket.write_all(sent.as_bytes()).await;
-            std::future::pending::<()>().await;
+            if !close {
+                std::future::pending::<()>().await;
+            }
         });
         reqwest::Url::parse(&format!("http://{address}/")).unwrap()
     }
 
-    async fn read_local(sent: String, length: usize, wait: Duration) -> String {
-        let response = reqwest::Client::new()
-            .get(local_page(sent, length).await)
-            .send()
-            .await
-            .unwrap();
-        let body = read_head(response, tokio::time::Instant::now() + wait)
-            .await
-            .expect("read");
+    async fn read_url(url: reqwest::Url, wait: Duration) -> String {
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+        let body = read_head(response, tokio::time::Instant::now() + wait).await;
         String::from_utf8(body).unwrap()
+    }
+
+    async fn read_local(sent: String, length: usize, wait: Duration) -> String {
+        read_url(local_page(sent, length).await, wait).await
+    }
+
+    /// A connection that breaks off mid-head keeps the whole tags that came.
+    #[tokio::test]
+    async fn a_head_cut_short_by_a_failed_read_is_still_read() {
+        let url = broken_page(STALLED.to_owned(), 100_000).await;
+        let html = read_url(url, Duration::from_secs(5)).await;
+        assert!(html.ends_with("content=\"Slow\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Slow"));
+        assert_eq!(meta.description, None);
     }
 
     const STALLED: &str = "<html><head><meta property=\"og:title\" content=\"Slow\">\
@@ -737,12 +796,20 @@ mod tests {
             "<html><head><script>{}</script>\
              <meta property=\"og:title\" content=\"A video\">\
              <meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">\
-             </head><body>{}</body></html>",
+             </head><body>{}",
             "x".repeat(800 * 1024),
             "y".repeat(64 * 1024)
         );
-        let length = sent.len();
-        let html = read_local(sent, length, Duration::from_secs(5)).await;
+        // The rest of the page is never sent, so only a read that stops at the
+        // head's end returns before its far deadline; socket buffering cannot
+        // make bytes that were never written arrive.
+        let length = sent.len() + MAX_PAGE;
+        let html = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_local(sent, length, Duration::from_secs(60)),
+        )
+        .await
+        .expect("the read stopped at the head's end, not waiting for the rest");
         assert!(html.ends_with("content=\"https://i.example.com/v.jpg\">"));
         let meta = parse_page(&html, &base());
         assert_eq!(meta.title.as_deref(), Some("A video"));
@@ -777,6 +844,26 @@ mod tests {
         assert_eq!(end("<meta content=it's><b"), "<meta content=it's>");
         assert_eq!(end("<meta content = \"a>b\">x"), "<meta content = \"a>b\">");
         assert_eq!(end("no tags"), "");
+    }
+
+    #[test]
+    fn whole_tags_end_reads_script_text_as_text() {
+        fn end(html: &str) -> &str {
+            &html[..whole_tags_end(html.as_bytes())]
+        }
+        // In script, `<b` and an escaped quote would open a value that never closes.
+        let page = "<script>if (a<b) c = 'it\\'s';</script>\
+                    <meta content=\"ok\"><meta content=\"cut";
+        assert_eq!(
+            end(page),
+            &page[..page.find("<meta content=\"cut").unwrap()]
+        );
+        assert_eq!(
+            end("<SCRIPT type=\"x\">a<b='</Script><a><b"),
+            "<SCRIPT type=\"x\">a<b='</Script><a>"
+        );
+        assert_eq!(end("<script>a<b='<meta>"), "<script>");
+        assert_eq!(end("<scripts><a x='>"), "<scripts>");
     }
 
     #[test]
