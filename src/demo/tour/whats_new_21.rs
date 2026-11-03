@@ -22,7 +22,7 @@
 //! | 40.6 - 44.0 | The chat menu: Export chat, with attachments, then Cancel      |
 //! | 45.0 - 48.0 | The account switcher: the second account's notifications muted |
 
-use super::{Cue, Gesture, Target, command, session};
+use super::{Cue, Gesture, Target, session};
 use crate::{
     app::App,
     backend::Event,
@@ -175,13 +175,22 @@ pub(super) fn script() -> Vec<Cue> {
     add(18.8, Click(left));
 
     // The field's right-click menu formats the selected word.
+    // A word is Option on a Mac, where Command goes to the line's start.
     add(
         21.0,
-        Key(
-            K::ArrowLeft,
-            command() | Modifiers::SHIFT,
-            "Ctrl + Shift + ← · Select a word",
-        ),
+        if cfg!(target_os = "macos") {
+            Key(
+                K::ArrowLeft,
+                Modifiers::ALT | Modifiers::SHIFT,
+                "Option + Shift + ← · Select a word",
+            )
+        } else {
+            Key(
+                K::ArrowLeft,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                "Ctrl + Shift + ← · Select a word",
+            )
+        },
     );
     add(21.8, Click(right));
     add(22.6, Move(Label("Bold")));
