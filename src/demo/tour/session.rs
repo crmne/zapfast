@@ -271,6 +271,11 @@ pub fn respond(app: &mut App) {
                     }
                 }
             }
+            Command::SetDisappearingTimer { chat, seconds } => {
+                if let Some(known) = app.chat_mut(&chat) {
+                    known.ephemeral_expiration = Some(seconds);
+                }
+            }
             // The engine's answers to the call screen's own controls: the
             // call as it now is, as the worker reports it.
             Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),

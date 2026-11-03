@@ -1982,6 +1982,37 @@ mod tests {
         assert!(app.backend.is_offline());
     }
 
+    /// A click on the info panel's timer row opens its choices, and one
+    /// picked asks for that timer.
+    #[test]
+    fn a_click_opens_the_disappearing_timer_menu() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let mut tour = Tour::new(None, None);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.actions
+            .push(crate::model::Action::OpenInfo(ada.clone()));
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        let row = crate::i18n::gettext(app.locale, "Disappearing messages").to_string();
+        click(&mut app, &mut tour, &ctx, &row);
+        let week = crate::i18n::gettext(app.locale, "7 days").to_string();
+        assert!(tour.labels.contains_key(&week), "the choices show");
+        click(&mut app, &mut tour, &ctx, &week);
+        assert_eq!(
+            app.chat(&ada).and_then(|chat| chat.ephemeral_expiration),
+            Some(604_800),
+            "the pick goes out and the reply sets it"
+        );
+    }
+
     /// Plays `script` at 60 frames a second at the capture's size, calling
     /// `each` after every frame, and fails at the first missing target.
     fn play(script: Script, mut each: impl FnMut(&mut App, &Tour, &egui::Context)) -> App {

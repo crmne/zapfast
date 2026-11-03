@@ -632,7 +632,13 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             ];
             let mut selected = None;
             egui::Popup::menu(&response)
-                .open_memory((!can_change).then_some(egui::SetOpenCommand::Bool(false)))
+                // The click opens it, as any menu button's does; replacing
+                // that command with `None` would leave it shut for good.
+                .open_memory(if can_change {
+                    response.clicked().then_some(egui::SetOpenCommand::Toggle)
+                } else {
+                    Some(egui::SetOpenCommand::Bool(false))
+                })
                 .align(egui::RectAlign::BOTTOM)
                 .width(widgets::menu_width(
                     ui,
