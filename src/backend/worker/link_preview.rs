@@ -411,10 +411,24 @@ impl reqwest::dns::Resolve for GuardedResolver {
 }
 
 /// The page up to where its head ends, which is all `parse_page` reads, or
-/// `MAX_PAGE` bytes.
-async fn read_head(mut response: reqwest::Response) -> Option<Vec<u8>> {
+/// `MAX_PAGE` bytes. At `deadline` it keeps what came so far, up to its last
+/// whole tag, so a page that stalls still gives what its head named.
+async fn read_head(
+    mut response: reqwest::Response,
+    deadline: tokio::time::Instant,
+) -> Option<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
+    loop {
+        let Ok(next) = tokio::time::timeout_at(deadline, response.chunk()).await else {
+            // A tag cut off mid-value would put half a title in the preview.
+            let whole = body
+                .iter()
+                .rposition(|&byte| byte == b'>')
+                .map_or(0, |at| at + 1);
+            body.truncate(whole);
+            break;
+        };
+        let Some(chunk) = next.ok()? else { break };
         let scanned = body.len();
         body.extend_from_slice(&chunk);
         if body.len() >= MAX_PAGE || head_ends_after(&body, scanned) {
@@ -493,13 +507,11 @@ fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
 /// linked site is contacted. Gives `None` on any failure or when the page says
 /// nothing; nothing about the link is logged.
 pub(super) async fn fetch(url: String) -> Option<ComposedPreview> {
-    tokio::time::timeout(TOTAL_TIME, fetch_inner(url))
-        .await
-        .ok()
-        .flatten()
+    fetch_inner(url, tokio::time::Instant::now() + TOTAL_TIME).await
 }
 
-async fn fetch_inner(url: String) -> Option<ComposedPreview> {
+/// Every wait is bounded by `deadline`; a head cut short by it is still read.
+async fn fetch_inner(url: String, deadline: tokio::time::Instant) -> Option<ComposedPreview> {
     // The preview names the address that was asked for, not where it led.
     let requested = crate::safety::preview_url(&url)?;
     let parsed = reqwest::Url::parse(&requested).ok()?;
@@ -508,7 +520,10 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
     }
     let client = client(&parsed)?;
 
-    let response = client.get(parsed).send().await.ok()?;
+    let response = tokio::time::timeout_at(deadline, client.get(parsed).send())
+        .await
+        .ok()?
+        .ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -526,7 +541,7 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
         return None;
     }
     let base = response.url().clone();
-    let bytes = read_head(response).await?;
+    let bytes = read_head(response, deadline).await?;
     // Parsing a large page is CPU work no timeout or abort can interrupt.
     let meta =
         tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
@@ -536,9 +551,15 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
         return None;
     }
 
+    // A head that took all the time leaves none for its picture.
     let thumbnail = match meta.image.as_deref() {
-        Some(image) => fetch_image(&client, image).await,
-        None => None,
+        Some(image) if tokio::time::Instant::now() < deadline => {
+            tokio::time::timeout_at(deadline, fetch_image(&client, image))
+                .await
+                .ok()
+                .flatten()
+        }
+        _ => None,
     };
     Some(ComposedPreview {
         preview: LinkPreview {
@@ -617,6 +638,45 @@ mod tests {
             b"<head><meta name=\"a\" content=\"b\">",
             0
         ));
+    }
+
+    /// A server that sends part of the head and then stalls, on this machine.
+    async fn stalling_page(sent: &'static str) -> reqwest::Response {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Length: 100000
+
+{sent}"
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        reqwest::Client::new()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_head_cut_short_by_the_deadline_is_still_read() {
+        let response = stalling_page(
+            "<html><head><meta property=\"og:title\" content=\"Slow\">             <meta property=\"og:description\" content=\"Half a desc",
+        )
+        .await;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        let body = read_head(response, deadline).await.expect("kept what came");
+        let html = String::from_utf8(body).unwrap();
+        assert!(html.ends_with("content=\"Slow\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Slow"));
+        assert_eq!(meta.description, None);
     }
 
     #[test]
