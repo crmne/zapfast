@@ -1080,6 +1080,47 @@ fn spawn_decoder(path: &Path, from: Duration, side: u32, waker: Waker) -> Receiv
     receiver
 }
 
+/// A video's frames in order, decoded a few ahead on their own thread, for
+/// the demo's call tiles. Waits for the decoder when it is behind, so a
+/// frame-by-frame capture always gets the picture its time asks for.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) struct Frames {
+    receiver: Receiver<Delivery>,
+    /// The movie's length, once the file has been read.
+    pub length: Option<Duration>,
+}
+
+#[cfg(any(test, feature = "demo"))]
+impl Frames {
+    /// Starts decoding `path` from its beginning, at most `side` pixels on
+    /// its longest side.
+    pub(crate) fn open(path: &Path, side: u32) -> Self {
+        Self {
+            receiver: spawn_decoder(path, Duration::ZERO, side, Waker::default()),
+            length: None,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "demo"))]
+impl Iterator for Frames {
+    type Item = (Duration, ColorImage);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.receiver.recv().ok()? {
+                Delivery::Length(length) => self.length = Some(length),
+                Delivery::Frame(at, image) => return Some((at, image)),
+                Delivery::End => return None,
+                Delivery::Unsupported(reason) => {
+                    log::warn!("a demo call feed cannot play: {reason}");
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// Sample timing of a video track, in the track's own time units.
 #[derive(Debug, Default)]
 struct Timeline {

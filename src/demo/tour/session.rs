@@ -271,9 +271,44 @@ pub fn respond(app: &mut App) {
                     }
                 }
             }
+            // The engine's answers to the call screen's own controls: the
+            // call as it now is, as the worker reports it.
+            Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),
+            Command::SetCallCamera(on) => update_call(app, |call| call.camera_on = on),
+            Command::AnswerCall => update_call(app, |call| {
+                call.phase = crate::calls::CallPhase::Active;
+                call.started = Some(std::time::Instant::now());
+                call.remote_video = call.video;
+                call.camera_on = call.video;
+            }),
+            Command::LoadCallLog => {
+                // The sample's history, with the calls made on this run.
+                let mut log = super::super::call_entries(crate::util::now());
+                log.extend(
+                    app.conversations
+                        .values()
+                        .flat_map(|conversation| &conversation.messages)
+                        .filter(|row| row.id.starts_with(super::calls::ENTRY))
+                        .cloned(),
+                );
+                log.sort_by_key(|row| std::cmp::Reverse(row.timestamp));
+                app.call_log = log;
+                app.call_log_loaded = true;
+            }
             _ => {}
         }
     }
+}
+
+/// Delivers the call on screen, changed by `change`, as the worker's next
+/// word on it.
+pub(super) fn update_call(app: &mut App, change: impl FnOnce(&mut crate::calls::CallUpdate)) {
+    let Some(mut call) = app.call.clone().filter(|call| call.phase.is_live()) else {
+        return;
+    };
+    change(&mut call);
+    app.backend
+        .deliver_demo_event(crate::backend::Event::Call(Box::new(call)));
 }
 
 /// Resolves an explicit quote source rather than assuming it belongs to the destination chat.
@@ -307,7 +342,7 @@ fn outgoing(app: &App, chat: &str, content: Content) -> Message {
     )
 }
 
-fn append(app: &mut App, row: Message) {
+pub(super) fn append(app: &mut App, row: Message) {
     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == row.chat) {
         chat.last_activity = row.timestamp;
         chat.last = Some(LastMessage {

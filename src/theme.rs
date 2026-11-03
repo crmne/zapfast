@@ -1027,6 +1027,8 @@ pub fn icon_button(
         };
         paint_icon(ui, icon, rect, size * scale, tint);
     }
+    #[cfg(any(test, feature = "demo"))]
+    crate::ui::focus::name_button(ui.ctx(), tooltip, response.id);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
@@ -1061,6 +1063,8 @@ pub fn circle_button(
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
         icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
     }
+    #[cfg(any(test, feature = "demo"))]
+    crate::ui::focus::name_button(ui.ctx(), tooltip, response.id);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response

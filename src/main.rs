@@ -40,8 +40,9 @@ struct Cli {
     #[arg(long, requires = "demo_tour", value_name = "PATH")]
     demo_tour_events: Option<std::path::PathBuf>,
 
-    /// Which tour to play: `launch` (41 seconds) or `whats-new` (what 0.16
-    /// added, 86 seconds).
+    /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
+    /// added, 86 seconds) or `calls` (39 seconds; `ZAPFAST_DEMO_CALL_FEEDS`
+    /// puts video clips in its call tiles).
     #[cfg(feature = "demo")]
     #[arg(
         long,

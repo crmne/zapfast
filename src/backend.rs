@@ -1918,6 +1918,16 @@ impl Backend {
             })
     }
 
+    /// Delivers `event` to the window as the worker would, for an offline
+    /// demo playing the other side of a call.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn deliver_demo_event(&self, event: Event) {
+        if let Some(events) = &self.demo_events {
+            let _ = events.send(event);
+            self.demo_waker.wake();
+        }
+    }
+
     pub fn poll(&self) -> Vec<Event> {
         self.events.try_iter().collect()
     }

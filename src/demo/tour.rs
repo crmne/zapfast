@@ -1,6 +1,8 @@
 //! A repeatable tour driven through the real pointer and keyboard handlers.
 
+mod calls;
 mod capture;
+mod feeds;
 pub(super) mod media;
 mod session;
 mod whats_new;
@@ -34,16 +36,20 @@ pub enum Script {
     Launch,
     /// What ZapFast 0.16 added, about 90 seconds.
     WhatsNew,
+    /// A one-to-one video call, a voice call answered, and a group's video
+    /// call, about 40 seconds.
+    Calls,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 2] = ["launch", "whats-new"];
+    pub const NAMES: [&str; 3] = ["launch", "whats-new", "calls"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
+            "calls" => Some(Self::Calls),
             _ => None,
         }
     }
@@ -53,6 +59,7 @@ impl Script {
         match self {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
+            Self::Calls => calls::DURATION,
         }
     }
 
@@ -61,6 +68,7 @@ impl Script {
         match self {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
+            Self::Calls => calls::prepare(app),
         }
     }
 
@@ -68,6 +76,7 @@ impl Script {
         match self {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
+            Self::Calls => calls::script(),
         }
     }
 
@@ -75,7 +84,7 @@ impl Script {
     fn scrolls(self) -> &'static [(f32, f32, f32)] {
         match self {
             Self::Launch => &[(3.6, 4.6, 340.0)],
-            Self::WhatsNew => &[],
+            Self::WhatsNew | Self::Calls => &[],
         }
     }
 }
@@ -196,6 +205,8 @@ enum Target {
     OldestHit,
     /// A sticker shelf tab: 0 recent, 1 favorites, then the packs.
     Shelf(usize),
+    /// An icon button without text, by its tooltip.
+    Button(&'static str),
 }
 
 enum Gesture {
@@ -209,6 +220,9 @@ enum Gesture {
     ClickWith(PointerButton, Modifiers, &'static str),
     /// Turns the wheel where the pointer is, by points; negative scrolls down.
     Wheel(f32),
+    /// What the other side of a call or the network does, which no input
+    /// here causes: the demo backend's part, delivered as the worker would.
+    Remote(fn(&mut App)),
 }
 
 struct Cue {
@@ -433,6 +447,8 @@ pub struct Tour {
     capture_at: Option<f32>,
     /// Modifier keys held for a click, with its button until released.
     holding: Option<(Option<PointerButton>, Modifiers)>,
+    /// What a video call's tiles show.
+    feeds: feeds::Feeds,
 }
 
 impl Tour {
@@ -474,6 +490,7 @@ impl Tour {
             capture,
             capture_at: None,
             holding: None,
+            feeds: feeds::Feeds::from_env(),
         }
     }
 
@@ -567,6 +584,9 @@ impl Tour {
                 ctx.data(|d| d.get_temp::<Rect>(crate::ui::picker::shelf_tab_id(&shelf)))
                     .map(|rect| rect.center())
             }
+            Target::Button(tooltip) => ctx
+                .read_response(crate::ui::focus::named_button(ctx, tooltip)?)
+                .map(|r| r.rect.center()),
         }
     }
 
@@ -580,7 +600,13 @@ impl Tour {
         rect.is_positive().then_some(rect)
     }
 
-    fn input_at(&mut self, app: &App, ctx: &egui::Context, input: &mut egui::RawInput, at: f32) {
+    fn input_at(
+        &mut self,
+        app: &mut App,
+        ctx: &egui::Context,
+        input: &mut egui::RawInput,
+        at: f32,
+    ) {
         if self.failed {
             return;
         }
@@ -638,9 +664,11 @@ impl Tour {
                     modifiers: Modifiers::NONE,
                     phase: egui::TouchPhase::Move,
                 }),
+                Gesture::Remote(act) => act(app),
             }
             self.next += 1;
         }
+        self.feeds.show(app, at);
         if let Some((began, from, to)) = self.motion {
             let t = ((at - began) / 0.28).clamp(0.0, 1.0);
             self.pointer = from.lerp(to, t * t * (3.0 - 2.0 * t));
@@ -1873,7 +1901,7 @@ mod tests {
                 ..Default::default()
             };
             if frame > 0 {
-                tour.input_at(&app, &ctx, &mut input, at);
+                tour.input_at(&mut app, &ctx, &mut input, at);
             }
             let mut output = ctx.run_ui(input, |ui| {
                 app.background_frame(&ctx);
@@ -1954,6 +1982,123 @@ mod tests {
         assert!(app.backend.is_offline());
     }
 
+    /// Plays `script` at 60 frames a second at the capture's size, calling
+    /// `each` after every frame, and fails at the first missing target.
+    fn play(script: Script, mut each: impl FnMut(&mut App, &Tour, &egui::Context)) -> App {
+        let mut app = super::super::tests::app();
+        script.prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::scripted(script, None, None, None);
+        let duration = script.duration().as_secs_f32();
+        for frame in 0..=((duration + 1.0) * 60.0) as usize {
+            let at = frame as f32 / 60.0;
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 780.0))),
+                time: Some(at as f64),
+                ..Default::default()
+            };
+            if frame > 0 {
+                tour.input_at(&mut app, &ctx, &mut input, at);
+            }
+            let mut output = ctx.run_ui(input, |ui| {
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+                tour.observe(&mut app, &ctx);
+            });
+            output.textures_delta.clear();
+            each(&mut app, &tour, &ctx);
+            assert!(
+                !tour.failed,
+                "missing target at {at:.2}s, cue {}",
+                tour.next
+            );
+        }
+        app
+    }
+
+    /// Reports which of `features` `checks` never saw.
+    fn never_shown(features: &[&str], seen: &[bool]) {
+        let missing: Vec<_> = features
+            .iter()
+            .zip(seen)
+            .filter(|(_, seen)| !**seen)
+            .map(|(feature, _)| *feature)
+            .collect();
+        assert!(missing.is_empty(), "never shown: {missing:?}");
+    }
+
+    #[test]
+    fn the_calls_tour_places_answers_and_hangs_up_through_real_input() {
+        use crate::calls::CallPhase;
+        let features = [
+            "placing",
+            "calling",
+            "ringing",
+            "video call with both pictures",
+            "muted",
+            "device pickers",
+            "entry in the chat",
+            "incoming voice call",
+            "voice call answered",
+            "everyone invited",
+            "group video call with four cameras",
+            "call history",
+        ];
+        let mut seen = [false; 12];
+        let ada = super::super::SAMPLES[0].id;
+        let grace = super::super::SAMPLES[2].id;
+        let group = super::super::SAMPLES[1].id;
+        let filed = |app: &App, chat: &str| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .any(|row| row.id.starts_with(calls::ENTRY))
+        };
+        let app = play(Script::Calls, |app, _, _| {
+            let call = app.call.as_ref();
+            let phase = call.map(|call| call.phase);
+            let group_call = call.and_then(|call| call.group.as_ref());
+            let checks = [
+                phase == Some(CallPhase::Placing),
+                phase == Some(CallPhase::Dialing) && app.call_local_frame.is_some(),
+                phase == Some(CallPhase::Ringing),
+                phase == Some(CallPhase::Active)
+                    && group_call.is_none()
+                    && app.call_remote_frame.is_some()
+                    && app.call_local_frame.is_some(),
+                call.is_some_and(|call| call.muted),
+                app.call_devices_open,
+                app.call.is_none() && filed(app, ada),
+                phase == Some(CallPhase::Incoming) && call.is_some_and(|call| call.chat == grace),
+                phase == Some(CallPhase::Active)
+                    && call.is_some_and(|call| !call.video && call.chat == grace),
+                group_call.is_some_and(|group| {
+                    !group.participants.is_empty()
+                        && group.participants.iter().all(|person| !person.joined)
+                }),
+                group_call.is_some()
+                    && app.call_member_frames.len() == 4
+                    && app.call_local_frame.is_some(),
+                app.page == Page::Calls
+                    && app
+                        .call_log
+                        .iter()
+                        .filter(|row| row.id.starts_with(calls::ENTRY))
+                        .count()
+                        == 3,
+            ];
+            for (seen, check) in seen.iter_mut().zip(checks) {
+                *seen |= check;
+            }
+        });
+        never_shown(&features, &seen);
+        assert!(app.call.is_none(), "every call hung up");
+        assert!(filed(&app, grace) && filed(&app, group));
+        assert!(!app.call_devices_open);
+        assert!(app.backend.is_offline());
+    }
+
     #[test]
     fn real_input_opens_menus_completes_text_and_sends_offline_media() {
         let mut app = super::super::tests::app();
@@ -1971,7 +2116,7 @@ mod tests {
             };
             // Give the first screen a frame to establish its hit targets.
             if frame > 0 {
-                tour.input_at(&app, &ctx, &mut input, at);
+                tour.input_at(&mut app, &ctx, &mut input, at);
             }
             let mut output = ctx.run_ui(input, |ui| {
                 app.background_frame(&ctx);

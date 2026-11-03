@@ -231,7 +231,7 @@ impl App {
     }
 
     /// A video call's newest pictures, from the account the call is on.
-    pub(super) fn handle_call_video(
+    pub(crate) fn handle_call_video(
         &mut self,
         local: Option<std::sync::Arc<egui::ColorImage>>,
         remote: Option<std::sync::Arc<egui::ColorImage>>,
