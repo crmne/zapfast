@@ -10,6 +10,9 @@ use crate::model::{ComposedPreview, LinkPreview};
 const USER_AGENT: &str = concat!("ZapFast/", env!("CARGO_PKG_VERSION"));
 /// Page and picture together.
 const TOTAL_TIME: Duration = Duration::from_secs(5);
+/// The end of `TOTAL_TIME` kept for parsing the page, a head of at most
+/// `MAX_PAGE` bytes, after reading stops.
+const PARSE_TIME: Duration = Duration::from_millis(500);
 /// Reading stops where the head ends; this bounds a page whose head does not.
 /// Some heads are long: YouTube's tags start about 760 KiB in.
 const MAX_PAGE: usize = 2 * 1024 * 1024;
@@ -413,13 +416,19 @@ impl reqwest::dns::Resolve for GuardedResolver {
 /// The page up to where its head ends, which is all `parse_page` reads, or
 /// `MAX_PAGE` bytes. A head cut short, by the cap, at `deadline` or by a failed
 /// read, keeps only its whole tags, so a page that stalls or breaks off still
-/// gives what its head named.
+/// gives what its head named. A page that simply ends loses only a tag it left
+/// unfinished, so the text of a title it never closed stays.
 async fn read_head(mut response: reqwest::Response, deadline: tokio::time::Instant) -> Vec<u8> {
     let mut body = Vec::new();
     loop {
         let chunk = match tokio::time::timeout_at(deadline, response.chunk()).await {
             Ok(Ok(Some(chunk))) => chunk,
-            Ok(Ok(None)) => break,
+            Ok(Ok(None)) => {
+                if let Some(start) = scan_tags(&body).open_tag {
+                    body.truncate(start);
+                }
+                break;
+            }
             Ok(Err(_)) | Err(_) => {
                 body.truncate(whole_tags_end(&body));
                 break;
@@ -455,11 +464,22 @@ fn head_end_after(body: &[u8], scanned: usize) -> Option<usize> {
 
 /// How much of `head` runs through the last `>` that closes a tag. A `>`
 /// inside a quoted attribute value closes nothing, so a cut there cannot leave
-/// half a value for `parse_page` to read as a title. A script's text is not
-/// markup, so its `<` and quotes open nothing either.
+/// half a value for `parse_page` to read as a title. The text of a script, a
+/// style or a title is not markup, so its `<` and quotes open nothing either.
 fn whole_tags_end(head: &[u8]) -> usize {
-    const SCRIPT_END: &[u8] = b"</script";
-    let mut end = 0;
+    scan_tags(head).whole
+}
+
+/// Where a head's markup stands at its last byte.
+struct TagScan {
+    /// How much runs through the last `>` that closes a tag.
+    whole: usize,
+    /// Where a tag still open at the end starts.
+    open_tag: Option<usize>,
+}
+
+fn scan_tags(head: &[u8]) -> TagScan {
+    let mut whole = 0;
     let mut tag_start = None;
     // As `attributes` reads them: a quote opens a value only right after `=`.
     let mut after_equals = false;
@@ -474,15 +494,12 @@ fn whole_tags_end(head: &[u8]) -> usize {
             if byte == b'>' {
                 tag_start = None;
                 after_equals = false;
-                end = at + 1;
-                if opens_script(&head[start..]) {
-                    let text = &head[at + 1..];
-                    match text
-                        .windows(SCRIPT_END.len())
-                        .position(|found| found.eq_ignore_ascii_case(SCRIPT_END))
-                    {
+                whole = at + 1;
+                if let Some(name) = text_element(&head[start..]) {
+                    match end_tag_in(&head[at + 1..], name) {
                         // Resume at the closing tag's `<`.
                         Some(length) => at += length,
+                        // The rest is that element's text, not a tag.
                         None => break,
                     }
                 }
@@ -499,17 +516,37 @@ fn whole_tags_end(head: &[u8]) -> usize {
         }
         at += 1;
     }
-    end
+    TagScan {
+        whole,
+        open_tag: tag_start,
+    }
 }
 
-/// Whether `tag`, from its `<`, is a `script` start tag.
-fn opens_script(tag: &[u8]) -> bool {
-    const NAME: &[u8] = b"<script";
-    tag.get(..NAME.len())
-        .is_some_and(|found| found.eq_ignore_ascii_case(NAME))
-        && tag
-            .get(NAME.len())
-            .is_some_and(|&next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'))
+/// The name of the element `tag`, from its `<`, starts if its text is not
+/// markup: `script` and `style` (raw text) and `title` (escapable raw text).
+fn text_element(tag: &[u8]) -> Option<&'static [u8]> {
+    [&b"script"[..], b"style", b"title"]
+        .into_iter()
+        .find(|name| {
+            tag.get(1..1 + name.len())
+                .is_some_and(|found| found.eq_ignore_ascii_case(name))
+                && tag.get(1 + name.len()).copied().is_some_and(ends_name)
+        })
+}
+
+/// Where the end tag `</name`, followed by the end of its name, first starts
+/// in `text`; `</scripture` does not end a script.
+fn end_tag_in(text: &[u8], name: &[u8]) -> Option<usize> {
+    let length = name.len() + 3;
+    text.windows(length).position(|found| {
+        found.starts_with(b"</")
+            && found[2..2 + name.len()].eq_ignore_ascii_case(name)
+            && ends_name(found[length - 1])
+    })
+}
+
+fn ends_name(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/')
 }
 
 /// The body up to `limit` bytes, and whether more followed.
@@ -590,7 +627,10 @@ async fn preview_from(
     parsed: reqwest::Url,
     deadline: tokio::time::Instant,
 ) -> Option<ComposedPreview> {
-    let response = tokio::time::timeout_at(deadline, client.get(parsed).send())
+    // Reading stops early enough to leave parsing its time before `deadline`,
+    // so a head cut short by the time still gives its title.
+    let read_by = deadline.checked_sub(PARSE_TIME).unwrap_or(deadline);
+    let response = tokio::time::timeout_at(read_by, client.get(parsed).send())
         .await
         .ok()?
         .ok()?;
@@ -611,12 +651,12 @@ async fn preview_from(
         return None;
     }
     let base = response.url().clone();
-    let bytes = read_head(response, deadline).await;
-    // Parsing a large page is CPU work no timeout or abort can interrupt.
-    let meta =
-        tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
-            .await
-            .ok()?;
+    let bytes = read_head(response, read_by).await;
+    // Parsing a large page is CPU work no timeout or abort can interrupt, so it
+    // runs on its own thread and is waited for only until `deadline`.
+    let parse =
+        tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base));
+    let meta = tokio::time::timeout_at(deadline, parse).await.ok()?.ok()?;
     if meta.title.is_none() && meta.description.is_none() && meta.image.is_none() {
         return None;
     }
@@ -773,7 +813,8 @@ mod tests {
             "<html><head><meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">{STALLED}"
         );
         let url = local_page(sent, 100_000).await;
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        // Reading stops `PARSE_TIME` before this, 300 ms from now.
+        let deadline = tokio::time::Instant::now() + PARSE_TIME + Duration::from_millis(300);
         let preview = preview_from(
             &reqwest::Client::new(),
             url.to_string(),
@@ -782,6 +823,10 @@ mod tests {
         )
         .await
         .expect("a preview from what came");
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "parsed within the time"
+        );
         assert_eq!(preview.preview.url, url.to_string());
         assert_eq!(preview.preview.title.as_deref(), Some("Slow"));
         assert_eq!(preview.preview.description, None);
@@ -868,6 +913,55 @@ mod tests {
             "<script>a</scripture><b c='</script><meta>"
         );
         assert_eq!(end("<scripts><a x='>"), "<scripts>");
+        assert_eq!(end("<script>a</script ><b c='"), "<script>a</script >");
+    }
+
+    #[test]
+    fn whole_tags_end_reads_style_and_title_text_as_text() {
+        fn end(html: &str) -> &str {
+            &html[..whole_tags_end(html.as_bytes())]
+        }
+        let page = "<style>a[href='x</style><meta content=\"ok\"><meta content=\"cut";
+        assert_eq!(
+            end(page),
+            &page[..page.find("<meta content=\"cut").unwrap()]
+        );
+        assert_eq!(
+            end("<STYLE>a<b='</Style ><a><b"),
+            "<STYLE>a<b='</Style ><a>"
+        );
+        assert_eq!(
+            end("<title>a<b c='</title><a><b"),
+            "<title>a<b c='</title><a>"
+        );
+        assert_eq!(end("<styles><a x='>"), "<styles>");
+    }
+
+    /// A page that simply ends mid-tag loses only that tag; the text of a title
+    /// it never closed stays for the title.
+    #[tokio::test]
+    async fn a_page_that_ends_keeps_all_but_an_unfinished_tag() {
+        let read_whole = |sent: &str| {
+            let sent = sent.to_owned();
+            async move {
+                let length = sent.len();
+                read_local(sent, length, Duration::from_secs(5)).await
+            }
+        };
+        let html = read_whole(
+            "<head><meta property=\"og:title\" content=\"Kept\">\
+             <meta property=\"og:description\" content=\"Partial",
+        )
+        .await;
+        assert!(html.ends_with("content=\"Kept\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Kept"));
+        assert_eq!(meta.description, None);
+
+        let html = read_whole("<head><title>Fast > slow, a<b").await;
+        assert_eq!(html, "<head><title>Fast > slow, a<b");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Fast > slow, a<b"));
     }
 
     #[test]
