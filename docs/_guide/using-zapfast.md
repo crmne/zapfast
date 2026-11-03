@@ -510,7 +510,8 @@ right-click menu keeps a copy wherever you choose. A document keeps the name
 it was sent with. Anything else, and a document sent without a name, is
 offered a name with its kind and the time it was sent, such as
 `WhatsApp Audio 2026-08-06 at 20.07.49.ogg`, so saved files of one kind sort
-by date.
+by date. One whose send time is unknown keeps the name ZapFast stored it
+under.
 
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click
