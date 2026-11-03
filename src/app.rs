@@ -1482,14 +1482,16 @@ impl App {
         (app, events)
     }
 
-    /// Repaints through `waker`, the one the shell attaches to each window.
-    /// [`App::headless`] makes a waker of its own that no window ever
-    /// attaches, so an offline demo would otherwise only redraw on input:
-    /// the recorder's waveform and timer, and voice playback, stood still
-    /// while the pointer did.
+    /// An offline demo that repaints through `waker`, the one the shell
+    /// attaches to each window. [`App::headless`] makes a waker of its own
+    /// that no window ever attaches, so a demo built on it only redrew on
+    /// input: the recorder's waveform and timer, and voice playback, stood
+    /// still while the pointer did.
     #[cfg(feature = "demo")]
-    pub fn wake_through(&mut self, waker: &Waker) {
-        self.waker = waker.clone();
+    pub fn demo(waker: &Waker, dirs: AppDirs, settings: Settings) -> Self {
+        let (mut app, _) = Self::headless(dirs, settings);
+        app.waker = waker.clone();
+        app
     }
 
     /// Starts without a window (`--start-hidden`). The link and the archive
@@ -12862,6 +12864,35 @@ mod tests {
     /// While recording, the light, the timer and the waveform ask for a
     /// frame every 40 ms, or every step while a screen reader is attached,
     /// and the recorder then stops asking for frames of its own.
+    /// A demo wakes the window the shell attaches its waker to, so background
+    /// work such as the recorder repaints it without input.
+    #[test]
+    #[cfg(feature = "demo")]
+    fn a_demo_wakes_the_window_of_the_shells_waker() {
+        let wakes = |app: &App, ctx: &egui::Context| {
+            let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let seen = std::sync::Arc::clone(&count);
+            ctx.set_request_repaint_callback(move |_| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            });
+            app.waker.wake();
+            count.load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let shell = Waker::default();
+        let ctx = egui::Context::default();
+        shell.attach(&ctx);
+        let root = tempfile::tempdir().unwrap();
+        let demo = App::demo(&shell, AppDirs::under(root.path()), Settings::default());
+        assert!(wakes(&demo, &ctx) > 0, "the demo's wakes reach the window");
+        let root = tempfile::tempdir().unwrap();
+        let (headless, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        assert_eq!(
+            wakes(&headless, &ctx),
+            0,
+            "a headless app's own waker reaches no window"
+        );
+    }
+
     #[test]
     fn recording_progress_steps_while_a_screen_reader_is_attached() {
         let run = |reader: bool| {
