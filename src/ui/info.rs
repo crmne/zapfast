@@ -2232,6 +2232,114 @@ pub fn group_name_field_id() -> egui::Id {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blocking_action_joins_the_centered_rows_and_follows_archive_in_tab_order() {
+        use super::{ACTION_STOP, Shown, actions};
+        use crate::app::App;
+        use crate::model::Chat;
+        use crate::paths::AppDirs;
+        use crate::settings::Settings;
+        use crate::ui::focus::{Stop, control, stops};
+
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(directory.path()), Settings::default());
+        let id = "15550002222@s.whatsapp.net";
+        app.chats.push(Chat::new(id.into(), "Contact".into()));
+        app.link = crate::backend::LinkStatus::Connected;
+        app.locale = crate::i18n::Locale::English;
+        let shown = Shown::of(&app, id);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+
+        for (blocked, label) in [(false, "Block contact"), (true, "Unblock contact")] {
+            app.blocklist.ids = Some(blocked.then(|| id.to_owned()).into_iter().collect());
+
+            for (width, wraps) in [(900.0, false), (165.0, true)] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 240.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        crate::ui::focus::begin(ui.ctx(), true);
+                        actions(&mut app, ui, &shown, false, true);
+                        crate::ui::focus::finish(ui.ctx(), true);
+                    },
+                );
+
+                assert!(output.shapes.iter().any(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == label)
+                }), "expected {label}");
+                output.textures_delta.clear();
+
+                let response = |index| {
+                    let stop = Stop::InfoControl(ACTION_STOP + index);
+                    let widget = control(&ctx, stop).expect("action Tab stop");
+                    ctx.read_response(widget).expect("action response")
+                };
+                let archive = response(5).rect;
+                let block = response(6).rect;
+                if wraps {
+                    assert!(block.top() >= archive.bottom());
+                    assert!((block.center().x - width / 2.0).abs() < 1.0);
+                } else {
+                    assert!((block.center().y - archive.center().y).abs() < 1.0);
+                    assert!(block.left() >= archive.right());
+                }
+
+                if !blocked && !wraps {
+                    let action_stops: Vec<_> = stops(&ctx)
+                        .into_iter()
+                        .filter_map(|(stop, _)| match stop {
+                            Stop::InfoControl(index)
+                                if (ACTION_STOP..ACTION_STOP + 7).contains(&index) =>
+                            {
+                                Some(index)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(
+                        action_stops,
+                        (ACTION_STOP..ACTION_STOP + 7).collect::<Vec<_>>()
+                    );
+
+                    let archive_id = control(&ctx, Stop::InfoControl(ACTION_STOP + 5))
+                        .expect("Archive Tab stop");
+                    let block_id = control(&ctx, Stop::InfoControl(ACTION_STOP + 6))
+                        .expect("Block contact Tab stop");
+                    ctx.memory_mut(|memory| memory.request_focus(archive_id));
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 240.0),
+                            )),
+                            events: vec![egui::Event::Key {
+                                key: egui::Key::Tab,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                            }],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            crate::ui::focus::begin(ui.ctx(), true);
+                            actions(&mut app, ui, &shown, false, true);
+                            crate::ui::focus::finish(ui.ctx(), true);
+                        },
+                    );
+                    output.textures_delta.clear();
+                    assert!(ctx.memory(|memory| memory.has_focus(block_id)));
+                }
+            }
+        }
+    }
+
     /// The picture opens the viewer on its own, not a chat's album (#640).
     #[test]
     fn a_profile_picture_opens_alone_in_the_viewer() {
