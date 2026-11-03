@@ -1145,6 +1145,30 @@ mod tests {
         assert!(super::poster(b"not a video").is_none());
     }
 
+    /// Some encoders put the pixel aspect box before the decoder's
+    /// configuration in the sample entry; such a video still opens.
+    #[test]
+    fn a_video_with_its_aspect_box_first_still_opens() {
+        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let find = |name: &[u8]| {
+            bytes
+                .windows(4)
+                .position(|window| window == name)
+                .expect("the box")
+                - 4
+        };
+        let size = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let (avcc, pasp) = (find(b"avcC"), find(b"pasp"));
+        assert_eq!(avcc + size(avcc), pasp, "the fixture has them side by side");
+        let end = pasp + size(pasp);
+        // Swapping two neighbours changes no size or offset around them.
+        let mut swapped = bytes.to_vec();
+        swapped[avcc..end].copy_from_slice(&[&bytes[pasp..end], &bytes[avcc..pasp]].concat());
+        let poster = poster(&swapped).expect("an MP4");
+        assert_eq!((poster.width, poster.height), (320, 180));
+        assert!(poster.picture.is_some(), "it decodes");
+    }
+
     /// Verifies animated WebP frame disposal.
     #[test]
     fn a_moving_subject_leaves_no_trace_behind() {

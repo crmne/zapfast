@@ -132,7 +132,11 @@ openh264 = "0.9"
 # The encoder option a call's camera uses to change its bitrate mid-stream,
 # which openh264 does not wrap. Already included through openh264.
 openh264-sys2 = { version = "0.9", default-features = false }
-mp4 = "0.14"
+# crmne/mp4-rust is upstream's master, which reads a sample entry whose
+# avcC follows another box (pasp first, as some encoders write it); 0.14.0,
+# the last release, refuses such a video. Back to crates.io once a release
+# has it.
+mp4 = { git = "https://github.com/crmne/mp4-rust", rev = "35560e94f5e871a2b2d88bfe964013b39af131e8" }
 # rodio decodes and mixes; fastframe-audio plays and records, so neither of
 # rodio's own device features is on. The crmne/rodio fork (branch `zapfast`)
 # is upstream's master, which carries what no release has yet:
