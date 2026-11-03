@@ -29,6 +29,8 @@ the composer and right-click (or press Shift+F10 while it is focused) for
 **Monospace**. Spaces at the edges of the selection stay outside the markers,
 and bold, italic and strikethrough mark each selected line. Formatting keeps
 the text selected and can be undone.
+Formatting characters inside web addresses stay literal, preserving both the
+displayed URL and its click target.
 A line beginning with `> ` (greater-than and a space) is a block quote.
 Without the space, text such as `>.<` stays literal.
 Paste text with Ctrl+V (Command+V on macOS) or Shift+Insert, as in other
