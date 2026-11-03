@@ -188,14 +188,14 @@ fn header(
         })
         .response
         .rect;
-    // The edge lines up with the chat header's beside it, which its name and
-    // subtitle can make taller than this row.
+    // The edge is the chat header's beside it, whichever of the two would be
+    // taller on its own: their rows differ by a few points with some fonts.
     let chat_header = ui
         .ctx()
         .data(|data| data.get_temp::<Rect>(super::conversation::header_rect_id()));
     let bottom = chat_header
         .filter(|chat| (chat.top() - top).abs() < 1.0)
-        .map_or(frame.bottom(), |chat| frame.bottom().max(chat.bottom()));
+        .map_or(frame.bottom(), |chat| chat.bottom());
     ui.ctx()
         .data_mut(|data| data.insert_temp(header_edge_id(), bottom));
     let short = bottom - ui.cursor().top();
