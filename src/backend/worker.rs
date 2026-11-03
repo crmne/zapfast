@@ -7633,8 +7633,9 @@ impl Worker {
             }
             Command::SetProxy(setting) => {
                 crate::proxy::configure(&setting);
-                // Reconnect so the WhatsApp connection uses the new route.
-                if self.handle.is_some() {
+                // A failed start has no handle. Correcting its proxy must
+                // still retry, while an unlinked account stays unlinked.
+                if restart_for_proxy_change(self.handle.is_some(), &self.status) {
                     self.stop_bot().await;
                     self.start_bot().await;
                 }
@@ -13177,6 +13178,10 @@ pub(super) struct Prepared {
     file_name: Option<String>,
 }
 
+fn restart_for_proxy_change(has_handle: bool, status: &LinkStatus) -> bool {
+    has_handle || matches!(status, LinkStatus::Failed(_))
+}
+
 fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality);
@@ -14880,6 +14885,31 @@ mod tests {
                     .contact("15550000001@s.whatsapp.net")
                     .unwrap()
                     .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_proxy_change_retries_a_failed_start_without_linking_a_stopped_account() {
+        for status in [
+            LinkStatus::Starting,
+            LinkStatus::Connecting,
+            LinkStatus::Connected,
+            LinkStatus::Disconnected {
+                reason: "Fixture".into(),
+            },
+            LinkStatus::Unlinked {
+                qr: None,
+                pair_code: None,
+                pairing_phone: None,
+            },
+            LinkStatus::LoggedOut,
+            LinkStatus::Failed("The proxy address is not usable for downloads".into()),
+        ] {
+            assert!(super::restart_for_proxy_change(true, &status));
+            assert_eq!(
+                super::restart_for_proxy_change(false, &status),
+                matches!(status, LinkStatus::Failed(_))
             );
         }
     }
