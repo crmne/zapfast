@@ -3755,6 +3755,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+            "recording-paused" => {
+                app.recording = Some(crate::audio::Recorder::paused_rehearsal());
+            }
             // Shows the native image preview over the demo chat.
             "preview" => {
                 // Three photos with a text between the second and the third,
@@ -9828,6 +9831,7 @@ mod tests {
             "voice",
             "voice,voice-menu",
             "recording",
+            "recording-paused",
             "preview",
             "gifs",
             "gifs-badkey",
@@ -22520,6 +22524,43 @@ mod tests {
             .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::recording_wave_id()))
             .expect("the recorder is drawn");
         // The window is 1180 points wide; the old strip stopped at 150.
+        assert!(
+            wave.width() > 400.0,
+            "the waveform is {} wide",
+            wave.width()
+        );
+    }
+
+    #[test]
+    fn a_paused_recording_offers_playback_resume_and_send() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.recording = Some(crate::audio::Recorder::rehearsal());
+        let labels = accessible_labels(&mut app, &ctx);
+        for label in ["Discard", "Pause recording", "Send"] {
+            assert!(
+                labels.iter().any(|text| text == label),
+                "{label} in {labels:?}"
+            );
+        }
+        assert!(!labels.iter().any(|text| text == "Play recording"));
+        app.recording = Some(crate::audio::Recorder::paused_rehearsal());
+        let labels = accessible_labels(&mut app, &ctx);
+        for label in ["Discard", "Play recording", "Resume recording", "Send"] {
+            assert!(
+                labels.iter().any(|text| text == label),
+                "{label} in {labels:?}"
+            );
+        }
+        assert!(!labels.iter().any(|text| text == "Pause recording"));
+        // The whole take spreads across the field, between the controls.
+        for _ in 0..3 {
+            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let wave = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::recording_wave_id()))
+            .expect("the paused recorder is drawn");
         assert!(
             wave.width() > 400.0,
             "the waveform is {} wide",
