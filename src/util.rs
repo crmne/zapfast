@@ -231,8 +231,13 @@ pub fn copy_stamp(unix_seconds: i64) -> String {
 /// send time, after the names WhatsApp Web gives its downloads (#801), such as
 /// `WhatsApp Audio 2026-08-06 at 20.07.49.ogg`. Always a 24-hour clock with
 /// dots between the fields, so files of one kind sort by date and every file
-/// system takes the name. The cached file lends its extension.
+/// system takes the name. The cached file lends its extension. A message
+/// whose time history left unknown (filed as 0) gets none, rather than a
+/// 1970 name.
 pub fn saved_file_name(kind: &str, unix_seconds: i64, cached: &std::path::Path) -> Option<String> {
+    if unix_seconds <= 0 {
+        return None;
+    }
     let stamp = zoned(unix_seconds)?.strftime("%Y-%m-%d at %H.%M.%S");
     Some(
         match cached.extension().and_then(|extension| extension.to_str()) {
@@ -1027,6 +1032,11 @@ mod tests {
             "a file without an extension gets no trailing dot"
         );
         assert_eq!(super::saved_file_name("Audio", i64::MAX, cached), None);
+        assert_eq!(
+            super::saved_file_name("Audio", 0, cached),
+            None,
+            "history files a message of unknown time at 0"
+        );
     }
 
     #[test]

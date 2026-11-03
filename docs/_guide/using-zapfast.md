@@ -507,9 +507,10 @@ empty space around the picture, or Escape, closes the viewer. It also closes
 when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose. A document keeps the name
-it was sent with; anything else is offered a name with its kind and the time
-it was sent, such as `WhatsApp Audio 2026-08-06 at 20.07.49.ogg`, so saved
-files of one kind sort by date.
+it was sent with. Anything else, and a document sent without a name, is
+offered a name with its kind and the time it was sent, such as
+`WhatsApp Audio 2026-08-06 at 20.07.49.ogg`, so saved files of one kind sort
+by date.
 
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click
