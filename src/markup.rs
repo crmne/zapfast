@@ -316,21 +316,8 @@ fn inline(line: &str) -> Vec<Span> {
     while i < chars.len() {
         let c = chars[i];
         // Markers inside an address are URL characters, not formatting.
-        if let Some(mut end) = link_char_end(line, &chars, &offsets, i) {
-            // A marker that closes formatting around the address stays for
-            // the normal parser; an unformatted address keeps its suffix.
-            while end > i {
-                let active = match chars[end - 1] {
-                    '*' => flags[0],
-                    '_' => flags[1],
-                    '~' => flags[2],
-                    _ => false,
-                };
-                if !active || !is_closer(&chars, end - 1) {
-                    break;
-                }
-                end -= 1;
-            }
+        if let Some(end) = link_char_end(line, &chars, &offsets, i) {
+            let end = link_format_end(&chars, i, end, flags);
             run.extend(&chars[i..end]);
             i = end;
             continue;
@@ -377,7 +364,7 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(line, &chars, &offsets, i + 1, c) {
+            } else if is_opener(&chars, i) && has_closer(line, &chars, &offsets, i + 1, c, flags) {
                 flush(&mut run, &mut spans, flags);
                 flags[index] = true;
                 i += 1;
@@ -414,16 +401,41 @@ fn link_char_end(line: &str, chars: &[char], offsets: &[usize], at: usize) -> Op
     Some(offsets.partition_point(|offset| *offset < end))
 }
 
-fn has_closer(line: &str, chars: &[char], offsets: &[usize], from: usize, marker: char) -> bool {
+/// Leave only active, valid closing markers outside an address.
+fn link_format_end(chars: &[char], start: usize, mut end: usize, flags: [bool; 3]) -> usize {
+    while end > start {
+        let active = match chars[end - 1] {
+            '*' => flags[0],
+            '_' => flags[1],
+            '~' => flags[2],
+            _ => false,
+        };
+        if !active || !is_closer(chars, end - 1) {
+            break;
+        }
+        end -= 1;
+    }
+    end
+}
+
+fn has_closer(
+    line: &str,
+    chars: &[char],
+    offsets: &[usize],
+    from: usize,
+    marker: char,
+    mut flags: [bool; 3],
+) -> bool {
+    // Look ahead with the candidate opener active, exactly as inline will.
+    flags[match marker {
+        '*' => 0,
+        '_' => 1,
+        _ => 2,
+    }] = true;
     let mut at = from;
     while at < chars.len() {
-        if let Some(mut end) = link_char_end(line, chars, offsets, at) {
-            // A trailing marker may close surrounding formatting, but a
-            // marker within the address cannot pair with preceding prose.
-            while end > at && matches!(chars[end - 1], '*' | '_' | '~') {
-                end -= 1;
-            }
-            at = end;
+        if let Some(end) = link_char_end(line, chars, offsets, at) {
+            at = link_format_end(chars, at, end, flags);
             continue;
         }
         if chars[at] == marker && is_closer(chars, at) {
@@ -613,7 +625,10 @@ fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
             let depth = match c {
                 '(' | ')' => &mut parens,
                 '[' | ']' => &mut squares,
-                _ => return c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '{' | '}'),
+                _ => {
+                    return c.is_whitespace()
+                        || matches!(c, '<' | '>' | '"' | '\'' | '{' | '}' | '`');
+                }
             };
             if matches!(c, '(' | '[') {
                 *depth += 1;
@@ -629,6 +644,11 @@ fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
     let mut token = &rest[..token_end];
     while let Some(stripped) = token.strip_suffix(['.', ',', ';', ':', '!', '?']) {
         token = stripped;
+    }
+    // Formatting suffixes cannot be part of a bare hostname or email.
+    // Paths retain their literal markers, including a trailing one.
+    if !token.contains('/') {
+        token = token.trim_end_matches(['.', ',', ';', ':', '!', '?', '*', '_', '~']);
     }
     if token.len() < 4 {
         return None;
@@ -895,6 +915,54 @@ mod tests {
         let code = format!("`{address}`");
         assert_eq!(plain(&code, &[]), address);
         assert!(links(&code).is_empty());
+    }
+
+    #[test]
+    fn repeated_url_suffixes_do_not_consume_unmatched_openers() {
+        for marker in ['*', '_', '~'] {
+            let text = format!("{marker}https://example.com/end{marker}{marker} after");
+            assert_eq!(plain(&text, &[]), text);
+            assert!(
+                parse(&text, &[])
+                    .iter()
+                    .all(|span| !span.bold && !span.italic && !span.strike)
+            );
+        }
+        let spans = parse("*~https://example.com/end~* after", &[]);
+        let link = spans.iter().find(|span| span.link.is_some()).unwrap();
+        assert!(link.bold && link.strike);
+        assert!(!spans.last().unwrap().bold && !spans.last().unwrap().strike);
+    }
+
+    #[test]
+    fn bare_addresses_keep_links_before_trailing_markers() {
+        for (address, target) in [
+            ("example.com", "https://example.com"),
+            ("www.example.com", "https://www.example.com"),
+            ("hello@example.com", "mailto:hello@example.com"),
+            ("mailto:hello@example.com", "mailto:hello@example.com"),
+        ] {
+            for suffix in ["~", "_", "*", "~.", ".~"] {
+                let text = format!("{address}{suffix}");
+                assert_eq!(plain(&text, &[]), text);
+                let targets: Vec<_> = parse(&text, &[])
+                    .into_iter()
+                    .filter_map(|span| span.link)
+                    .collect();
+                assert_eq!(targets, vec![target], "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn urls_stop_before_adjacent_code_spans() {
+        for delimiter in ["`", "```"] {
+            let text = format!("https://example.com{delimiter}code{delimiter}");
+            assert_eq!(plain(&text, &[]), "https://example.comcode");
+            assert_eq!(links(&text), vec!["https://example.com"]);
+            let spans = parse(&text, &[]);
+            assert!(spans.iter().any(|span| span.mono && span.text == "code"));
+        }
     }
 
     #[test]
