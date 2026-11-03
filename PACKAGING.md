@@ -187,6 +187,23 @@ submitting. The manifests use the current Freedesktop 26.08 runtime; the CI buil
 container is 25.08 and installs the runtime and SDK named by the manifest. The GitHub release job includes the bundle
 in `checksums.txt`. No existing release files are replaced by this change.
 
+## Fedora COPR and openSUSE OBS
+
+`packaging/rpm/zapfast.spec` builds ZapFast from its release source for the
+[paolino/zapfast](https://copr.fedorainfracloud.org/coprs/paolino/zapfast/) COPR
+and the `home:paolino` OBS project. Fill in `@VERSION@` and `@DATE@` (in RPM
+changelog form, such as `Tue Nov 03 2026`), then build a source RPM and submit
+it. Cargo fetches the locked dependencies during the build, so the COPR project
+has network access turned on for builds. Fedora 44 and newer ship a new enough
+Rust. Submissions are a manual maintainer step that needs a COPR API token.
+
+```sh
+sed -e "s/@VERSION@/X.Y.Z/g" -e "s/@DATE@/$(LC_ALL=C date '+%a %b %d %Y')/" \
+  packaging/rpm/zapfast.spec > zapfast.spec
+spectool -g -R zapfast.spec && rpmbuild -bs zapfast.spec
+copr-cli build paolino/zapfast ~/rpmbuild/SRPMS/zapfast-X.Y.Z-1.*.src.rpm
+```
+
 ## winget
 
 `packaging/winget/` holds the manifests for the `crmne.ZapFast` package in
