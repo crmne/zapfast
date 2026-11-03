@@ -629,8 +629,6 @@ fn month_step(month: Date, direction: i32) -> Date {
     Date::new(year, number, 1).unwrap_or(month)
 }
 
-/// One result: when it was said, and the line that matched, with who said
-/// it in a group. Returns whether it was clicked.
 /// Where a search result's row keeps its widget id, by its message, for
 /// scripted demos.
 #[cfg(any(test, feature = "demo"))]
@@ -638,6 +636,8 @@ pub(crate) fn hit_row_id(message: &str) -> egui::Id {
     egui::Id::new(("chat-search-hit", message))
 }
 
+/// One result: when it was said, and the line that matched, with who said
+/// it in a group. Returns whether it was clicked.
 fn hit_row(
     app: &mut App,
     ui: &mut egui::Ui,
