@@ -173,10 +173,6 @@ mod tests {
     fn dutch_catalog_translates_plain_contextual_and_plural_messages() {
         assert_eq!(gettext(Locale::Dutch, "Search"), "Zoeken");
         assert_eq!(gettext(Locale::Dutch, "Settings"), "Instellingen");
-        assert_eq!(
-            gettext(Locale::Dutch, "Reply privately"),
-            "Privé beantwoorden"
-        );
         assert_eq!(gettext(Locale::Dutch, "About"), "Over");
         assert_eq!(pgettext(Locale::Dutch, "profile", "About"), "Info");
         assert_eq!(pgettext(Locale::Dutch, "mention", "all"), "iedereen");
@@ -351,6 +347,11 @@ mod tests {
                 Locale::Turkish,
                 "Özel olarak yanıtla",
                 "Orijinal grup mesajı kullanılamıyor",
+            ),
+            (
+                Locale::Dutch,
+                "Privé beantwoorden",
+                "Oorspronkelijk groepsbericht niet beschikbaar",
             ),
         ] {
             assert_eq!(gettext(locale, "Reply privately"), reply, "{locale:?}");

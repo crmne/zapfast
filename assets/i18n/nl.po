@@ -43,7 +43,7 @@ msgid ""
 "again."
 msgstr ""
 "WhatsApp heeft niet op tijd geantwoord. Probeer het opnieuw als de groep "
-"niet snel verschijnt."
+"niet zo meteen verschijnt."
 
 #: src/new_group.rs:206
 msgid "WhatsApp does not allow this account to create groups right now."
@@ -704,7 +704,7 @@ msgstr "Verzenden van {name} annuleren"
 #: src/ui/conversation.rs:2392
 #, rust-format
 msgid "Sending {name}"
-msgstr "{name} verzenden"
+msgstr "{name} wordt verzonden"
 
 #: src/ui/conversation.rs:2398
 #, rust-format
@@ -801,7 +801,7 @@ msgstr "Bericht losmaken"
 
 #: src/ui/conversation.rs:7025 src/ui/conversation.rs:7415
 msgid "Open in the viewer"
-msgstr "Openen in de viewer"
+msgstr "Openen in de mediaweergave"
 
 #: src/ui/conversation.rs:7026 src/ui/conversation.rs:7429
 msgid "Select"
@@ -851,7 +851,7 @@ msgstr "Tonen in map"
 
 #: src/ui/conversation.rs:7037 src/ui/conversation.rs:7611
 msgid "Downloading…"
-msgstr "Downloaden…"
+msgstr "Bezig met downloaden…"
 
 #: src/ui/conversation.rs:7038 src/ui/conversation.rs:7613
 #: src/ui/image_preview.rs:460 src/ui/image_preview.rs:815
@@ -975,7 +975,7 @@ msgstr "Downloaden mislukt. Klik om het opnieuw te proberen."
 
 #: src/ui/conversation.rs:9403 src/ui/dialogs.rs:225
 msgid "Sending reply…"
-msgstr "Antwoord verzenden…"
+msgstr "Antwoord wordt verzonden…"
 
 #: src/ui/conversation.rs:9404 src/ui/dialogs.rs:227
 msgid "Connect to WhatsApp to reply"
@@ -1134,9 +1134,9 @@ msgid ""
 " phone. Open Locked with a separate local ZapFast code to read it."
 msgstr ""
 "Dit verplaatst de chat naar het tabblad Vergrendeld en verbergt deze in de "
-"gewone chatlijst, zoekresultaten, ongelezen badges en meldingen. De "
-"vergrendeling wordt ook met je telefoon gesynchroniseerd. Open Vergrendeld "
-"met een aparte lokale ZapFast-code om de chat te lezen."
+"gewone chatlijst, zoekresultaten, badges voor ongelezen berichten en "
+"meldingen. De vergrendeling wordt ook met je telefoon gesynchroniseerd. Open "
+"Vergrendeld met een aparte lokale ZapFast-code om de chat te lezen."
 
 #: src/ui/dialogs.rs:489
 msgid "New chat"
@@ -1287,7 +1287,7 @@ msgstr "Groepsuitnodiging"
 
 #: src/ui/dialogs.rs:1149
 msgid "Looking up the group…"
-msgstr "Groep opzoeken…"
+msgstr "Groep wordt opgezocht…"
 
 #: src/ui/dialogs.rs:1166 src/ui/info.rs:501
 #, rust-format
@@ -1306,7 +1306,7 @@ msgstr "Chat openen"
 
 #: src/ui/dialogs.rs:1195
 msgid "Request to join"
-msgstr "Verzoeken om deel te nemen"
+msgstr "Deelname aanvragen"
 
 #: src/ui/dialogs.rs:1196
 msgid "Join group"
@@ -1314,11 +1314,11 @@ msgstr "Deelnemen aan groep"
 
 #: src/ui/dialogs.rs:1199
 msgid "Joining…"
-msgstr "Deelnemen…"
+msgstr "Bezig met deelnemen…"
 
 #: src/ui/dialogs.rs:1252
 msgid "Downloading the pack…"
-msgstr "Pakket downloaden…"
+msgstr "Pakket wordt gedownload…"
 
 #: src/ui/dialogs.rs:1276
 msgid "Add to my stickers"
@@ -1491,7 +1491,7 @@ msgstr ""
 
 #: src/ui/dialogs.rs:1659
 msgid "Reset the invite link?"
-msgstr "Uitnodigingslink opnieuw instellen?"
+msgstr "Uitnodigingslink resetten?"
 
 #: src/ui/dialogs.rs:1665
 msgid ""
@@ -1503,7 +1503,7 @@ msgstr ""
 
 #: src/ui/dialogs.rs:1674 src/ui/info.rs:1770
 msgid "Reset link"
-msgstr "Link opnieuw instellen"
+msgstr "Link resetten"
 
 #: src/ui/dialogs.rs:1691
 msgid "Remove from the group?"
@@ -1589,7 +1589,7 @@ msgstr "Ook opslaan in de contacten op je telefoon"
 
 #: src/ui/dialogs.rs:2024 src/ui/dialogs.rs:2033
 msgid "Checking the number…"
-msgstr "Nummer controleren…"
+msgstr "Nummer wordt gecontroleerd…"
 
 #: src/ui/dialogs.rs:2037
 msgid ""
@@ -1692,7 +1692,7 @@ msgstr "Aangepaste titelbalk"
 msgid ""
 "Draw ZapFast's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Gebruik de eigen titelbalk en vensterknoppen van ZapFast in plaats van die "
+"Tekent de eigen titelbalk en vensterknoppen van ZapFast in plaats van die "
 "van het bureaublad."
 
 #: src/ui/settings.rs:428 src/ui/rail.rs:293
@@ -1790,8 +1790,8 @@ msgid ""
 "After one notification, a chat stays quiet for 10 minutes. Opening the chat "
 "resets this. In groups, mentions and replies to you still notify."
 msgstr ""
-"Na één melding blijft een chat 10 minuten stil. Dit wordt opnieuw ingesteld "
-"als je de chat opent. In groepen krijg je wel meldingen van vermeldingen en "
+"Na één melding blijft een chat 10 minuten stil. Als je de chat opent, begint "
+"die periode opnieuw. In groepen krijg je wel meldingen van vermeldingen en "
 "antwoorden aan jou."
 
 #: src/ui/settings.rs:564 src/ui/settings.rs:2123
@@ -2117,7 +2117,7 @@ msgstr "Krabbels toevoegen"
 
 #: src/ui/settings.rs:1299
 msgid "Show the default doodles over the selected colour."
-msgstr "Toon de standaardkrabbels over de geselecteerde kleur."
+msgstr "Toont de standaardkrabbels over de geselecteerde kleur."
 
 #: src/ui/settings.rs:1383
 msgid "Choose image…"
@@ -2297,11 +2297,11 @@ msgstr "Video starten"
 
 #: src/ui/call.rs:550
 msgid "Turn the camera off"
-msgstr "Camera uitzetten"
+msgstr "Camera uitschakelen"
 
 #: src/ui/call.rs:557
 msgid "Turn the camera on"
-msgstr "Camera aanzetten"
+msgstr "Camera inschakelen"
 
 #: src/ui/call.rs:567
 msgid "Devices"
@@ -2398,7 +2398,7 @@ msgstr "Laden…"
 
 #: src/ui/calls.rs:214
 msgid "Reading this account's calls."
-msgstr "Oproepen van dit account lezen."
+msgstr "De oproepen van dit account worden gelezen."
 
 #: src/ui/calls.rs:238
 msgid "No missed calls"
@@ -2540,8 +2540,8 @@ msgstr "Afgeleverd bij"
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
-msgstr[0] "{} resterend"
-msgstr[1] "{} resterend"
+msgstr[0] "Nog {} over"
+msgstr[1] "Nog {} over"
 
 #: src/ui/message_info.rs:322
 msgid "No one yet"
@@ -2707,7 +2707,7 @@ msgstr "Aan favorieten toegevoegd"
 
 #: src/app.rs:8853
 msgid "Sending the sticker pack…"
-msgstr "Stickerpakket verzenden…"
+msgstr "Stickerpakket wordt verzonden…"
 
 #: src/app.rs:9279 src/ui/labels.rs:257
 #, rust-format
@@ -2900,7 +2900,7 @@ msgstr "GIF's zoeken via GIPHY"
 
 #: src/ui/picker.rs:1070
 msgid "Searching…"
-msgstr "Zoeken…"
+msgstr "Bezig met zoeken…"
 
 #: src/ui/picker.rs:1157 src/ui/mod.rs:656
 msgid "Retry"
@@ -3017,7 +3017,7 @@ msgstr "Signalstickers.org bekijken"
 
 #: src/ui/picker.rs:1668
 msgid "Importing the pack…"
-msgstr "Pakket importeren…"
+msgstr "Pakket wordt geïmporteerd…"
 
 #: src/ui/picker.rs:1717
 msgid "Remove from recents"
@@ -3171,7 +3171,7 @@ msgstr "Inzoomen"
 
 #: src/ui/image_preview.rs:346
 msgid "Fit"
-msgstr "Passend maken"
+msgstr "Passend"
 
 #: src/ui/image_preview.rs:347
 msgid "Show at original size"
@@ -3215,7 +3215,7 @@ msgstr "ZapFast is vergrendeld"
 
 #: src/ui/lock.rs:23
 msgid "Unlinking this computer…"
-msgstr "Deze computer ontkoppelen…"
+msgstr "Deze computer wordt ontkoppeld…"
 
 #: src/ui/lock.rs:52
 msgid "Enter your password to unlock."
@@ -3295,7 +3295,7 @@ msgstr "Meldingen dempen"
 
 #: src/ui/accounts.rs:319
 msgid "Unmute notifications"
-msgstr "Dempen van meldingen opheffen"
+msgstr "Meldingen niet meer dempen"
 
 #: src/ui/accounts.rs:335
 #, rust-format
@@ -3336,7 +3336,7 @@ msgstr "Groepsnaam bewerken"
 
 #: src/ui/info.rs:493 src/ui/info.rs:644 src/ui/info.rs:1908
 msgid "Saving…"
-msgstr "Opslaan…"
+msgstr "Bezig met opslaan…"
 
 #: src/ui/info.rs:680
 msgid "Add group description"
@@ -3436,7 +3436,7 @@ msgstr "Uitnodigen via link"
 
 #: src/ui/info.rs:1718
 msgid "Getting the link…"
-msgstr "Link ophalen…"
+msgstr "Link wordt opgehaald…"
 
 #: src/ui/info.rs:1755
 msgid "Copy link"
@@ -3514,7 +3514,7 @@ msgstr ""
 
 #: src/ui/login.rs:117
 msgid "Requesting a new code…"
-msgstr "Nieuwe code aanvragen…"
+msgstr "Nieuwe code wordt aangevraagd…"
 
 #: src/ui/login.rs:147
 msgid "Start over…"
@@ -3523,7 +3523,7 @@ msgstr "Opnieuw beginnen…"
 #: src/ui/login.rs:165
 #, rust-format
 msgid "Requesting a code for +{phone}…"
-msgstr "Code aanvragen voor +{phone}…"
+msgstr "Code wordt aangevraagd voor +{phone}…"
 
 #: src/ui/login.rs:174
 msgid "Waiting for a code from WhatsApp…"
@@ -3550,7 +3550,7 @@ msgstr "Tik op Menu of Instellingen en daarna op Gekoppelde apparaten"
 
 #: src/ui/login.rs:227
 msgid "Tap Link a device and point the phone at this code"
-msgstr "Tik op Een apparaat koppelen en richt de telefoon op deze code"
+msgstr "Tik op Apparaat koppelen en richt de telefoon op deze code"
 
 #: src/ui/login.rs:244
 msgid "Link with phone number instead"
@@ -3567,7 +3567,7 @@ msgstr "voor +{phone}"
 
 #: src/ui/login.rs:285
 msgid "Tap Link a device, then Link with phone number instead"
-msgstr "Tik op Een apparaat koppelen en daarna op Koppelen met telefoonnummer"
+msgstr "Tik op Apparaat koppelen en daarna op Koppelen met telefoonnummer"
 
 #: src/ui/rail.rs:302
 msgid "Calls"
@@ -3676,7 +3676,7 @@ msgstr[1] "{count} leden naast jou"
 
 #: src/ui/new_group.rs:445
 msgid "Creating the group…"
-msgstr "Groep maken…"
+msgstr "Groep wordt gemaakt…"
 
 #: src/group_admin.rs:60
 msgid "Edit group settings"
@@ -3816,7 +3816,7 @@ msgstr "Meerdere antwoorden toestaan"
 
 #: src/ui/polls.rs:165
 msgid "Sending…"
-msgstr "Verzenden…"
+msgstr "Bezig met verzenden…"
 
 #: src/ui/polls.rs:167
 msgid "Send poll"
@@ -3832,7 +3832,7 @@ msgstr "Selecteer antwoorden"
 
 #: src/ui/polls.rs:321
 msgid "Sending vote…"
-msgstr "Stem verzenden…"
+msgstr "Stem wordt verzonden…"
 
 #: src/ui/polls.rs:325
 msgid "Waiting for your phone · earlier votes may be missing"
@@ -3904,11 +3904,11 @@ msgstr "Versieopmerkingen"
 
 #: src/ui/update.rs:70
 msgid "Checking download…"
-msgstr "Download controleren…"
+msgstr "Download wordt gecontroleerd…"
 
 #: src/ui/update.rs:72
 msgid "Downloading update…"
-msgstr "Update downloaden…"
+msgstr "Update wordt gedownload…"
 
 #: src/ui/update.rs:85
 #, rust-format
@@ -3934,7 +3934,7 @@ msgstr "Opnieuw opstarten om bij te werken"
 
 #: src/ui/update.rs:130
 msgid "Preparing to restart…"
-msgstr "Opnieuw opstarten voorbereiden…"
+msgstr "Herstart wordt voorbereid…"
 
 #: src/ui/update.rs:147
 msgid "Download from GitHub"
@@ -3961,7 +3961,7 @@ msgstr "Berichten met {name}"
 #: src/a11y.rs:122
 #, rust-format
 msgid "replying to {name}: {text}"
-msgstr "antwoord op {name}: {text}"
+msgstr "antwoord aan {name}: {text}"
 
 #: src/a11y.rs:130
 msgid "forwarded"
@@ -4012,7 +4012,7 @@ msgstr "Niet-ondersteund bericht ({what})"
 
 #: src/a11y.rs:339
 msgid "downloading"
-msgstr "downloaden"
+msgstr "wordt gedownload"
 
 #: src/a11y.rs:343
 msgid "download failed"
@@ -4024,7 +4024,7 @@ msgstr "niet gedownload"
 
 #: src/a11y.rs:357
 msgid "sending"
-msgstr "verzenden"
+msgstr "wordt verzonden"
 
 #: src/a11y.rs:358
 msgid "sent"
