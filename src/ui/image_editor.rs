@@ -428,12 +428,14 @@ fn marks_texture(
         [size[0] as usize, size[1] as usize],
         drawn.data(),
     );
+    // Nearest, not linear: filtering would blend a pixelated block's edge
+    // with the see-through texel beside it and let the sharp picture show.
     let texture = match cache.take() {
         Some(mut layer) => {
-            layer.texture.set(image, egui::TextureOptions::LINEAR);
+            layer.texture.set(image, egui::TextureOptions::NEAREST);
             layer.texture
         }
-        None => ctx.load_texture("picture-marks", image, egui::TextureOptions::LINEAR),
+        None => ctx.load_texture("picture-marks", image, egui::TextureOptions::NEAREST),
     };
     let id = texture.id();
     *cache = Some(MarksLayer {
