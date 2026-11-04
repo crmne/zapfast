@@ -719,6 +719,10 @@ pub struct App {
     /// overtaken by a cancellation or by another picture, and opening the
     /// cropper on it would take the window off whoever has it now.
     pub picture_inspecting: Option<AttachmentId>,
+    /// The staged picture asked to be edited again while its last edit was
+    /// still being written. The editor opens on it once that write lands, so
+    /// two writes of one picture never race.
+    pub picture_reopen: Option<AttachmentId>,
     /// Whether the cropper asked for follows focus: asked for from the keys
     /// or with a screen reader, as `ui::overlay::followed` says at the time
     /// of asking. A file opens the cropper only once its size is read, in a
@@ -1184,6 +1188,7 @@ impl App {
         }
         self.picture_origins.retain(|id, _| live.contains(id));
         self.picture_applying.retain(|id, _| live.contains(id));
+        self.picture_reopen = self.picture_reopen.filter(|id| live.contains(id));
     }
 }
 
@@ -1695,6 +1700,7 @@ impl App {
             sticker_draft: None,
             picture_edit: None,
             picture_inspecting: None,
+            picture_reopen: None,
             picture_edit_followed: None,
             picture_applying: Default::default(),
             picture_origins: Default::default(),
@@ -1983,6 +1989,7 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.invalidate_composer_undo();
+        self.picture_reopen = None;
         self.gif_request = self.gif_request.wrapping_add(1);
         self.gif_query.clear();
         self.gif_results.clear();
@@ -4833,10 +4840,13 @@ impl App {
                 }
             }
             Event::PictureEdited { target, result } => {
-                // The window is left alone: applying a crop takes the editor
-                // with it, so an editor open here belongs to another picture
-                // and closing it would throw away a crop nobody finished.
-                match result {
+                // The window is left alone unless the editor is to open on
+                // this picture again: applying a crop takes the editor with
+                // it, so an editor open here belongs to another picture and
+                // closing it would throw away a crop nobody finished.
+                let kept = self.picture_applying.remove(&target);
+                let asked = self.picture_reopen.take_if(|id| *id == target).is_some();
+                let reopen = match result {
                     // Applied only while that attachment is still staged. A
                     // result that arrives after its attachment was removed, or
                     // after another account took over the composer, is dropped
@@ -4845,30 +4855,28 @@ impl App {
                         Some(at) => {
                             self.pending[at].item = Pending::File(path);
                             self.pending[at].preview = None;
-                            if let Some(origin) = self.picture_applying.remove(&target) {
-                                self.picture_origins.insert(target, origin);
+                            if let Some(origin) = &kept {
+                                self.picture_origins.insert(target, origin.clone());
                             }
+                            kept.filter(|_| asked)
                         }
-                        None => {
-                            self.picture_applying.remove(&target);
-                        }
+                        None => None,
                     },
+                    // Opened again as it was kept, so trying again does not
+                    // mean drawing it all again.
                     Err(error) => {
-                        let kept = self.picture_applying.remove(&target);
                         self.toast_error(error);
-                        // Opened again as it was kept, so trying again does
-                        // not mean drawing it all again; never over an editor
-                        // open or about to open on another picture.
-                        if let Some(origin) = kept
-                            && self.picture_edit.is_none()
-                            && self.picture_inspecting.is_none()
-                            && self.staged_at(target).is_some()
-                        {
-                            self.open_picture_edit(crate::model::PictureEdit::reopened(
-                                target, origin,
-                            ));
-                        }
+                        kept
                     }
+                };
+                // Never over an editor open, or about to open, on another
+                // picture.
+                if let Some(origin) = reopen
+                    && self.picture_edit.is_none()
+                    && self.picture_inspecting.is_none()
+                    && self.staged_at(target).is_some()
+                {
+                    self.open_picture_edit(crate::model::PictureEdit::reopened(target, origin));
                 }
             }
             Event::StickerPackPreview(result) => {
@@ -8482,6 +8490,7 @@ impl App {
             Action::EditPicture(target) => {
                 // Whatever was being waited for is not what is wanted now.
                 self.picture_inspecting = None;
+                self.picture_reopen = None;
                 self.picture_edit_followed = Some(crate::ui::overlay::followed(ctx));
                 // Read out before anything is written back, so the borrow of
                 // the strip ends here.
@@ -8504,7 +8513,11 @@ impl App {
                     },
                     None => None,
                 };
-                if let Some((width, height, rgba)) = pasted {
+                if self.picture_applying.contains_key(&target) {
+                    // Its last edit is still being written, and the editor
+                    // opens on that edit once it lands.
+                    self.picture_reopen = Some(target);
+                } else if let Some((width, height, rgba)) = pasted {
                     self.open_picture_edit(crate::model::PictureEdit::new(
                         target,
                         crate::model::PictureSource::Pasted(rgba),
@@ -8542,6 +8555,7 @@ impl App {
             Action::CancelPictureEdit => {
                 self.picture_edit = None;
                 self.picture_inspecting = None;
+                self.picture_reopen = None;
             }
             Action::ClearPending => {
                 self.composer.clear();
@@ -22593,6 +22607,53 @@ mod tests {
             app.picture_edit.is_none(),
             "a removed picture opens nothing"
         );
+    }
+
+    /// Editing a picture again while its last edit is still being written
+    /// waits for that write and opens on it, so two writes of one picture
+    /// never race and the strip and the editor agree on what was kept.
+    #[test]
+    fn editing_a_picture_again_waits_for_its_last_edit_to_land() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let rgba = std::sync::Arc::new(vec![200u8; 8 * 6 * 4]);
+        let target = app.stage(Pending::Picture {
+            width: 8,
+            height: 6,
+            rgba: rgba.clone(),
+            texture: None,
+        });
+        let mut edit =
+            crate::model::PictureEdit::new(target, crate::model::PictureSource::Pasted(rgba), 8, 6);
+        edit.begin_mark(crate::model::Brush::default(), [1.0, 1.0]);
+        edit.extend_mark([5.0, 4.0], 1.0);
+        edit.finish_mark();
+        let kept = edit.origin();
+        let results: [Result<std::path::PathBuf, String>; 2] =
+            [Ok("/fixture/edited.png".into()), Err("disk full".into())];
+        for result in results {
+            app.picture_edit = Some(crate::model::PictureEdit::reopened(target, kept.clone()));
+            app.apply(Action::ApplyPictureEdit, &ctx);
+            app.apply(Action::EditPicture(target), &ctx);
+            assert!(
+                app.picture_edit.is_none(),
+                "nothing opens on the picture before its edit lands"
+            );
+            app.apply(Action::ApplyPictureEdit, &ctx);
+            let writes = std::iter::from_fn(|| commands.try_recv().ok())
+                .filter(|command| matches!(command, Command::ApplyPictureEdit { .. }))
+                .count();
+            assert_eq!(writes, 1, "one write of the picture at a time");
+            app.apply_backend_event(Event::PictureEdited { target, result }, true);
+            let again = app
+                .picture_edit
+                .as_ref()
+                .expect("the editor opens once the edit lands");
+            assert_eq!(again.origin(), kept, "on the edit that was written");
+        }
     }
 
     /// Opening the editor asks for the pixelation colours, and only the
