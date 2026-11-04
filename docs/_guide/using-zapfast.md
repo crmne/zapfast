@@ -504,7 +504,8 @@ the small inline thumbnail. The inline image stays visible while decoding or
 if the codec is unavailable, including in albums. Forwarded videos, including
 TikTok shares, use the same layout. Videos without captions carry their time
 over the bottom corner; captions stay below the video with the time beside
-them. Playback controls keep clear of the overlaid time.
+them. A camera icon precedes the duration. Duration and overlaid time use plain
+white text over a bottom fade. Playback controls keep clear of the overlaid time.
 Automatic downloads follow your setting.
 Double-click one, or use the button at the end of its
 controls, to play it in the full-window viewer:

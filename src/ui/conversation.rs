@@ -6648,7 +6648,7 @@ fn footer_over_picture(
         ),
         picture.right_bottom() - OVER_PICTURE_INSET,
     );
-    if ui.is_rect_visible(picture) {
+    if ui.is_rect_visible(picture) && !matches!(message.content, Content::Video { .. }) {
         let scrim = row.expand2(vec2(6.0, 2.0)).intersect(picture);
         ui.painter()
             .rect_filled(scrim, scrim.height() / 2.0, Color32::from_black_alpha(110));
@@ -9218,6 +9218,9 @@ fn album_tile(
             }
         }
         if not_sent(message) {
+            if matches!(message.content, Content::Video { .. }) {
+                video_metadata_shade(ui, rect);
+            }
             let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
             footer_over_picture(ui, view, message, rect, starred, pinned, actions);
@@ -10856,6 +10859,7 @@ fn video(
                 Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
+            video_metadata_shade(ui, rect);
         }
         if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -10913,9 +10917,12 @@ fn video(
             }
         }
         let state = status.as_ref().map(|status| status.state);
+        let controls = status
+            .as_ref()
+            .is_some_and(|status| video_controls_visible(ui, status, rect));
+        let bottom = rect.bottom() - if controls { VIDEO_CONTROLS_HEIGHT } else { 0.0 };
+        video_metadata_shade(ui, Rect::from_min_max(rect.min, pos2(rect.right(), bottom)));
         if state != Some(State::Playing) {
-            ui.painter()
-                .rect_filled(rect, 6.0, Color32::from_black_alpha(40));
             let disc = Rect::from_center_size(rect.center(), Vec2::splat(48.0));
             ui.painter()
                 .circle_filled(disc.center(), 24.0, Color32::from_black_alpha(140));
@@ -10940,7 +10947,15 @@ fn video(
                     theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger)
                 }
                 (Some(_), _) | (None, MediaState::Idle) => {
-                    theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE)
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            disc.center() + vec2(-6.0, -10.0),
+                            disc.center() + vec2(-6.0, 10.0),
+                            disc.center() + vec2(10.0, 0.0),
+                        ],
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
                 }
             }
         }
@@ -10948,7 +10963,7 @@ fn video(
             (Some(status), Some(path)) => {
                 // Controls show while paused and while the pointer is over
                 // the video, as in other players.
-                if video_controls_visible(ui, status, rect) {
+                if controls {
                     video_controls(
                         ui,
                         &VideoControls {
@@ -10979,20 +10994,31 @@ fn video(
                 if !label.is_empty() {
                     let galley = ui.painter().layout_no_wrap(
                         label.join(" · "),
-                        theme::medium(11.5),
+                        theme::regular(11.0),
                         Color32::WHITE,
                     );
-                    let chip = Rect::from_min_size(
-                        pos2(rect.left() + 8.0, rect.bottom() - galley.size().y - 14.0),
-                        galley.size() + vec2(12.0, 6.0),
+                    let center_y = rect.bottom() - OVER_PICTURE_INSET.y - 7.5;
+                    let mut x = rect.left() + 8.0;
+                    if !gif {
+                        let camera = Rect::from_min_size(pos2(x, center_y - 4.5), vec2(9.0, 9.0));
+                        ui.painter().rect_filled(camera, 1.0, Color32::WHITE);
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![
+                                pos2(x + 9.0, center_y - 2.0),
+                                pos2(x + 13.0, center_y - 4.5),
+                                pos2(x + 13.0, center_y + 4.5),
+                                pos2(x + 9.0, center_y + 2.0),
+                            ],
+                            Color32::WHITE,
+                            Stroke::NONE,
+                        ));
+                        x += 17.0;
+                    }
+                    ui.painter().galley(
+                        pos2(x, center_y - galley.size().y / 2.0),
+                        galley,
+                        Color32::WHITE,
                     );
-                    ui.painter().rect_filled(
-                        chip,
-                        chip.height() / 2.0,
-                        Color32::from_black_alpha(140),
-                    );
-                    ui.painter()
-                        .galley(chip.min + vec2(6.0, 3.0), galley, Color32::WHITE);
                 }
             }
         }
@@ -11023,6 +11049,38 @@ fn video(
         actions.push(expand_video_action(&message.id, path));
     }
     rect
+}
+
+/// Shared rounded fade behind video metadata, backed by one cached two-pixel texture.
+fn video_metadata_shade(ui: &egui::Ui, rect: Rect) {
+    // One two-pixel texture provides a rounded bottom fade for both labels.
+    let shade_id = egui::Id::new("video-bottom-shade");
+    let shade = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::TextureHandle>(shade_id))
+        .unwrap_or_else(|| {
+            let texture = ui.ctx().load_texture(
+                "video-bottom-shade",
+                egui::ColorImage::new(
+                    [1, 2],
+                    vec![Color32::TRANSPARENT, Color32::from_black_alpha(150)],
+                ),
+                egui::TextureOptions::LINEAR,
+            );
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(shade_id, texture.clone()));
+            texture
+        });
+    paint_texture(
+        ui,
+        Rect::from_min_max(
+            pos2(rect.left(), (rect.bottom() - 40.0).max(rect.top())),
+            rect.max,
+        ),
+        shade.id(),
+        Rect::from_min_max(pos2(0.0, 0.25), pos2(1.0, 0.75)),
+        6.0,
+    );
 }
 
 const VIDEO_CONTROLS_HEIGHT: f32 = 32.0;
@@ -12159,6 +12217,33 @@ mod tests {
                         let id = bubble_id(&row.chat, &row.id);
                         let video = rect(id.with("video"));
                         let clock = rect(footer_id(&row.chat, &row.id));
+                        let duration = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text)
+                                    if text.galley.text().starts_with("2:58") =>
+                                {
+                                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                                }
+                                _ => None,
+                            })
+                            .expect("the video duration is painted");
+                        assert!(
+                            output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Rect(shape) if shape.fill == Color32::WHITE
+                                && (shape.rect.left() - video.left() - 8.0).abs() < 0.5
+                                && (shape.rect.center().y - duration.center().y).abs() < 0.5
+                                && shape.rect.width() <= 12.0)),
+                            "a solid camera precedes the duration"
+                        );
+                        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Rect(shape) if shape.fill.a() > 0
+                                && shape.fill.r() == 0 && shape.fill.g() == 0 && shape.fill.b() == 0
+                                && shape.rect.width() < video.width() * 0.75
+                                && shape.rect.height() < 32.0
+                                && (shape.rect.contains_rect(duration) || shape.rect.contains_rect(clock))
+                        )), "video labels have no pill backgrounds");
                         if caption.is_none() {
                             assert!(
                                 video.contains_rect(clock),
