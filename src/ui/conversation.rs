@@ -2569,7 +2569,8 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
                     let right = ui.max_rect().right();
                     let (bar, _) = ui.allocate_exact_size(vec2(3.0, 0.0), Sense::hover());
                     let width = (ui.available_width() - 46.0).max(0.0);
-                    let card = preview_layout(ui, &palette, &composed.preview, thumbnail, width);
+                    let (card, _) =
+                        composer_preview_layout(ui, &palette, &composed.preview, thumbnail, width);
                     ui.painter().rect_filled(
                         Rect::from_x_y_ranges(bar.x_range(), card.y_range()),
                         2.0,
@@ -5590,133 +5591,160 @@ fn bubble_frame(
     // A picture without a caption carries its time over its corner, so
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = album.is_none() && time_over_picture(message);
+    let media_preview = whatsapp_media_preview(&palette, message);
+    let mut margin = bubble_margin(&palette, message, over_picture);
+    if media_preview {
+        margin.left = 9;
+        margin.right = 9;
+        margin.bottom = 3;
+        if !(show_sender && view.chat.is_group()) && !message.forwarded && message.quoted.is_none()
+        {
+            margin.top = 3;
+        }
+    }
     let mut tiles: Vec<(Rect, String)> = Vec::new();
-    let inner = Frame::new()
-        .inner_margin(bubble_margin(&palette, message, over_picture))
-        .show(ui, |ui| {
-            ui.set_max_width(max_width);
-            ui.spacing_mut().item_spacing.y = 4.0;
-            if show_sender && view.chat.is_group() {
-                let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
-                let response = widgets::rich_text(
-                    ui,
-                    &name,
-                    theme::semibold(13.0),
-                    palette.sender(crate::util::hue(&message.sender)),
-                );
-                let response = ui
-                    .interact(
-                        response.rect,
-                        ui.id().with(("sender", &message.id)),
-                        Sense::CLICK,
-                    )
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(bubble_id.with("sender"), response.rect));
-                if response.clicked() {
-                    actions.push(sender_info_action(message));
-                }
-            } else {
-                // A name from an earlier frame must not trim the text's
-                // click target below.
-                ui.ctx()
-                    .data_mut(|data| data.remove::<Rect>(bubble_id.with("sender")));
+    let inner = Frame::new().inner_margin(margin).show(ui, |ui| {
+        ui.set_max_width(max_width);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        if show_sender && view.chat.is_group() {
+            let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
+            let response = widgets::rich_text(
+                ui,
+                &name,
+                theme::semibold(13.0),
+                palette.sender(crate::util::hue(&message.sender)),
+            );
+            let response = ui
+                .interact(
+                    response.rect,
+                    ui.id().with(("sender", &message.id)),
+                    Sense::CLICK,
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(bubble_id.with("sender"), response.rect));
+            if response.clicked() {
+                actions.push(sender_info_action(message));
             }
-            // Reserve the label's line now and paint it once the contents
-            // are measured, at their start: an own bubble lays out from the
-            // right, and its width is known only then.
-            let forwarded = message.forwarded.then(|| forwarded_label(ui, &palette));
-            // Cards share the bubble's settled width: at least CARD_WIDTH and
-            // no more than the cap. Text spans that width and stays left-aligned.
-            // Bubbles without cards use the natural text width.
-            let inset = if palette.bubbles == theme::BubbleStyle::Messages
-                && !bare_picture(&palette, message)
-            {
-                MESSAGES_BUBBLE_MARGIN.sum().x
-            } else {
-                20.0
-            };
-            let cap = ((max_width - inset).min(ui.available_width())).max(0.0);
-            let last = album
-                .and_then(|messages| messages.last())
-                .unwrap_or(message);
-            // An album's footer is its last member's, marks included.
-            let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
-            let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let reserve = footer_width(ui, last, starred, pinned);
-            let settled = album
-                .map(|_| CARD_WIDTH.min(cap))
-                .or_else(|| settled_width(ui, view, message, cap));
-            let slot = if let Some(messages) = album {
-                let mut quoted_targets = HashMap::new();
-                let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
-                for member in messages {
-                    if let Some(quoted) = &member.quoted {
-                        // WhatsApp can repeat the same reply on every album
-                        // item. Show each target once, keeping distinct replies.
-                        let target = (
-                            quoted.chat.as_deref().unwrap_or(&view.chat.id),
-                            quoted.id.as_str(),
-                            quoted.sender.as_str(),
-                        );
-                        let index = *quoted_targets.entry(target).or_insert_with(|| {
-                            quotes.push((member, quoted));
-                            quotes.len() - 1
-                        });
-                        // Keep targets in their first-seen order, but let a
-                        // later copy supply text missing from the first one.
-                        if quotes[index].1.summary.trim().is_empty()
-                            && !quoted.summary.trim().is_empty()
-                        {
-                            quotes[index] = (member, quoted);
-                        }
+        } else {
+            // A name from an earlier frame must not trim the text's
+            // click target below.
+            ui.ctx()
+                .data_mut(|data| data.remove::<Rect>(bubble_id.with("sender")));
+        }
+        // Reserve the label's line now and paint it once the contents
+        // are measured, at their start: an own bubble lays out from the
+        // right, and its width is known only then.
+        let forwarded = message.forwarded.then(|| forwarded_label(ui, &palette));
+        // Cards settle the text width within the cap. Their pictures may
+        // reach into the side padding; text stays left-aligned.
+        // Bubbles without cards use the natural text width.
+        let inset = if bare_picture(&palette, message) {
+            20.0
+        } else {
+            margin.sum().x
+        };
+        let cap = ((max_width - inset).min(ui.available_width())).max(0.0);
+        let last = album
+            .and_then(|messages| messages.last())
+            .unwrap_or(message);
+        // An album's footer is its last member's, marks included.
+        let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
+        let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
+        let reserve = footer_width(ui, last, starred, pinned);
+        let settled = album
+            .map(|_| CARD_WIDTH.min(cap))
+            .or_else(|| settled_width(ui, view, message, cap));
+        let slot = if let Some(messages) = album {
+            let mut quoted_targets = HashMap::new();
+            let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
+            for member in messages {
+                if let Some(quoted) = &member.quoted {
+                    // WhatsApp can repeat the same reply on every album
+                    // item. Show each target once, keeping distinct replies.
+                    let target = (
+                        quoted.chat.as_deref().unwrap_or(&view.chat.id),
+                        quoted.id.as_str(),
+                        quoted.sender.as_str(),
+                    );
+                    let index = *quoted_targets.entry(target).or_insert_with(|| {
+                        quotes.push((member, quoted));
+                        quotes.len() - 1
+                    });
+                    // Keep targets in their first-seen order, but let a
+                    // later copy supply text missing from the first one.
+                    if quotes[index].1.summary.trim().is_empty()
+                        && !quoted.summary.trim().is_empty()
+                    {
+                        quotes[index] = (member, quoted);
                     }
                 }
-                for (member, quoted) in quotes {
-                    quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
-                }
-                tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
-                None
-            } else {
-                match settled {
-                    Some(width) => {
-                        if let Some(quoted) = &message.quoted {
-                            quote_block(ui, view, message, quoted, width, actions);
-                        }
-                        content(ui, view, message, width, reserve, actions)
+            }
+            for (member, quoted) in quotes {
+                quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
+            }
+            tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
+            None
+        } else {
+            match settled {
+                Some(width) => {
+                    if let Some(quoted) = &message.quoted {
+                        quote_block(ui, view, message, quoted, width, actions);
                     }
-                    None => content(ui, view, message, cap, reserve, actions),
+                    content(ui, view, message, width, reserve, actions)
                 }
-            };
-            if over_picture && let Some(picture) = slot {
-                footer_over_picture(ui, view, message, picture, starred, pinned, actions);
-            } else {
-                footer(ui, view, last, slot, starred, pinned, actions);
+                None => content(ui, view, message, cap, reserve, actions),
             }
-            if matches!(message.content, Content::Poll { .. }) {
-                super::polls::results_button(
-                    ui,
-                    &palette,
-                    view.locale,
-                    message,
-                    settled.unwrap_or(cap),
-                    actions,
-                );
-            }
-            if let Content::Interactive {
-                card: Some(card), ..
-            } = &message.content
-            {
-                interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
-            }
-            if let Some((reserved, galley)) = forwarded {
-                let at = pos2(ui.min_rect().left(), reserved.top());
-                let painted = paint_forwarded_label(ui, &palette, at, galley);
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(bubble_id.with("forwarded"), painted);
-                });
-            }
-        });
+        };
+        let slot = if media_preview {
+            slot.map(|slot| {
+                // WhatsApp lowers inline metadata below the link's baseline.
+                let slot = slot.translate(vec2(0.0, 7.0));
+                ui.expand_to_include_rect(slot);
+                slot
+            })
+        } else {
+            slot
+        };
+        if over_picture
+            && let Some(picture) = slot.filter(|picture| picture_footer_fits(*picture, reserve))
+        {
+            footer_over_picture(ui, view, message, picture, starred, pinned, actions);
+        } else {
+            footer(
+                ui,
+                view,
+                last,
+                if over_picture { None } else { slot },
+                starred,
+                pinned,
+                actions,
+            );
+        }
+        if matches!(message.content, Content::Poll { .. }) {
+            super::polls::results_button(
+                ui,
+                &palette,
+                view.locale,
+                message,
+                settled.unwrap_or(cap),
+                actions,
+            );
+        }
+        if let Content::Interactive {
+            card: Some(card), ..
+        } = &message.content
+        {
+            interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
+        }
+        if let Some((reserved, galley)) = forwarded {
+            let at = pos2(ui.min_rect().left(), reserved.top());
+            let painted = paint_forwarded_label(ui, &palette, at, galley);
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(bubble_id.with("forwarded"), painted);
+            });
+        }
+    });
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         ui.painter().set(
             backdrop,
@@ -6022,6 +6050,8 @@ fn bubble_frame(
 
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
+/// Space between a media preview's edge and its message text.
+const PREVIEW_TEXT_INSET: i8 = 6;
 const CAROUSEL_CARD_WIDTH: f32 = 280.0;
 /// Location cards: a map preview across the top, then the details.
 const LOCATION_CARD_WIDTH: f32 = 300.0;
@@ -6029,6 +6059,27 @@ const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Text {
+        preview: Some(preview),
+        ..
+    } = &message.content
+        && large_preview(preview, message.thumbnail.as_deref())
+    {
+        let whatsapp = view.palette.bubbles == theme::BubbleStyle::WhatsApp;
+        let picture = if preview.is_video() {
+            240.0
+        } else if whatsapp {
+            330.0
+        } else {
+            CARD_WIDTH
+        };
+        let inset = if whatsapp {
+            2.0 * f32::from(PREVIEW_TEXT_INSET)
+        } else {
+            0.0
+        };
+        return Some((picture - inset).min(cap).max(0.0));
+    }
     if matches!(
         message.content,
         Content::Location { .. } | Content::LiveLocation { .. }
@@ -6059,9 +6110,6 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
             Content::Interactive { card, .. } => card.is_some(),
-            // Videos without a poster use the file-row layout, except the
-            // round ones, which always draw as a circle.
-            Content::Video { note, .. } => !note && message.thumbnail.is_none(),
             _ => false,
         };
     card.then(|| {
@@ -6500,9 +6548,17 @@ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -
 }
 
 /// Whether the message's time and ticks sit over its picture rather than
-/// on a line of their own: a picture without a caption, as in WhatsApp.
+/// on a line of their own: a photo or video without a caption, as in WhatsApp.
 fn time_over_picture(message: &Message) -> bool {
-    matches!(message.content, Content::Image { caption: None, .. })
+    matches!(
+        message.content,
+        Content::Image { caption: None, .. }
+            | Content::Video {
+                caption: None,
+                note: false,
+                ..
+            }
+    )
 }
 
 /// The ticks a message in this view shows (see [`display_delivery`]).
@@ -6539,7 +6595,7 @@ pub(super) fn display_delivery(
 /// itself. A quote or the forwarded label keeps the bubble around it.
 fn bare_picture(palette: &Palette, message: &Message) -> bool {
     palette.bubbles == theme::BubbleStyle::Messages
-        && time_over_picture(message)
+        && matches!(message.content, Content::Image { caption: None, .. })
         && message.quoted.is_none()
         && !message.forwarded
 }
@@ -6557,6 +6613,11 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
 /// around the time keeps a few points clear of the rounded corner.
 const OVER_PICTURE_INSET: Vec2 = vec2(10.0, 6.0);
 
+fn picture_footer_fits(picture: Rect, width: f32) -> bool {
+    width + 2.0 * OVER_PICTURE_INSET.x <= picture.width()
+        && 15.0 + 2.0 * OVER_PICTURE_INSET.y <= picture.height()
+}
+
 /// Paints the time and ticks over the bottom corner of a picture without a
 /// caption, in white on a soft dark scrim so they read on any picture.
 fn footer_over_picture(
@@ -6569,10 +6630,27 @@ fn footer_over_picture(
     actions: &mut Vec<Action>,
 ) {
     let palette = &view.palette;
+    // Keep metadata above the controls while a video is paused or hovered.
+    let picture = if matches!(&message.content, Content::Video { media, note: false, .. } if media.path.is_some())
+        && view
+            .video
+            .status(&message.id)
+            .is_some_and(|status| video_controls_visible(ui, &status, picture))
+    {
+        Rect::from_min_max(picture.min, picture.max - vec2(0.0, VIDEO_CONTROLS_HEIGHT))
+    } else {
+        picture
+    };
     let font = theme::regular(11.0);
-    let time =
+    let time = ui.painter().layout_no_wrap(
+        crate::util::clock(message.timestamp),
+        font.clone(),
+        Color32::WHITE,
+    );
+    let edited = message.edited.then(|| {
         ui.painter()
-            .layout_no_wrap(crate::util::clock(message.timestamp), font, Color32::WHITE);
+            .layout_no_wrap("edited".to_owned(), font, Color32::WHITE)
+    });
     let failed = not_sent(message).then(|| {
         ui.painter()
             .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
@@ -6581,6 +6659,7 @@ fn footer_over_picture(
     let marks =
         if starred { FOOTER_MARK_SLOT } else { 0.0 } + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     let width = time.size().x
+        + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
         + tick_width
         + marks;
@@ -6591,7 +6670,7 @@ fn footer_over_picture(
         ),
         picture.right_bottom() - OVER_PICTURE_INSET,
     );
-    if ui.is_rect_visible(picture) {
+    if ui.is_rect_visible(picture) && !matches!(message.content, Content::Video { .. }) {
         let scrim = row.expand2(vec2(6.0, 2.0)).intersect(picture);
         ui.painter()
             .rect_filled(scrim, scrim.height() / 2.0, Color32::from_black_alpha(110));
@@ -6617,6 +6696,14 @@ fn footer_over_picture(
     let status =
         Rect::from_x_y_ranges(x..=row.right(), row.center().y - 7.5..=row.center().y + 7.5);
     status_opens_info(ui, view, message, status, actions);
+    if let Some(edited) = edited {
+        x -= edited.size().x + 4.0;
+        ui.painter().galley(
+            pos2(x, row.center().y - edited.size().y / 2.0),
+            edited,
+            Color32::WHITE,
+        );
+    }
     if let Some(failed) = failed {
         x -= failed.size().x + 6.0;
         let label = Rect::from_min_size(
@@ -6746,7 +6833,9 @@ fn footer(
     let width = time.size().x
         + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
-        + tick_width;
+        + tick_width
+        + if starred { FOOTER_MARK_SLOT } else { 0.0 }
+        + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     let rect = match slot {
         Some(slot) => slot,
         None => {
@@ -7567,7 +7656,10 @@ fn context_menu(
     {
         actions.push(Action::SaveSticker(path.clone()));
     }
-    if let Some(media) = message.content.media() {
+    if let Some(media) = message.content.media()
+        && (!matches!(message.content, Content::Text { .. })
+            || (media.path.is_none() && matches!(media.state, MediaState::Failed(_))))
+    {
         match &media.path {
             Some(path) => {
                 let open = if matches!(message.content, Content::Video { gif: false, .. }) {
@@ -8190,7 +8282,24 @@ fn content(
         }
         Content::Text { text, preview } => {
             if let Some(preview) = preview {
-                preview_card(ui, view, message, preview, width, actions);
+                if whatsapp_media_preview(&palette, message) {
+                    // The picture reaches toward the bubble edge; text keeps
+                    // WhatsApp's wider inset without increasing the bubble.
+                    Frame::new()
+                        .inner_margin(Margin::symmetric(-PREVIEW_TEXT_INSET, 0))
+                        .show(ui, |ui| {
+                            preview_card(
+                                ui,
+                                view,
+                                message,
+                                preview,
+                                width + 2.0 * f32::from(PREVIEW_TEXT_INSET),
+                                actions,
+                            );
+                        });
+                } else {
+                    preview_card(ui, view, message, preview, width, actions);
+                }
             }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
             rich_body(ui, view, message, text, width, Some(reserve), span, actions)
@@ -8245,7 +8354,11 @@ fn content(
             let drawn = if *note {
                 video_note(ui, view, message, media, *seconds, actions)
             } else {
-                video(ui, view, message, media, *seconds, *gif, width, actions)
+                let rect = video(ui, view, message, media, *seconds, *gif, width, actions);
+                if caption.is_none() {
+                    return Some(rect);
+                }
+                rect.width()
             };
             caption.as_ref().and_then(|caption| {
                 let wrap = if message.quoted.is_some() {
@@ -9054,27 +9167,43 @@ fn album_tile(
     theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         ui.painter().rect_filled(rect, 5.0, view.palette.surface);
-        let uri = media
-            .path
-            .as_ref()
-            .filter(|_| matches!(message.content, Content::Image { .. }))
-            .map(|path| {
-                let uri = crate::util::image_uri(path);
-                crate::image_cache::touch(ui.ctx(), &uri);
-                uri
-            })
-            .or_else(|| {
-                message.thumbnail.as_deref().map(|bytes| {
-                    thumbnail_uri(
-                        ui.ctx(),
-                        &message.chat,
-                        &format!("{}-album-{row}-{column}", message.id),
-                        bytes,
-                    )
+        let poster = if matches!(message.content, Content::Video { .. }) {
+            media
+                .path
+                .as_ref()
+                .and_then(|path| match animation::frame(ui, path, rect, false) {
+                    animation::Frame::Ready(texture) => Some(texture),
+                    _ => None,
                 })
+        } else {
+            None
+        };
+        let image = poster
+            .as_ref()
+            .map(|texture| egui::Image::from_texture((texture.id(), texture.size_vec2())))
+            .or_else(|| {
+                let uri = media
+                    .path
+                    .as_ref()
+                    .filter(|_| matches!(message.content, Content::Image { .. }))
+                    .map(|path| {
+                        let uri = crate::util::image_uri(path);
+                        crate::image_cache::touch(ui.ctx(), &uri);
+                        uri
+                    })
+                    .or_else(|| {
+                        message.thumbnail.as_deref().map(|bytes| {
+                            thumbnail_uri(
+                                ui.ctx(),
+                                &message.chat,
+                                &format!("{}-album-{row}-{column}", message.id),
+                                bytes,
+                            )
+                        })
+                    });
+                uri.map(egui::Image::new)
             });
-        if let Some(uri) = uri {
-            let image = egui::Image::new(uri);
+        if let Some(image) = image {
             let dimensions = match image.load_for_size(ui.ctx(), size) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
                 Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
@@ -9122,6 +9251,9 @@ fn album_tile(
             }
         }
         if not_sent(message) {
+            if matches!(message.content, Content::Video { .. }) {
+                video_metadata_shade(ui, rect);
+            }
             let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
             footer_over_picture(ui, view, message, rect, starred, pinned, actions);
@@ -9635,7 +9767,11 @@ fn rich_body(
     let palette = view.palette;
     let mentions = mentions_of(view, message);
     let style = markup::Style {
-        size: BODY_SIZE,
+        size: if whatsapp_media_preview(&palette, message) {
+            14.0
+        } else {
+            BODY_SIZE
+        },
         color: palette.text,
         secondary: palette.secondary,
         link: palette.link,
@@ -9891,6 +10027,7 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    let large = large_preview(preview, message.thumbnail.as_deref());
     let thumbnail = message
         .thumbnail
         .as_deref()
@@ -9898,12 +10035,22 @@ fn preview_card(
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(8))
+        .inner_margin(if large { Margin::ZERO } else { Margin::same(8) })
         .show(ui, |ui| {
-            // Include margins in the settled card width.
-            let card_width = (width - 16.0).max(0.0);
+            // The caption supplies padding; the image fills the card.
+            let card_width = (width - if large { 0.0 } else { 16.0 }).max(0.0);
             ui.set_width(card_width);
-            preview_layout(ui, &palette, preview, thumbnail, card_width);
+            if large {
+                preview_layout(ui, &palette, preview, message, card_width, actions);
+            } else {
+                let (_, unreadable) =
+                    composer_preview_layout(ui, &palette, preview, thumbnail, card_width);
+                if unreadable
+                    && let Some(path) = preview.image.as_ref().and_then(|image| image.path.as_ref())
+                {
+                    actions.push(unreadable_media(view, message, path));
+                }
+            }
         })
         .response;
     ui.ctx().data_mut(|data| {
@@ -9919,22 +10066,255 @@ fn preview_card(
             Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    // Link pictures are preview assets, not full attachments. Fetch the
+    // WhatsApp-hosted picture even when automatic attachment downloads are off.
+    if view.connected
+        && ui.is_rect_visible(response.rect)
+        && let Some(image) = &preview.image
+        && image.path.is_none()
+        && matches!(image.state, MediaState::Idle)
+    {
+        actions.push(Action::Download {
+            manual: false,
+            card: None,
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+        });
+    }
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
     }
 }
 
+fn whatsapp_media_preview(palette: &Palette, message: &Message) -> bool {
+    palette.bubbles == theme::BubbleStyle::WhatsApp
+        && matches!(&message.content, Content::Text { preview: Some(preview), .. }
+            if large_preview(preview, message.thumbnail.as_deref()))
+}
+
+/// Small site icons stay compact; media posters and WhatsApp's larger
+/// downloadable pictures use the expanded layout.
+fn large_preview(preview: &LinkPreview, thumbnail: Option<&[u8]>) -> bool {
+    if preview.is_video() {
+        return true;
+    }
+    let dimensions = preview
+        .image
+        .as_ref()
+        .and_then(|image| {
+            image
+                .width
+                .zip(image.height)
+                .filter(|(width, height)| *width > 0 && *height > 0)
+        })
+        .or_else(|| {
+            thumbnail.and_then(|bytes| {
+                image::ImageReader::new(std::io::Cursor::new(bytes))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|reader| reader.into_dimensions().ok())
+            })
+        });
+    dimensions.map_or(preview.image.is_some(), |(width, height)| {
+        width >= 200 || height >= 200
+    })
+}
+
+/// Received/sent link cards put the image above the caption, as WhatsApp
+/// does. The composer keeps its smaller, horizontal preview strip.
+fn preview_layout(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    preview: &LinkPreview,
+    message: &Message,
+    card_width: f32,
+    actions: &mut Vec<Action>,
+) -> Rect {
+    let thumbnail = message.thumbnail.as_deref();
+    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(card_width);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let image = preview.image.as_ref();
+        let dimensions = image
+            .and_then(|image| image.width.zip(image.height))
+            .filter(|(w, h)| *w > 0 && *h > 0)
+            .or_else(|| {
+                thumbnail.and_then(|bytes| {
+                    image::ImageReader::new(std::io::Cursor::new(bytes))
+                        .with_guessed_format()
+                        .ok()?
+                        .into_dimensions()
+                        .ok()
+                })
+            });
+        let path = image.and_then(|image| image.path.as_ref());
+        if thumbnail.is_some()
+            || path.is_some()
+            || image.is_some_and(|image| matches!(image.state, MediaState::Downloading))
+        {
+            let (w, h) = dimensions.unwrap_or((1, 1));
+            let video = preview.is_video();
+            let height = if video {
+                card_width
+            } else {
+                (card_width * h as f32 / w as f32).min(card_width * 1.5)
+            };
+            let full = if ui.is_rect_visible(Rect::from_min_size(
+                ui.next_widget_position(),
+                vec2(card_width, height),
+            )) {
+                path.and_then(|path| {
+                    let uri = crate::util::image_uri(path);
+                    crate::image_cache::touch(ui.ctx(), &uri);
+                    match ui.ctx().try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        Ok(egui::load::TexturePoll::Pending { .. }) => None,
+                        Err(_) => {
+                            actions.push(Action::UnreadableMedia {
+                                chat: message.chat.clone(),
+                                message: message.id.clone(),
+                                path: path.clone(),
+                            });
+                            None
+                        }
+                    }
+                })
+            } else {
+                None
+            };
+            let height = if video {
+                height
+            } else {
+                full.as_ref()
+                    .map_or(height, |texture| {
+                        card_width * texture.size.y / texture.size.x
+                    })
+                    .min(card_width * 1.5)
+            };
+            let (rect, _) = ui.allocate_exact_size(vec2(card_width, height), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                ui.painter().rect_filled(rect, 4.0, palette.surface);
+                // Only retain/decode the inline JPEG until the full picture is ready.
+                let texture = full.or_else(|| {
+                    let uri = link_thumbnail_uri(
+                        ui.ctx(),
+                        preview,
+                        &message.chat,
+                        &message.id,
+                        thumbnail?,
+                    );
+                    match ui.ctx().try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        _ => None,
+                    }
+                });
+                if let Some(texture) = texture
+                    && rect.is_positive()
+                {
+                    let aspect = texture.size.x / texture.size.y;
+                    let target = rect.width() / rect.height();
+                    let uv = if aspect > target {
+                        let half = target / aspect * 0.5;
+                        Rect::from_min_max(pos2(0.5 - half, 0.0), pos2(0.5 + half, 1.0))
+                    } else {
+                        let half = aspect / target * 0.5;
+                        Rect::from_min_max(pos2(0.0, 0.5 - half), pos2(1.0, 0.5 + half))
+                    };
+                    paint_texture(ui, rect, texture.id, uv, 4.0);
+                }
+                if video {
+                    let center = rect.center();
+                    ui.painter()
+                        .circle_filled(center, 24.0, Color32::from_black_alpha(100));
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            center + vec2(-7.0, -13.0),
+                            center + vec2(-7.0, 13.0),
+                            center + vec2(13.0, 0.0),
+                        ],
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
+                }
+            }
+        }
+        Frame::new()
+            .inner_margin(Margin {
+                left: 10,
+                right: 10,
+                top: 8,
+                bottom: 10,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 20.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (text, font, color, lines, line_height) in [
+                    (
+                        preview.title.as_deref(),
+                        theme::semibold(12.5),
+                        palette.text,
+                        2,
+                        Some(19.0),
+                    ),
+                    (
+                        preview.description.as_deref(),
+                        theme::regular(12.5),
+                        palette.secondary,
+                        3,
+                        None,
+                    ),
+                ] {
+                    if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        let format = egui::TextFormat {
+                            line_height,
+                            valign: Align::TOP,
+                            ..egui::TextFormat::simple(font, color)
+                        };
+                        let line =
+                            widgets::formatted_line(ui, text, format, ui.available_width(), lines);
+                        let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                        line.paint(ui, rect.min, color);
+                    }
+                }
+                let domain = reqwest::Url::parse(&preview.url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .unwrap_or_default();
+                let line = widgets::line(
+                    ui,
+                    &domain,
+                    theme::regular(12.0),
+                    palette.dim,
+                    ui.available_width(),
+                    1,
+                );
+                let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                line.paint(ui, rect.min, palette.dim);
+            });
+    })
+    .response
+    .rect
+}
+
 /// The inside of a link preview card, a bubble's or the composer's: a
 /// 64-point thumbnail (from `thumbnail`'s chat, image id and JPEG), then the
 /// title, up to two lines of description and the domain, `card_width` wide.
-/// Returns where it was laid out.
-fn preview_layout(
+/// Returns its bounds and whether the cached picture failed to load.
+fn composer_preview_layout(
     ui: &mut egui::Ui,
     palette: &Palette,
     preview: &LinkPreview,
     thumbnail: Option<(&str, &str, &[u8])>,
     card_width: f32,
-) -> Rect {
+) -> (Rect, bool) {
     let domain = preview
         .url
         .split("://")
@@ -9946,46 +10326,76 @@ fn preview_layout(
         .to_owned();
     // Limit text to the space beside the thumbnail and keep it
     // left-aligned in own bubbles.
-    let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
-    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
-        ui.set_width(card_width);
-        ui.horizontal(|ui| {
-            if let Some((chat, id, bytes)) = thumbnail {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-                // Off-screen cards are laid out too; only a visible
-                // one keeps its thumbnail resident.
-                if ui.is_rect_visible(rect) {
-                    let uri = thumbnail_uri(ui.ctx(), chat, id, bytes);
-                    egui::Image::new(uri)
-                        .fit_to_exact_size(rect.size())
-                        .corner_radius(4.0)
-                        .paint_at(ui, rect);
+    let has_picture = thumbnail.is_some() || preview.image.is_some();
+    let column = (card_width - if has_picture { 72.0 } else { 0.0 }).max(0.0);
+    let mut unreadable = false;
+    let rect = ui
+        .allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+            ui.set_width(card_width);
+            ui.horizontal(|ui| {
+                if has_picture {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                    // Off-screen cards are laid out too; only a visible
+                    // one keeps its thumbnail resident.
+                    if ui.is_rect_visible(rect) {
+                        let uri = preview
+                            .image
+                            .as_ref()
+                            .and_then(|image| image.path.as_ref())
+                            .and_then(|path| {
+                                let uri = crate::util::image_uri(path);
+                                crate::image_cache::touch(ui.ctx(), &uri);
+                                match ui.ctx().try_load_texture(
+                                    &uri,
+                                    egui::TextureOptions::LINEAR,
+                                    egui::load::SizeHint::default(),
+                                ) {
+                                    Ok(egui::load::TexturePoll::Ready { .. }) => Some(uri),
+                                    Ok(egui::load::TexturePoll::Pending { .. }) => None,
+                                    Err(_) => {
+                                        unreadable = true;
+                                        None
+                                    }
+                                }
+                            })
+                            .or_else(|| {
+                                thumbnail.map(|(chat, id, bytes)| {
+                                    link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes)
+                                })
+                            });
+                        if let Some(uri) = uri {
+                            egui::Image::new(uri)
+                                .fit_to_exact_size(rect.size())
+                                .corner_radius(4.0)
+                                .paint_at(ui, rect);
+                        }
+                    }
                 }
-            }
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.set_width(column);
-                if let Some(title) = &preview.title {
-                    widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
-                }
-                if let Some(description) = &preview.description {
-                    let line = widgets::line(
-                        ui,
-                        description,
-                        theme::regular(12.5),
-                        palette.secondary,
-                        ui.available_width(),
-                        2,
-                    );
-                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                    line.paint(ui, rect.min, palette.secondary);
-                }
-                theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.set_width(column);
+                    if let Some(title) = &preview.title {
+                        widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
+                    }
+                    if let Some(description) = &preview.description {
+                        let line = widgets::line(
+                            ui,
+                            description,
+                            theme::regular(12.5),
+                            palette.secondary,
+                            ui.available_width(),
+                            2,
+                        );
+                        let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                        line.paint(ui, rect.min, palette.secondary);
+                    }
+                    theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+                });
             });
-        });
-    })
-    .response
-    .rect
+        })
+        .response
+        .rect;
+    (rect, unreadable)
 }
 
 /// A location as a card: the map preview WhatsApp sent across the top, then
@@ -10051,6 +10461,21 @@ fn location_card(
             actions.push(Action::OpenUrl(crate::geo::map_url(spot)));
         }
     });
+}
+
+/// An edited link's inline picture must not reuse the previous URL's cached bytes.
+fn link_thumbnail_uri(
+    ctx: &egui::Context,
+    preview: &LinkPreview,
+    chat: &str,
+    id: &str,
+    bytes: &[u8],
+) -> String {
+    let id = format!(
+        "{id}-link-{:x}",
+        egui::Id::new((&preview.url, bytes)).value()
+    );
+    thumbnail_uri(ctx, chat, &id, bytes)
 }
 
 pub(crate) fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {
@@ -10491,32 +10916,16 @@ fn video(
     gif: bool,
     width: f32,
     actions: &mut Vec<Action>,
-) -> f32 {
+) -> Rect {
     use crate::video::State;
     let palette = view.palette;
-    // A video sent before ZapFast made thumbnails has none; its file is
-    // here, so its first frame stands in. Without either, it is a file card.
-    let thumbnail = message.thumbnail.as_deref();
-    if thumbnail.is_none() && media.path.is_none() {
-        let title = if gif { "GIF" } else { "Video" };
-        let mut detail = Vec::new();
-        if let Some(seconds) = seconds {
-            detail.push(crate::util::duration(seconds));
-        }
-        detail.push(crate::util::bytes(media.size));
-        attachment(
-            ui,
-            view,
-            message,
-            media,
-            Icon::Video,
-            title,
-            &detail.join(" · "),
-            width,
-            actions,
-        );
-        return width;
-    }
+    // A missing inline thumbnail does not change a video into a file row.
+    // Keep its frame and play target while downloading; the first decoded
+    // frame becomes its poster once the file is available.
+    let thumbnail = message
+        .thumbnail
+        .as_deref()
+        .filter(|bytes| !bytes.is_empty());
     let limit = width.min(PICTURE_WIDTH);
     // Without its size, a widescreen frame that fills the bubble: the hint is
     // in pixels, so a bare 16 by 9 would shrink it to the narrowest picture.
@@ -10527,6 +10936,19 @@ fn video(
         PICTURE_HEIGHT.min(limit * 1.3),
     );
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    #[cfg(test)]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("video"), rect);
+    });
+    let response = if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(format!("{error} · Click to retry"))
+    } else {
+        response
+    };
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 6.0, palette.surface);
+    }
+
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
             ui,
@@ -10544,6 +10966,9 @@ fn video(
                 Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
+            if time_over_picture(message) {
+                video_metadata_shade(ui, rect);
+            }
         }
         if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -10552,7 +10977,7 @@ fn video(
         {
             actions.push(Action::OpenFile(path.clone()));
         }
-        return size.x;
+        return rect;
     }
     let status = media
         .path
@@ -10574,36 +10999,39 @@ fn video(
                     6.0,
                 );
             }
-            None => match (thumbnail, &media.path) {
-                (Some(thumbnail), _) => {
-                    // Registering the poster decodes it, so it waits for the row to show.
+            None => {
+                let poster = media.path.as_ref().filter(|_| !gif).and_then(|path| {
+                    match animation::frame(ui, path, rect, false) {
+                        animation::Frame::Ready(texture) => Some(texture),
+                        _ => None,
+                    }
+                });
+                if let Some(texture) = poster {
+                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                    paint_texture(
+                        ui,
+                        fit_within(texture.size_vec2(), rect),
+                        texture.id(),
+                        Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        6.0,
+                    );
+                } else if let Some(thumbnail) = thumbnail {
+                    // Keep the inline JPEG until the downloaded frame is ready.
                     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
                     egui::Image::new(uri)
                         .fit_to_exact_size(size)
                         .corner_radius(6.0)
                         .paint_at(ui, rect);
                 }
-                (None, Some(path)) => {
-                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
-                    if let animation::Frame::Ready(texture) =
-                        animation::frame(ui, path, rect, false)
-                    {
-                        paint_texture(
-                            ui,
-                            fit_within(texture.size_vec2(), rect),
-                            texture.id(),
-                            Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            6.0,
-                        );
-                    }
-                }
-                (None, None) => {}
-            },
+            }
         }
         let state = status.as_ref().map(|status| status.state);
+        let controls = status
+            .as_ref()
+            .is_some_and(|status| video_controls_visible(ui, status, rect));
+        let bottom = rect.bottom() - if controls { VIDEO_CONTROLS_HEIGHT } else { 0.0 };
+        video_metadata_shade(ui, Rect::from_min_max(rect.min, pos2(rect.right(), bottom)));
         if state != Some(State::Playing) {
-            ui.painter()
-                .rect_filled(rect, 6.0, Color32::from_black_alpha(40));
             let disc = Rect::from_center_size(rect.center(), Vec2::splat(48.0));
             ui.painter()
                 .circle_filled(disc.center(), 24.0, Color32::from_black_alpha(140));
@@ -10628,7 +11056,15 @@ fn video(
                     theme::paint_icon(ui, Icon::CircleAlert, disc, 22.0, palette.danger)
                 }
                 (Some(_), _) | (None, MediaState::Idle) => {
-                    theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE)
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            disc.center() + vec2(-6.0, -10.0),
+                            disc.center() + vec2(-6.0, 10.0),
+                            disc.center() + vec2(10.0, 0.0),
+                        ],
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
                 }
             }
         }
@@ -10636,9 +11072,7 @@ fn video(
             (Some(status), Some(path)) => {
                 // Controls show while paused and while the pointer is over
                 // the video, as in other players.
-                if status.state == State::Paused
-                    || (status.state == State::Playing && ui.rect_contains_pointer(rect))
-                {
+                if controls {
                     video_controls(
                         ui,
                         &VideoControls {
@@ -10669,20 +11103,47 @@ fn video(
                 if !label.is_empty() {
                     let galley = ui.painter().layout_no_wrap(
                         label.join(" · "),
-                        theme::medium(11.5),
+                        theme::regular(11.0),
                         Color32::WHITE,
                     );
-                    let chip = Rect::from_min_size(
-                        pos2(rect.left() + 8.0, rect.bottom() - galley.size().y - 14.0),
-                        galley.size() + vec2(12.0, 6.0),
+                    let center_y = rect.bottom() - OVER_PICTURE_INSET.y - 7.5;
+                    let mut x = rect.left() + 8.0;
+                    let reserve = footer_width(
+                        ui,
+                        message,
+                        view.starred.is_some_and(|ids| ids.contains(&message.id)),
+                        view.pins.is_some_and(|ids| ids.contains(&message.id)),
                     );
-                    ui.painter().rect_filled(
-                        chip,
-                        chip.height() / 2.0,
-                        Color32::from_black_alpha(140),
-                    );
-                    ui.painter()
-                        .galley(chip.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+                    let overlays = time_over_picture(message) && picture_footer_fits(rect, reserve);
+                    let right = rect.right()
+                        - if overlays {
+                            OVER_PICTURE_INSET.x + reserve + 8.0
+                        } else {
+                            8.0
+                        };
+                    let fits = x + galley.size().x + if gif { 0.0 } else { 17.0 } <= right;
+                    if !gif && fits {
+                        let camera = Rect::from_min_size(pos2(x, center_y - 4.5), vec2(9.0, 9.0));
+                        ui.painter().rect_filled(camera, 1.0, Color32::WHITE);
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![
+                                pos2(x + 9.0, center_y - 2.0),
+                                pos2(x + 13.0, center_y - 4.5),
+                                pos2(x + 13.0, center_y + 4.5),
+                                pos2(x + 9.0, center_y + 2.0),
+                            ],
+                            Color32::WHITE,
+                            Stroke::NONE,
+                        ));
+                        x += 17.0;
+                    }
+                    if fits {
+                        ui.painter().galley(
+                            pos2(x, center_y - galley.size().y / 2.0),
+                            galley,
+                            Color32::WHITE,
+                        );
+                    }
                 }
             }
         }
@@ -10712,7 +11173,46 @@ fn video(
     {
         actions.push(expand_video_action(&message.id, path));
     }
-    size.x
+    rect
+}
+
+/// Shared rounded fade behind video metadata, backed by one cached two-pixel texture.
+fn video_metadata_shade(ui: &egui::Ui, rect: Rect) {
+    // One two-pixel texture provides a rounded bottom fade for both labels.
+    let shade_id = egui::Id::new("video-bottom-shade");
+    let shade = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::TextureHandle>(shade_id))
+        .unwrap_or_else(|| {
+            let texture = ui.ctx().load_texture(
+                "video-bottom-shade",
+                egui::ColorImage::new(
+                    [1, 2],
+                    vec![Color32::TRANSPARENT, Color32::from_black_alpha(150)],
+                ),
+                egui::TextureOptions::LINEAR,
+            );
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(shade_id, texture.clone()));
+            texture
+        });
+    paint_texture(
+        ui,
+        Rect::from_min_max(
+            pos2(rect.left(), (rect.bottom() - 40.0).max(rect.top())),
+            rect.max,
+        ),
+        shade.id(),
+        Rect::from_min_max(pos2(0.0, 0.25), pos2(1.0, 0.75)),
+        6.0,
+    );
+}
+
+const VIDEO_CONTROLS_HEIGHT: f32 = 32.0;
+
+fn video_controls_visible(ui: &egui::Ui, status: &crate::video::Status, rect: Rect) -> bool {
+    status.state == crate::video::State::Paused
+        || (status.state == crate::video::State::Playing && ui.rect_contains_pointer(rect))
 }
 
 /// What "Fill the window" does: the video covers the window, starting it
@@ -10781,7 +11281,10 @@ pub(crate) fn video_controls(
     status: &crate::video::Status,
     actions: &mut Vec<Action>,
 ) {
-    let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 32.0), rect.max);
+    let bar = Rect::from_min_max(
+        pos2(rect.left(), rect.bottom() - VIDEO_CONTROLS_HEIGHT),
+        rect.max,
+    );
     ui.painter().rect_filled(
         bar,
         CornerRadius {
@@ -11792,6 +12295,672 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compact_preview_reports_unreadable_cached_images_for_repair() {
+        for corrupt in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("icon.png");
+            if corrupt {
+                std::fs::write(&path, b"not an image").unwrap();
+            }
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            let preview = LinkPreview {
+                url: "https://example.com".into(),
+                title: None,
+                description: None,
+                video: false,
+                image_sha256: None,
+                image: Some(Box::new(Media {
+                    path: Some(path.clone()),
+                    ..media(Some(64), Some(64))
+                })),
+            };
+            with_still_view(|view| {
+                let mut row = message(Content::Text {
+                    text: preview.url.clone(),
+                    preview: Some(preview.clone()),
+                });
+                row.chat = view.chat.id.clone();
+                let mut actions = Vec::new();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while std::time::Instant::now() < deadline {
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        preview_card(ui, view, &row, &preview, 240.0, &mut actions);
+                    });
+                    output.textures_delta.clear();
+                    if !actions.is_empty() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                assert!(
+                    actions.iter().any(|action| matches!(action,
+                        Action::UnreadableMedia { chat, message, path: failed }
+                            if chat == &row.chat && message == &row.id && failed == &path
+                    )),
+                    "the stale compact path must be repaired, corrupt={corrupt}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn compact_preview_uses_inline_pixels_when_the_cached_file_is_unreadable() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let preview = LinkPreview {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            video: false,
+            image_sha256: None,
+            image: Some(Box::new(Media {
+                path: Some(root.path().join("missing.png")),
+                ..media(Some(64), Some(64))
+            })),
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let inline = link_thumbnail_uri(&ctx, &preview, "synthetic", "icon", jpeg.get_ref());
+        let mut painted = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                composer_preview_layout(
+                    ui,
+                    &Palette::dark(),
+                    &preview,
+                    Some(("synthetic", "icon", jpeg.get_ref())),
+                    240.0,
+                );
+            });
+            output.textures_delta.clear();
+            painted = output.shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) => rect.brush.as_ref().is_some_and(|brush| {
+                    ctx.tex_manager()
+                        .read()
+                        .meta(brush.fill_texture_id)
+                        .is_some_and(|meta| meta.name.contains(&inline))
+                }),
+                egui::Shape::Mesh(mesh) => ctx
+                    .tex_manager()
+                    .read()
+                    .meta(mesh.texture_id)
+                    .is_some_and(|meta| meta.name.contains(&inline)),
+                _ => false,
+            });
+            if painted {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            painted,
+            "a missing cached icon must not hide its inline thumbnail"
+        );
+    }
+
+    #[test]
+    fn narrow_video_metadata_does_not_overlap_or_escape_the_bubble() {
+        for width in [80, 720] {
+            for status in [Delivery::Sent, Delivery::Failed] {
+                let ctx = egui::Context::default();
+                crate::theme::install(&ctx);
+                with_still_view(|view| {
+                    let mut row = message(Content::Video {
+                        caption: None,
+                        media: media(Some(width), Some(640)),
+                        seconds: Some(178),
+                        gif: false,
+                        note: false,
+                    });
+                    row.chat = view.chat.id.clone();
+                    row.from_me = true;
+                    row.status = status;
+                    let marked = [row.id.clone()].into_iter().collect();
+                    let view = View {
+                        starred: Some(&marked),
+                        pins: Some(&marked),
+                        ..*view
+                    };
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                vec2(920.0, 1000.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            bubble(
+                                ui,
+                                &view,
+                                &row,
+                                None,
+                                RunPlace {
+                                    show_sender: false,
+                                    show_avatar: false,
+                                    tailed: false,
+                                },
+                                &mut Vec::new(),
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let id = bubble_id(&row.chat, &row.id);
+                    let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
+                    let frame = rect(id.with("rect"));
+                    let video = rect(id.with("video"));
+                    let clock = rect(footer_id(&row.chat, &row.id));
+                    assert!(
+                        frame.contains_rect(clock),
+                        "footer escapes the bubble: {clock:?}, {frame:?}"
+                    );
+                    let mut durations = 0;
+                    for shape in &output.shapes {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && text.galley.text().starts_with("2:58")
+                        {
+                            durations += 1;
+                            let duration = Rect::from_min_size(text.pos, text.galley.size());
+                            assert!(
+                                !clock.intersects(duration),
+                                "duration overlaps the timestamp"
+                            );
+                            assert!(video.contains_rect(duration), "duration escapes the video");
+                        }
+                    }
+                    assert_eq!(
+                        durations,
+                        // A failed narrow footer moves below the picture,
+                        // leaving the duration the whole bottom band.
+                        usize::from(width == 720 || status == Delivery::Failed),
+                        "duration visibility must match the deliberately chosen frame width"
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn video_timestamps_stay_inside_captionless_frames() {
+        for palette in [Palette::dark(), Palette::light()] {
+            for own in [false, true] {
+                for caption in [None, Some("A caption".to_owned())] {
+                    let ctx = egui::Context::default();
+                    crate::theme::install(&ctx);
+                    with_still_view(|view| {
+                        let view = View { palette, ..*view };
+                        let mut row = message(Content::Video {
+                            caption: caption.clone(),
+                            media: media(Some(360), Some(640)),
+                            seconds: Some(178),
+                            gif: false,
+                            note: false,
+                        });
+                        row.chat = view.chat.id.clone();
+                        row.from_me = own;
+                        row.forwarded = true;
+                        row.edited = true;
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    vec2(920.0, 1000.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                bubble(
+                                    ui,
+                                    &view,
+                                    &row,
+                                    None,
+                                    RunPlace {
+                                        show_sender: false,
+                                        show_avatar: false,
+                                        tailed: false,
+                                    },
+                                    &mut Vec::new(),
+                                );
+                            },
+                        );
+                        output.textures_delta.clear();
+                        let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
+                        let id = bubble_id(&row.chat, &row.id);
+                        let video = rect(id.with("video"));
+                        let clock = rect(footer_id(&row.chat, &row.id));
+                        assert!(
+                            output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Text(text) if text.galley.text() == "edited")),
+                            "edited videos keep their edit indicator"
+                        );
+                        let duration = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text)
+                                    if text.galley.text().starts_with("2:58") =>
+                                {
+                                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                                }
+                                _ => None,
+                            })
+                            .expect("the video duration is painted");
+                        assert!(
+                            output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Rect(shape) if shape.fill == Color32::WHITE
+                                && (shape.rect.left() - video.left() - 8.0).abs() < 0.5
+                                && (shape.rect.center().y - duration.center().y).abs() < 0.5
+                                && shape.rect.width() <= 12.0)),
+                            "a solid camera precedes the duration"
+                        );
+                        assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Rect(shape) if shape.fill.a() > 0
+                                && shape.fill.r() == 0 && shape.fill.g() == 0 && shape.fill.b() == 0
+                                && shape.rect.width() < video.width() * 0.75
+                                && shape.rect.height() < 32.0
+                                && (shape.rect.contains_rect(duration) || shape.rect.contains_rect(clock))
+                        )), "video labels have no pill backgrounds");
+                        if caption.is_none() {
+                            assert!(
+                                video.contains_rect(clock),
+                                "timestamp {clock:?} is outside video {video:?}"
+                            );
+                            assert!(rect(id.with("rect")).bottom() - video.bottom() <= 7.0);
+                        } else {
+                            assert!(
+                                clock.top() >= video.bottom(),
+                                "captioned video keeps its timestamp below the picture"
+                            );
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn whatsapp_media_preview_matches_card_and_timestamp_insets() {
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        for palette in [Palette::dark(), Palette::light()] {
+            for own in [false, true] {
+                for video in [false, true] {
+                    for viewport in [420.0, 920.0] {
+                        let ctx = egui::Context::default();
+                        crate::theme::install(&ctx);
+                        with_still_view(|view| {
+                            let view = View { palette, ..*view };
+                            let url = "https://www.instagram.com/p/example/?q=abc";
+                            let mut row = message(Content::Text {
+                                text: url.into(),
+                                preview: Some(LinkPreview {
+                                    image_sha256: None,
+                                    url: url.into(),
+                                    title: Some("A synthetic post on Instagram".into()),
+                                    description: None,
+                                    video,
+                                    image: Some(Box::new(media(Some(640), Some(640)))),
+                                }),
+                            });
+                            row.chat = view.chat.id.clone();
+                            row.from_me = own;
+                            row.thumbnail = Some(jpeg.get_ref().clone());
+                            let mut output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(Rect::from_min_size(
+                                        egui::Pos2::ZERO,
+                                        vec2(viewport, 1000.0),
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| {
+                                    bubble(
+                                        ui,
+                                        &view,
+                                        &row,
+                                        None,
+                                        RunPlace {
+                                            show_sender: false,
+                                            show_avatar: false,
+                                            tailed: false,
+                                        },
+                                        &mut Vec::new(),
+                                    );
+                                },
+                            );
+                            output.textures_delta.clear();
+                            let id = bubble_id(&row.chat, &row.id);
+                            let rect = |key| ctx.data(|data| data.get_temp::<Rect>(key)).unwrap();
+                            let frame = rect(id.with("rect"));
+                            let preview = rect(id.with("preview"));
+                            let body = rect(id.with("body"));
+                            let clock = rect(footer_id(&row.chat, &row.id));
+                            let maximum = if video { 246.0 } else { 336.0 };
+                            assert!(
+                                frame.width() <= maximum + 0.5,
+                                "card is too wide: {frame:?}, {maximum}"
+                            );
+                            assert!(
+                                (preview.left() - frame.left() - 3.0).abs() < 0.5,
+                                "picture inset: frame={frame:?}, preview={preview:?}"
+                            );
+                            assert!((frame.right() - preview.right() - 3.0).abs() < 0.5);
+                            assert!(
+                                clock.bottom() >= body.bottom() + 5.0,
+                                "timestamp sits too high: body={body:?}, clock={clock:?}"
+                            );
+                            assert!(
+                                frame.bottom() >= body.bottom() + 9.0,
+                                "link needs bottom breathing room: body={body:?}, frame={frame:?}"
+                            );
+                            assert!((frame.right() - clock.right() - 9.0).abs() < 0.5);
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn link_preview_puts_a_large_picture_above_its_caption() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let preview = LinkPreview {
+            image_sha256: None,
+            video: false,
+            image: None,
+            url: "https://example.com/article".into(),
+            title: Some("An article with a landscape picture".into()),
+            description: Some("Its description belongs below the picture.".into()),
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(300, 200)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut card = Rect::NOTHING;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            card = preview_layout(
+                ui,
+                &Palette::dark(),
+                &preview,
+                &Message {
+                    thumbnail: Some(jpeg.get_ref().clone()),
+                    ..message(Content::text("synthetic"))
+                },
+                300.0,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        assert!(card.height() > 240.0, "large picture and caption: {card:?}");
+        assert!(
+            card.width() <= 301.0,
+            "preview stays inside the bubble: {card:?}"
+        );
+    }
+
+    #[test]
+    fn link_preview_video_posters_are_square_and_captioned_below_in_both_directions() {
+        for (url, video) in [
+            ("https://www.instagram.com/reel/synthetic/", false),
+            ("https://example.com/clip", true),
+        ] {
+            for width in [180.0, 240.0] {
+                for layout in [
+                    Layout::top_down(Align::Min),
+                    Layout::right_to_left(Align::Min),
+                ] {
+                    let ctx = egui::Context::default();
+                    crate::theme::install(&ctx);
+                    let preview = LinkPreview {
+                        image_sha256: None,
+                        url: url.into(),
+                        title: Some(
+                            "Preview title that wraps over several lines in a narrow bubble".into(),
+                        ),
+                        description: None,
+                        video,
+                        image: None,
+                    };
+                    let mut jpeg = std::io::Cursor::new(Vec::new());
+                    image::RgbImage::new(300, 200)
+                        .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+                        .unwrap();
+                    let mut card = Rect::NOTHING;
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        ui.with_layout(layout, |ui| {
+                            card = preview_layout(
+                                ui,
+                                &Palette::dark(),
+                                &preview,
+                                &Message {
+                                    thumbnail: Some(jpeg.get_ref().clone()),
+                                    ..message(Content::text("synthetic"))
+                                },
+                                width,
+                                &mut Vec::new(),
+                            );
+                        });
+                    });
+                    output.textures_delta.clear();
+                    let play = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Path(path)
+                                if path.points.len() == 3 && path.fill == Color32::WHITE =>
+                            {
+                                Some(path)
+                            }
+                            _ => None,
+                        })
+                        .expect("a reel has a play overlay");
+                    assert!(
+                        (play.points[0].y + 13.0 - card.top() - width / 2.0).abs() < 1.0,
+                        "the play button is centered on a square poster"
+                    );
+                    let title = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text)
+                                if text.galley.job.text.starts_with("Preview title") =>
+                            {
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                        .expect("preview caption");
+                    assert!(
+                        title.pos.y >= card.top() + width,
+                        "caption sits below the image"
+                    );
+                    assert!(
+                        card.width() <= width + 1.0,
+                        "narrow/own previews never overflow"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn link_preview_site_icons_stay_compact_and_received_pictures_download_once() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut preview = LinkPreview {
+            image_sha256: None,
+            url: "https://example.com".into(),
+            title: Some("Site".into()),
+            description: None,
+            video: false,
+            image: None,
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "a small site icon is not a media poster"
+        );
+        preview.image = Some(Box::new(media(Some(64), Some(64))));
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "download metadata does not enlarge a favicon"
+        );
+        preview.image.as_mut().unwrap().width = None;
+        preview.image.as_mut().unwrap().height = None;
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "inline dimensions classify an icon when download dimensions are absent"
+        );
+        let old_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", jpeg.get_ref());
+        let new_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", b"replacement");
+        assert_ne!(old_uri, new_uri);
+        let egui::load::BytesPoll::Ready { bytes, .. } = ctx.try_load_bytes(&new_uri).unwrap()
+        else {
+            panic!("the replacement thumbnail must be registered")
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            b"replacement",
+            "the old cached JPEG must not win"
+        );
+        preview.image = Some(Box::new(media(Some(640), Some(640))));
+        with_still_view(|view| {
+            for (connected, state) in [
+                (false, MediaState::Idle),
+                (true, MediaState::Idle),
+                (true, MediaState::Downloading),
+                (true, MediaState::Failed("Expired".into())),
+            ] {
+                let view = View {
+                    auto_download: false,
+                    connected,
+                    ..*view
+                };
+                preview.image.as_mut().unwrap().state = state.clone();
+                let row = message(Content::Text {
+                    text: preview.url.clone(),
+                    preview: Some(preview.clone()),
+                });
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    preview_card(ui, &view, &row, &preview, 240.0, &mut actions);
+                });
+                output.textures_delta.clear();
+                assert_eq!(
+                    actions
+                        .iter()
+                        .filter(|action| matches!(action, Action::Download { .. }))
+                        .count(),
+                    usize::from(connected && matches!(state, MediaState::Idle)),
+                    "only a connected, visible idle preview requests its image"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn link_preview_paints_the_full_resolution_texture_over_the_inline_jpeg() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("full-preview.png");
+        image::RgbImage::from_fn(640, 320, |x, y| {
+            let pixel = if (x / 4 + y / 4) % 2 == 0 { 255 } else { 0 };
+            image::Rgb([pixel, pixel, pixel])
+        })
+        .save(&path)
+        .unwrap();
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        for video in [true, false] {
+            let preview = LinkPreview {
+                image_sha256: None,
+                url: if video {
+                    "https://www.instagram.com/reel/synthetic/"
+                } else {
+                    "https://example.com/article"
+                }
+                .into(),
+                title: Some("Full-quality preview".into()),
+                description: None,
+                video,
+                image: Some(Box::new(Media {
+                    path: Some(path.clone()),
+                    ..media(Some(640), Some(640))
+                })),
+            };
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            let uri = crate::util::image_uri(&path);
+            let full = (0..100)
+                .find_map(|_| {
+                    match ctx.try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        Ok(egui::load::TexturePoll::Pending { .. }) => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            None
+                        }
+                        Err(error) => panic!("full preview failed: {error}"),
+                    }
+                })
+                .expect("full preview texture decoded");
+            assert_eq!(full.size, vec2(640.0, 320.0));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                preview_layout(
+                    ui,
+                    &Palette::dark(),
+                    &preview,
+                    &Message {
+                        thumbnail: Some(jpeg.get_ref().clone()),
+                        ..message(Content::text("synthetic"))
+                    },
+                    240.0,
+                    &mut Vec::new(),
+                );
+            });
+            output.textures_delta.clear();
+            let painted = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) => rect
+                        .brush
+                        .as_ref()
+                        .filter(|brush| brush.fill_texture_id == full.id),
+                    _ => None,
+                })
+                .expect("the full-resolution image is painted");
+            assert_eq!(
+                painted.uv,
+                if video {
+                    Rect::from_min_max(pos2(0.25, 0.0), pos2(0.75, 1.0))
+                } else {
+                    Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0))
+                },
+                "crop uses decoded dimensions, not stale protocol dimensions"
+            );
+        }
+    }
+
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]
     fn a_vibrant_header_folds_its_buttons_rather_than_cover_the_name() {
@@ -13459,6 +14628,21 @@ mod reaction_tests {
                 gif: false,
                 note: false,
             }),
+            row(Content::Text {
+                text: "https://example.com".into(),
+                preview: Some(LinkPreview {
+                    url: "https://example.com".into(),
+                    title: None,
+                    description: None,
+                    video: false,
+                    image_sha256: None,
+                    image: Some(Box::new(media(
+                        "image/jpeg",
+                        None,
+                        MediaState::Failed("Expired".into()),
+                    ))),
+                }),
+            }),
             row(Content::Sticker {
                 media: media("image/webp", path, Idle),
                 animated: false,
@@ -13474,6 +14658,19 @@ mod reaction_tests {
         std::fs::write(&file, b"jpeg").unwrap();
         let mut labels = Vec::new();
         for row in menu_fixtures(&file) {
+            if matches!(
+                row.message.content,
+                Content::Text {
+                    preview: Some(_),
+                    ..
+                }
+            ) {
+                assert!(
+                    drawn_menu_words(crate::i18n::Locale::English, &row)
+                        .iter()
+                        .any(|label| label == "Download")
+                );
+            }
             let spanish = drawn_menu_words(crate::i18n::Locale::Spanish, &row);
             for english in drawn_menu_words(crate::i18n::Locale::English, &row) {
                 assert!(!spanish.contains(&english), "{english} in {spanish:?}");

@@ -6,12 +6,123 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::model::{ComposedPreview, LinkPreview};
+use whatsapp_rust::download::{DownloadParams, MediaType};
+use whatsapp_rust::prelude::{MessageExt, wa};
+
+impl super::Worker {
+    /// Recover preview metadata from retained protobufs without rederiving
+    /// other message kinds or overwriting edited text and downloaded files.
+    pub(super) fn backfill_link_previews(&mut self) {
+        const KEY: &str = "link_preview_images_v1";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let mut complete = true;
+        let mut after = 0;
+        loop {
+            let Ok(rows) = self.archive.link_previews_with_raw(after) else {
+                return;
+            };
+            if rows.is_empty() {
+                break;
+            }
+            for crate::archive::RawMessage {
+                rowid,
+                chat,
+                id,
+                raw,
+            } in rows
+            {
+                after = rowid;
+                let Some(raw) = raw else {
+                    continue;
+                };
+                use whatsapp_rust::waproto::buffa::Message as _;
+                let Ok(raw) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                if !raw.get_base_message().extended_text_message.is_set() {
+                    continue;
+                }
+                let Ok(Some(mut existing)) = self.archive.message(&chat, &id) else {
+                    complete = false;
+                    continue;
+                };
+                if existing.edited
+                    || !matches!(existing.content, crate::model::Content::Text { .. })
+                {
+                    continue;
+                }
+                let Some(mut content) = super::classify(&raw) else {
+                    continue;
+                };
+                if !matches!(
+                    content,
+                    crate::model::Content::Text {
+                        preview: Some(_),
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                content.keep_local_paths(&existing.content);
+                if let (
+                    crate::model::Content::Text { preview: new, .. },
+                    crate::model::Content::Text { preview, .. },
+                ) = (&mut content, &mut existing.content)
+                {
+                    std::mem::swap(preview, new);
+                }
+                let thumbnail = existing
+                    .thumbnail
+                    .or_else(|| super::thumbnail_of(raw.get_base_message()));
+                if self
+                    .archive
+                    .set_derived(
+                        &chat,
+                        &id,
+                        &existing.content,
+                        &existing.mentions,
+                        thumbnail.as_deref(),
+                        existing.forwarded,
+                    )
+                    .is_err()
+                {
+                    complete = false;
+                }
+            }
+        }
+        if complete {
+            let _ = self.archive.set_meta(KEY, "1");
+        }
+    }
+}
+
+/// Use the protocol library to download and verify WhatsApp's encrypted link
+/// picture, including messages with no small inline JPEG at all.
+pub(super) fn picture(text: &wa::message::ExtendedTextMessage) -> Option<DownloadParams> {
+    let path = text
+        .thumbnail_direct_path
+        .as_deref()
+        .filter(|path| !path.is_empty())?;
+    DownloadParams::encrypted(
+        path,
+        text.media_key.as_deref()?,
+        text.thumbnail_sha256.as_deref()?,
+        text.thumbnail_enc_sha256.as_deref()?,
+        0,
+        MediaType::LinkThumbnail,
+    )
+    .ok()
+}
 
 const USER_AGENT: &str = concat!("ZapFast/", env!("CARGO_PKG_VERSION"));
 /// Page and picture together.
 const TOTAL_TIME: Duration = Duration::from_secs(5);
 const MAX_PAGE: usize = 512 * 1024;
 const MAX_IMAGE: usize = 2 * 1024 * 1024;
+pub(super) const PICTURE_LIMIT: u64 = MAX_IMAGE as u64;
+pub(super) const PICTURE_LIMIT_ERROR: &str = "Link preview exceeds the 2 MiB download limit";
 const MAX_REDIRECTS: usize = 5;
 const THUMB_SIDE: u32 = 300;
 const MIN_SIDE: u32 = 16;
@@ -23,11 +134,29 @@ const JPEG_QUALITY: u8 = 70;
 const TITLE_CHARS: usize = 300;
 const DESCRIPTION_CHARS: usize = 600;
 
+/// Bound decoded pixels before egui opens a downloaded preview. Reading the
+/// header keeps full-quality pixels without decoding the image twice.
+pub(super) fn valid_picture(path: &std::path::Path) -> bool {
+    image::ImageReader::open(path)
+        .ok()
+        .and_then(|reader| reader.with_guessed_format().ok())
+        .and_then(|reader| reader.into_dimensions().ok())
+        .is_some_and(|(width, height)| {
+            width > 0
+                && height > 0
+                && width <= MAX_SOURCE_SIDE
+                && height <= MAX_SOURCE_SIDE
+                // Allow for 16-bit RGBA sources as well as 8-bit JPEGs.
+                && u64::from(width) * u64::from(height) * 8 <= MAX_DECODE_BYTES
+        })
+}
+
 /// What a page says about itself, for the preview under an outgoing link.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct PageMeta {
     pub title: Option<String>,
     pub description: Option<String>,
+    pub video: bool,
     /// Already resolved against the page's address; always http or https.
     pub image: Option<String>,
 }
@@ -98,6 +227,8 @@ pub(super) fn parse_page(html: &str, base: &reqwest::Url) -> PageMeta {
     PageMeta {
         title,
         description,
+        video: first(&["og:type"], 80)
+            .is_some_and(|kind| kind == "video" || kind.starts_with("video.")),
         image,
     }
 }
@@ -512,6 +643,9 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
     };
     Some(ComposedPreview {
         preview: LinkPreview {
+            image_sha256: None,
+            video: meta.video,
+            image: None,
             url: requested,
             title: meta.title,
             description: meta.description,
@@ -544,6 +678,36 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use std::net::IpAddr;
+
+    #[test]
+    fn link_preview_download_uses_link_thumbnail_keys_and_hashes() {
+        use whatsapp_rust::wacore::download::Downloadable;
+        let mut text = wa::message::ExtendedTextMessage::default();
+        text.thumbnail_direct_path = Some("/v/t62/synthetic".into());
+        text.media_key = Some(vec![1; 32]);
+        text.thumbnail_sha256 = Some(vec![2; 32]);
+        text.thumbnail_enc_sha256 = Some(vec![3; 32]);
+        let full = picture(&text).expect("valid encrypted picture");
+        assert_eq!(full.app_info(), MediaType::LinkThumbnail);
+        assert_eq!(full.direct_path(), text.thumbnail_direct_path.as_deref());
+        assert_eq!(full.media_key(), text.media_key.as_deref());
+        assert_eq!(full.file_sha256(), text.thumbnail_sha256.as_deref());
+        assert_eq!(full.file_enc_sha256(), text.thumbnail_enc_sha256.as_deref());
+        text.media_key = Some(vec![1; 31]);
+        assert!(
+            picture(&text).is_none(),
+            "invalid keys never reach the downloader"
+        );
+    }
+
+    #[test]
+    fn link_preview_recognizes_open_graph_video_metadata() {
+        let url = reqwest::Url::parse("https://example.com/clip").unwrap();
+        let meta = parse_page("<meta property='og:type' content='video.other'>", &url);
+        assert!(meta.video);
+        let article = parse_page("<meta property='og:type' content='article'>", &url);
+        assert!(!article.video);
+    }
 
     /// Every `&` here looks for a `;` that never comes; the look is bounded,
     /// so the page decodes in linear time.
@@ -826,6 +990,25 @@ mod tests {
         assert_eq!(thumbnail(&png(20, 8193)), None);
         assert!(thumbnail(&png(8192, 20)).is_some());
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn downloaded_picture_checks_dimensions_without_reducing_quality() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("preview.jpg");
+        let small = png(640, 360);
+        for (bytes, accepted) in [
+            (small.clone(), true),
+            (b"not an image".to_vec(), false),
+            (png_claiming(&small, 60000, 60000), false),
+            (png_claiming(&small, 8192, 8192), false),
+            (png_claiming(&small, 4096, 4096), false),
+            (png_claiming(&small, 8193, 100), false),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            assert_eq!(valid_picture(&path), accepted);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
     }
 
     #[tokio::test]
