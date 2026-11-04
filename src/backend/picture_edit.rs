@@ -164,7 +164,7 @@ fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> Result<image::RgbaIm
                     }
                 }
             }
-            _ => drawn |= stroke(&mut layer, mark),
+            _ => drawn |= stroke(&mut layer, mark, tiny_skia::Transform::identity()),
         }
     }
     if drawn {
@@ -181,8 +181,66 @@ fn blank_layer(width: u32, height: u32) -> Result<tiny_skia::Pixmap, String> {
         .ok_or_else(|| format!("Could not draw on a picture {width} by {height} pixels"))
 }
 
-/// Draws one inked mark on `layer`, answering whether it drew anything.
-fn stroke(layer: &mut tiny_skia::Pixmap, mark: &Mark) -> bool {
+/// The marks as the editor shows them over the picture, drawn by the same
+/// strokes writing draws: on a see-through layer `size` pixels big that
+/// covers the source turned `turns` quarters clockwise. A pixelated block
+/// is opaque, in `cell`'s colour, and hides whatever was drawn under it as
+/// writing it does.
+pub(crate) fn preview_layer<'a>(
+    marks: impl IntoIterator<Item = &'a Mark>,
+    (width, height): (u32, u32),
+    turns: u8,
+    [wide, tall]: [u32; 2],
+    cell: impl Fn([u32; 4]) -> [u8; 3],
+) -> Option<tiny_skia::Pixmap> {
+    let mut layer = tiny_skia::Pixmap::new(wide, tall)?;
+    let (shown_wide, shown_tall) = if turns.is_multiple_of(2) {
+        (width, height)
+    } else {
+        (height, width)
+    };
+    let transform = turned(turns, width, height).post_scale(
+        wide as f32 / shown_wide.max(1) as f32,
+        tall as f32 / shown_tall.max(1) as f32,
+    );
+    // Without anti-aliasing, blocks that meet share their edge exactly,
+    // and no seam lets the picture through.
+    let mut paint = tiny_skia::Paint {
+        anti_alias: false,
+        ..Default::default()
+    };
+    for mark in marks {
+        let Mark::Pixelate { from, to } = mark else {
+            stroke(&mut layer, mark, transform);
+            continue;
+        };
+        for block in crate::model::pixel_cells(*from, *to, width, height) {
+            let [r, g, b] = cell(block);
+            paint.set_color_rgba8(r, g, b, u8::MAX);
+            let [left, top, right, bottom] = block.map(|edge| edge as f32);
+            if let Some(rect) = tiny_skia::Rect::from_ltrb(left, top, right, bottom) {
+                layer.fill_rect(rect, &paint, transform, None);
+            }
+        }
+    }
+    Some(layer)
+}
+
+/// Carries the source's pixels to the picture turned `turns` quarters
+/// clockwise, as `crate::model::turned_point` does.
+fn turned(turns: u8, width: u32, height: u32) -> tiny_skia::Transform {
+    let (w, h) = (width as f32, height as f32);
+    match turns % 4 {
+        1 => tiny_skia::Transform::from_row(0.0, 1.0, -1.0, 0.0, h, 0.0),
+        2 => tiny_skia::Transform::from_row(-1.0, 0.0, 0.0, -1.0, w, h),
+        3 => tiny_skia::Transform::from_row(0.0, -1.0, 1.0, 0.0, 0.0, w),
+        _ => tiny_skia::Transform::identity(),
+    }
+}
+
+/// Draws one inked mark on `layer` through `transform`, answering whether
+/// it drew anything.
+fn stroke(layer: &mut tiny_skia::Pixmap, mark: &Mark, transform: tiny_skia::Transform) -> bool {
     use tiny_skia::{LineCap, LineJoin, PathBuilder};
     let Some([r, g, b, a]) = mark.rgba() else {
         return false;
@@ -212,7 +270,6 @@ fn stroke(layer: &mut tiny_skia::Pixmap, mark: &Mark) -> bool {
             let Some(dot) = PathBuilder::from_circle(x, y, width / 2.0) else {
                 return false;
             };
-            let transform = tiny_skia::Transform::identity();
             layer.fill_path(&dot, &paint, tiny_skia::FillRule::Winding, transform, None);
             return true;
         }
@@ -248,13 +305,7 @@ fn stroke(layer: &mut tiny_skia::Pixmap, mark: &Mark) -> bool {
         line_join,
         ..Default::default()
     };
-    layer.stroke_path(
-        &path,
-        &paint,
-        &stroke,
-        tiny_skia::Transform::identity(),
-        None,
-    );
+    layer.stroke_path(&path, &paint, &stroke, transform, None);
     true
 }
 
@@ -736,6 +787,103 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_editors_turn_carries_points_where_the_model_does() {
+        let (width, height) = (300, 200);
+        for turns in 0..4 {
+            for point in [[0.0, 0.0], [40.0, 170.0], [300.0, 12.5]] {
+                let mut moved = [tiny_skia::Point::from_xy(point[0], point[1])];
+                turned(turns, width, height).map_points(&mut moved);
+                let expected = crate::model::turned_point(point, turns, width, height);
+                assert_eq!([moved[0].x, moved[0].y], expected, "{turns} {point:?}");
+            }
+        }
+    }
+
+    /// The editor's preview of a highlighter that crosses itself, a pen
+    /// line and a pixelated block, turned a quarter, is the written file:
+    /// in particular the crossing is no darker than one pass, since the
+    /// stroke is filled once.
+    #[test]
+    fn the_editors_preview_of_marks_is_the_written_picture() {
+        use crate::model::Ink;
+        let (width, height) = (200, 160);
+        let zigzag = Mark::Highlighter {
+            points: vec![[20.0, 20.0], [120.0, 120.0], [120.0, 20.0], [20.0, 120.0]],
+            ink: Ink::Yellow,
+            width: 14.0,
+        };
+        let marks = [
+            zigzag,
+            red_line([150.0, 10.0], [150.0, 150.0]),
+            Mark::Pixelate {
+                from: [160.0, 130.0],
+                to: [190.0, 150.0],
+            },
+        ];
+        let picture = print(width, height);
+        let blocks = blocks(&picture);
+        let cell = |block| {
+            let [r, g, b, _] = blocks.colour(block).expect("a block");
+            [r, g, b]
+        };
+        let layer =
+            preview_layer(&marks, (width, height), 1, [height, width], cell).expect("a layer");
+        let mut shown = image::imageops::rotate90(&picture);
+        lay_over(&mut shown, &layer);
+        let drawn = image::imageops::rotate90(&marked(picture.clone(), &marks).expect("draws"));
+        // tiny-skia's anti-aliasing is not quite the same turned, so a few
+        // pixels along a diagonal edge differ by part of their coverage.
+        let differences: Vec<u8> = shown
+            .pixels()
+            .zip(drawn.pixels())
+            .map(|(a, b)| (0..4).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0))
+            .collect();
+        let strays = differences.iter().filter(|&&by| by > 2).count();
+        assert!(
+            strays * 1000 <= differences.len(),
+            "{strays} pixels of the preview stray from the file"
+        );
+        assert!(
+            differences.iter().all(|&by| by < 32),
+            "no pixel strays by more than an edge's coverage"
+        );
+        let at = |source: [f32; 2]| {
+            let [x, y] = crate::model::turned_point(source, 1, width, height);
+            shown.get_pixel(x as u32, y as u32).0
+        };
+        // (70, 70) is where the zigzag crosses itself; (45, 45) is on one
+        // pass; both on white between the lines of print.
+        let (crossing, once) = (at([70.5, 72.5]), at([45.5, 47.5]));
+        assert!(
+            (0..3).all(|c| crossing[c].abs_diff(once[c]) <= 1),
+            "crossing {crossing:?}, one pass {once:?}"
+        );
+        let root = tempfile::tempdir().expect("makes the directory");
+        let rgba = std::sync::Arc::new(picture.into_raw());
+        let written = write(
+            &PictureOrigin {
+                turns: 1,
+                marks: marks.to_vec(),
+                ..origin(
+                    PictureSource::Pasted(rgba),
+                    width,
+                    height,
+                    PictureCrop::full(height, width),
+                )
+            },
+            root.path(),
+        )
+        .expect("writes");
+        let file = read(&written);
+        let [x, y] = crate::model::turned_point([70.5, 72.5], 1, width, height);
+        let kept = file.get_pixel(x as u32, y as u32);
+        assert!(
+            (0..3).all(|c| crossing[c].abs_diff(kept[c]) <= 12),
+            "the editor shows {crossing:?} at the crossing, the file has {kept:?}"
+        );
     }
 
     /// A picture the marks cannot be drawn on is refused rather than

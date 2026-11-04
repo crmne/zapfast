@@ -738,6 +738,8 @@ pub struct App {
     /// The picture editor's last tool, ink and thickness, kept for the
     /// session only so the next picture opens with them.
     pub picture_brush: crate::model::Brush,
+    /// The open editor's marks, drawn as a texture.
+    pub(crate) picture_marks: Option<crate::ui::image_editor::MarksLayer>,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.
@@ -1698,6 +1700,7 @@ impl App {
             picture_origins: Default::default(),
             picture_texture: None,
             picture_brush: Default::default(),
+            picture_marks: None,
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
@@ -2668,6 +2671,7 @@ impl App {
         self.call_remote_texture = None;
         self.call_member_textures.clear();
         self.picture_texture = None;
+        self.picture_marks = None;
         for staged in self.pending.iter_mut().chain(
             self.accounts
                 .iter_mut()

@@ -88,6 +88,7 @@ impl Placement {
     }
 
     /// Where a pixel of the source is on screen.
+    #[cfg(test)]
     fn to_screen(self, at: Point) -> Pos2 {
         let [x, y] = crate::model::turned_point(at, self.turns, self.width, self.height);
         self.picture.min + vec2(x, y) * self.scale
@@ -98,8 +99,10 @@ impl Placement {
 /// asked for. The staged picture is left alone until the edit is kept.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(mut edit) = app.picture_edit.clone() else {
+        app.picture_marks = None;
         return;
     };
+    let mut marks_layer = app.picture_marks.take();
     let palette = app.palette;
     let locale = app.locale;
     let mut brush = app.picture_brush;
@@ -139,9 +142,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             if let Some(id) = texture {
                 paint_turned(ui, id, picture, edit.turns);
             }
-            let painter = ui.painter().with_clip_rect(picture);
-            for mark in edit.marks.iter().chain(&edit.drawing) {
-                paint_mark(&painter, mark, place, edit.blocks.as_deref(), palette);
+            if let Some(id) = marks_texture(ui.ctx(), &mut marks_layer, &edit, place, palette) {
+                let whole = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
+                ui.painter().image(id, picture, whole, Color32::WHITE);
             }
             if brush.tool == PictureTool::Crop {
                 crop_handles(ui, &mut edit, picture, scale);
@@ -290,6 +293,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         None => {}
     }
     app.picture_edit = Some(edit);
+    app.picture_marks = marks_layer;
     app.picture_brush = brush;
     app.actions.extend(actions);
 }
@@ -356,87 +360,91 @@ fn draw(ui: &mut egui::Ui, edit: &mut PictureEdit, brush: Brush, place: Placemen
     }
 }
 
-/// The colour a mark is drawn in on screen.
-fn colour(rgba: [u8; 4]) -> Color32 {
-    let [r, g, b, a] = rgba;
-    Color32::from_rgba_unmultiplied(r, g, b, a)
+/// The marks drawn last, as a texture over the picture, and what they
+/// were drawn from, so a frame that changes none of it draws nothing anew.
+pub(crate) struct MarksLayer {
+    marks: Vec<Mark>,
+    drawing: Option<Mark>,
+    /// The source's size, its turn, and the layer's size in pixels.
+    shape: (u32, u32, u8, [u32; 2]),
+    blocks: Option<std::sync::Arc<crate::model::PictureBlocks>>,
+    behind: [Color32; 2],
+    texture: egui::TextureHandle,
 }
 
-/// Draws a mark as it will be written. Round ends are discs, as the written
-/// lines have round caps.
-fn paint_mark(
-    painter: &egui::Painter,
-    mark: &Mark,
-    place: Placement,
-    blocks: Option<&crate::model::PictureBlocks>,
-    palette: theme::Palette,
-) {
-    let screen = |points: &[Point]| -> Vec<Pos2> {
-        points.iter().map(|point| place.to_screen(*point)).collect()
-    };
-    let line = |width: f32| width * place.scale;
-    match mark {
-        Mark::Pen { points, width, .. } | Mark::Highlighter { points, width, .. } => {
-            let fill = colour(mark.rgba().unwrap_or_default());
-            let points = screen(points);
-            let round = matches!(mark, Mark::Pen { .. });
-            match points.as_slice() {
-                [] => {}
-                [dot] => {
-                    painter.circle_filled(*dot, line(*width) / 2.0, fill);
-                }
-                [first, .., last] => {
-                    if round {
-                        painter.circle_filled(*first, line(*width) / 2.0, fill);
-                        painter.circle_filled(*last, line(*width) / 2.0, fill);
-                    }
-                    painter.add(egui::Shape::line(
-                        points.clone(),
-                        Stroke::new(line(*width), fill),
-                    ));
-                }
-            }
-        }
-        Mark::Arrow {
-            from, to, width, ..
-        } => {
-            let fill = colour(mark.rgba().unwrap_or_default());
-            let stroke = Stroke::new(line(*width), fill);
-            let [left, right] = crate::model::arrow_barbs(*from, *to, *width);
-            let [from, to, left, right] = [*from, *to, left, right].map(|at| place.to_screen(at));
-            painter.line_segment([from, to], stroke);
-            painter.add(egui::Shape::line(vec![left, to, right], stroke));
-            for end in [from, to, left, right] {
-                painter.circle_filled(end, line(*width) / 2.0, fill);
-            }
-        }
-        Mark::Rectangle {
-            from, to, width, ..
-        } => {
-            let fill = colour(mark.rgba().unwrap_or_default());
-            painter.rect_stroke(
-                Rect::from_two_pos(place.to_screen(*from), place.to_screen(*to)),
-                0.0,
-                Stroke::new(line(*width), fill),
-                StrokeKind::Middle,
-            );
-        }
-        Mark::Pixelate { from, to } => {
-            let mut mesh = egui::epaint::Mesh::default();
-            for cell in crate::model::pixel_cells(*from, *to, place.width, place.height) {
-                let [left, top, right, bottom] = cell.map(|edge| edge as f32);
-                let corners = [[left, top], [right, top], [right, bottom], [left, bottom]];
-                let fill = block_colour(blocks, cell, palette);
-                let base = mesh.vertices.len() as u32;
-                for corner in corners {
-                    mesh.colored_vertex(place.to_screen(corner), fill);
-                }
-                mesh.add_triangle(base, base + 1, base + 2);
-                mesh.add_triangle(base, base + 2, base + 3);
-            }
-            painter.add(egui::Shape::mesh(mesh));
-        }
+impl MarksLayer {
+    fn shows(
+        &self,
+        edit: &PictureEdit,
+        shape: (u32, u32, u8, [u32; 2]),
+        behind: [Color32; 2],
+    ) -> bool {
+        self.shape == shape
+            && self.behind == behind
+            && self.marks == edit.marks
+            && self.drawing == edit.drawing
+            && self.blocks == edit.blocks
     }
+}
+
+/// The texture the marks are drawn on: rasterised by the code that writes
+/// them into the file, at the size the picture has on screen, so the
+/// preview cannot drift from what is sent. It is drawn again only when the
+/// marks, the picture's size on screen or its turn change.
+fn marks_texture(
+    ctx: &egui::Context,
+    cache: &mut Option<MarksLayer>,
+    edit: &PictureEdit,
+    place: Placement,
+    palette: theme::Palette,
+) -> Option<egui::TextureId> {
+    if edit.marks.is_empty() && edit.drawing.is_none() {
+        return None;
+    }
+    // Never past what the GPU takes as one texture; the quad stretches it.
+    let pixels = place.picture.size() * ctx.pixels_per_point();
+    let most = ctx.input(|input| input.max_texture_side) as f32;
+    let pixels = (pixels * (most / pixels.max_elem()).min(1.0)).round();
+    let size = [pixels.x.max(1.0) as u32, pixels.y.max(1.0) as u32];
+    let shape = (edit.width, edit.height, edit.turns, size);
+    let behind = [palette.window, palette.surface];
+    if let Some(layer) = cache.as_ref()
+        && layer.shows(edit, shape, behind)
+    {
+        return Some(layer.texture.id());
+    }
+    let blocks = edit.blocks.as_deref();
+    let drawn = crate::backend::picture_edit::preview_layer(
+        edit.marks.iter().chain(&edit.drawing),
+        (edit.width, edit.height),
+        edit.turns,
+        size,
+        |cell| {
+            let [r, g, b, _] = block_colour(blocks, cell, palette).to_array();
+            [r, g, b]
+        },
+    )?;
+    let image = egui::ColorImage::from_rgba_premultiplied(
+        [size[0] as usize, size[1] as usize],
+        drawn.data(),
+    );
+    let texture = match cache.take() {
+        Some(mut layer) => {
+            layer.texture.set(image, egui::TextureOptions::LINEAR);
+            layer.texture
+        }
+        None => ctx.load_texture("picture-marks", image, egui::TextureOptions::LINEAR),
+    };
+    let id = texture.id();
+    *cache = Some(MarksLayer {
+        marks: edit.marks.clone(),
+        drawing: edit.drawing.clone(),
+        shape,
+        blocks: edit.blocks.clone(),
+        behind,
+        texture,
+    });
+    Some(id)
 }
 
 /// The opaque colour a pixelated block shows: the average writing paints
@@ -865,6 +873,39 @@ mod tests {
         let (wide, tall) = edit.displayed_size();
         let picture = Rect::from_min_size(pos2(10.0, 20.0), vec2(wide as f32, tall as f32) * 0.5);
         Placement::new(picture, &edit)
+    }
+
+    /// A picture shown larger than the GPU takes as one texture still gets
+    /// its marks, on a texture of the largest size it takes.
+    #[test]
+    fn the_marks_layer_stays_within_the_largest_texture() {
+        let ctx = egui::Context::default();
+        let mut edit = PictureEdit::new(
+            0,
+            PictureSource::File(std::path::PathBuf::from("photo.png")),
+            400,
+            200,
+        );
+        edit.begin_mark(Brush::default(), [10.0, 10.0]);
+        edit.finish_mark();
+        let most = ctx.input(|input| input.max_texture_side);
+        let picture = Rect::from_min_size(Pos2::ZERO, vec2(most as f32 * 2.0, most as f32));
+        let mut cache = None;
+        let palette = theme::Palette::dark();
+        assert!(
+            marks_texture(
+                &ctx,
+                &mut cache,
+                &edit,
+                Placement::new(picture, &edit),
+                palette
+            )
+            .is_some()
+        );
+        let size = cache
+            .as_ref()
+            .map(|layer: &MarksLayer| layer.texture.size());
+        assert_eq!(size, Some([most, most / 2]));
     }
 
     #[test]
