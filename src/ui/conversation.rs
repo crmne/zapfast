@@ -6538,9 +6538,17 @@ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -
 }
 
 /// Whether the message's time and ticks sit over its picture rather than
-/// on a line of their own: a picture without a caption, as in WhatsApp.
+/// on a line of their own: a photo or video without a caption, as in WhatsApp.
 fn time_over_picture(message: &Message) -> bool {
-    matches!(message.content, Content::Image { caption: None, .. })
+    matches!(
+        message.content,
+        Content::Image { caption: None, .. }
+            | Content::Video {
+                caption: None,
+                note: false,
+                ..
+            }
+    )
 }
 
 /// The ticks a message in this view shows (see [`display_delivery`]).
@@ -6577,7 +6585,7 @@ pub(super) fn display_delivery(
 /// itself. A quote or the forwarded label keeps the bubble around it.
 fn bare_picture(palette: &Palette, message: &Message) -> bool {
     palette.bubbles == theme::BubbleStyle::Messages
-        && time_over_picture(message)
+        && matches!(message.content, Content::Image { caption: None, .. })
         && message.quoted.is_none()
         && !message.forwarded
 }
@@ -6607,6 +6615,17 @@ fn footer_over_picture(
     actions: &mut Vec<Action>,
 ) {
     let palette = &view.palette;
+    // Keep metadata above the controls while a video is paused or hovered.
+    let picture = if matches!(&message.content, Content::Video { media, note: false, .. } if media.path.is_some())
+        && view
+            .video
+            .status(&message.id)
+            .is_some_and(|status| video_controls_visible(ui, &status, picture))
+    {
+        Rect::from_min_max(picture.min, picture.max - vec2(0.0, VIDEO_CONTROLS_HEIGHT))
+    } else {
+        picture
+    };
     let font = theme::regular(11.0);
     let time =
         ui.painter()
@@ -8302,7 +8321,11 @@ fn content(
             let drawn = if *note {
                 video_note(ui, view, message, media, *seconds, actions)
             } else {
-                video(ui, view, message, media, *seconds, *gif, width, actions)
+                let rect = video(ui, view, message, media, *seconds, *gif, width, actions);
+                if caption.is_none() {
+                    return Some(rect);
+                }
+                rect.width()
             };
             caption.as_ref().and_then(|caption| {
                 let wrap = if message.quoted.is_some() {
@@ -9111,27 +9134,43 @@ fn album_tile(
     theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
         ui.painter().rect_filled(rect, 5.0, view.palette.surface);
-        let uri = media
-            .path
-            .as_ref()
-            .filter(|_| matches!(message.content, Content::Image { .. }))
-            .map(|path| {
-                let uri = crate::util::image_uri(path);
-                crate::image_cache::touch(ui.ctx(), &uri);
-                uri
-            })
-            .or_else(|| {
-                message.thumbnail.as_deref().map(|bytes| {
-                    thumbnail_uri(
-                        ui.ctx(),
-                        &message.chat,
-                        &format!("{}-album-{row}-{column}", message.id),
-                        bytes,
-                    )
+        let poster = if matches!(message.content, Content::Video { .. }) {
+            media
+                .path
+                .as_ref()
+                .and_then(|path| match animation::frame(ui, path, rect, false) {
+                    animation::Frame::Ready(texture) => Some(texture),
+                    _ => None,
                 })
+        } else {
+            None
+        };
+        let image = poster
+            .as_ref()
+            .map(|texture| egui::Image::from_texture((texture.id(), texture.size_vec2())))
+            .or_else(|| {
+                let uri = media
+                    .path
+                    .as_ref()
+                    .filter(|_| matches!(message.content, Content::Image { .. }))
+                    .map(|path| {
+                        let uri = crate::util::image_uri(path);
+                        crate::image_cache::touch(ui.ctx(), &uri);
+                        uri
+                    })
+                    .or_else(|| {
+                        message.thumbnail.as_deref().map(|bytes| {
+                            thumbnail_uri(
+                                ui.ctx(),
+                                &message.chat,
+                                &format!("{}-album-{row}-{column}", message.id),
+                                bytes,
+                            )
+                        })
+                    });
+                uri.map(egui::Image::new)
             });
-        if let Some(uri) = uri {
-            let image = egui::Image::new(uri);
+        if let Some(image) = image {
             let dimensions = match image.load_for_size(ui.ctx(), size) {
                 Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.size),
                 Ok(egui::load::TexturePoll::Pending { .. }) => Some(vec2(
@@ -10772,7 +10811,7 @@ fn video(
     gif: bool,
     width: f32,
     actions: &mut Vec<Action>,
-) -> f32 {
+) -> Rect {
     use crate::video::State;
     let palette = view.palette;
     // A missing inline thumbnail does not change a video into a file row.
@@ -10825,7 +10864,7 @@ fn video(
         {
             actions.push(Action::OpenFile(path.clone()));
         }
-        return size.x;
+        return rect;
     }
     let status = media
         .path
@@ -10847,31 +10886,31 @@ fn video(
                     6.0,
                 );
             }
-            None => match (thumbnail, &media.path) {
-                (Some(thumbnail), _) => {
-                    // Registering the poster decodes it, so it waits for the row to show.
+            None => {
+                let poster = media.path.as_ref().filter(|_| !gif).and_then(|path| {
+                    match animation::frame(ui, path, rect, false) {
+                        animation::Frame::Ready(texture) => Some(texture),
+                        _ => None,
+                    }
+                });
+                if let Some(texture) = poster {
+                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                    paint_texture(
+                        ui,
+                        fit_within(texture.size_vec2(), rect),
+                        texture.id(),
+                        Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        6.0,
+                    );
+                } else if let Some(thumbnail) = thumbnail {
+                    // Keep the inline JPEG until the downloaded frame is ready.
                     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
                     egui::Image::new(uri)
                         .fit_to_exact_size(size)
                         .corner_radius(6.0)
                         .paint_at(ui, rect);
                 }
-                (None, Some(path)) => {
-                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
-                    if let animation::Frame::Ready(texture) =
-                        animation::frame(ui, path, rect, false)
-                    {
-                        paint_texture(
-                            ui,
-                            fit_within(texture.size_vec2(), rect),
-                            texture.id(),
-                            Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            6.0,
-                        );
-                    }
-                }
-                (None, None) => {}
-            },
+            }
         }
         let state = status.as_ref().map(|status| status.state);
         if state != Some(State::Playing) {
@@ -10909,9 +10948,7 @@ fn video(
             (Some(status), Some(path)) => {
                 // Controls show while paused and while the pointer is over
                 // the video, as in other players.
-                if status.state == State::Paused
-                    || (status.state == State::Playing && ui.rect_contains_pointer(rect))
-                {
+                if video_controls_visible(ui, status, rect) {
                     video_controls(
                         ui,
                         &VideoControls {
@@ -10985,7 +11022,14 @@ fn video(
     {
         actions.push(expand_video_action(&message.id, path));
     }
-    size.x
+    rect
+}
+
+const VIDEO_CONTROLS_HEIGHT: f32 = 32.0;
+
+fn video_controls_visible(ui: &egui::Ui, status: &crate::video::Status, rect: Rect) -> bool {
+    status.state == crate::video::State::Paused
+        || (status.state == crate::video::State::Playing && ui.rect_contains_pointer(rect))
 }
 
 /// What "Fill the window" does: the video covers the window, starting it
@@ -11054,7 +11098,10 @@ pub(crate) fn video_controls(
     status: &crate::video::Status,
     actions: &mut Vec<Action>,
 ) {
-    let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 32.0), rect.max);
+    let bar = Rect::from_min_max(
+        pos2(rect.left(), rect.bottom() - VIDEO_CONTROLS_HEIGHT),
+        rect.max,
+    );
     ui.painter().rect_filled(
         bar,
         CornerRadius {
@@ -12065,6 +12112,71 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn video_timestamps_stay_inside_captionless_frames() {
+        for palette in [Palette::dark(), Palette::light()] {
+            for own in [false, true] {
+                for caption in [None, Some("A caption".to_owned())] {
+                    let ctx = egui::Context::default();
+                    crate::theme::install(&ctx);
+                    with_still_view(|view| {
+                        let view = View { palette, ..*view };
+                        let mut row = message(Content::Video {
+                            caption: caption.clone(),
+                            media: media(Some(360), Some(640)),
+                            seconds: Some(178),
+                            gif: false,
+                            note: false,
+                        });
+                        row.chat = view.chat.id.clone();
+                        row.from_me = own;
+                        row.forwarded = true;
+                        let mut output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    vec2(920.0, 1000.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                bubble(
+                                    ui,
+                                    &view,
+                                    &row,
+                                    None,
+                                    RunPlace {
+                                        show_sender: false,
+                                        show_avatar: false,
+                                        tailed: false,
+                                    },
+                                    &mut Vec::new(),
+                                );
+                            },
+                        );
+                        output.textures_delta.clear();
+                        let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
+                        let id = bubble_id(&row.chat, &row.id);
+                        let video = rect(id.with("video"));
+                        let clock = rect(footer_id(&row.chat, &row.id));
+                        if caption.is_none() {
+                            assert!(
+                                video.contains_rect(clock),
+                                "timestamp {clock:?} is outside video {video:?}"
+                            );
+                            assert!(rect(id.with("rect")).bottom() - video.bottom() <= 7.0);
+                        } else {
+                            assert!(
+                                clock.top() >= video.bottom(),
+                                "captioned video keeps its timestamp below the picture"
+                            );
+                        }
+                    });
+                }
+            }
+        }
+    }
+
     #[test]
     fn whatsapp_media_preview_matches_card_and_timestamp_insets() {
         let mut jpeg = std::io::Cursor::new(Vec::new());

@@ -499,9 +499,13 @@ play from their local file. Playback
 waits for the download to finish; videos over the
 [64 MiB automatic download limit](#attachments) download when you click them.
 A video keeps its portrait or landscape frame and play button even when the
-message has no thumbnail. Once its file downloads, the first frame becomes
-the poster. Forwarded videos, including TikTok shares, use the same layout;
-their caption stays below the video. Automatic downloads follow your setting.
+message has no thumbnail. Once its file downloads, a decoded frame replaces
+the small inline thumbnail. The inline image stays visible while decoding or
+if the codec is unavailable, including in albums. Forwarded videos, including
+TikTok shares, use the same layout. Videos without captions carry their time
+over the bottom corner; captions stay below the video with the time beside
+them. Playback controls keep clear of the overlaid time.
+Automatic downloads follow your setting.
 Double-click one, or use the button at the end of its
 controls, to play it in the full-window viewer:
 Space plays and pauses, the arrows jump five seconds, M mutes, S changes the

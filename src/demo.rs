@@ -2238,6 +2238,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "tiktok-video" => forwarded_video_sample(app, false),
             "tiktok-video-ready" => forwarded_video_sample(app, true),
+            "video-preview" => {
+                forwarded_video_sample(app, true);
+                let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+                if let Content::Video { caption, .. } = &mut row.content {
+                    *caption = None;
+                }
+                row.thumbnail = crate::animation::poster(stock::PORTRAIT_VIDEO)
+                    .and_then(|poster| poster.picture)
+                    .map(|picture| {
+                        let mut bytes = Vec::new();
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 45)
+                            .encode_image(&image::imageops::thumbnail(&picture, 48, 48))
+                            .expect("the bundled video has a JPEG poster");
+                        bytes
+                    });
+            }
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
             "video-expanded" => {
@@ -9798,6 +9814,7 @@ mod tests {
             "voice-presence",
             "tiktok-video",
             "tiktok-video-ready",
+            "video-preview",
             "video",
             "video-playing",
             "video-expanded",
@@ -23569,6 +23586,122 @@ mod tests {
             (1..15).contains(&registered),
             "only the rows on screen should register a poster, {registered} of 40 did"
         );
+    }
+
+    #[test]
+    fn captionless_video_metadata_stays_clear_of_playback_controls() {
+        let mut app = app();
+        apply_flags(&mut app, Some("video-preview"));
+        let path = app.conversations[SAMPLES[0].id].messages[0]
+            .content
+            .media()
+            .unwrap()
+            .path
+            .clone()
+            .unwrap();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..2 {
+            app.actions.push(crate::model::Action::PlayVideo {
+                message: "tiktok-video".into(),
+                path: path.clone(),
+            });
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+            if app
+                .video
+                .status("tiktok-video")
+                .is_some_and(|status| status.state == crate::video::State::Paused)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the synthetic video did not pause"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let rect = |id| ctx.data(|data| data.get_temp::<egui::Rect>(id)).unwrap();
+        let video =
+            rect(crate::ui::conversation::bubble_id(SAMPLES[0].id, "tiktok-video").with("video"));
+        let clock = rect(crate::ui::conversation::footer_id(
+            SAMPLES[0].id,
+            "tiktok-video",
+        ));
+        let button = rect(egui::Id::new(("video-window", "tiktok-video")));
+        assert!(video.contains_rect(clock));
+        assert!(
+            clock.bottom() <= button.top(),
+            "timestamp overlaps the playback controls"
+        );
+    }
+
+    #[test]
+    fn a_downloaded_video_replaces_its_inline_thumbnail_with_a_decoded_poster() {
+        fn paints(shape: &egui::Shape, ctx: &egui::Context, name: &str) -> bool {
+            match shape {
+                egui::Shape::Mesh(mesh) => ctx
+                    .tex_manager()
+                    .read()
+                    .meta(mesh.texture_id)
+                    .is_some_and(|meta| meta.name == name && meta.size[0] >= 240),
+                egui::Shape::Rect(rect) => rect.brush.as_ref().is_some_and(|brush| {
+                    ctx.tex_manager()
+                        .read()
+                        .meta(brush.fill_texture_id)
+                        .is_some_and(|meta| meta.name == name && meta.size[0] >= 240)
+                }),
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| paints(shape, ctx, name)),
+                _ => false,
+            }
+        }
+        for album in [false, true] {
+            let mut app = app();
+            forwarded_video_sample(&mut app, true);
+            let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+            row.thumbnail = Some(sample_thumbnail(1));
+            let name = format!(
+                "{}#0",
+                row.content
+                    .media()
+                    .unwrap()
+                    .path
+                    .as_ref()
+                    .unwrap()
+                    .display()
+            );
+            if album {
+                row.content.media_mut().unwrap().album = Some("video-poster-fixture".into());
+                let mut sibling = row.clone();
+                sibling.id = "second-video".into();
+                sibling.timestamp += 1;
+                app.conversations
+                    .get_mut(SAMPLES[0].id)
+                    .unwrap()
+                    .messages
+                    .push(sibling);
+            }
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+                if shapes.iter().any(|shape| paints(&shape.shape, &ctx, &name)) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the downloaded frame never replaced the blurry inline JPEG, album={album}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(
+                app.video.status("tiktok-video").is_none(),
+                "loading a poster must not start playback"
+            );
+        }
     }
 
     /// A forwarded video keeps its poster layout even when the message has

@@ -98,6 +98,8 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 `video-playing` or `note-playing` starts one of them, silently.
 `tiktok-video` shows a forwarded portrait video without an inline thumbnail
 before download; `tiktok-video-ready` shows its recovered first-frame poster.
+`video-preview` shows a downloaded portrait video with a small inline JPEG
+and no caption, for checking poster quality and the timestamp overlay.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
