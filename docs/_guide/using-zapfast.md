@@ -68,6 +68,18 @@ a preview. If your phone has **Privacy > Advanced > Disable link previews** on,
 ZapFast makes no previews either, and it makes none until it has read that
 setting from your phone.
 
+Link previews in messages show a large picture above the title, description,
+and site name. Reels and other video links have a square poster with a play
+button; clicking the preview opens the link. Article pictures keep their
+aspect ratio. When WhatsApp supplies a larger preview picture, ZapFast
+downloads it from WhatsApp into the account's cache, keeping the inline
+thumbnail while it loads. Preview pictures load even when automatic attachment
+downloads are off; the attachment setting still controls full photos and videos.
+Preview downloads stop after 20 seconds or 2 MiB. Images with excessive dimensions
+are refused; the inline thumbnail remains when a larger picture is unavailable.
+Reading a received preview does not contact the linked website.
+Small site icons keep a compact preview beside the text.
+
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it; in
@@ -484,6 +496,10 @@ speed stays for the next video until ZapFast quits. Already downloaded videos
 play from their local file. Playback
 waits for the download to finish; videos over the
 [64 MiB automatic download limit](#attachments) download when you click them.
+A video keeps its portrait or landscape frame and play button even when the
+message has no thumbnail. Once its file downloads, the first frame becomes
+the poster. Forwarded videos, including TikTok shares, use the same layout;
+their caption stays below the video. Automatic downloads follow your setting.
 Double-click one, or use the button at the end of its
 controls, to play it in the full-window viewer:
 Space plays and pauses, the arrows jump five seconds, M mutes, S changes the

@@ -686,6 +686,8 @@ pub fn populate(app: &mut App) {
                 Content::Text {
                     text: "btw I made my own Spotify app from scratch! https://spotifast.rocks/".into(),
                     preview: Some(LinkPreview {
+                video: false,
+                image: None,
                         url: "https://spotifast.rocks/".into(),
                         title: Some("spotifast.rocks".into()),
                         description: Some("Spotify, native and fast. A lightweight Spotify client written in Rust with egui.".into()),
@@ -1340,6 +1342,72 @@ fn short_chat_sample(app: &mut App) {
     app.scroll_to_bottom = true;
 }
 
+/// Offline examples of a reel poster, a full thumbnail without an inline
+/// JPEG, and a landscape article preview. All pictures are bundled stock.
+fn social_previews_sample(app: &mut App, only: Option<usize>) {
+    let chat = SAMPLES[0].id;
+    let examples = [
+        (
+            "https://www.instagram.com/reel/demo/",
+            "A rocket launch on Instagram",
+            "Watch the launch from beside the pad.",
+            stock::LAUNCH,
+            true,
+        ),
+        (
+            "https://www.facebook.com/share/r/demo/",
+            "A spacewalk | Reel",
+            "A view from outside the station.",
+            stock::SPACEWALK,
+            false,
+        ),
+        (
+            "https://example.com/launch",
+            "A launch over the water",
+            "The launch leaves a bright trail across the evening sky. A landscape article keeps the whole picture.",
+            stock::DUSK,
+            true,
+        ),
+    ];
+    let messages = examples
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| only.is_none_or(|only| *i == only))
+        .map(|(i, (url, title, description, photo, inline))| {
+            let mut row = message(
+                chat,
+                &format!("social-preview-{i}"),
+                i == 2,
+                crate::util::now() - 300 + i as i64 * 60,
+                Content::Text {
+                    text: url.into(),
+                    preview: Some(LinkPreview {
+                        url: url.into(),
+                        title: Some(title.into()),
+                        description: Some(description.into()),
+                        video: i < 2,
+                        image: Some(Box::new(Media {
+                            mime: "image/jpeg".into(),
+                            size: photo.bytes.len() as u64,
+                            width: Some(photo.width),
+                            height: Some(photo.height),
+                            album: None,
+                            path: Some(stock::save_photo(&app.dirs.media_cache_dir(), photo)),
+                            state: Default::default(),
+                        })),
+                    }),
+                },
+            );
+            row.thumbnail = inline.then(|| stock::thumbnail(photo));
+            row
+        })
+        .collect();
+    app.conversations.get_mut(chat).unwrap().messages = messages;
+    app.open_chat = Some(chat.into());
+    app.typing.clear();
+    app.scroll_to_bottom = true;
+}
+
 fn interactive_actions_sample(app: &mut App) {
     use crate::model::{InteractiveAction, InteractiveButton, InteractiveCard, InteractiveOption};
     interactive_sample(app, false);
@@ -1849,6 +1917,45 @@ fn video_sample(app: &mut App, play: Option<&str>) {
     }
 }
 
+/// A forwarded portrait video with a TikTok caption and no inline JPEG.
+/// The ready state demonstrates recovery from the downloaded first frame.
+fn forwarded_video_sample(app: &mut App, downloaded: bool) {
+    let chat = SAMPLES[0].id;
+    let mut media = media(
+        "video/mp4",
+        stock::PORTRAIT_VIDEO.len() as u64,
+        Some(360),
+        Some(640),
+    );
+    if downloaded {
+        media.path = Some(stock::save(
+            &app.dirs.media_cache_dir(),
+            "demo-portrait.mp4",
+            stock::PORTRAIT_VIDEO,
+        ));
+    }
+    let mut row = message(
+        chat,
+        "tiktok-video",
+        false,
+        crate::util::now() - 120,
+        Content::Video {
+            caption: Some("https://vt.tiktok.com/demo/".into()),
+            media,
+            seconds: Some(stock::CLIP_SECONDS),
+            gif: false,
+            note: false,
+        },
+    );
+    row.forwarded = true;
+    app.conversations.get_mut(chat).unwrap().messages = vec![row];
+    app.open_chat = Some(chat.into());
+    app.settings.auto_download = false;
+    app.typing.clear();
+    app.scroll_to_bottom = true;
+    app.video.silence();
+}
+
 /// Replaces the first chat with a synthetic four-picture WhatsApp album.
 fn media_album_sample(app: &mut App, grouped: bool) {
     let chat = SAMPLES[0].id;
@@ -2018,6 +2125,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     };
     for part in page.split(',').map(str::trim) {
         match part {
+            "social-previews" => social_previews_sample(app, None),
+            "instagram-preview" => social_previews_sample(app, Some(0)),
+            "facebook-preview" => social_previews_sample(app, Some(1)),
+            "article-preview" => social_previews_sample(app, Some(2)),
             "history-date" => history_date_sample(app),
             "chat" | "" => {}
             "blocked" | "blocked-contacts" | "block-confirm" => {
@@ -2117,6 +2228,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     path: app.dirs.media_cache_dir().join("demo-video.mp4"),
                 });
             }
+            "tiktok-video" => forwarded_video_sample(app, false),
+            "tiktok-video-ready" => forwarded_video_sample(app, true),
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
             "video-expanded" => {
@@ -3473,6 +3586,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     state: if part == "link-preview" {
                         crate::app::LinkPreviewState::Ready(crate::model::ComposedPreview {
                             preview: LinkPreview {
+                video: false,
+                image: None,
                                 url: LINK.to_owned(),
                                 title: Some("spotifast.rocks".into()),
                                 description: Some(
@@ -9673,6 +9788,8 @@ mod tests {
             "motion-preview",
             "motion-viewer",
             "voice-presence",
+            "tiktok-video",
+            "tiktok-video-ready",
             "video",
             "video-playing",
             "video-expanded",
@@ -9794,6 +9911,11 @@ mod tests {
             "typing",
             "composer-tools",
             "link-preview",
+            "social-previews",
+            "instagram-preview",
+            "facebook-preview",
+            "article-preview",
+            "social-previews,light",
             "link-preview,light",
             "link-preview-loading",
             "mention",
@@ -20037,6 +20159,8 @@ mod tests {
                 Content::Text {
                     text: "Text below a card".into(),
                     preview: (kind == "preview").then(|| LinkPreview {
+                        video: false,
+                        image: None,
                         url: "https://example.com/selection-fixture".into(),
                         title: Some("Fixture preview".into()),
                         description: None,
@@ -23439,8 +23563,8 @@ mod tests {
         );
     }
 
-    /// A video sent before ZapFast made thumbnails has none. With its file
-    /// here it still shows as a video; only without either is it a file card.
+    /// A forwarded video keeps its poster layout even when the message has
+    /// no inline thumbnail and its file has not downloaded yet.
     #[test]
     fn a_video_without_a_thumbnail_shows_from_its_file() {
         fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
@@ -23478,10 +23602,86 @@ mod tests {
         let rows = &mut app.conversations.get_mut(chat).unwrap().messages;
         if let Content::Video { media, .. } = &mut rows[0].content {
             media.path = None;
+            media.width = Some(360);
+            media.height = Some(640);
         }
+        rows[0].forwarded = true;
         assert!(
-            card(&drawn(&mut app, &ctx)),
-            "without a thumbnail or a file it is a card to download"
+            !card(&drawn(&mut app, &ctx)),
+            "a missing thumbnail still shows a portrait video, not a file card"
+        );
+        let rect = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(
+                    crate::ui::conversation::bubble_id(chat, "demo-video").with("rect"),
+                )
+            })
+            .expect("the video bubble");
+        assert!(rect.height() > 300.0, "portrait video layout: {rect:?}");
+    }
+
+    #[test]
+    fn a_forwarded_video_without_a_thumbnail_downloads_then_plays_from_its_play_button() {
+        let mut app = app();
+        forwarded_video_sample(&mut app, false);
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(
+            app.backend
+                .take_demo_commands()
+                .iter()
+                .all(|command| !matches!(command, crate::backend::Command::Download { .. })),
+            "automatic downloads are disabled"
+        );
+        let rect = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(
+                    crate::ui::conversation::bubble_id(SAMPLES[0].id, "tiktok-video").with("video"),
+                )
+            })
+            .expect("the video has a play target before any thumbnail arrives");
+        assert!(rect.height() > rect.width());
+        for pressed in [true, false] {
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let commands = app.backend.take_demo_commands();
+        assert_eq!(commands.iter().filter(|command| matches!(command,
+            crate::backend::Command::Download { message, manual: true, .. } if message == "tiktok-video"
+        )).count(), 1, "the play button downloads the video once");
+        let path = stock::save(
+            &app.dirs.media_cache_dir(),
+            "recovered-portrait.mp4",
+            stock::PORTRAIT_VIDEO,
+        );
+        let (backend, events) = crate::backend::Backend::detached();
+        app.backend = backend;
+        events
+            .send(crate::backend::Event::Media {
+                card: None,
+                chat: SAMPLES[0].id.into(),
+                message: "tiktok-video".into(),
+                result: Ok(path),
+            })
+            .unwrap();
+        render(&mut app, &ctx);
+        assert_eq!(
+            app.video.message(),
+            Some("tiktok-video"),
+            "the requested video starts when its download completes"
         );
     }
 

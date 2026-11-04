@@ -294,7 +294,9 @@ fn readable(content: &Content) -> String {
 /// Missing paths remain in the list so the transcript can report unavailable files.
 fn attachments(content: &Content) -> Vec<(Option<PathBuf>, String)> {
     let mut files = Vec::new();
-    if let Some(media) = content.media() {
+    if !matches!(content, Content::Text { .. })
+        && let Some(media) = content.media()
+    {
         let name = match content {
             Content::Document { file_name, .. } => file_name.clone(),
             _ => media
@@ -332,6 +334,41 @@ mod tests {
     use crate::model::{Media, MediaState};
 
     const CHAT: &str = "fixture@s.whatsapp.net";
+
+    #[test]
+    fn link_preview_images_do_not_turn_links_into_exported_attachments() {
+        let archive = fixture();
+        let url = "https://example.com/article";
+        let mut row = message(CHAT, "preview", 100, false);
+        row.content = Content::Text {
+            text: url.into(),
+            preview: Some(crate::model::LinkPreview {
+                url: url.into(),
+                title: Some("Article".into()),
+                description: None,
+                video: false,
+                image: Some(Box::new(Media {
+                    mime: "image/jpeg".into(),
+                    size: 4,
+                    width: Some(640),
+                    height: Some(320),
+                    album: None,
+                    path: Some("cached-preview.jpg".into()),
+                    state: MediaState::Idle,
+                })),
+            }),
+        };
+        archive.insert_message(&row, None).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("chat.txt");
+        archive
+            .export_chat(CHAT, &target, false, &AtomicBool::new(false), |_| {})
+            .unwrap();
+        let transcript = std::fs::read_to_string(target).unwrap();
+        assert!(transcript.contains(url));
+        assert!(attachments(&row.content).is_empty());
+        assert!(!transcript.contains("cached-preview"));
+    }
 
     /// Creates an isolated synthetic archive with one named chat for export tests.
     fn fixture() -> Archive {

@@ -622,6 +622,42 @@ pub struct LinkPreview {
     pub url: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub video: bool,
+    /// Larger preview hosted by WhatsApp. Its download keys stay in the raw message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Box<Media>>,
+}
+
+impl LinkPreview {
+    /// Prefer WhatsApp's video flag; known reel/video links also work when a
+    /// sender omitted it. An ordinary post or article never gets a play badge.
+    pub fn is_video(&self) -> bool {
+        if self.video {
+            return true;
+        }
+        let Ok(url) = reqwest::Url::parse(&self.url) else {
+            return false;
+        };
+        let host = url
+            .host_str()
+            .unwrap_or_default()
+            .trim_start_matches("www.");
+        let path = url.path();
+        match host {
+            "instagram.com" => path.starts_with("/reel/") || path.starts_with("/reels/"),
+            "facebook.com" | "m.facebook.com" => {
+                path.starts_with("/reel/")
+                    || path.starts_with("/reels/")
+                    || path.starts_with("/share/r/")
+                    || path.starts_with("/watch")
+                    || path.contains("/videos/")
+            }
+            "fb.watch" | "youtu.be" => path.len() > 1,
+            "youtube.com" | "m.youtube.com" => path == "/watch" || path.starts_with("/shorts/"),
+            _ => false,
+        }
+    }
 }
 
 /// A link preview made here for an outgoing message, with its picture as JPEG.
@@ -1490,6 +1526,10 @@ impl Content {
 
     pub fn media(&self) -> Option<&Media> {
         match self {
+            Self::Text {
+                preview: Some(preview),
+                ..
+            } => preview.image.as_deref(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }
@@ -1545,10 +1585,28 @@ impl Content {
         }
     }
 
-    /// Carries downloaded file paths over from `old` when rederiving content
-    /// from the raw protobuf: the main attachment and each carousel card's image.
+    /// A changed link must not inherit the previous link's picture or transfer state.
+    pub fn can_reuse_media(&self, old: &Content) -> bool {
+        match (self, old) {
+            (
+                Self::Text {
+                    preview: Some(new), ..
+                },
+                Self::Text {
+                    preview: Some(old), ..
+                },
+            ) => new.url == old.url,
+            (Self::Text { .. }, _) | (_, Self::Text { .. }) => false,
+            _ => true,
+        }
+    }
+
+    /// Carries downloaded file paths over from `old` when rederiving content:
+    /// the main attachment, link picture and each carousel card's image.
     pub fn keep_local_paths(&mut self, old: &Content) {
-        if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
+        if self.can_reuse_media(old)
+            && let (Some(new), Some(old)) = (self.media_mut(), old.media())
+        {
             new.path = old.path.clone();
         }
         if let (
@@ -1581,7 +1639,8 @@ impl Content {
     /// downloaded where this copy has none: the attachment, a motion photo's
     /// clip, and each carousel card's image. A file this copy has stays.
     pub fn fill_local_paths(&mut self, other: &Content) {
-        if let (Some(new), Some(old)) = (self.media_mut(), other.media())
+        if self.can_reuse_media(other)
+            && let (Some(new), Some(old)) = (self.media_mut(), other.media())
             && new.path.is_none()
         {
             new.path = old.path.clone();
@@ -1651,6 +1710,10 @@ impl Content {
 
     pub fn media_mut(&mut self) -> Option<&mut Media> {
         match self {
+            Self::Text {
+                preview: Some(preview),
+                ..
+            } => preview.image.as_deref_mut(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }
@@ -4419,6 +4482,8 @@ mod tests {
                     // Typed without the scheme, previewed with it: one link.
                     text: "see spotifast.rocks".into(),
                     preview: Some(LinkPreview {
+                        video: false,
+                        image: None,
                         url: "https://spotifast.rocks/".into(),
                         title: Some("Spotifast".into()),
                         description: None,

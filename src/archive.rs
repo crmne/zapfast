@@ -62,6 +62,13 @@ pub struct ArchivedSticker {
     pub raw: Option<Vec<u8>>,
 }
 
+pub struct RawMessage {
+    pub rowid: i64,
+    pub chat: String,
+    pub id: String,
+    pub raw: Vec<u8>,
+}
+
 pub struct Archive {
     connection: Connection,
 }
@@ -1944,6 +1951,26 @@ impl Archive {
             .connection
             .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
         let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// A bounded page for upgrading link previews without retaining the archive
+    /// in memory. The rowid cursor stays stable while derived content changes.
+    pub fn link_previews_with_raw(&self, after: i64) -> Result<Vec<RawMessage>> {
+        let mut statement = self.connection.prepare(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE rowid > ?1 AND raw IS NOT NULL AND edited = 0 AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'text'
+             ORDER BY rowid LIMIT 128",
+        )?;
+        let rows = statement.query_map([after], |row| {
+            Ok(RawMessage {
+                rowid: row.get(0)?,
+                chat: row.get(1)?,
+                id: row.get(2)?,
+                raw: row.get(3)?,
+            })
+        })?;
         rows.collect()
     }
 
@@ -6568,6 +6595,8 @@ mod media_path_tests {
                 Content::Text {
                     text: "look".into(),
                     preview: Some(crate::model::LinkPreview {
+                        video: false,
+                        image: None,
                         url: "https://spotifast.rocks/".into(),
                         title: None,
                         description: None,

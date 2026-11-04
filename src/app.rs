@@ -280,6 +280,7 @@ impl Conversation {
                     let media = existing
                         .content
                         .media()
+                        .filter(|_| message.content.can_reuse_media(&existing.content))
                         .map(|media| (media.state.clone(), media.path.clone()));
                     *existing = message;
                     // Keep downloads in flight and files absent from a freshly
@@ -4169,7 +4170,11 @@ impl App {
                 if let Some(conversation) = self.conversations.get_mut(&message.chat)
                     && let Some(existing) = conversation.message_mut(&message.id)
                 {
-                    let state = existing.content.media().map(|media| media.state.clone());
+                    let state = existing
+                        .content
+                        .media()
+                        .filter(|_| message.content.can_reuse_media(&existing.content))
+                        .map(|media| media.state.clone());
                     let motion_state = match &existing.content {
                         Content::Image {
                             motion: Some(motion),
@@ -5860,6 +5865,10 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        // A new download can replace a link's old picture at the same path.
+        if let Ok(path) = &result {
+            self.stale_images.push(crate::util::image_uri(path));
+        }
         if card.is_none()
             && let Some(progress) = self.download_progress.get_mut(chat)
         {
@@ -20681,6 +20690,46 @@ mod tests {
             .expect("still present");
         assert_eq!(media.path, Some(relocated));
         assert_eq!(media.state, MediaState::Idle);
+
+        let mut old = image(Some("/old-preview.jpg".into()), MediaState::Downloading);
+        old.content = Content::Text {
+            text: "https://example.com/old".into(),
+            preview: Some(crate::model::LinkPreview {
+                url: "https://example.com/old".into(),
+                title: None,
+                description: None,
+                video: false,
+                image: old.content.media().cloned().map(Box::new),
+            }),
+        };
+        let mut incoming = old.clone();
+        let media = incoming.content.media_mut().unwrap();
+        media.path = None;
+        media.state = MediaState::Idle;
+        // Reloading the same link still preserves the local picture and transfer.
+        conversation.messages = vec![old.clone()];
+        conversation.merge(vec![incoming.clone()], false);
+        assert_eq!(
+            conversation.messages[0].content.media(),
+            old.content.media()
+        );
+        if let Content::Text {
+            preview: Some(preview),
+            ..
+        } = &mut incoming.content
+        {
+            preview.url = "https://example.com/new".into();
+        }
+        incoming.content.keep_local_paths(&old.content);
+        incoming.content.fill_local_paths(&old.content);
+        assert!(incoming.content.media().unwrap().path.is_none());
+        conversation.merge(vec![incoming], false);
+        let media = conversation.messages[0].content.media().unwrap();
+        assert!(
+            media.path.is_none(),
+            "changed links do not inherit cached pictures"
+        );
+        assert_eq!(media.state, MediaState::Idle);
     }
 
     /// Checks that clicking a pending video note resumes playback only after its download arrives.
@@ -21391,6 +21440,8 @@ mod tests {
     fn composed_preview(url: &str) -> crate::model::ComposedPreview {
         crate::model::ComposedPreview {
             preview: crate::model::LinkPreview {
+                video: false,
+                image: None,
                 url: url.into(),
                 title: Some("Fixture title".into()),
                 description: Some("Fixture description".into()),

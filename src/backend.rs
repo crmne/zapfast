@@ -1002,6 +1002,8 @@ pub enum Command {
         card: Option<usize>,
         chat: ChatId,
         id: String,
+        /// Link pictures only: the result must still belong to this URL.
+        preview_url: Option<String>,
         result: Result<PathBuf, String>,
     },
     /// Internal motion-clip download result.

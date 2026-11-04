@@ -1093,6 +1093,7 @@ pub async fn run(
     worker.backfill_hd_copies();
     worker.backfill_group_status_mentions();
     worker.backfill_interactive();
+    worker.backfill_link_previews();
     worker.adopt_broadcast_lists();
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
@@ -8932,8 +8933,26 @@ impl Worker {
                 card,
                 chat,
                 id,
+                preview_url,
                 result,
-            } => self.downloaded(chat, id, card, result),
+            } => {
+                let changed = preview_url.is_some_and(|url| {
+                    !matches!(self.archive.message(&chat, &id).ok().flatten(),
+                        Some(Message { content: Content::Text { preview: Some(preview), .. }, .. })
+                        if preview.url == url)
+                });
+                if changed {
+                    // A link was edited during the transfer. Discard its old
+                    // poster and resolve the current message's keys again.
+                    if let Ok(path) = result {
+                        let _ = tokio::fs::remove_file(path).await;
+                    }
+                    self.downloads.remove(&(chat.clone(), id.clone(), card));
+                    self.download_media(chat, id, card, false);
+                } else {
+                    self.downloaded(chat, id, card, result);
+                }
+            }
             Command::DownloadMotion { chat, message } => self.download_motion(chat, message),
             Command::MotionDownloaded { chat, id, result } => {
                 let result = result.and_then(|path| {
@@ -10222,6 +10241,12 @@ impl Worker {
                     },
                     None,
                 )
+            } else if let Some(picture) = base
+                .extended_text_message
+                .as_option()
+                .and_then(link_preview::picture)
+            {
+                (Box::new(picture), "image/jpeg".to_owned(), None)
             } else {
                 self.downloaded(
                     chat,
@@ -10235,12 +10260,19 @@ impl Worker {
             self.downloaded(chat, id, card, Err(ATTACHMENT_LIMIT_ERROR.to_owned()));
             return;
         }
-        let limit = if manual {
+        let link_picture = base.extended_text_message.is_set();
+        let limit = if link_picture {
+            link_preview::PICTURE_LIMIT
+        } else if manual {
             u64::MAX
         } else {
             ATTACHMENT_DOWNLOAD_LIMIT
         };
-        let deadline = attachment_deadline(downloadable.file_length());
+        let deadline = if link_picture {
+            Duration::from_secs(20)
+        } else {
+            attachment_deadline(downloadable.file_length())
+        };
         // Keep metadata needed for one media re-upload request and retry.
         let media_key = base
             .image_message
@@ -10270,6 +10302,31 @@ impl Worker {
         let reupload = !self.sticker_downloads.contains(&(chat.clone(), id.clone()));
         let jid = Self::jid_of(&chat);
         let row = self.archive.message(&chat, &id).ok().flatten();
+        let preview_url = if link_picture {
+            match classify(&message) {
+                Some(Content::Text {
+                    preview: Some(preview),
+                    ..
+                }) => Some(preview.url),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if link_picture
+            && preview_url.as_ref().is_none_or(|url| {
+                !matches!(row.as_ref().map(|row| &row.content),
+                Some(Content::Text { preview: Some(preview), .. }) if &preview.url == url)
+            })
+        {
+            self.downloaded(
+                chat,
+                id,
+                card,
+                Err("Link preview download keys are out of date".to_owned()),
+            );
+            return;
+        }
         let is_from_me = row.as_ref().is_some_and(|row| row.from_me);
         let participant = match (&jid, &row) {
             (Some(jid), Some(row)) if jid.is_group() => Self::jid_of(&row.sender),
@@ -10318,14 +10375,20 @@ impl Worker {
             }
             None
         };
-        let dir = self.download_dir(&chat);
+        // Preview pictures belong in the account cache, never the reader's
+        // attachment export folder. Expired ones retain their inline poster.
+        let dir = if link_picture {
+            self.dirs.media_cache_dir()
+        } else {
+            self.download_dir(&chat)
+        };
         let cache = self.dirs.media_cache_dir();
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
-        // A card's picture is small and has no ring of its own.
-        let progress = card.is_none().then(|| {
+        // Preview pictures have no progress ring of their own.
+        let progress = (card.is_none() && !link_picture).then(|| {
             let (chat, message) = (chat.clone(), id.clone());
             Progress::new(
                 self.events.clone(),
@@ -10415,10 +10478,31 @@ impl Worker {
                 }
             })
             .await;
+            let result = if link_picture {
+                match result {
+                    Ok(path) => tokio::task::spawn_blocking(move || {
+                        if link_preview::valid_picture(&path) {
+                            Ok(path)
+                        } else {
+                            let _ = std::fs::remove_file(path);
+                            Err("Link preview has invalid or excessive image dimensions".to_owned())
+                        }
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("Could not validate link preview".to_owned())),
+                    Err(error) if error == ATTACHMENT_LIMIT_ERROR => {
+                        Err(link_preview::PICTURE_LIMIT_ERROR.to_owned())
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                result
+            };
             let _ = commands.send(Command::Downloaded {
                 card,
                 chat,
                 id,
+                preview_url,
                 result,
             });
         });
@@ -12455,7 +12539,11 @@ fn attach_preview(
         extended.thumbnail_width = size.map(|(width, _)| width);
         extended.thumbnail_height = size.map(|(_, height)| height);
     }
-    extended.preview_type = Some(PreviewType::NONE);
+    extended.preview_type = Some(if preview.preview.is_video() {
+        PreviewType::VIDEO
+    } else {
+        PreviewType::NONE
+    });
     message.extended_text_message = MessageField::some(extended);
 }
 
@@ -12782,11 +12870,21 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
         let preview = base.extended_text_message.as_option().and_then(|extended| {
             let title = non_empty(&extended.title);
             let description = non_empty(&extended.description);
+            let image = link_preview::picture(extended).map(|_| {
+                let mut image = media(
+                    None,
+                    None,
+                    extended.thumbnail_width,
+                    extended.thumbnail_height,
+                );
+                image.mime = "image/jpeg".into();
+                Box::new(image)
+            });
             let has_picture = extended
                 .jpeg_thumbnail
                 .as_ref()
                 .is_some_and(|bytes| !bytes.is_empty());
-            if title.is_none() && description.is_none() && !has_picture {
+            if title.is_none() && description.is_none() && !has_picture && image.is_none() {
                 return None;
             }
             let url = non_empty(&extended.matched_text)
@@ -12795,6 +12893,9 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
                     crate::safety::first_link(text).and_then(|url| crate::safety::preview_url(&url))
                 })?;
             Some(LinkPreview {
+                video: extended.preview_type
+                    == Some(wa::message::extended_text_message::PreviewType::VIDEO),
+                image,
                 url,
                 title,
                 description,
@@ -17934,6 +18035,170 @@ mod tests {
         assert_eq!(mentioned_of(&message), vec!["123456@lid".to_owned()]);
     }
 
+    fn full_link_preview_fixture() -> wa::Message {
+        let mut text = wa::message::ExtendedTextMessage::default();
+        text.text = Some("https://www.facebook.com/share/r/example/".into());
+        text.matched_text = text.text.clone();
+        text.title = Some("A shared reel".into());
+        text.thumbnail_direct_path = Some("/v/t62/example".into());
+        text.thumbnail_sha256 = Some(vec![1; 32]);
+        text.thumbnail_enc_sha256 = Some(vec![2; 32]);
+        text.media_key = Some(vec![3; 32]);
+        text.thumbnail_width = Some(640);
+        text.thumbnail_height = Some(640);
+        let mut raw = wa::Message::default();
+        raw.extended_text_message = MessageField::some(text);
+        raw
+    }
+
+    #[test]
+    fn link_preview_without_inline_jpeg_keeps_its_downloadable_thumbnail() {
+        let raw = full_link_preview_fixture();
+        let content = classify(&raw).expect("link message");
+        let image = content
+            .media()
+            .expect("WhatsApp's full preview image must be downloadable");
+        assert_eq!((image.width, image.height), (Some(640), Some(640)));
+        assert_eq!(
+            thumbnail_of(&raw),
+            None,
+            "the full picture does not need an inline JPEG"
+        );
+    }
+
+    #[tokio::test]
+    async fn link_preview_download_cannot_attach_to_a_link_edited_during_transfer() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Synthetic").unwrap();
+        let raw = full_link_preview_fixture();
+        let mut row = crate::archive::tests::message(chat, "edited-link", 1, false);
+        row.content = classify(&raw).unwrap();
+        let Content::Text {
+            preview: Some(preview),
+            ..
+        } = &mut row.content
+        else {
+            panic!("link fixture")
+        };
+        let previous_url = std::mem::replace(&mut preview.url, "https://example.com/new".into());
+        row.edited = true;
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("old-picture.jpg");
+        std::fs::write(&path, b"old picture").unwrap();
+        worker.downloads.insert((chat.into(), row.id.clone(), None));
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.into(),
+                id: row.id.clone(),
+                preview_url: Some(previous_url),
+                result: Ok(path.clone()),
+            })
+            .await;
+        assert!(!path.exists(), "the obsolete cached image is removed");
+        assert!(
+            worker
+                .archive
+                .message(chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content
+                .media()
+                .unwrap()
+                .path
+                .is_none()
+        );
+        assert!(worker.downloads.is_empty());
+    }
+
+    #[test]
+    fn link_preview_backfill_recovers_old_previews_and_keeps_edits_and_files() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Synthetic").unwrap();
+        let raw = full_link_preview_fixture();
+        for id in ["old-preview", "edited", "downloaded"] {
+            let mut row = crate::archive::tests::message(chat, id, 1, false);
+            row.content = if id == "downloaded" {
+                classify(&raw).unwrap()
+            } else {
+                Content::text("An existing message")
+            };
+            row.edited = id == "edited";
+            if let Some(media) = row.content.media_mut() {
+                media.path = Some("cached-preview.jpg".into());
+            }
+            worker
+                .archive
+                .insert_message(&row, Some(&raw.encode_to_vec()))
+                .unwrap();
+        }
+        for index in 0..130 {
+            let row = crate::archive::tests::message(chat, &format!("page-{index}"), 1, false);
+            worker
+                .archive
+                .insert_message(&row, Some(&raw.encode_to_vec()))
+                .unwrap();
+        }
+        let page = worker.archive.link_previews_with_raw(0).unwrap();
+        assert_eq!(page.len(), 128, "the migration retains at most one page");
+        assert!(page.iter().all(|row| row.id != "edited"));
+        assert_eq!(
+            worker
+                .archive
+                .link_previews_with_raw(page.last().unwrap().rowid)
+                .unwrap()
+                .len(),
+            4
+        );
+        worker.backfill_link_previews();
+        let old = worker
+            .archive
+            .message(chat, "old-preview")
+            .unwrap()
+            .unwrap();
+        assert!(
+            old.content.media().is_some(),
+            "the retained protocol recovers the image"
+        );
+        assert!(
+            matches!(&old.content, Content::Text { text, .. } if text == "An existing message")
+        );
+        assert!(
+            worker
+                .archive
+                .message(chat, "page-129")
+                .unwrap()
+                .unwrap()
+                .content
+                .media()
+                .is_some(),
+            "the migration continues beyond the first page"
+        );
+        let edited = worker.archive.message(chat, "edited").unwrap().unwrap();
+        assert_eq!(edited.content, Content::text("An existing message"));
+        let downloaded = worker.archive.message(chat, "downloaded").unwrap().unwrap();
+        assert_eq!(
+            downloaded.content.media().unwrap().path.as_deref(),
+            Some(std::path::Path::new("cached-preview.jpg"))
+        );
+        worker.backfill_link_previews();
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "old-preview")
+                .unwrap()
+                .unwrap()
+                .content,
+            old.content
+        );
+    }
+
     fn composed_preview() -> crate::model::ComposedPreview {
         let mut jpeg = Vec::new();
         image::RgbImage::new(6, 4)
@@ -17944,6 +18209,8 @@ mod tests {
             .expect("jpeg");
         crate::model::ComposedPreview {
             preview: LinkPreview {
+                video: false,
+                image: None,
                 url: "https://ex.com/a".into(),
                 title: Some("Example".into()),
                 description: Some("An example page".into()),

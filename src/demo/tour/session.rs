@@ -347,6 +347,8 @@ fn link_preview(url: &str) -> Option<crate::model::ComposedPreview> {
     url.contains("spotifast.rocks")
         .then(|| crate::model::ComposedPreview {
             preview: crate::model::LinkPreview {
+                video: false,
+                image: None,
                 url: url.to_owned(),
                 title: Some("spotifast.rocks".into()),
                 description: Some(

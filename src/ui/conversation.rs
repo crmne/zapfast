@@ -2569,7 +2569,8 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
                     let right = ui.max_rect().right();
                     let (bar, _) = ui.allocate_exact_size(vec2(3.0, 0.0), Sense::hover());
                     let width = (ui.available_width() - 46.0).max(0.0);
-                    let card = preview_layout(ui, &palette, &composed.preview, thumbnail, width);
+                    let card =
+                        composer_preview_layout(ui, &palette, &composed.preview, thumbnail, width);
                     ui.painter().rect_filled(
                         Rect::from_x_y_ranges(bar.x_range(), card.y_range()),
                         2.0,
@@ -6029,6 +6030,22 @@ const CAROUSEL_GAP: f32 = 8.0;
 
 /// Returns the shared card width, bounded by [`CARD_WIDTH`] and `cap`.
 fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) -> Option<f32> {
+    if let Content::Text {
+        preview: Some(preview),
+        ..
+    } = &message.content
+        && large_preview(preview, message.thumbnail.as_deref())
+    {
+        return Some(
+            (if preview.is_video() {
+                240.0_f32
+            } else {
+                CARD_WIDTH
+            })
+            .min(cap)
+            .max(0.0),
+        );
+    }
     if matches!(
         message.content,
         Content::Location { .. } | Content::LiveLocation { .. }
@@ -6059,9 +6076,6 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
             Content::Text { preview, .. } => preview.is_some(),
             Content::Document { .. } | Content::Audio { .. } | Content::Poll { .. } => true,
             Content::Interactive { card, .. } => card.is_some(),
-            // Videos without a poster use the file-row layout, except the
-            // round ones, which always draw as a circle.
-            Content::Video { note, .. } => !note && message.thumbnail.is_none(),
             _ => false,
         };
     card.then(|| {
@@ -7567,7 +7581,9 @@ fn context_menu(
     {
         actions.push(Action::SaveSticker(path.clone()));
     }
-    if let Some(media) = message.content.media() {
+    if !matches!(message.content, Content::Text { .. })
+        && let Some(media) = message.content.media()
+    {
         match &media.path {
             Some(path) => {
                 let open = if matches!(message.content, Content::Video { gif: false, .. }) {
@@ -9891,6 +9907,7 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    let large = large_preview(preview, message.thumbnail.as_deref());
     let thumbnail = message
         .thumbnail
         .as_deref()
@@ -9898,12 +9915,16 @@ fn preview_card(
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(8))
+        .inner_margin(if large { Margin::ZERO } else { Margin::same(8) })
         .show(ui, |ui| {
-            // Include margins in the settled card width.
-            let card_width = (width - 16.0).max(0.0);
+            // The caption supplies padding; the image fills the card.
+            let card_width = (width - if large { 0.0 } else { 16.0 }).max(0.0);
             ui.set_width(card_width);
-            preview_layout(ui, &palette, preview, thumbnail, card_width);
+            if large {
+                preview_layout(ui, &palette, preview, message, card_width, actions);
+            } else {
+                composer_preview_layout(ui, &palette, preview, thumbnail, card_width);
+            }
         })
         .response;
     ui.ctx().data_mut(|data| {
@@ -9919,16 +9940,198 @@ fn preview_card(
             Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    // Link pictures are preview assets, not full attachments. Fetch the
+    // WhatsApp-hosted picture even when automatic attachment downloads are off.
+    if view.connected
+        && ui.is_rect_visible(response.rect)
+        && let Some(image) = &preview.image
+        && image.path.is_none()
+        && matches!(image.state, MediaState::Idle)
+    {
+        actions.push(Action::Download {
+            manual: false,
+            card: None,
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+        });
+    }
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
     }
+}
+
+/// Small site icons stay compact; media posters and WhatsApp's larger
+/// downloadable pictures use the expanded layout.
+fn large_preview(preview: &LinkPreview, thumbnail: Option<&[u8]>) -> bool {
+    preview.is_video()
+        || preview.image.is_some()
+        || thumbnail.is_some_and(|bytes| {
+            image::ImageReader::new(std::io::Cursor::new(bytes))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok())
+                .is_some_and(|(w, h)| w >= 200 || h >= 200)
+        })
+}
+
+/// Received/sent link cards put the image above the caption, as WhatsApp
+/// does. The composer keeps its smaller, horizontal preview strip.
+fn preview_layout(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    preview: &LinkPreview,
+    message: &Message,
+    card_width: f32,
+    actions: &mut Vec<Action>,
+) -> Rect {
+    let thumbnail = message.thumbnail.as_deref();
+    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(card_width);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let image = preview.image.as_ref();
+        let dimensions = image
+            .and_then(|image| image.width.zip(image.height))
+            .filter(|(w, h)| *w > 0 && *h > 0)
+            .or_else(|| {
+                thumbnail.and_then(|bytes| {
+                    image::ImageReader::new(std::io::Cursor::new(bytes))
+                        .with_guessed_format()
+                        .ok()?
+                        .into_dimensions()
+                        .ok()
+                })
+            });
+        let path = image.and_then(|image| image.path.as_ref());
+        if thumbnail.is_some()
+            || path.is_some()
+            || image.is_some_and(|image| matches!(image.state, MediaState::Downloading))
+        {
+            let (w, h) = dimensions.unwrap_or((1, 1));
+            let video = preview.is_video();
+            let height = if video {
+                card_width
+            } else {
+                (card_width * h as f32 / w as f32).min(card_width * 1.5)
+            };
+            let (rect, _) = ui.allocate_exact_size(vec2(card_width, height), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                ui.painter().rect_filled(rect, 4.0, palette.surface);
+                let full = path.and_then(|path| {
+                    let uri = crate::util::image_uri(path);
+                    crate::image_cache::touch(ui.ctx(), &uri);
+                    match ui.ctx().try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        Ok(egui::load::TexturePoll::Pending { .. }) => None,
+                        Err(_) => {
+                            actions.push(Action::UnreadableMedia {
+                                chat: message.chat.clone(),
+                                message: message.id.clone(),
+                                path: path.clone(),
+                            });
+                            None
+                        }
+                    }
+                });
+                // Only retain/decode the inline JPEG until the full picture is ready.
+                let texture = full.or_else(|| {
+                    let uri = link_thumbnail_uri(
+                        ui.ctx(),
+                        preview,
+                        &message.chat,
+                        &message.id,
+                        thumbnail?,
+                    );
+                    match ui.ctx().try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        _ => None,
+                    }
+                });
+                if let Some(texture) = texture
+                    && rect.is_positive()
+                {
+                    let aspect = texture.size.x / texture.size.y;
+                    let target = rect.width() / rect.height();
+                    let uv = if aspect > target {
+                        let half = target / aspect * 0.5;
+                        Rect::from_min_max(pos2(0.5 - half, 0.0), pos2(0.5 + half, 1.0))
+                    } else {
+                        let half = aspect / target * 0.5;
+                        Rect::from_min_max(pos2(0.0, 0.5 - half), pos2(1.0, 0.5 + half))
+                    };
+                    paint_texture(ui, rect, texture.id, uv, 4.0);
+                }
+                if video {
+                    let center = rect.center();
+                    ui.painter()
+                        .circle_filled(center, 24.0, Color32::from_black_alpha(100));
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            center + vec2(-7.0, -13.0),
+                            center + vec2(-7.0, 13.0),
+                            center + vec2(13.0, 0.0),
+                        ],
+                        Color32::WHITE,
+                        Stroke::NONE,
+                    ));
+                }
+            }
+        }
+        Frame::new().inner_margin(Margin::same(8)).show(ui, |ui| {
+            ui.set_width((card_width - 16.0).max(0.0));
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for (text, font, color, lines) in [
+                (
+                    preview.title.as_deref(),
+                    theme::semibold(13.5),
+                    palette.text,
+                    2,
+                ),
+                (
+                    preview.description.as_deref(),
+                    theme::regular(12.5),
+                    palette.secondary,
+                    3,
+                ),
+            ] {
+                if let Some(text) = text.filter(|text| !text.is_empty()) {
+                    let line = widgets::line(ui, text, font, color, ui.available_width(), lines);
+                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                    line.paint(ui, rect.min, color);
+                }
+            }
+            let domain = reqwest::Url::parse(&preview.url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            let line = widgets::line(
+                ui,
+                &domain,
+                theme::regular(12.0),
+                palette.dim,
+                ui.available_width(),
+                1,
+            );
+            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+            line.paint(ui, rect.min, palette.dim);
+        });
+    })
+    .response
+    .rect
 }
 
 /// The inside of a link preview card, a bubble's or the composer's: a
 /// 64-point thumbnail (from `thumbnail`'s chat, image id and JPEG), then the
 /// title, up to two lines of description and the domain, `card_width` wide.
 /// Returns where it was laid out.
-fn preview_layout(
+fn composer_preview_layout(
     ui: &mut egui::Ui,
     palette: &Palette,
     preview: &LinkPreview,
@@ -9955,7 +10158,7 @@ fn preview_layout(
                 // Off-screen cards are laid out too; only a visible
                 // one keeps its thumbnail resident.
                 if ui.is_rect_visible(rect) {
-                    let uri = thumbnail_uri(ui.ctx(), chat, id, bytes);
+                    let uri = link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes);
                     egui::Image::new(uri)
                         .fit_to_exact_size(rect.size())
                         .corner_radius(4.0)
@@ -10051,6 +10254,18 @@ fn location_card(
             actions.push(Action::OpenUrl(crate::geo::map_url(spot)));
         }
     });
+}
+
+/// An edited link's inline picture must not reuse the previous URL's cached bytes.
+fn link_thumbnail_uri(
+    ctx: &egui::Context,
+    preview: &LinkPreview,
+    chat: &str,
+    id: &str,
+    bytes: &[u8],
+) -> String {
+    let id = format!("{id}-link-{:x}", egui::Id::new(&preview.url).value());
+    thumbnail_uri(ctx, chat, &id, bytes)
 }
 
 pub(crate) fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {
@@ -10494,29 +10709,13 @@ fn video(
 ) -> f32 {
     use crate::video::State;
     let palette = view.palette;
-    // A video sent before ZapFast made thumbnails has none; its file is
-    // here, so its first frame stands in. Without either, it is a file card.
-    let thumbnail = message.thumbnail.as_deref();
-    if thumbnail.is_none() && media.path.is_none() {
-        let title = if gif { "GIF" } else { "Video" };
-        let mut detail = Vec::new();
-        if let Some(seconds) = seconds {
-            detail.push(crate::util::duration(seconds));
-        }
-        detail.push(crate::util::bytes(media.size));
-        attachment(
-            ui,
-            view,
-            message,
-            media,
-            Icon::Video,
-            title,
-            &detail.join(" · "),
-            width,
-            actions,
-        );
-        return width;
-    }
+    // A missing inline thumbnail does not change a video into a file row.
+    // Keep its frame and play target while downloading; the first decoded
+    // frame becomes its poster once the file is available.
+    let thumbnail = message
+        .thumbnail
+        .as_deref()
+        .filter(|bytes| !bytes.is_empty());
     let limit = width.min(PICTURE_WIDTH);
     // Without its size, a widescreen frame that fills the bubble: the hint is
     // in pixels, so a bare 16 by 9 would shrink it to the narrowest picture.
@@ -10527,6 +10726,14 @@ fn video(
         PICTURE_HEIGHT.min(limit * 1.3),
     );
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    #[cfg(test)]
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("video"), rect);
+    });
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 6.0, palette.surface);
+    }
+
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
             ui,
@@ -11792,6 +11999,266 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn link_preview_puts_a_large_picture_above_its_caption() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let preview = LinkPreview {
+            video: false,
+            image: None,
+            url: "https://example.com/article".into(),
+            title: Some("An article with a landscape picture".into()),
+            description: Some("Its description belongs below the picture.".into()),
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(300, 200)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut card = Rect::NOTHING;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            card = preview_layout(
+                ui,
+                &Palette::dark(),
+                &preview,
+                &Message {
+                    thumbnail: Some(jpeg.get_ref().clone()),
+                    ..message(Content::text("synthetic"))
+                },
+                300.0,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        assert!(card.height() > 240.0, "large picture and caption: {card:?}");
+        assert!(
+            card.width() <= 301.0,
+            "preview stays inside the bubble: {card:?}"
+        );
+    }
+
+    #[test]
+    fn link_preview_video_posters_are_square_and_captioned_below_in_both_directions() {
+        for width in [180.0, 240.0] {
+            for layout in [
+                Layout::top_down(Align::Min),
+                Layout::right_to_left(Align::Min),
+            ] {
+                let ctx = egui::Context::default();
+                crate::theme::install(&ctx);
+                let preview = LinkPreview {
+                    url: "https://www.instagram.com/reel/synthetic/".into(),
+                    title: Some(
+                        "Preview title that wraps over several lines in a narrow bubble".into(),
+                    ),
+                    description: None,
+                    video: false,
+                    image: None,
+                };
+                let mut jpeg = std::io::Cursor::new(Vec::new());
+                image::RgbImage::new(300, 200)
+                    .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+                    .unwrap();
+                let mut card = Rect::NOTHING;
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.with_layout(layout, |ui| {
+                        card = preview_layout(
+                            ui,
+                            &Palette::dark(),
+                            &preview,
+                            &Message {
+                                thumbnail: Some(jpeg.get_ref().clone()),
+                                ..message(Content::text("synthetic"))
+                            },
+                            width,
+                            &mut Vec::new(),
+                        );
+                    });
+                });
+                output.textures_delta.clear();
+                let play = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Path(path)
+                            if path.points.len() == 3 && path.fill == Color32::WHITE =>
+                        {
+                            Some(path)
+                        }
+                        _ => None,
+                    })
+                    .expect("a reel has a play overlay");
+                assert!(
+                    (play.points[0].y + 13.0 - card.top() - width / 2.0).abs() < 1.0,
+                    "the play button is centered on a square poster"
+                );
+                let title = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text.galley.job.text.starts_with("Preview title") =>
+                        {
+                            Some(text)
+                        }
+                        _ => None,
+                    })
+                    .expect("preview caption");
+                assert!(
+                    title.pos.y >= card.top() + width,
+                    "caption sits below the image"
+                );
+                assert!(
+                    card.width() <= width + 1.0,
+                    "narrow/own previews never overflow"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn link_preview_site_icons_stay_compact_and_received_pictures_download_once() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut preview = LinkPreview {
+            url: "https://example.com".into(),
+            title: Some("Site".into()),
+            description: None,
+            video: false,
+            image: None,
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "a small site icon is not a media poster"
+        );
+        let old_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", jpeg.get_ref());
+        preview.url = "https://example.com/edited".into();
+        let new_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", b"replacement");
+        assert_ne!(old_uri, new_uri);
+        let egui::load::BytesPoll::Ready { bytes, .. } = ctx.try_load_bytes(&new_uri).unwrap()
+        else {
+            panic!("the replacement thumbnail must be registered")
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            b"replacement",
+            "the old cached JPEG must not win"
+        );
+        preview.image = Some(Box::new(media(Some(640), Some(640))));
+        with_still_view(|view| {
+            for (connected, state) in [
+                (false, MediaState::Idle),
+                (true, MediaState::Idle),
+                (true, MediaState::Downloading),
+                (true, MediaState::Failed("Expired".into())),
+            ] {
+                let view = View {
+                    auto_download: false,
+                    connected,
+                    ..*view
+                };
+                preview.image.as_mut().unwrap().state = state.clone();
+                let row = message(Content::Text {
+                    text: preview.url.clone(),
+                    preview: Some(preview.clone()),
+                });
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    preview_card(ui, &view, &row, &preview, 240.0, &mut actions);
+                });
+                output.textures_delta.clear();
+                assert_eq!(
+                    actions
+                        .iter()
+                        .filter(|action| matches!(action, Action::Download { .. }))
+                        .count(),
+                    usize::from(connected && matches!(state, MediaState::Idle)),
+                    "only a connected, visible idle preview requests its image"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn link_preview_paints_the_full_resolution_texture_over_the_inline_jpeg() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("full-preview.png");
+        image::RgbImage::from_fn(640, 320, |x, y| {
+            let pixel = if (x / 4 + y / 4) % 2 == 0 { 255 } else { 0 };
+            image::Rgb([pixel, pixel, pixel])
+        })
+        .save(&path)
+        .unwrap();
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let preview = LinkPreview {
+            url: "https://www.instagram.com/reel/synthetic/".into(),
+            title: Some("Full-quality preview".into()),
+            description: None,
+            video: true,
+            image: Some(Box::new(Media {
+                path: Some(path.clone()),
+                ..media(Some(640), Some(640))
+            })),
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let uri = crate::util::image_uri(&path);
+        let full = (0..100)
+            .find_map(|_| {
+                match ctx.try_load_texture(
+                    &uri,
+                    egui::TextureOptions::LINEAR,
+                    egui::load::SizeHint::default(),
+                ) {
+                    Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                    Ok(egui::load::TexturePoll::Pending { .. }) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        None
+                    }
+                    Err(error) => panic!("full preview failed: {error}"),
+                }
+            })
+            .expect("full preview texture decoded");
+        assert_eq!(full.size, vec2(640.0, 320.0));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            preview_layout(
+                ui,
+                &Palette::dark(),
+                &preview,
+                &Message {
+                    thumbnail: Some(jpeg.get_ref().clone()),
+                    ..message(Content::text("synthetic"))
+                },
+                240.0,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        let painted = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) => rect
+                    .brush
+                    .as_ref()
+                    .filter(|brush| brush.fill_texture_id == full.id),
+                _ => None,
+            })
+            .expect("the full-resolution image is painted");
+        assert_eq!(
+            painted.uv,
+            Rect::from_min_max(pos2(0.25, 0.0), pos2(0.75, 1.0)),
+            "crop uses decoded dimensions, not stale protocol dimensions"
+        );
+    }
+
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]
     fn a_vibrant_header_folds_its_buttons_rather_than_cover_the_name() {
