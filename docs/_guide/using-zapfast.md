@@ -327,7 +327,9 @@ tools along the top: **Crop**, **Pen**, **Highlighter**, **Arrow**,
 drag across the picture draws a line. The pen, highlighter, arrow and rectangle
 draw in one of seven colours and three thicknesses, picked under the picture;
 ZapFast remembers your last choice until it quits. **Pixelate** turns the
-region you drag over into coarse blocks, to hide a name or a number. **Undo**
+region you drag over into coarse blocks, to hide a name or a number. The
+blocks show in the colours the sent picture will have; a large picture shows
+them in a plain colour for a moment while ZapFast reads it. **Undo**
 and **Redo** step through the marks, also with Ctrl+Z and Ctrl+Shift+Z or
 Ctrl+Y (Command on macOS).
 
