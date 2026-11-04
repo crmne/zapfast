@@ -110,7 +110,7 @@ pub fn respond(app: &mut App) {
                     .and_then(|bytes| crate::backend::picture_edit::inspect(&bytes));
                 match size {
                     Ok((width, height)) => {
-                        app.picture_edit = Some(crate::model::PictureEdit::new(
+                        app.open_picture_edit(crate::model::PictureEdit::new(
                             target,
                             crate::model::PictureSource::File(path),
                             width,
@@ -120,21 +120,10 @@ pub fn respond(app: &mut App) {
                     Err(error) => app.toast_error(error),
                 }
             }
-            Command::ApplyPictureEdit {
-                target,
-                source,
-                width,
-                height,
-                crop,
-                turns,
-            } => {
+            Command::ApplyPictureEdit { target, origin } => {
                 // The same work the worker would do, on this thread instead.
                 let written = crate::backend::picture_edit::write(
-                    &source,
-                    width,
-                    height,
-                    crop,
-                    turns,
+                    &origin,
                     &app.dirs.media_cache_dir().join("edited"),
                 );
                 match written {
