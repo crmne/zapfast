@@ -12370,6 +12370,65 @@ mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
 
+    #[test]
+    fn unreadable_compact_preview_clears_its_path_and_sets_retry_state() {
+        for corrupt in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("icon.jpg");
+            if corrupt {
+                std::fs::write(&path, b"not an image").unwrap();
+            }
+            let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+            let chat = "synthetic@s.whatsapp.net";
+            let mut row = message(chat, "preview", 1);
+            row.content = Content::Text {
+                text: "https://example.com".into(),
+                preview: Some(crate::model::LinkPreview {
+                    url: "https://example.com".into(),
+                    title: None,
+                    description: None,
+                    video: false,
+                    image_sha256: None,
+                    image: Some(Box::new(Media {
+                        mime: "image/jpeg".into(),
+                        size: 1,
+                        width: Some(64),
+                        height: Some(64),
+                        album: None,
+                        path: Some(path.clone()),
+                        state: MediaState::Idle,
+                    })),
+                }),
+            };
+            app.conversations
+                .entry(chat.into())
+                .or_default()
+                .messages
+                .push(row);
+            app.apply(
+                Action::UnreadableMedia {
+                    chat: chat.into(),
+                    message: "preview".into(),
+                    path,
+                },
+                &egui::Context::default(),
+            );
+            let media = app.conversations[chat].messages[0].content.media().unwrap();
+            assert!(media.path.is_none());
+            if corrupt {
+                assert!(
+                    matches!(media.state, MediaState::Failed(_)),
+                    "corrupt files require a manual retry"
+                );
+            } else {
+                assert!(
+                    matches!(media.state, MediaState::Idle),
+                    "missing files can download again automatically"
+                );
+            }
+        }
+    }
+
     fn composer_undo_boundary_frame(
         app: &mut App,
         ctx: &egui::Context,

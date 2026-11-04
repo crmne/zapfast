@@ -2434,24 +2434,25 @@ impl Archive {
     fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
         let paths = |filter: &str| {
             format!(
-            "SELECT file FROM (
-                 SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(m.content, '$.motion.path') FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(m.content, '$.preview.image.path') FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(c.value, '$.image.path')
-                 FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
-             ) WHERE file IS NOT NULL"
+            "SELECT p.value AS file FROM messages m,
+                 json_each(CASE WHEN json_valid(m.content) THEN json_extract(m.content,
+                     '$.media.path', '$.card.image.path', '$.motion.path', '$.preview.image.path') END) p
+             WHERE ({filter}) AND p.type = 'text'
+             UNION ALL
+             SELECT CASE WHEN c.type = 'object' THEN json_extract(c.value, '$.image.path') END AS file
+             FROM messages m,
+                 json_each(CASE WHEN json_valid(m.content) THEN m.content END, '$.card.carousel') c
+             WHERE ({filter}) AND typeof(file) = 'text'"
         )
         };
         let mut statement = self.connection.prepare(&format!(
-            "{} EXCEPT {}",
+            "WITH removed AS MATERIALIZED ({})
+             SELECT file FROM removed EXCEPT
+             SELECT file FROM ({}) WHERE file IN (SELECT file FROM removed)",
             paths(filter),
-            paths(&format!("NOT ({filter})")),
+            paths(&format!(
+                "NOT ({filter}) AND EXISTS (SELECT 1 FROM removed)"
+            )),
         ))?;
         let rows =
             statement.query_map(params, |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
@@ -4687,6 +4688,60 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn malformed_content_does_not_block_chat_removal() {
+        for removal in ["clear", "delete", "through"] {
+            for corrupt_selected in [false, true] {
+                let archive = Archive::in_memory().unwrap();
+                // Simulate damaged stored content. Current partial indexes
+                // reject malformed JSON on ordinary writes.
+                archive
+                    .connection
+                    .execute_batch("DROP INDEX messages_stickers; DROP INDEX messages_calls;")
+                    .unwrap();
+                let chat = "1@s.whatsapp.net";
+                let other = "2@s.whatsapp.net";
+                let path = Path::new("/cache/synthetic.jpg");
+                furnished_chat(&archive, chat, path);
+                archive.ensure_chat(other, "Synthetic").unwrap();
+                let bad_chat = if corrupt_selected { chat } else { other };
+                archive
+                    .insert_message(&message(bad_chat, "bad", 100, false), None)
+                    .unwrap();
+                archive
+                    .connection
+                    .execute(
+                        "UPDATE messages SET content = '{' WHERE chat = ?1 AND id = 'bad'",
+                        params![bad_chat],
+                    )
+                    .unwrap();
+                if removal == "through" {
+                    archive
+                        .insert_message(&message(chat, "newer", 300, false), None)
+                        .unwrap();
+                }
+                let removed = match removal {
+                    "clear" => archive.clear_chat(chat),
+                    "delete" => archive.delete_chat(chat),
+                    _ => archive.remove_chat_through(chat, 200, false),
+                }
+                .unwrap();
+                assert_eq!(removed.media, [path.to_path_buf()]);
+                if !corrupt_selected {
+                    let content: String = archive
+                        .connection
+                        .query_row(
+                            "SELECT content FROM messages WHERE chat = ?1 AND id = 'bad'",
+                            params![other],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(content, "{", "unrelated damaged rows stay untouched");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn chat_removal_keeps_preview_files_referenced_by_surviving_messages() {
         for removal in ["clear", "delete", "through"] {
             let archive = Archive::in_memory().unwrap();
@@ -4700,28 +4755,39 @@ pub(crate) mod tests {
                 ("source", 100, chat, "shared.jpg"),
                 ("unshared", 100, chat, "unshared.jpg"),
                 ("forwarded", 200, kept_chat, "shared.jpg"),
+                ("source-media", 100, chat, "attachment.jpg"),
+                ("forwarded-media", 200, kept_chat, "attachment.jpg"),
             ] {
                 archive.ensure_chat(target, "Synthetic").unwrap();
                 let mut row = message(target, id, at, false);
-                row.forwarded = id == "forwarded";
-                row.content = Content::Text {
-                    text: "https://example.com".into(),
-                    preview: Some(crate::model::LinkPreview {
-                        url: "https://example.com".into(),
-                        title: None,
-                        description: None,
-                        video: false,
-                        image_sha256: None,
-                        image: Some(Box::new(crate::model::Media {
-                            mime: "image/jpeg".into(),
-                            size: 1,
-                            width: None,
-                            height: None,
-                            album: None,
-                            path: Some(PathBuf::from(file)),
-                            state: crate::model::MediaState::Idle,
-                        })),
-                    }),
+                row.forwarded = id.starts_with("forwarded");
+                let media = crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    album: None,
+                    path: Some(PathBuf::from(file)),
+                    state: crate::model::MediaState::Idle,
+                };
+                row.content = if id.ends_with("-media") {
+                    Content::Image {
+                        caption: None,
+                        motion: None,
+                        media,
+                    }
+                } else {
+                    Content::Text {
+                        text: "https://example.com".into(),
+                        preview: Some(crate::model::LinkPreview {
+                            url: "https://example.com".into(),
+                            title: None,
+                            description: None,
+                            video: false,
+                            image_sha256: None,
+                            image: Some(Box::new(media)),
+                        }),
+                    }
                 };
                 archive.insert_message(&row, None).unwrap();
             }
@@ -4738,8 +4804,20 @@ pub(crate) mod tests {
                 Some(Path::new("shared.jpg"))
             );
             assert_eq!(
+                archive
+                    .message(kept_chat, "forwarded-media")
+                    .unwrap()
+                    .unwrap()
+                    .content
+                    .media()
+                    .unwrap()
+                    .path
+                    .as_deref(),
+                Some(Path::new("attachment.jpg"))
+            );
+            assert_eq!(
                 archive.delete_chat(kept_chat).unwrap().media,
-                [PathBuf::from("shared.jpg")]
+                [PathBuf::from("attachment.jpg"), PathBuf::from("shared.jpg")]
             );
         }
     }
