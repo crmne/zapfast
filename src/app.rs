@@ -8514,7 +8514,9 @@ impl App {
                 }
             }
             Action::ApplyPictureEdit => {
-                if let Some(edit) = self.picture_edit.take() {
+                if let Some(mut edit) = self.picture_edit.take() {
+                    // Enter can keep the edit with the pointer still down.
+                    edit.finish_mark();
                     // Held against the attachment until the file lands, so a
                     // second edit started meanwhile cannot take its origin.
                     let origin = edit.origin();
@@ -22458,6 +22460,39 @@ mod tests {
                 Pending::File(path) if path == std::path::Path::new("/fixture/edited.jpg")
             ),
             "and the first picture was still replaced by its own crop"
+        );
+    }
+
+    /// Enter can keep the edit while the pointer is still down, and the
+    /// line being drawn is written with the rest.
+    #[test]
+    fn keeping_an_edit_mid_stroke_writes_that_stroke() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let target = app.stage(Pending::File("/fixture/photo.png".into()));
+        let mut edit = crate::model::PictureEdit::new(
+            target,
+            crate::model::PictureSource::File("/fixture/photo.png".into()),
+            80,
+            60,
+        );
+        edit.begin_mark(crate::model::Brush::default(), [10.0, 10.0]);
+        edit.extend_mark([40.0, 30.0], 1.0);
+        app.picture_edit = Some(edit);
+        app.apply(Action::ApplyPictureEdit, &ctx);
+        let written: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::ApplyPictureEdit { origin, .. } => Some(origin.marks),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(written.as_slice(), [marks] if matches!(marks.as_slice(),
+                [crate::model::Mark::Pen { points, .. }] if points.len() == 2)),
+            "the stroke under the pointer was written, got {written:?}"
         );
     }
 
