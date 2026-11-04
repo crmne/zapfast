@@ -82,7 +82,17 @@ sudo apt install ./{{ name }}_{{ v }}_amd64.deb    # or _arm64.deb
 - [{{ name }}_{{ v }}_amd64.deb]({{ base }}/{{ name }}_{{ v }}_amd64.deb)
 - [{{ name }}_{{ v }}_arm64.deb]({{ base }}/{{ name }}_{{ v }}_arm64.deb)
 
-On Fedora, openSUSE and other RPM distributions, install the `.rpm`:
+On Fedora 44 and newer, install from the
+[COPR repository](https://copr.fedorainfracloud.org/coprs/paolino/zapfast/),
+so dnf updates {{ app }} with the rest of your system:
+
+```sh
+sudo dnf copr enable paolino/zapfast
+sudo dnf install zapfast
+```
+
+On openSUSE and other RPM distributions, or to install one release by hand,
+take the `.rpm`:
 
 ```sh
 sudo dnf install ./{{ name }}-{{ v }}-1.x86_64.rpm    # or .aarch64.rpm

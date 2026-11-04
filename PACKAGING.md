@@ -195,7 +195,11 @@ and the `home:paolino` OBS project. Fill in `@VERSION@` and `@DATE@` (in RPM
 changelog form, such as `Tue Nov 03 2026`), then build a source RPM and submit
 it. Cargo fetches the locked dependencies during the build, so the COPR project
 has network access turned on for builds. Fedora 44 and newer ship a new enough
-Rust. Submissions are a manual maintainer step that needs a COPR API token.
+Rust. Submissions are a manual maintainer step that needs a COPR API token:
+`~/.config/copr`, also in 1Password as "Fedora COPR API". It lasts 180 days
+from the COPR API page; the current one expires on 2026-12-03. `copr-cli` is
+not packaged for Arch, so run it from a Fedora container with the config
+mounted read-only.
 
 ```sh
 sed -e "s/@VERSION@/X.Y.Z/g" -e "s/@DATE@/$(LC_ALL=C date '+%a %b %d %Y')/" \
