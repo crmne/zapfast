@@ -339,8 +339,9 @@ edges and corners or move it whole. **Turn left** and **Turn right** turn the
 picture a quarter at a time, marks included, and **Reset** puts it back the way
 it started, without marks. Press Enter or click the check to keep the changes,
 or Escape or the close button to leave the picture as it was. If the changes
-cannot be saved, ZapFast says why and opens the editor again with them, so you
-can try once more without redrawing them. Opened from the keyboard, the editor puts focus on the check (**Keep changes**), Tab moves
+cannot be saved, ZapFast says why. Unless the editor is already busy with
+another picture, it also opens again with them, so you can try once more
+without redrawing them. Opened from the keyboard, the editor puts focus on the check (**Keep changes**), Tab moves
 between its buttons, and Enter or Space presses the focused one, so Enter on
 the close button cancels. Drawing and the crop region work with the pointer
 only.
