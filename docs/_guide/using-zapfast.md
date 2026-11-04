@@ -323,10 +323,11 @@ close button cancels the send, and nothing reaches the chat.
 Select a picture in the review area and click **Edit picture** to draw on it,
 crop it or turn it before sending. The picture opens over the window with the
 tools along the top: **Crop**, **Pen**, **Highlighter**, **Arrow**,
-**Rectangle** and **Pixelate**. The pen is picked when the editor opens, so a
-drag across the picture draws a line. The pen, highlighter, arrow and rectangle
-draw in one of seven colours and three thicknesses, picked under the picture;
-ZapFast remembers your last choice until it quits. **Pixelate** turns the
+**Rectangle** and **Pixelate**. The first time the editor opens, the pen is
+picked, so a drag across the picture draws a line. The pen, highlighter, arrow
+and rectangle draw in one of seven colours and three thicknesses, picked under
+the picture. Until ZapFast quits, the editor opens with the tool, colour and
+thickness you used last. **Pixelate** turns the
 region you drag over into coarse blocks, to hide a name or a number. The
 blocks show in the colours the sent picture will have; a large picture shows
 them in a plain colour for a moment while ZapFast reads it. **Undo**
