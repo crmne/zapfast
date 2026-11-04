@@ -48,7 +48,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && !app.show_update
         && app.picker != Some(PickerTab::Emoji)
         && app.reaction_target.is_none()
-        && app.recording.is_none();
+        && app.recording.is_none()
+        // The call screen covers the chats.
+        && (app.call.is_none() || app.call_surface_hidden);
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         // The message list's key counts only with its modifier alone:
@@ -2235,6 +2237,37 @@ mod tests {
             (true, vec![])
         );
         app.editing = None;
+        // The call screen covers the chats, and the message field under it.
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: ids[0].clone(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        });
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.call_surface_hidden = true;
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (false, vec![Action::TogglePicker(PickerTab::Emoji)])
+        );
+        app.call = None;
+        app.call_surface_hidden = false;
         // Without the message field focused, the keys are not the picker's.
         ctx.memory_mut(|memory| memory.surrender_focus(composer));
         app.actions.clear();
