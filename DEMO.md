@@ -88,6 +88,8 @@ locked.
 `--demo-page call-bubbles` ends a group with one call entry of each kind
 (answered with a length, unanswered, missed and declined, voice and video,
 ours and members'), and `call-entries` files the sample calls in a chat.
+`--demo-page forwarded-group` shows consecutive messages from one group member,
+including a forwarded photo with the sender's name above its label.
 `--demo-page video` shows a video and round video messages,
 `--demo-page video-expanded` the video playing in the full-window viewer, and
 `video-playing` or `note-playing` starts one of them, silently.

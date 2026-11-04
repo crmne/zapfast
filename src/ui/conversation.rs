@@ -5565,6 +5565,8 @@ fn bubble_frame(
 ) -> egui::Response {
     let palette = view.palette;
     let own = message.from_me;
+    // A forwarded group message names its sender even within the same run.
+    let show_sender = show_sender || (message.forwarded && !own);
     let fill = if bubbleless(&palette, message) {
         Color32::TRANSPARENT
     } else if own {

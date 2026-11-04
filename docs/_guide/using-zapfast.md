@@ -84,6 +84,9 @@ edit, the message keeps its earlier text.
 **Development builds** also show when your message was delivered and read when
 you click its time or ticks, as on WhatsApp.
 
+Forwarded messages in a group show the sender's name above **Forwarded**, even
+when the preceding message comes from the same person.
+
 Forwarding opens a recipient picker. Select up to five writable chats, as on
 WhatsApp; a message labelled as forwarded many times goes to one chat at a
 time. With one chat selected, **Forward** sends it straight away. With

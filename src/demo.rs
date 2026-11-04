@@ -2086,6 +2086,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-voted" => poll_sample(app, true, false),
             "poll-results" => poll_sample(app, true, true),
             "photos" => photos_sample(app),
+            "forwarded-group" => {
+                photos_sample(app);
+                let mut photo = app.conversations[SAMPLES[0].id].messages[1].clone();
+                photo.chat = FAMILY.into();
+                photo.sender = JONAS.into();
+                let first = Message {
+                    id: "forwarded-before".into(),
+                    content: Content::text("Passing this along."),
+                    forwarded: false,
+                    timestamp: photo.timestamp - 60,
+                    ..photo.clone()
+                };
+                app.conversations.entry(FAMILY.into()).or_default().messages = vec![first, photo];
+                app.open_chat = Some(FAMILY.into());
+                app.typing.clear();
+                app.scroll_to_bottom = true;
+            }
             "bubbles" => bubbles_sample(app),
             "drafts" => {
                 // Unsent text in two chats besides the open one, whose
@@ -24717,6 +24734,27 @@ mod bubble_detail_tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn forwarded_group_messages_repeat_the_sender_above_the_forwarded_label() {
+        for theme in ["", ",light", ",messages", ",messages-light"] {
+            for width in [560.0, 1180.0] {
+                let mut app = app();
+                apply_flags(&mut app, Some(&format!("forwarded-group{theme}")));
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                frames(&mut app, &ctx, egui::vec2(width, 780.0));
+                let bubble = crate::ui::conversation::bubble_id(FAMILY, "photos-in");
+                let sender = rect(&ctx, bubble.with("sender"))
+                    .expect("the forwarded message names its sender");
+                let label = rect(&ctx, bubble.with("forwarded")).expect("forwarded label");
+                assert!(
+                    sender.bottom() <= label.top(),
+                    "the sender is above Forwarded"
+                );
             }
         }
     }
