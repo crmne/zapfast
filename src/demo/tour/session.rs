@@ -110,7 +110,7 @@ pub fn respond(app: &mut App) {
                     .and_then(|bytes| crate::backend::picture_edit::inspect(&bytes));
                 match size {
                     Ok((width, height)) => {
-                        app.picture_edit = Some(crate::model::PictureEdit::new(
+                        app.open_picture_edit(crate::model::PictureEdit::new(
                             target,
                             crate::model::PictureSource::File(path),
                             width,

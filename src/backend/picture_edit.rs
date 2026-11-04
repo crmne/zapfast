@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::model::{Mark, PictureCrop, PictureOrigin, PictureSource};
+use crate::model::{Mark, PictureBlocks, PictureCrop, PictureOrigin, PictureSource};
 
 /// Quality of an opaque picture written back. The send path passes a JPEG
 /// through untouched, so this is the only lossy step for one.
@@ -53,6 +53,30 @@ pub fn inspect(bytes: &[u8]) -> Result<(u32, u32), String> {
     let picture = image::load_from_memory(bytes)
         .map_err(|error| format!("This picture could not be read: {error}"))?;
     Ok((picture.width(), picture.height()))
+}
+
+/// The colours a pixelated region of this picture is painted in, read
+/// from the same pixels writing the edit reads.
+pub fn sample(source: &PictureSource, width: u32, height: u32) -> Result<PictureBlocks, String> {
+    let picture = match source {
+        PictureSource::File(path) => {
+            let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+            image::load_from_memory(&bytes)
+                .map_err(|error| format!("This picture could not be read: {error}"))?
+                .to_rgba8()
+        }
+        PictureSource::Pasted(rgba) => {
+            image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())
+                .ok_or_else(|| "This picture could not be read".to_owned())?
+        }
+    };
+    Ok(blocks(&picture))
+}
+
+/// Every pixelation block of the picture, in its average colour.
+fn blocks(picture: &image::RgbaImage) -> PictureBlocks {
+    let (width, height) = picture.dimensions();
+    PictureBlocks::new(width, height, |cell| average(picture, cell))
 }
 
 /// The picture with its marks drawn, then turned by whole quarter turns
@@ -108,7 +132,8 @@ pub fn write(origin: &PictureOrigin, dir: &Path) -> Result<PathBuf, String> {
 /// The picture with its marks drawn on in order. Lines are drawn with
 /// anti-aliasing onto a see-through layer and laid over the picture; a
 /// pixelated region paints each block in the average of the untouched
-/// picture under it, as the editor's preview samples the untouched picture.
+/// picture under it, from the same `PictureBlocks` the editor's preview
+/// paints with.
 fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> Result<image::RgbaImage, String> {
     if marks.is_empty() {
         return Ok(picture);
@@ -118,7 +143,7 @@ fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> Result<image::RgbaIm
     let untouched = marks
         .iter()
         .any(|mark| matches!(mark, Mark::Pixelate { .. }))
-        .then(|| picture.clone());
+        .then(|| blocks(&picture));
     let mut drawn = false;
     for mark in marks {
         match (mark, &untouched) {
@@ -128,7 +153,10 @@ fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> Result<image::RgbaIm
                     layer.fill(tiny_skia::Color::TRANSPARENT);
                 }
                 for cell in crate::model::pixel_cells(*from, *to, width, height) {
-                    let colour = image::Rgba(average(untouched, cell));
+                    let Some(colour) = untouched.colour(cell) else {
+                        continue;
+                    };
+                    let colour = image::Rgba(colour);
                     for y in cell[1]..cell[3] {
                         for x in cell[0]..cell[2] {
                             picture.put_pixel(x, y, colour);
@@ -648,6 +676,66 @@ mod tests {
             "the next block is left alone"
         );
         assert_eq!(picture.get_pixel(0, 8)[0], 0);
+    }
+
+    /// Black lines of print on white, two rows in every five, as in a
+    /// screenshot of text.
+    fn print(width: u32, height: u32) -> image::RgbaImage {
+        image::RgbaImage::from_fn(width, height, |x, y| {
+            let ink = y % 5 < 2 && x % 7 != 0;
+            image::Rgba(if ink { [0, 0, 0, 255] } else { [255; 4] })
+        })
+    }
+
+    /// What the editor paints a pixelated block in is what the written
+    /// file has there: the block's grey, never one black or white pixel of
+    /// the print under it.
+    #[test]
+    fn the_editors_pixelated_blocks_are_the_written_ones() {
+        let (width, height) = (600, 300);
+        let rgba = std::sync::Arc::new(print(width, height).into_raw());
+        let source = PictureSource::Pasted(rgba);
+        let blocks = sample(&source, width, height).expect("samples");
+        let region = Mark::Pixelate {
+            from: [100.0, 40.0],
+            to: [260.0, 150.0],
+        };
+        let root = tempfile::tempdir().expect("makes the directory");
+        let written = write(
+            &PictureOrigin {
+                marks: vec![region.clone()],
+                ..origin(source, width, height, PictureCrop::full(width, height))
+            },
+            root.path(),
+        )
+        .expect("writes");
+        let file = read(&written);
+        let drawn = marked(print(width, height), std::slice::from_ref(&region)).expect("draws");
+        let Mark::Pixelate { from, to } = region else {
+            unreachable!()
+        };
+        let cells = crate::model::pixel_cells(from, to, width, height);
+        assert!(cells.len() > 100);
+        for cell in cells {
+            let shown = blocks.colour(cell).expect("every cell has a block");
+            let [left, top, right, bottom] = cell;
+            let (x, y) = ((left + right) / 2, (top + bottom) / 2);
+            assert_eq!(shown, drawn.get_pixel(x, y).0, "{cell:?}: what is encoded");
+            let kept = file.get_pixel(x, y);
+            for channel in 0..3 {
+                let (shown, kept) = (shown[channel], kept[channel]);
+                assert!(
+                    (60..200).contains(&shown),
+                    "{cell:?}: a grey, not the print, got {shown}"
+                );
+                // The JPEG the file is written as rings a little beside the
+                // print around the region.
+                assert!(
+                    shown.abs_diff(kept) <= 12,
+                    "{cell:?}: the editor shows {shown}, the file has {kept}"
+                );
+            }
+        }
     }
 
     /// A picture the marks cannot be drawn on is refused rather than

@@ -3914,7 +3914,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 // The photo is named by the strip, so another page having
                 // staged pictures already cannot point this at the wrong one.
                 let target = app.stage(crate::app::Pending::File(photo.clone()));
-                app.picture_edit = Some(crate::model::PictureEdit::new(
+                app.open_picture_edit(crate::model::PictureEdit::new(
                     target,
                     crate::model::PictureSource::File(photo),
                     width,
@@ -3935,7 +3935,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     height,
                 );
                 edit.marks = picture_marks(width as f32, height as f32);
-                app.picture_edit = Some(edit);
+                app.open_picture_edit(edit);
                 app.picture_brush = crate::model::Brush {
                     tool: crate::model::PictureTool::Highlighter,
                     ink: crate::model::Ink::Yellow,

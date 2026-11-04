@@ -2304,6 +2304,9 @@ pub struct PictureEdit {
     pub undone: Vec<Mark>,
     /// The mark the pointer is drawing now, until it lets go.
     pub drawing: Option<Mark>,
+    /// The colours a pixelated region is painted in, once they have been
+    /// read from the picture off the interface thread.
+    pub blocks: Option<std::sync::Arc<PictureBlocks>>,
 }
 
 impl PictureEdit {
@@ -2324,6 +2327,7 @@ impl PictureEdit {
             marks: Vec::new(),
             undone: Vec::new(),
             drawing: None,
+            blocks: None,
         }
     }
 
@@ -2689,6 +2693,45 @@ pub fn arrow_barbs(from: Point, to: Point, width: f32) -> [Point; 2] {
         let (rx, ry) = (ux * cos - side * uy * sin, side * ux * sin + uy * cos);
         [to[0] - rx * head, to[1] - ry * head]
     })
+}
+
+/// Every pixelation block's colour, the average of the picture under it, on
+/// the grid `pixel_cells` lays out. The written picture and the editor's
+/// preview both paint a pixelated region from it, so they agree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureBlocks {
+    block: u32,
+    columns: u32,
+    colours: Vec<[u8; 4]>,
+}
+
+impl PictureBlocks {
+    /// The blocks of a picture this big, each painted by `average` from the
+    /// `[left, top, right, bottom]` region it covers.
+    pub fn new(width: u32, height: u32, average: impl Fn([u32; 4]) -> [u8; 4]) -> Self {
+        let block = pixel_block(width, height);
+        let columns = width.div_ceil(block);
+        let colours = (0..height.div_ceil(block))
+            .flat_map(|row| {
+                (0..columns).map(move |column| {
+                    let (x, y) = (column * block, row * block);
+                    [x, y, (x + block).min(width), (y + block).min(height)]
+                })
+            })
+            .map(average)
+            .collect();
+        Self {
+            block,
+            columns,
+            colours,
+        }
+    }
+
+    /// The straight RGBA colour of a cell `pixel_cells` gave.
+    pub fn colour(&self, [left, top, ..]: [u32; 4]) -> Option<[u8; 4]> {
+        let at = (top / self.block) * self.columns + left / self.block;
+        self.colours.get(at as usize).copied()
+    }
 }
 
 /// The side of a pixelated block in a picture this big, in its pixels.

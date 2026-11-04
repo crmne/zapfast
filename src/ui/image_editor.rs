@@ -141,7 +141,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             }
             let painter = ui.painter().with_clip_rect(picture);
             for mark in edit.marks.iter().chain(&edit.drawing) {
-                paint_mark(&painter, mark, place, texture, palette);
+                paint_mark(&painter, mark, place, edit.blocks.as_deref(), palette);
             }
             if brush.tool == PictureTool::Crop {
                 crop_handles(ui, &mut edit, picture, scale);
@@ -368,7 +368,7 @@ fn paint_mark(
     painter: &egui::Painter,
     mark: &Mark,
     place: Placement,
-    texture: Option<egui::TextureId>,
+    blocks: Option<&crate::model::PictureBlocks>,
     palette: theme::Palette,
 ) {
     let screen = |points: &[Point]| -> Vec<Pos2> {
@@ -422,46 +422,44 @@ fn paint_mark(
             );
         }
         Mark::Pixelate { from, to } => {
-            // Each block is a quad whose corners all sample the texture at
-            // the block's centre, so the GPU paints it in one colour without
-            // the pixels coming back to the CPU.
-            let cells = crate::model::pixel_cells(*from, *to, place.width, place.height);
-            let (width, height) = (place.width as f32, place.height as f32);
-            let mut mesh = egui::epaint::Mesh {
-                texture_id: texture.unwrap_or_default(),
-                ..Default::default()
-            };
-            for [left, top, right, bottom] in cells {
-                let [left, top, right, bottom] = [left, top, right, bottom].map(|edge| edge as f32);
-                let centre = pos2((left + right) / 2.0 / width, (top + bottom) / 2.0 / height);
+            let mut mesh = egui::epaint::Mesh::default();
+            for cell in crate::model::pixel_cells(*from, *to, place.width, place.height) {
+                let [left, top, right, bottom] = cell.map(|edge| edge as f32);
+                let corners = [[left, top], [right, top], [right, bottom], [left, bottom]];
+                let fill = block_colour(blocks, cell, palette);
                 let base = mesh.vertices.len() as u32;
-                for corner in [[left, top], [right, top], [right, bottom], [left, bottom]] {
-                    mesh.vertices.push(egui::epaint::Vertex {
-                        pos: place.to_screen(corner),
-                        uv: if texture.is_some() {
-                            centre
-                        } else {
-                            egui::epaint::WHITE_UV
-                        },
-                        color: if texture.is_some() {
-                            Color32::WHITE
-                        } else {
-                            palette.surface
-                        },
-                    });
+                for corner in corners {
+                    mesh.colored_vertex(place.to_screen(corner), fill);
                 }
-                mesh.indices.extend_from_slice(&[
-                    base,
-                    base + 1,
-                    base + 2,
-                    base,
-                    base + 2,
-                    base + 3,
-                ]);
+                mesh.add_triangle(base, base + 1, base + 2);
+                mesh.add_triangle(base, base + 2, base + 3);
             }
             painter.add(egui::Shape::mesh(mesh));
         }
     }
+}
+
+/// The opaque colour a pixelated block shows: the average writing paints
+/// it in, over the window as a see-through picture is seen, or a plain
+/// colour until the averages are read. Never the picture itself.
+fn block_colour(
+    blocks: Option<&crate::model::PictureBlocks>,
+    cell: [u32; 4],
+    palette: theme::Palette,
+) -> Color32 {
+    let Some([r, g, b, a]) = blocks.and_then(|blocks| blocks.colour(cell)) else {
+        return palette.surface.to_opaque();
+    };
+    let behind = palette.window.to_opaque();
+    let over = |colour: u8, under: u8| {
+        ((u32::from(colour) * u32::from(a) + u32::from(under) * u32::from(255 - a) + 127) / 255)
+            as u8
+    };
+    Color32::from_rgb(
+        over(r, behind.r()),
+        over(g, behind.g()),
+        over(b, behind.b()),
+    )
 }
 
 /// A tool, ink or thickness to pick: lit while it is the one in use.

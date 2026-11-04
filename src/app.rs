@@ -1092,6 +1092,18 @@ impl App {
         id
     }
 
+    /// Opens the picture editor, and asks for the colours its pixelated
+    /// regions are painted in, which take reading the whole picture.
+    pub(crate) fn open_picture_edit(&mut self, edit: crate::model::PictureEdit) {
+        self.backend.send(Command::SamplePicture {
+            target: edit.target,
+            source: edit.source.clone(),
+            width: edit.width,
+            height: edit.height,
+        });
+        self.picture_edit = Some(edit);
+    }
+
     /// Give a new attachment its identity and queue any expensive preview work.
     fn prepare_staged(&mut self, item: Pending) -> Staged {
         let id = self.next_attachment_id();
@@ -4793,7 +4805,7 @@ impl App {
                                 }
                             });
                             if let Some(path) = source {
-                                self.picture_edit = Some(crate::model::PictureEdit::new(
+                                self.open_picture_edit(crate::model::PictureEdit::new(
                                     target,
                                     crate::model::PictureSource::File(path),
                                     width,
@@ -4803,6 +4815,17 @@ impl App {
                         }
                         Err(error) => self.toast_error(error),
                     }
+                }
+            }
+            Event::PictureSampled { target, blocks } => {
+                // Only for the picture still open: a hidden account's
+                // answer, or one for an editor since closed, has nowhere
+                // to go.
+                if !self.events_hidden
+                    && let Some(edit) = &mut self.picture_edit
+                    && edit.target == target
+                {
+                    edit.blocks = Some(std::sync::Arc::new(blocks));
                 }
             }
             Event::PictureEdited { target, result } => {
@@ -8466,7 +8489,7 @@ impl App {
                     None => None,
                 };
                 if let Some((width, height, rgba)) = pasted {
-                    self.picture_edit = Some(crate::model::PictureEdit::new(
+                    self.open_picture_edit(crate::model::PictureEdit::new(
                         target,
                         crate::model::PictureSource::Pasted(rgba),
                         width,
@@ -8477,8 +8500,7 @@ impl App {
                     // with the crop it had, so cropping it again does not
                     // stack another lossy pass on the one before it.
                     if let Some(origin) = self.picture_origins.get(&target).cloned() {
-                        self.picture_edit =
-                            Some(crate::model::PictureEdit::reopened(target, origin));
+                        self.open_picture_edit(crate::model::PictureEdit::reopened(target, origin));
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
                         // on it, and only this answer may open it.
@@ -22432,6 +22454,55 @@ mod tests {
                 Pending::File(path) if path == std::path::Path::new("/fixture/edited.jpg")
             ),
             "and the first picture was still replaced by its own crop"
+        );
+    }
+
+    /// Opening the editor asks for the pixelation colours, and only the
+    /// answer for the picture still open fills them in.
+    #[test]
+    fn the_editor_takes_the_colours_read_for_its_own_picture() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let target = app.stage(Pending::File("/fixture/photo.png".into()));
+        app.picture_inspecting = Some(target);
+        app.apply_backend_event(
+            Event::PictureInspected {
+                target,
+                result: Ok((8, 6)),
+            },
+            true,
+        );
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(command,
+                Command::SamplePicture { target: asked, width: 8, height: 6, .. } if *asked == target)),
+            "the editor asked for its picture's colours"
+        );
+        let blocks = || crate::model::PictureBlocks::new(8, 6, |_| [1, 2, 3, 255]);
+        for (other, hidden) in [(target + 1, false), (target, true)] {
+            app.events_hidden = hidden;
+            app.apply_backend_event(
+                Event::PictureSampled {
+                    target: other,
+                    blocks: blocks(),
+                },
+                true,
+            );
+            assert!(app.picture_edit.as_ref().unwrap().blocks.is_none());
+        }
+        app.events_hidden = false;
+        app.apply_backend_event(
+            Event::PictureSampled {
+                target,
+                blocks: blocks(),
+            },
+            true,
+        );
+        assert_eq!(
+            app.picture_edit.as_ref().unwrap().blocks.as_deref(),
+            Some(&blocks())
         );
     }
 

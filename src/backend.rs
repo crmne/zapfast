@@ -825,6 +825,19 @@ pub enum Command {
         target: crate::app::AttachmentId,
         result: Result<(u32, u32), String>,
     },
+    /// Reads the colours a pixelated region of the picture being edited is
+    /// painted in, so the editor shows what writing it will.
+    SamplePicture {
+        target: crate::app::AttachmentId,
+        source: crate::model::PictureSource,
+        width: u32,
+        height: u32,
+    },
+    /// Internal: the sampled colours.
+    PictureSampled {
+        target: crate::app::AttachmentId,
+        blocks: crate::model::PictureBlocks,
+    },
     /// Draws the marks on a staged picture, then turns and crops it, writing
     /// the result beside the media cache so it can be sent in place of the
     /// original.
@@ -1393,6 +1406,12 @@ pub enum Event {
         target: crate::app::AttachmentId,
         result: Result<(u32, u32), String>,
     },
+    /// The colours a pixelated region of the picture being edited is
+    /// painted in.
+    PictureSampled {
+        target: crate::app::AttachmentId,
+        blocks: crate::model::PictureBlocks,
+    },
     /// An edited picture, ready to replace the staged attachment, or why it
     /// could not be written.
     PictureEdited {
@@ -1877,6 +1896,29 @@ impl Backend {
                         let image = picture_edit::preview(width, height, &rgba);
                         let _ = events.send(Event::PicturePreviewReady { target, image });
                         waker.wake();
+                    })
+                    .ok();
+                return;
+            }
+            #[cfg(any(test, feature = "demo"))]
+            if let Command::SamplePicture {
+                target,
+                source,
+                width,
+                height,
+            } = &command
+                && let Some(events) = &self.demo_events
+            {
+                let (target, source, width, height) = (*target, source.clone(), *width, *height);
+                let events = events.clone();
+                let waker = self.demo_waker.clone();
+                std::thread::Builder::new()
+                    .name("demo-picture-sample".into())
+                    .spawn(move || {
+                        if let Ok(blocks) = picture_edit::sample(&source, width, height) {
+                            let _ = events.send(Event::PictureSampled { target, blocks });
+                            waker.wake();
+                        }
                     })
                     .ok();
                 return;
