@@ -875,6 +875,97 @@ mod tests {
         Placement::new(picture, &edit)
     }
 
+    /// Runs the editor for one frame of a 1180 by 780 window with these
+    /// pointer events, answering where the picture sits.
+    fn frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> Rect {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 780.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| show(app, ui.ctx()),
+        );
+        output.textures_delta.clear();
+        // The picture is the one place that only senses a drag.
+        ctx.viewport(|viewport| {
+            viewport
+                .prev_pass
+                .widgets
+                .layers()
+                .flat_map(|(_, widgets)| widgets.iter())
+                .find(|widget| widget.sense == Sense::DRAG)
+                .map(|widget| widget.interact_rect)
+        })
+        .expect("the picture takes drags")
+    }
+
+    fn button(at: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn near(a: Point, b: Point) -> bool {
+        (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01
+    }
+
+    /// A drag across a picture turned a quarter clockwise lands in the
+    /// source's own pixels, where writing it draws, and a click with the pen
+    /// leaves a dot.
+    #[test]
+    fn the_pointer_draws_on_a_turned_picture_in_its_own_pixels() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let edit = PictureEdit::new(
+            0,
+            PictureSource::File(std::path::PathBuf::from("photo.png")),
+            400,
+            200,
+        )
+        .turned(true);
+        app.picture_edit = Some(edit.clone());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let picture = frame(&mut app, &ctx, Vec::new());
+        let place = Placement::new(picture, &edit);
+        let (from, to) = ([40.0, 30.0], [300.0, 150.0]);
+        let (start, end) = (place.to_screen(from), place.to_screen(to));
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+        frame(&mut app, &ctx, vec![button(start, true)]);
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start.lerp(end, 0.5))],
+        );
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+        frame(&mut app, &ctx, vec![button(end, false)]);
+        let marks = app.picture_edit.as_ref().unwrap().marks.clone();
+        let [Mark::Pen { points, .. }] = marks.as_slice() else {
+            panic!("one pen line, got {marks:?}");
+        };
+        assert_eq!(points.len(), 3, "{points:?}");
+        assert!(near(points[0], from), "{points:?}");
+        assert!(near(points[2], to), "{points:?}");
+        let dot = [350.0, 20.0];
+        let at = place.to_screen(dot);
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        frame(&mut app, &ctx, vec![button(at, true)]);
+        frame(&mut app, &ctx, vec![button(at, false)]);
+        let marks = &app.picture_edit.as_ref().unwrap().marks;
+        assert!(
+            matches!(marks.get(1), Some(Mark::Pen { points, .. }) if points.len() == 1 && near(points[0], dot)),
+            "a click leaves a dot, got {marks:?}"
+        );
+    }
+
     /// A picture shown larger than the GPU takes as one texture still gets
     /// its marks, on a texture of the largest size it takes.
     #[test]
