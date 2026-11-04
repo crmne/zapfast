@@ -4854,8 +4854,20 @@ impl App {
                         }
                     },
                     Err(error) => {
-                        self.picture_applying.remove(&target);
+                        let kept = self.picture_applying.remove(&target);
                         self.toast_error(error);
+                        // Opened again as it was kept, so trying again does
+                        // not mean drawing it all again; never over an editor
+                        // open or about to open on another picture.
+                        if let Some(origin) = kept
+                            && self.picture_edit.is_none()
+                            && self.picture_inspecting.is_none()
+                            && self.staged_at(target).is_some()
+                        {
+                            self.open_picture_edit(crate::model::PictureEdit::reopened(
+                                target, origin,
+                            ));
+                        }
                     }
                 }
             }
@@ -22493,6 +22505,93 @@ mod tests {
             matches!(written.as_slice(), [marks] if matches!(marks.as_slice(),
                 [crate::model::Mark::Pen { points, .. }] if points.len() == 2)),
             "the stroke under the pointer was written, got {written:?}"
+        );
+    }
+
+    /// An edit that could not be written opens again as it was kept, so
+    /// trying again does not mean drawing it all again.
+    #[test]
+    fn an_edit_that_fails_to_write_opens_again_with_its_marks() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let target = app.stage(Pending::File("/fixture/photo.png".into()));
+        let mut edit = crate::model::PictureEdit::new(
+            target,
+            crate::model::PictureSource::File("/fixture/photo.png".into()),
+            80,
+            60,
+        )
+        .turned(true);
+        edit.begin_mark(crate::model::Brush::default(), [10.0, 10.0]);
+        edit.extend_mark([40.0, 30.0], 1.0);
+        edit.finish_mark();
+        let kept = edit.origin();
+        app.picture_edit = Some(edit);
+        app.apply(Action::ApplyPictureEdit, &ctx);
+        assert!(app.picture_edit.is_none(), "keeping closes the editor");
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Err("disk full".into()),
+            },
+            true,
+        );
+        let again = app.picture_edit.as_ref().expect("the editor opened again");
+        assert_eq!(again.target, target);
+        assert_eq!(again.origin(), kept, "with the marks, turn and crop kept");
+        assert!(
+            !app.picture_applying.contains_key(&target),
+            "nothing is still being written"
+        );
+    }
+
+    /// A failed write for a picture no longer staged, or while another
+    /// picture's editor is open, opens nothing.
+    #[test]
+    fn a_failed_write_leaves_another_editor_and_a_removed_picture_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let first = app.stage(Pending::File("/fixture/one.png".into()));
+        let second = app.stage(Pending::File("/fixture/two.png".into()));
+        let editor = |target, path: &str| {
+            crate::model::PictureEdit::new(
+                target,
+                crate::model::PictureSource::File(path.into()),
+                12,
+                6,
+            )
+        };
+        app.picture_edit = Some(editor(first, "/fixture/one.png"));
+        app.apply(Action::ApplyPictureEdit, &ctx);
+        let open = editor(second, "/fixture/two.png");
+        app.picture_edit = Some(open.clone());
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target: first,
+                result: Err("disk full".into()),
+            },
+            true,
+        );
+        assert_eq!(app.picture_edit, Some(open), "the open editor stays");
+        app.picture_edit = Some(editor(second, "/fixture/two.png"));
+        app.apply(Action::ApplyPictureEdit, &ctx);
+        app.pending.clear();
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target: second,
+                result: Err("disk full".into()),
+            },
+            true,
+        );
+        assert!(
+            app.picture_edit.is_none(),
+            "a removed picture opens nothing"
         );
     }
 
