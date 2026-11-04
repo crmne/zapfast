@@ -162,7 +162,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 egui::UiBuilder::new()
                     .max_rect(top)
                     .layout(Layout::left_to_right(Align::Center)),
-                |ui| tools(ui, palette, locale, &mut brush),
+                |ui| {
+                    if let Some(tool) = tools(ui, palette, locale, brush.tool) {
+                        edit.pick_tool(&mut brush, tool);
+                    }
+                },
             );
             ui.scope_builder(
                 egui::UiBuilder::new()
@@ -507,13 +511,14 @@ fn choice(
 }
 
 /// The tools along the top: crop, pen, highlighter, arrow, rectangle and
-/// pixelate.
+/// pixelate. Answers the one picked this frame.
 fn tools(
     ui: &mut egui::Ui,
     palette: theme::Palette,
     locale: crate::i18n::Locale,
-    brush: &mut Brush,
-) {
+    current: PictureTool,
+) -> Option<PictureTool> {
+    let mut picked = None;
     ui.spacing_mut().item_spacing.x = 2.0;
     for tool in PictureTool::ALL {
         let (icon, label) = match tool {
@@ -527,16 +532,16 @@ fn tools(
             PictureTool::Rectangle => (Icon::Square, crate::i18n::gettext(locale, "Rectangle")),
             PictureTool::Pixelate => (Icon::Grid, crate::i18n::gettext(locale, "Pixelate")),
         };
-        let picked = brush.tool == tool;
-        let response = choice(ui, palette, &label, picked, |ui, rect, tint| {
+        let response = choice(ui, palette, &label, current == tool, |ui, rect, tint| {
             let size = 18.0;
             let at = Rect::from_center_size(rect.center(), Vec2::splat(size));
             icon.image(tint, size).paint_at(ui, at);
         });
         if response.clicked() {
-            brush.tool = tool;
+            picked = Some(tool);
         }
     }
+    picked
 }
 
 /// The inks and the three thicknesses, for the tools that draw in them.
@@ -965,6 +970,66 @@ mod tests {
         assert!(
             matches!(marks.get(1), Some(Mark::Pen { points, .. }) if points.len() == 1 && near(points[0], dot)),
             "a click leaves a dot, got {marks:?}"
+        );
+    }
+
+    /// Picking another tool from the keys while the pointer is still down
+    /// keeps the line drawn so far, and Undo can take it back.
+    #[test]
+    fn picking_a_tool_mid_stroke_keeps_the_stroke() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let edit = PictureEdit::new(
+            0,
+            PictureSource::File(std::path::PathBuf::from("photo.png")),
+            400,
+            200,
+        );
+        app.picture_edit = Some(edit.clone());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let picture = frame(&mut app, &ctx, Vec::new());
+        let place = Placement::new(picture, &edit);
+        let (start, end) = (
+            place.to_screen([40.0, 30.0]),
+            place.to_screen([300.0, 150.0]),
+        );
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+        frame(&mut app, &ctx, vec![button(start, true)]);
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+        let key = |key, pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Tab, true), key(egui::Key::Tab, false)],
+        );
+        frame(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, true), key(egui::Key::Enter, false)],
+        );
+        frame(&mut app, &ctx, Vec::new());
+        assert_eq!(
+            app.picture_brush.tool,
+            PictureTool::Crop,
+            "Tab and Enter picked the crop"
+        );
+        let edit = app.picture_edit.as_ref().unwrap();
+        assert!(edit.drawing.is_none(), "no line is left half drawn");
+        assert!(
+            matches!(edit.marks.as_slice(), [Mark::Pen { .. }]),
+            "the line drawn so far is kept, got {:?}",
+            edit.marks
         );
     }
 

@@ -2380,6 +2380,15 @@ impl PictureEdit {
         }
     }
 
+    /// Picks another tool for the brush. The mark being drawn is kept as it
+    /// stands, since only the tool that began it sees the pointer let go.
+    pub fn pick_tool(&mut self, brush: &mut Brush, tool: PictureTool) {
+        if brush.tool != tool {
+            self.finish_mark();
+            brush.tool = tool;
+        }
+    }
+
     /// Takes the latest mark back.
     pub fn undo(&mut self) {
         if let Some(mark) = self.marks.pop() {
@@ -4345,6 +4354,23 @@ mod tests {
         edit.redo();
         assert_eq!(edit.marks.len(), 2);
         assert!(edit.undone.is_empty());
+    }
+
+    #[test]
+    fn picking_another_tool_keeps_the_mark_being_drawn() {
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        let mut brush = pen();
+        edit.begin_mark(brush, [10.0, 10.0]);
+        edit.extend_mark([20.0, 20.0], 1.0);
+        edit.pick_tool(&mut brush, super::PictureTool::Pen);
+        assert!(edit.drawing.is_some(), "the tool in use goes on drawing");
+        edit.pick_tool(&mut brush, super::PictureTool::Crop);
+        assert_eq!(brush.tool, super::PictureTool::Crop);
+        assert!(edit.drawing.is_none());
+        assert_eq!(edit.marks.len(), 1, "the line so far is kept");
+        edit.undo();
+        assert!(edit.marks.is_empty(), "and Undo takes it back");
     }
 
     #[test]
