@@ -372,7 +372,7 @@ fn yuyv_to_i420(data: &[u8], width: usize, height: usize) -> Option<I420> {
 fn nv12_to_i420(data: &[u8], width: usize, height: usize, stride: usize) -> Option<I420> {
     let (even_w, even_h) = (width & !1, height & !1);
     let chroma_rows = height.div_ceil(2);
-    let chroma_stride = stride.max(width.div_ceil(2) * 2);
+    let chroma_stride = stride.max(width.div_ceil(2).checked_mul(2)?);
     let y_len = stride.checked_mul(height)?;
     let total = y_len.checked_add(chroma_stride.checked_mul(chroma_rows)?)?;
     if even_w == 0 || even_h == 0 || stride < width || data.len() < total {
@@ -977,6 +977,7 @@ mod tests {
     fn nv12_refuses_short_frames_and_strides_narrower_than_the_picture() {
         assert!(nv12_to_i420(&[1, 2, 0, 0, 3, 4, 0, 0, 50, 60], 2, 2, 4).is_none());
         assert!(nv12_to_i420(&[1, 2, 3, 4, 50, 60], 2, 2, 1).is_none());
+        assert!(nv12_to_i420(&[], usize::MAX, 2, usize::MAX).is_none());
     }
 
     #[test]
