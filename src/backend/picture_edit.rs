@@ -62,7 +62,7 @@ pub fn edit(bytes: &[u8], crop: PictureCrop, turns: u8, marks: &[Mark]) -> Resul
     let picture = image::load_from_memory(bytes)
         .map_err(|error| format!("This picture could not be read: {error}"))?
         .to_rgba8();
-    turned_and_cropped(marked(picture, marks), crop, turns)
+    turned_and_cropped(marked(picture, marks)?, crop, turns)
 }
 
 /// The same for a pasted picture, which has no file to read back.
@@ -76,7 +76,7 @@ pub fn edit_pasted(
 ) -> Result<Edited, String> {
     let picture = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())
         .ok_or_else(|| "This picture could not be read".to_owned())?;
-    turned_and_cropped(marked(picture, marks), crop, turns)
+    turned_and_cropped(marked(picture, marks)?, crop, turns)
 }
 
 /// Draws on, turns and crops a staged picture, writes the result in `dir`
@@ -109,14 +109,12 @@ pub fn write(origin: &PictureOrigin, dir: &Path) -> Result<PathBuf, String> {
 /// anti-aliasing onto a see-through layer and laid over the picture; a
 /// pixelated region paints each block in the average of the untouched
 /// picture under it, as the editor's preview samples the untouched picture.
-fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> image::RgbaImage {
+fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> Result<image::RgbaImage, String> {
     if marks.is_empty() {
-        return picture;
+        return Ok(picture);
     }
     let (width, height) = picture.dimensions();
-    let Some(mut layer) = tiny_skia::Pixmap::new(width, height) else {
-        return picture;
-    };
+    let mut layer = blank_layer(width, height)?;
     let untouched = marks
         .iter()
         .any(|mark| matches!(mark, Mark::Pixelate { .. }))
@@ -144,7 +142,15 @@ fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> image::RgbaImage {
     if drawn {
         lay_over(&mut picture, &layer);
     }
-    picture
+    Ok(picture)
+}
+
+/// A see-through layer this big to draw marks on. Sending the picture
+/// without the marks the person drew, a pixelated face among them, is worse
+/// than not sending it, so a layer that cannot be made is an error.
+fn blank_layer(width: u32, height: u32) -> Result<tiny_skia::Pixmap, String> {
+    tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| format!("Could not draw on a picture {width} by {height} pixels"))
 }
 
 /// Draws one inked mark on `layer`, answering whether it drew anything.
@@ -589,7 +595,7 @@ mod tests {
 
     #[test]
     fn a_red_line_turns_the_pixels_under_it_red_and_leaves_the_rest() {
-        let picture = marked(white(100, 100), &[red_line([10.0, 50.0], [90.0, 50.0])]);
+        let picture = marked(white(100, 100), &[red_line([10.0, 50.0], [90.0, 50.0])]).unwrap();
         assert_eq!(*picture.get_pixel(50, 50), image::Rgba([235, 64, 52, 255]));
         assert_eq!(*picture.get_pixel(0, 0), image::Rgba([255, 255, 255, 255]));
         assert_eq!(
@@ -605,7 +611,10 @@ mod tests {
             ink: crate::model::Ink::Blue,
             width: 12.0,
         };
-        let [r, g, b, a] = marked(white(100, 100), &[mark]).get_pixel(50, 50).0;
+        let [r, g, b, a] = marked(white(100, 100), &[mark])
+            .unwrap()
+            .get_pixel(50, 50)
+            .0;
         assert_eq!(a, 255, "an opaque picture stays opaque");
         // 40% blue over white.
         assert!(
@@ -627,7 +636,8 @@ mod tests {
                 from: [2.0, 2.0],
                 to: [10.0, 4.0],
             }],
-        );
+        )
+        .unwrap();
         // The region grows to whole 8-pixel blocks: two across, one down.
         for (x, y) in [(0, 0), (7, 7), (8, 0), (15, 7)] {
             assert_eq!(*picture.get_pixel(x, y), image::Rgba([128, 128, 128, 255]));
@@ -638,6 +648,19 @@ mod tests {
             "the next block is left alone"
         );
         assert_eq!(picture.get_pixel(0, 8)[0], 0);
+    }
+
+    /// A picture the marks cannot be drawn on is refused rather than
+    /// written without them.
+    #[test]
+    fn marks_that_cannot_be_drawn_refuse_the_picture() {
+        let error = marked(white(0, 4), &[red_line([0.0, 1.0], [0.0, 3.0])])
+            .expect_err("no layer for an empty picture");
+        assert!(error.contains("Could not draw"), "{error}");
+        assert!(
+            blank_layer(u32::MAX, 1).is_err(),
+            "too wide for a layer, refused before anything is allocated"
+        );
     }
 
     #[test]
@@ -674,6 +697,6 @@ mod tests {
         let turned = image::imageops::rotate90(&source);
         let kept = image::imageops::crop_imm(&turned, 3, 4, 20, 10).to_image();
         assert_eq!(edited.bytes, encode(&kept).unwrap().bytes);
-        assert_eq!(marked(source.clone(), &[]), source);
+        assert_eq!(marked(source.clone(), &[]).unwrap(), source);
     }
 }
