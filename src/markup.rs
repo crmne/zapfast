@@ -294,6 +294,11 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
 /// Inline markers within one line.
 fn inline(line: &str) -> Vec<Span> {
     let (offsets, chars): (Vec<_>, Vec<_>) = line.char_indices().unzip();
+    // Lookahead revisits the same suffix for each unmatched opener. Cache
+    // misses too, but fill lazily so code and address interiors stay unscanned.
+    let mut link_ends = vec![None; chars.len()];
+    let mut link_end =
+        |at: usize| *link_ends[at].get_or_insert_with(|| link_char_end(line, &chars, &offsets, at));
     let mut spans = Vec::new();
     let mut run = String::new();
     // bold, italic, strike
@@ -316,7 +321,7 @@ fn inline(line: &str) -> Vec<Span> {
     while i < chars.len() {
         let c = chars[i];
         // Markers inside an address are URL characters, not formatting.
-        if let Some(end) = link_char_end(line, &chars, &offsets, i) {
+        if let Some(end) = link_end(i) {
             let end = link_format_end(&chars, i, end, flags);
             run.extend(&chars[i..end]);
             i = end;
@@ -364,7 +369,7 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(line, &chars, &offsets, i + 1, c, flags) {
+            } else if is_opener(&chars, i) && has_closer(&chars, &mut link_end, i + 1, c, flags) {
                 flush(&mut run, &mut spans, flags);
                 flags[index] = true;
                 i += 1;
@@ -419,9 +424,8 @@ fn link_format_end(chars: &[char], start: usize, mut end: usize, flags: [bool; 3
 }
 
 fn has_closer(
-    line: &str,
     chars: &[char],
-    offsets: &[usize],
+    link_end: &mut impl FnMut(usize) -> Option<usize>,
     from: usize,
     marker: char,
     mut flags: [bool; 3],
@@ -434,7 +438,7 @@ fn has_closer(
     }] = true;
     let mut at = from;
     while at < chars.len() {
-        if let Some(end) = link_char_end(line, chars, offsets, at) {
+        if let Some(end) = link_end(at) {
             at = link_format_end(chars, at, end, flags);
             continue;
         }
@@ -615,6 +619,8 @@ fn mention_at<'m>(text: &str, at: usize, mentions: &'m [Mention]) -> Option<(usi
 
 /// Parses a web or email address at `at` and returns its end and target.
 fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
+    #[cfg(test)]
+    tests::LINK_SCANS.with(|count| count.set(count.get() + 1));
     let rest = &text[at..];
     // Brackets opened inside the address belong to it, as in
     // `https://en.wikipedia.org/wiki/Rust_(programming_language)`; a closing
@@ -842,6 +848,51 @@ const KNOWN_TLDS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        pub(super) static LINK_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn unmatched_openers_do_not_repeat_address_scans() {
+        // Every marker could open formatting, but none can close it. Count
+        // address scans rather than timing this on machines of varying speed.
+        for marker in ['*', '_', '~'] {
+            let text = format!("-{marker}a").repeat(128);
+            LINK_SCANS.with(|count| count.set(0));
+            let spans = parse(&text, &[]);
+            assert_eq!(
+                spans,
+                vec![Span {
+                    text: text.clone(),
+                    ..Default::default()
+                }]
+            );
+            let scans = LINK_SCANS.with(|count| count.get());
+            eprintln!("{marker}: {scans} address scans for {} bytes", text.len());
+            assert!(
+                scans <= 2 * text.len(),
+                "{scans} address scans for {} bytes",
+                text.len()
+            );
+        }
+    }
+
+    #[test]
+    fn address_interiors_do_not_need_separate_scans() {
+        let address = format!("https://example.com/{}", "a-".repeat(128));
+        LINK_SCANS.with(|count| count.set(0));
+        assert_eq!(
+            parse(&address, &[]),
+            vec![Span {
+                text: address.clone(),
+                link: Some(address),
+                ..Default::default()
+            }]
+        );
+        // Once for formatting, once to construct the linked span.
+        assert_eq!(LINK_SCANS.with(|count| count.get()), 2);
+    }
 
     fn kinds(text: &str) -> Vec<(String, bool, bool, bool, bool)> {
         parse(text, &[])
