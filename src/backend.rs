@@ -1002,8 +1002,8 @@ pub enum Command {
         card: Option<usize>,
         chat: ChatId,
         id: String,
-        /// Link pictures only: the result must still belong to this URL.
-        preview_url: Option<String>,
+        /// Link pictures only: the result must still belong to this URL and picture.
+        preview: Option<crate::model::LinkPreview>,
         result: Result<PathBuf, String>,
     },
     /// Internal motion-clip download result.

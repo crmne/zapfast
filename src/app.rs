@@ -20695,6 +20695,7 @@ mod tests {
         old.content = Content::Text {
             text: "https://example.com/old".into(),
             preview: Some(crate::model::LinkPreview {
+                image_sha256: None,
                 url: "https://example.com/old".into(),
                 title: None,
                 description: None,
@@ -21440,6 +21441,7 @@ mod tests {
     fn composed_preview(url: &str) -> crate::model::ComposedPreview {
         crate::model::ComposedPreview {
             preview: crate::model::LinkPreview {
+                image_sha256: None,
                 video: false,
                 image: None,
                 url: url.into(),

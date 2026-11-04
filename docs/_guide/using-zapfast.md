@@ -81,6 +81,8 @@ Preview downloads stop after 20 seconds or 2 MiB. Images with excessive dimensio
 are refused; the inline thumbnail remains when a larger picture is unavailable.
 Reading a received preview does not contact the linked website.
 Small site icons keep a compact preview beside the text.
+If a preview picture fails to download, right-click its message and choose
+**Download** to retry. Updated previews replace their earlier cached pictures.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
 check when it was sent, delivered, and read. The reaction row has a **+** that
@@ -506,6 +508,8 @@ TikTok shares, use the same layout. Videos without captions carry their time
 over the bottom corner; captions stay below the video with the time beside
 them. A camera icon precedes the duration. Duration and overlaid time use plain
 white text over a bottom fade. Playback controls keep clear of the overlaid time.
+On very narrow videos, the time moves below the picture and duration labels
+are hidden when they cannot fit without overlapping.
 Automatic downloads follow your setting.
 Double-click one, or use the button at the end of its
 controls, to play it in the full-window viewer:

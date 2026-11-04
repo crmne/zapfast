@@ -34,6 +34,9 @@ impl super::Worker {
             } in rows
             {
                 after = rowid;
+                let Some(raw) = raw else {
+                    continue;
+                };
                 use whatsapp_rust::waproto::buffa::Message as _;
                 let Ok(raw) = wa::Message::decode_from_slice(&raw) else {
                     continue;
@@ -640,6 +643,7 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
     };
     Some(ComposedPreview {
         preview: LinkPreview {
+            image_sha256: None,
             video: meta.video,
             image: None,
             url: requested,

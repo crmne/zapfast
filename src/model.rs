@@ -627,9 +627,17 @@ pub struct LinkPreview {
     /// Larger preview hosted by WhatsApp. Its download keys stay in the raw message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<Box<Media>>,
+    /// Content identity of the downloadable picture, without its encryption keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_sha256: Option<Vec<u8>>,
 }
 
 impl LinkPreview {
+    /// Cached paths and in-flight downloads must belong to the same picture.
+    pub fn same_picture(&self, other: &Self) -> bool {
+        self.url == other.url && self.image_sha256 == other.image_sha256
+    }
+
     /// Prefer WhatsApp's video flag; known reel/video links also work when a
     /// sender omitted it. An ordinary post or article never gets a play badge.
     pub fn is_video(&self) -> bool {
@@ -650,7 +658,8 @@ impl LinkPreview {
                 path.starts_with("/reel/")
                     || path.starts_with("/reels/")
                     || path.starts_with("/share/r/")
-                    || path.starts_with("/watch")
+                    || path == "/watch"
+                    || path.starts_with("/watch/")
                     || path.contains("/videos/")
             }
             "fb.watch" | "youtu.be" => path.len() > 1,
@@ -1595,7 +1604,7 @@ impl Content {
                 Self::Text {
                     preview: Some(old), ..
                 },
-            ) => new.url == old.url,
+            ) => new.same_picture(old),
             (Self::Text { .. }, _) | (_, Self::Text { .. }) => false,
             _ => true,
         }
@@ -3586,6 +3595,25 @@ mod storage_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn facebook_watch_urls_match_a_path_segment() {
+        for (path, expected) in [
+            ("/watch", true),
+            ("/watch/live", true),
+            ("/watchlist", false),
+        ] {
+            let preview = crate::model::LinkPreview {
+                url: format!("https://www.facebook.com{path}"),
+                title: None,
+                description: None,
+                video: false,
+                image: None,
+                image_sha256: None,
+            };
+            assert_eq!(preview.is_video(), expected, "{path}");
+        }
+    }
+
     /// Checks compatibility with older archived quotes that omitted a source chat.
     #[test]
     fn archived_quotes_without_a_source_chat_remain_readable() {
@@ -4482,6 +4510,7 @@ mod tests {
                     // Typed without the scheme, previewed with it: one link.
                     text: "see spotifast.rocks".into(),
                     preview: Some(LinkPreview {
+                        image_sha256: None,
                         video: false,
                         image: None,
                         url: "https://spotifast.rocks/".into(),

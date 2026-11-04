@@ -5215,10 +5215,14 @@ impl Worker {
                         if let Some(existing) = &existing {
                             content.keep_local_paths(&existing.content);
                         }
-                        if let Ok(true) = self
-                            .archive
-                            .set_edited_content(&chat, &target, &content, &mentions)
-                        {
+                        if let Ok(true) = self.archive.set_edited_message(
+                            &chat,
+                            &target,
+                            &content,
+                            &mentions,
+                            &edited.encode_to_vec(),
+                            thumbnail_of(edited.get_base_message()).as_deref(),
+                        ) {
                             self.emit_message(&chat, &target);
                             self.emit_chat(&chat);
                             self.media_changed(
@@ -8933,13 +8937,13 @@ impl Worker {
                 card,
                 chat,
                 id,
-                preview_url,
+                preview,
                 result,
             } => {
-                let changed = preview_url.is_some_and(|url| {
+                let changed = preview.is_some_and(|downloaded| {
                     !matches!(self.archive.message(&chat, &id).ok().flatten(),
                         Some(Message { content: Content::Text { preview: Some(preview), .. }, .. })
-                        if preview.url == url)
+                        if preview.same_picture(&downloaded))
                 });
                 if changed {
                     // A link was edited during the transfer. Discard its old
@@ -10302,21 +10306,21 @@ impl Worker {
         let reupload = !self.sticker_downloads.contains(&(chat.clone(), id.clone()));
         let jid = Self::jid_of(&chat);
         let row = self.archive.message(&chat, &id).ok().flatten();
-        let preview_url = if link_picture {
+        let preview = if link_picture {
             match classify(&message) {
                 Some(Content::Text {
                     preview: Some(preview),
                     ..
-                }) => Some(preview.url),
+                }) => Some(preview),
                 _ => None,
             }
         } else {
             None
         };
         if link_picture
-            && preview_url.as_ref().is_none_or(|url| {
+            && preview.as_ref().is_none_or(|downloaded| {
                 !matches!(row.as_ref().map(|row| &row.content),
-                Some(Content::Text { preview: Some(preview), .. }) if &preview.url == url)
+                Some(Content::Text { preview: Some(preview), .. }) if preview.same_picture(downloaded))
             })
         {
             self.downloaded(
@@ -10502,7 +10506,7 @@ impl Worker {
                 card,
                 chat,
                 id,
-                preview_url,
+                preview,
                 result,
             });
         });
@@ -12893,6 +12897,7 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
                     crate::safety::first_link(text).and_then(|url| crate::safety::preview_url(&url))
                 })?;
             Some(LinkPreview {
+                image_sha256: image.as_ref().and(extended.thumbnail_sha256.clone()),
                 video: extended.preview_type
                     == Some(wa::message::extended_text_message::PreviewType::VIDEO),
                 image,
@@ -18052,6 +18057,80 @@ mod tests {
     }
 
     #[test]
+    fn changed_link_picture_keys_invalidate_same_url_paths() {
+        let raw = full_link_preview_fixture();
+        let mut old = classify(&raw).unwrap();
+        old.media_mut().unwrap().path = Some("old-preview.jpg".into());
+        let mut replacement = raw.clone();
+        replacement
+            .extended_text_message
+            .as_option_mut()
+            .unwrap()
+            .thumbnail_sha256 = Some(vec![4; 32]);
+        let mut current = classify(&replacement).unwrap();
+        current.keep_local_paths(&old);
+        assert!(
+            current.media().unwrap().path.is_none(),
+            "a same-URL replacement must not reuse the old picture"
+        );
+    }
+
+    #[test]
+    fn live_link_edits_store_current_download_keys_and_thumbnail() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Synthetic").unwrap();
+        let raw = full_link_preview_fixture();
+        let mut row = crate::archive::tests::message(chat, "edited-link", 1, false);
+        row.content = classify(&raw).unwrap();
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+        let mut edited = raw;
+        let text = edited.extended_text_message.as_option_mut().unwrap();
+        text.text = Some("https://example.com/edited".into());
+        text.matched_text = text.text.clone();
+        text.thumbnail_sha256 = Some(vec![4; 32]);
+        text.jpeg_thumbnail = Some(b"new poster".to_vec());
+        let mut protocol = wa::message::ProtocolMessage::default();
+        protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+        let mut key = wa::MessageKey::default();
+        key.id = Some(row.id.clone());
+        protocol.key = MessageField::some(key);
+        protocol.edited_message = MessageField::some(edited.clone());
+        let mut event = wa::Message::default();
+        event.protocol_message = MessageField::some(protocol);
+        worker.ingest(
+            &Arc::new(event),
+            &MessageInfo {
+                id: "edit-event".into(),
+                source: MessageSource {
+                    chat: chat.parse().unwrap(),
+                    sender: chat.parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(2).unwrap(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            worker.archive.raw(chat, &row.id).unwrap().unwrap(),
+            edited.encode_to_vec()
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .thumbnail
+                .as_deref(),
+            Some(b"new poster".as_slice())
+        );
+    }
+
+    #[test]
     fn link_preview_without_inline_jpeg_keeps_its_downloadable_thumbnail() {
         let raw = full_link_preview_fixture();
         let content = classify(&raw).expect("link message");
@@ -18068,52 +18147,59 @@ mod tests {
 
     #[tokio::test]
     async fn link_preview_download_cannot_attach_to_a_link_edited_during_transfer() {
-        let (mut worker, _events, _, _) = receipt_tests::worker();
-        let chat = "200@s.whatsapp.net";
-        worker.archive.ensure_chat(chat, "Synthetic").unwrap();
-        let raw = full_link_preview_fixture();
-        let mut row = crate::archive::tests::message(chat, "edited-link", 1, false);
-        row.content = classify(&raw).unwrap();
-        let Content::Text {
-            preview: Some(preview),
-            ..
-        } = &mut row.content
-        else {
-            panic!("link fixture")
-        };
-        let previous_url = std::mem::replace(&mut preview.url, "https://example.com/new".into());
-        row.edited = true;
-        worker
-            .archive
-            .insert_message(&row, Some(&raw.encode_to_vec()))
-            .unwrap();
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("old-picture.jpg");
-        std::fs::write(&path, b"old picture").unwrap();
-        worker.downloads.insert((chat.into(), row.id.clone(), None));
-        worker
-            .handle_command(Command::Downloaded {
-                card: None,
-                chat: chat.into(),
-                id: row.id.clone(),
-                preview_url: Some(previous_url),
-                result: Ok(path.clone()),
-            })
-            .await;
-        assert!(!path.exists(), "the obsolete cached image is removed");
-        assert!(
+        for change_url in [false, true] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            let chat = "200@s.whatsapp.net";
+            worker.archive.ensure_chat(chat, "Synthetic").unwrap();
+            let raw = full_link_preview_fixture();
+            let mut row = crate::archive::tests::message(chat, "edited-link", 1, false);
+            row.content = classify(&raw).unwrap();
+            let Content::Text {
+                preview: Some(preview),
+                ..
+            } = &mut row.content
+            else {
+                panic!("link fixture")
+            };
+            let previous = preview.clone();
+            if change_url {
+                preview.url = "https://example.com/new".into();
+            } else {
+                preview.image_sha256 = Some(vec![9; 32]);
+            }
+            row.edited = true;
             worker
                 .archive
-                .message(chat, &row.id)
-                .unwrap()
-                .unwrap()
-                .content
-                .media()
-                .unwrap()
-                .path
-                .is_none()
-        );
-        assert!(worker.downloads.is_empty());
+                .insert_message(&row, Some(&raw.encode_to_vec()))
+                .unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("old-picture.jpg");
+            std::fs::write(&path, b"old picture").unwrap();
+            worker.downloads.insert((chat.into(), row.id.clone(), None));
+            worker
+                .handle_command(Command::Downloaded {
+                    card: None,
+                    chat: chat.into(),
+                    id: row.id.clone(),
+                    preview: Some(previous),
+                    result: Ok(path.clone()),
+                })
+                .await;
+            assert!(!path.exists(), "the obsolete cached image is removed");
+            assert!(
+                worker
+                    .archive
+                    .message(chat, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .content
+                    .media()
+                    .unwrap()
+                    .path
+                    .is_none()
+            );
+            assert!(worker.downloads.is_empty());
+        }
     }
 
     #[test]
@@ -18209,6 +18295,7 @@ mod tests {
             .expect("jpeg");
         crate::model::ComposedPreview {
             preview: LinkPreview {
+                image_sha256: None,
                 video: false,
                 image: None,
                 url: "https://ex.com/a".into(),

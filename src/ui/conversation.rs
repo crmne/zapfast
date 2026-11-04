@@ -5706,10 +5706,20 @@ fn bubble_frame(
         } else {
             slot
         };
-        if over_picture && let Some(picture) = slot {
+        if over_picture
+            && let Some(picture) = slot.filter(|picture| picture_footer_fits(*picture, reserve))
+        {
             footer_over_picture(ui, view, message, picture, starred, pinned, actions);
         } else {
-            footer(ui, view, last, slot, starred, pinned, actions);
+            footer(
+                ui,
+                view,
+                last,
+                if over_picture { None } else { slot },
+                starred,
+                pinned,
+                actions,
+            );
         }
         if matches!(message.content, Content::Poll { .. }) {
             super::polls::results_button(
@@ -6603,6 +6613,11 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
 /// around the time keeps a few points clear of the rounded corner.
 const OVER_PICTURE_INSET: Vec2 = vec2(10.0, 6.0);
 
+fn picture_footer_fits(picture: Rect, width: f32) -> bool {
+    width + 2.0 * OVER_PICTURE_INSET.x <= picture.width()
+        && 15.0 + 2.0 * OVER_PICTURE_INSET.y <= picture.height()
+}
+
 /// Paints the time and ticks over the bottom corner of a picture without a
 /// caption, in white on a soft dark scrim so they read on any picture.
 fn footer_over_picture(
@@ -6803,7 +6818,9 @@ fn footer(
     let width = time.size().x
         + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
-        + tick_width;
+        + tick_width
+        + if starred { FOOTER_MARK_SLOT } else { 0.0 }
+        + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     let rect = match slot {
         Some(slot) => slot,
         None => {
@@ -7624,8 +7641,9 @@ fn context_menu(
     {
         actions.push(Action::SaveSticker(path.clone()));
     }
-    if !matches!(message.content, Content::Text { .. })
-        && let Some(media) = message.content.media()
+    if let Some(media) = message.content.media()
+        && (!matches!(message.content, Content::Text { .. })
+            || (media.path.is_none() && matches!(media.state, MediaState::Failed(_))))
     {
         match &media.path {
             Some(path) => {
@@ -10057,7 +10075,13 @@ fn whatsapp_media_preview(palette: &Palette, message: &Message) -> bool {
 /// downloadable pictures use the expanded layout.
 fn large_preview(preview: &LinkPreview, thumbnail: Option<&[u8]>) -> bool {
     preview.is_video()
-        || preview.image.is_some()
+        || preview.image.as_ref().is_some_and(|image| {
+            image
+                .width
+                .zip(image.height)
+                .filter(|(width, height)| *width > 0 && *height > 0)
+                .is_none_or(|(width, height)| width >= 200 || height >= 200)
+        })
         || thumbnail.is_some_and(|bytes| {
             image::ImageReader::new(std::io::Cursor::new(bytes))
                 .with_guessed_format()
@@ -10106,10 +10130,11 @@ fn preview_layout(
             } else {
                 (card_width * h as f32 / w as f32).min(card_width * 1.5)
             };
-            let (rect, _) = ui.allocate_exact_size(vec2(card_width, height), Sense::hover());
-            if ui.is_rect_visible(rect) {
-                ui.painter().rect_filled(rect, 4.0, palette.surface);
-                let full = path.and_then(|path| {
+            let full = if ui.is_rect_visible(Rect::from_min_size(
+                ui.next_widget_position(),
+                vec2(card_width, height),
+            )) {
+                path.and_then(|path| {
                     let uri = crate::util::image_uri(path);
                     crate::image_cache::touch(ui.ctx(), &uri);
                     match ui.ctx().try_load_texture(
@@ -10128,7 +10153,22 @@ fn preview_layout(
                             None
                         }
                     }
-                });
+                })
+            } else {
+                None
+            };
+            let height = if video {
+                height
+            } else {
+                full.as_ref()
+                    .map_or(height, |texture| {
+                        card_width * texture.size.y / texture.size.x
+                    })
+                    .min(card_width * 1.5)
+            };
+            let (rect, _) = ui.allocate_exact_size(vec2(card_width, height), Sense::hover());
+            if ui.is_rect_visible(rect) {
+                ui.painter().rect_filled(rect, 4.0, palette.surface);
                 // Only retain/decode the inline JPEG until the full picture is ready.
                 let texture = full.or_else(|| {
                     let uri = link_thumbnail_uri(
@@ -10257,20 +10297,36 @@ fn composer_preview_layout(
         .to_owned();
     // Limit text to the space beside the thumbnail and keep it
     // left-aligned in own bubbles.
-    let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
+    let has_picture = thumbnail.is_some() || preview.image.is_some();
+    let column = (card_width - if has_picture { 72.0 } else { 0.0 }).max(0.0);
     ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
         ui.set_width(card_width);
         ui.horizontal(|ui| {
-            if let Some((chat, id, bytes)) = thumbnail {
+            if has_picture {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
                 // Off-screen cards are laid out too; only a visible
                 // one keeps its thumbnail resident.
                 if ui.is_rect_visible(rect) {
-                    let uri = link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes);
-                    egui::Image::new(uri)
-                        .fit_to_exact_size(rect.size())
-                        .corner_radius(4.0)
-                        .paint_at(ui, rect);
+                    let uri = preview
+                        .image
+                        .as_ref()
+                        .and_then(|image| image.path.as_ref())
+                        .map(|path| {
+                            let uri = crate::util::image_uri(path);
+                            crate::image_cache::touch(ui.ctx(), &uri);
+                            uri
+                        })
+                        .or_else(|| {
+                            thumbnail.map(|(chat, id, bytes)| {
+                                link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes)
+                            })
+                        });
+                    if let Some(uri) = uri {
+                        egui::Image::new(uri)
+                            .fit_to_exact_size(rect.size())
+                            .corner_radius(4.0)
+                            .paint_at(ui, rect);
+                    }
                 }
             }
             ui.vertical(|ui| {
@@ -10372,7 +10428,10 @@ fn link_thumbnail_uri(
     id: &str,
     bytes: &[u8],
 ) -> String {
-    let id = format!("{id}-link-{:x}", egui::Id::new(&preview.url).value());
+    let id = format!(
+        "{id}-link-{:x}",
+        egui::Id::new((&preview.url, bytes)).value()
+    );
     thumbnail_uri(ctx, chat, &id, bytes)
 }
 
@@ -10838,6 +10897,11 @@ fn video(
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("video"), rect);
     });
+    let response = if let MediaState::Failed(error) = &media.state {
+        response.on_hover_text(format!("{error} · Click to retry"))
+    } else {
+        response
+    };
     if ui.is_rect_visible(rect) {
         ui.painter().rect_filled(rect, 6.0, palette.surface);
     }
@@ -10859,7 +10923,9 @@ fn video(
                 Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
-            video_metadata_shade(ui, rect);
+            if time_over_picture(message) {
+                video_metadata_shade(ui, rect);
+            }
         }
         if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -10999,7 +11065,21 @@ fn video(
                     );
                     let center_y = rect.bottom() - OVER_PICTURE_INSET.y - 7.5;
                     let mut x = rect.left() + 8.0;
-                    if !gif {
+                    let reserve = footer_width(
+                        ui,
+                        message,
+                        view.starred.is_some_and(|ids| ids.contains(&message.id)),
+                        view.pins.is_some_and(|ids| ids.contains(&message.id)),
+                    );
+                    let overlays = time_over_picture(message) && picture_footer_fits(rect, reserve);
+                    let right = rect.right()
+                        - if overlays {
+                            OVER_PICTURE_INSET.x + reserve + 8.0
+                        } else {
+                            8.0
+                        };
+                    let fits = x + galley.size().x + if gif { 0.0 } else { 17.0 } <= right;
+                    if !gif && fits {
                         let camera = Rect::from_min_size(pos2(x, center_y - 4.5), vec2(9.0, 9.0));
                         ui.painter().rect_filled(camera, 1.0, Color32::WHITE);
                         ui.painter().add(egui::Shape::convex_polygon(
@@ -11014,11 +11094,13 @@ fn video(
                         ));
                         x += 17.0;
                     }
-                    ui.painter().galley(
-                        pos2(x, center_y - galley.size().y / 2.0),
-                        galley,
-                        Color32::WHITE,
-                    );
+                    if fits {
+                        ui.painter().galley(
+                            pos2(x, center_y - galley.size().y / 2.0),
+                            galley,
+                            Color32::WHITE,
+                        );
+                    }
                 }
             }
         }
@@ -12171,6 +12253,77 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn narrow_video_metadata_does_not_overlap_or_escape_the_bubble() {
+        for status in [Delivery::Sent, Delivery::Failed] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            with_still_view(|view| {
+                let mut row = message(Content::Video {
+                    caption: None,
+                    media: media(Some(80), Some(640)),
+                    seconds: Some(178),
+                    gif: false,
+                    note: false,
+                });
+                row.chat = view.chat.id.clone();
+                row.from_me = true;
+                row.status = status;
+                let marked = [row.id.clone()].into_iter().collect();
+                let view = View {
+                    starred: Some(&marked),
+                    pins: Some(&marked),
+                    ..*view
+                };
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(920.0, 1000.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        bubble(
+                            ui,
+                            &view,
+                            &row,
+                            None,
+                            RunPlace {
+                                show_sender: false,
+                                show_avatar: false,
+                                tailed: false,
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let id = bubble_id(&row.chat, &row.id);
+                let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
+                let frame = rect(id.with("rect"));
+                let video = rect(id.with("video"));
+                let clock = rect(footer_id(&row.chat, &row.id));
+                assert!(
+                    frame.contains_rect(clock),
+                    "footer escapes the bubble: {clock:?}, {frame:?}"
+                );
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text().starts_with("2:58")
+                    {
+                        let duration = Rect::from_min_size(text.pos, text.galley.size());
+                        assert!(
+                            !clock.intersects(duration),
+                            "duration overlaps the timestamp"
+                        );
+                        assert!(video.contains_rect(duration), "duration escapes the video");
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
     fn video_timestamps_stay_inside_captionless_frames() {
         for palette in [Palette::dark(), Palette::light()] {
             for own in [false, true] {
@@ -12280,6 +12433,7 @@ mod tests {
                             let mut row = message(Content::Text {
                                 text: url.into(),
                                 preview: Some(LinkPreview {
+                                    image_sha256: None,
                                     url: url.into(),
                                     title: Some("A synthetic post on Instagram".into()),
                                     description: None,
@@ -12351,6 +12505,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         let preview = LinkPreview {
+            image_sha256: None,
             video: false,
             image: None,
             url: "https://example.com/article".into(),
@@ -12385,79 +12540,85 @@ mod tests {
 
     #[test]
     fn link_preview_video_posters_are_square_and_captioned_below_in_both_directions() {
-        for width in [180.0, 240.0] {
-            for layout in [
-                Layout::top_down(Align::Min),
-                Layout::right_to_left(Align::Min),
-            ] {
-                let ctx = egui::Context::default();
-                crate::theme::install(&ctx);
-                let preview = LinkPreview {
-                    url: "https://www.instagram.com/reel/synthetic/".into(),
-                    title: Some(
-                        "Preview title that wraps over several lines in a narrow bubble".into(),
-                    ),
-                    description: None,
-                    video: false,
-                    image: None,
-                };
-                let mut jpeg = std::io::Cursor::new(Vec::new());
-                image::RgbImage::new(300, 200)
-                    .write_to(&mut jpeg, image::ImageFormat::Jpeg)
-                    .unwrap();
-                let mut card = Rect::NOTHING;
-                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    ui.with_layout(layout, |ui| {
-                        card = preview_layout(
-                            ui,
-                            &Palette::dark(),
-                            &preview,
-                            &Message {
-                                thumbnail: Some(jpeg.get_ref().clone()),
-                                ..message(Content::text("synthetic"))
-                            },
-                            width,
-                            &mut Vec::new(),
-                        );
+        for (url, video) in [
+            ("https://www.instagram.com/reel/synthetic/", false),
+            ("https://example.com/clip", true),
+        ] {
+            for width in [180.0, 240.0] {
+                for layout in [
+                    Layout::top_down(Align::Min),
+                    Layout::right_to_left(Align::Min),
+                ] {
+                    let ctx = egui::Context::default();
+                    crate::theme::install(&ctx);
+                    let preview = LinkPreview {
+                        image_sha256: None,
+                        url: url.into(),
+                        title: Some(
+                            "Preview title that wraps over several lines in a narrow bubble".into(),
+                        ),
+                        description: None,
+                        video,
+                        image: None,
+                    };
+                    let mut jpeg = std::io::Cursor::new(Vec::new());
+                    image::RgbImage::new(300, 200)
+                        .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+                        .unwrap();
+                    let mut card = Rect::NOTHING;
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        ui.with_layout(layout, |ui| {
+                            card = preview_layout(
+                                ui,
+                                &Palette::dark(),
+                                &preview,
+                                &Message {
+                                    thumbnail: Some(jpeg.get_ref().clone()),
+                                    ..message(Content::text("synthetic"))
+                                },
+                                width,
+                                &mut Vec::new(),
+                            );
+                        });
                     });
-                });
-                output.textures_delta.clear();
-                let play = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Path(path)
-                            if path.points.len() == 3 && path.fill == Color32::WHITE =>
-                        {
-                            Some(path)
-                        }
-                        _ => None,
-                    })
-                    .expect("a reel has a play overlay");
-                assert!(
-                    (play.points[0].y + 13.0 - card.top() - width / 2.0).abs() < 1.0,
-                    "the play button is centered on a square poster"
-                );
-                let title = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Text(text)
-                            if text.galley.job.text.starts_with("Preview title") =>
-                        {
-                            Some(text)
-                        }
-                        _ => None,
-                    })
-                    .expect("preview caption");
-                assert!(
-                    title.pos.y >= card.top() + width,
-                    "caption sits below the image"
-                );
-                assert!(
-                    card.width() <= width + 1.0,
-                    "narrow/own previews never overflow"
-                );
+                    output.textures_delta.clear();
+                    let play = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Path(path)
+                                if path.points.len() == 3 && path.fill == Color32::WHITE =>
+                            {
+                                Some(path)
+                            }
+                            _ => None,
+                        })
+                        .expect("a reel has a play overlay");
+                    assert!(
+                        (play.points[0].y + 13.0 - card.top() - width / 2.0).abs() < 1.0,
+                        "the play button is centered on a square poster"
+                    );
+                    let title = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text)
+                                if text.galley.job.text.starts_with("Preview title") =>
+                            {
+                                Some(text)
+                            }
+                            _ => None,
+                        })
+                        .expect("preview caption");
+                    assert!(
+                        title.pos.y >= card.top() + width,
+                        "caption sits below the image"
+                    );
+                    assert!(
+                        card.width() <= width + 1.0,
+                        "narrow/own previews never overflow"
+                    );
+                }
             }
         }
     }
@@ -12467,6 +12628,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx);
         let mut preview = LinkPreview {
+            image_sha256: None,
             url: "https://example.com".into(),
             title: Some("Site".into()),
             description: None,
@@ -12481,8 +12643,12 @@ mod tests {
             !large_preview(&preview, Some(jpeg.get_ref())),
             "a small site icon is not a media poster"
         );
+        preview.image = Some(Box::new(media(Some(64), Some(64))));
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "download metadata does not enlarge a favicon"
+        );
         let old_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", jpeg.get_ref());
-        preview.url = "https://example.com/edited".into();
         let new_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", b"replacement");
         assert_ne!(old_uri, new_uri);
         let egui::load::BytesPoll::Ready { bytes, .. } = ctx.try_load_bytes(&new_uri).unwrap()
@@ -12543,67 +12709,79 @@ mod tests {
         image::RgbImage::new(72, 72)
             .write_to(&mut jpeg, image::ImageFormat::Jpeg)
             .unwrap();
-        let preview = LinkPreview {
-            url: "https://www.instagram.com/reel/synthetic/".into(),
-            title: Some("Full-quality preview".into()),
-            description: None,
-            video: true,
-            image: Some(Box::new(Media {
-                path: Some(path.clone()),
-                ..media(Some(640), Some(640))
-            })),
-        };
-        let ctx = egui::Context::default();
-        crate::theme::install(&ctx);
-        egui_extras::install_image_loaders(&ctx);
-        let uri = crate::util::image_uri(&path);
-        let full = (0..100)
-            .find_map(|_| {
-                match ctx.try_load_texture(
-                    &uri,
-                    egui::TextureOptions::LINEAR,
-                    egui::load::SizeHint::default(),
-                ) {
-                    Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
-                    Ok(egui::load::TexturePoll::Pending { .. }) => {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                        None
-                    }
-                    Err(error) => panic!("full preview failed: {error}"),
+        for video in [true, false] {
+            let preview = LinkPreview {
+                image_sha256: None,
+                url: if video {
+                    "https://www.instagram.com/reel/synthetic/"
+                } else {
+                    "https://example.com/article"
                 }
-            })
-            .expect("full preview texture decoded");
-        assert_eq!(full.size, vec2(640.0, 320.0));
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            preview_layout(
-                ui,
-                &Palette::dark(),
-                &preview,
-                &Message {
-                    thumbnail: Some(jpeg.get_ref().clone()),
-                    ..message(Content::text("synthetic"))
+                .into(),
+                title: Some("Full-quality preview".into()),
+                description: None,
+                video,
+                image: Some(Box::new(Media {
+                    path: Some(path.clone()),
+                    ..media(Some(640), Some(640))
+                })),
+            };
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            let uri = crate::util::image_uri(&path);
+            let full = (0..100)
+                .find_map(|_| {
+                    match ctx.try_load_texture(
+                        &uri,
+                        egui::TextureOptions::LINEAR,
+                        egui::load::SizeHint::default(),
+                    ) {
+                        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+                        Ok(egui::load::TexturePoll::Pending { .. }) => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            None
+                        }
+                        Err(error) => panic!("full preview failed: {error}"),
+                    }
+                })
+                .expect("full preview texture decoded");
+            assert_eq!(full.size, vec2(640.0, 320.0));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                preview_layout(
+                    ui,
+                    &Palette::dark(),
+                    &preview,
+                    &Message {
+                        thumbnail: Some(jpeg.get_ref().clone()),
+                        ..message(Content::text("synthetic"))
+                    },
+                    240.0,
+                    &mut Vec::new(),
+                );
+            });
+            output.textures_delta.clear();
+            let painted = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) => rect
+                        .brush
+                        .as_ref()
+                        .filter(|brush| brush.fill_texture_id == full.id),
+                    _ => None,
+                })
+                .expect("the full-resolution image is painted");
+            assert_eq!(
+                painted.uv,
+                if video {
+                    Rect::from_min_max(pos2(0.25, 0.0), pos2(0.75, 1.0))
+                } else {
+                    Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0))
                 },
-                240.0,
-                &mut Vec::new(),
+                "crop uses decoded dimensions, not stale protocol dimensions"
             );
-        });
-        output.textures_delta.clear();
-        let painted = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Rect(rect) => rect
-                    .brush
-                    .as_ref()
-                    .filter(|brush| brush.fill_texture_id == full.id),
-                _ => None,
-            })
-            .expect("the full-resolution image is painted");
-        assert_eq!(
-            painted.uv,
-            Rect::from_min_max(pos2(0.25, 0.0), pos2(0.75, 1.0)),
-            "crop uses decoded dimensions, not stale protocol dimensions"
-        );
+        }
     }
 
     /// Glass buttons leave the name no room in a narrow header (#626).
@@ -14273,6 +14451,21 @@ mod reaction_tests {
                 gif: false,
                 note: false,
             }),
+            row(Content::Text {
+                text: "https://example.com".into(),
+                preview: Some(LinkPreview {
+                    url: "https://example.com".into(),
+                    title: None,
+                    description: None,
+                    video: false,
+                    image_sha256: None,
+                    image: Some(Box::new(media(
+                        "image/jpeg",
+                        None,
+                        MediaState::Failed("Expired".into()),
+                    ))),
+                }),
+            }),
             row(Content::Sticker {
                 media: media("image/webp", path, Idle),
                 animated: false,
@@ -14288,6 +14481,19 @@ mod reaction_tests {
         std::fs::write(&file, b"jpeg").unwrap();
         let mut labels = Vec::new();
         for row in menu_fixtures(&file) {
+            if matches!(
+                row.message.content,
+                Content::Text {
+                    preview: Some(_),
+                    ..
+                }
+            ) {
+                assert!(
+                    drawn_menu_words(crate::i18n::Locale::English, &row)
+                        .iter()
+                        .any(|label| label == "Download")
+                );
+            }
             let spanish = drawn_menu_words(crate::i18n::Locale::Spanish, &row);
             for english in drawn_menu_words(crate::i18n::Locale::English, &row) {
                 assert!(!spanish.contains(&english), "{english} in {spanish:?}");

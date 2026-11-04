@@ -686,6 +686,7 @@ pub fn populate(app: &mut App) {
                 Content::Text {
                     text: "btw I made my own Spotify app from scratch! https://spotifast.rocks/".into(),
                     preview: Some(LinkPreview {
+image_sha256: None,
                 video: false,
                 image: None,
                         url: "https://spotifast.rocks/".into(),
@@ -1342,6 +1343,34 @@ fn short_chat_sample(app: &mut App) {
     app.scroll_to_bottom = true;
 }
 
+/// Keeps the sidebar in sync with a synthetic replacement conversation.
+fn refresh_sample_last(app: &mut App, id: &str) {
+    let last = app
+        .conversations
+        .get(id)
+        .and_then(|conversation| conversation.messages.last())
+        .map(|last| {
+            (
+                last.timestamp,
+                crate::model::LastMessage {
+                    labelled: last.content.labelled(),
+                    from_me: last.from_me,
+                    sender: last.sender.clone(),
+                    sender_name: last.sender_name.clone(),
+                    summary: last.summary(),
+                    full: last.content.full_summary(),
+                    status: last.status,
+                },
+            )
+        });
+    if let Some((timestamp, last)) = last
+        && let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id)
+    {
+        chat.last_activity = timestamp;
+        chat.last = Some(last);
+    }
+}
+
 /// Offline examples of a reel poster, a full thumbnail without an inline
 /// JPEG, a landscape article, and a square post. Pictures are bundled stock.
 fn social_previews_sample(app: &mut App, only: Option<usize>) {
@@ -1389,6 +1418,7 @@ fn social_previews_sample(app: &mut App, only: Option<usize>) {
                 Content::Text {
                     text: url.into(),
                     preview: Some(LinkPreview {
+                        image_sha256: None,
                         url: url.into(),
                         title: Some(title.into()),
                         description: Some(description.into()),
@@ -1410,6 +1440,7 @@ fn social_previews_sample(app: &mut App, only: Option<usize>) {
         })
         .collect();
     app.conversations.get_mut(chat).unwrap().messages = messages;
+    refresh_sample_last(app, chat);
     app.open_chat = Some(chat.into());
     app.typing.clear();
     app.scroll_to_bottom = true;
@@ -1956,8 +1987,9 @@ fn forwarded_video_sample(app: &mut App, downloaded: bool) {
     );
     row.forwarded = true;
     app.conversations.get_mut(chat).unwrap().messages = vec![row];
+    refresh_sample_last(app, chat);
     app.open_chat = Some(chat.into());
-    app.settings.auto_download = false;
+    app.account_mut().settings.auto_download = false;
     app.typing.clear();
     app.scroll_to_bottom = true;
     app.video.silence();
@@ -2253,6 +2285,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                             .expect("the bundled video has a JPEG poster");
                         bytes
                     });
+                refresh_sample_last(app, SAMPLES[0].id);
             }
             "video" => video_sample(app, None),
             "video-playing" => video_sample(app, Some("demo-video")),
@@ -3610,6 +3643,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     state: if part == "link-preview" {
                         crate::app::LinkPreviewState::Ready(crate::model::ComposedPreview {
                             preview: LinkPreview {
+image_sha256: None,
                 video: false,
                 image: None,
                                 url: LINK.to_owned(),
@@ -9938,6 +9972,7 @@ mod tests {
             "link-preview",
             "social-previews",
             "instagram-preview",
+            "instagram-post-preview",
             "facebook-preview",
             "article-preview",
             "social-previews,light",
@@ -20184,6 +20219,7 @@ mod tests {
                 Content::Text {
                     text: "Text below a card".into(),
                     preview: (kind == "preview").then(|| LinkPreview {
+                        image_sha256: None,
                         video: false,
                         image: None,
                         url: "https://example.com/selection-fixture".into(),
@@ -23640,67 +23676,77 @@ mod tests {
 
     #[test]
     fn a_downloaded_video_replaces_its_inline_thumbnail_with_a_decoded_poster() {
-        fn paints(shape: &egui::Shape, ctx: &egui::Context, name: &str) -> bool {
+        fn paints(shape: &egui::Shape, ctx: &egui::Context, name: &str) -> usize {
             match shape {
-                egui::Shape::Mesh(mesh) => ctx
-                    .tex_manager()
-                    .read()
-                    .meta(mesh.texture_id)
-                    .is_some_and(|meta| meta.name == name && meta.size[0] >= 240),
-                egui::Shape::Rect(rect) => rect.brush.as_ref().is_some_and(|brush| {
+                egui::Shape::Mesh(mesh) => usize::from(
+                    ctx.tex_manager()
+                        .read()
+                        .meta(mesh.texture_id)
+                        .is_some_and(|meta| meta.name == name && meta.size[0] >= 240),
+                ),
+                egui::Shape::Rect(rect) => usize::from(rect.brush.as_ref().is_some_and(|brush| {
                     ctx.tex_manager()
                         .read()
                         .meta(brush.fill_texture_id)
                         .is_some_and(|meta| meta.name == name && meta.size[0] >= 240)
-                }),
-                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| paints(shape, ctx, name)),
-                _ => false,
+                })),
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().map(|shape| paints(shape, ctx, name)).sum()
+                }
+                _ => 0,
             }
         }
-        for album in [false, true] {
-            let mut app = app();
-            forwarded_video_sample(&mut app, true);
-            let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
-            row.thumbnail = Some(sample_thumbnail(1));
-            let name = format!(
-                "{}#0",
-                row.content
-                    .media()
-                    .unwrap()
-                    .path
-                    .as_ref()
-                    .unwrap()
-                    .display()
-            );
-            if album {
-                row.content.media_mut().unwrap().album = Some("video-poster-fixture".into());
-                let mut sibling = row.clone();
-                sibling.id = "second-video".into();
-                sibling.timestamp += 1;
-                app.conversations
-                    .get_mut(SAMPLES[0].id)
-                    .unwrap()
-                    .messages
-                    .push(sibling);
-            }
-            let ctx = egui::Context::default();
-            app.attach(&ctx);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            loop {
-                let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
-                if shapes.iter().any(|shape| paints(&shape.shape, &ctx, &name)) {
-                    break;
+        for thumbnail in [None, Some(sample_thumbnail(1))] {
+            for album in [false, true] {
+                let mut app = app();
+                forwarded_video_sample(&mut app, true);
+                let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+                row.thumbnail = thumbnail.clone();
+                let name = format!(
+                    "{}#0",
+                    row.content
+                        .media()
+                        .unwrap()
+                        .path
+                        .as_ref()
+                        .unwrap()
+                        .display()
+                );
+                if album {
+                    row.content.media_mut().unwrap().album = Some("video-poster-fixture".into());
+                    let mut sibling = row.clone();
+                    sibling.id = "second-video".into();
+                    sibling.timestamp += 1;
+                    app.conversations
+                        .get_mut(SAMPLES[0].id)
+                        .unwrap()
+                        .messages
+                        .push(sibling);
+                }
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                loop {
+                    let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+                    if shapes
+                        .iter()
+                        .map(|shape| paints(&shape.shape, &ctx, &name))
+                        .sum::<usize>()
+                        == if album { 2 } else { 1 }
+                    {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the downloaded frame never replaced the blurry inline JPEG, album={album}"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
                 assert!(
-                    std::time::Instant::now() < deadline,
-                    "the downloaded frame never replaced the blurry inline JPEG, album={album}"
+                    app.video.status("tiktok-video").is_none(),
+                    "loading a poster must not start playback"
                 );
-                std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            assert!(
-                app.video.status("tiktok-video").is_none(),
-                "loading a poster must not start playback"
-            );
         }
     }
 
@@ -23762,7 +23808,51 @@ mod tests {
     }
 
     #[test]
+    fn preview_samples_refresh_the_sidebar() {
+        for page in [
+            "social-previews",
+            "instagram-post-preview",
+            "tiktok-video",
+            "tiktok-video-ready",
+            "video-preview",
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some(page));
+            let row = app.conversations[SAMPLES[0].id].messages.last().unwrap();
+            let chat = app
+                .chats
+                .iter()
+                .find(|chat| chat.id == SAMPLES[0].id)
+                .unwrap();
+            assert_eq!(chat.last_activity, row.timestamp, "{page}");
+            assert_eq!(chat.last.as_ref().unwrap().summary, row.summary(), "{page}");
+        }
+    }
+
+    #[test]
     fn a_forwarded_video_without_a_thumbnail_downloads_then_plays_from_its_play_button() {
+        {
+            let mut automatic = app();
+            forwarded_video_sample(&mut automatic, false);
+            automatic.account_mut().settings.auto_download = true;
+            automatic.backend.record_demo_commands();
+            let ctx = egui::Context::default();
+            automatic.attach(&ctx);
+            render(&mut automatic, &ctx);
+            assert_eq!(
+                automatic
+                    .backend
+                    .take_demo_commands()
+                    .iter()
+                    .filter(|command| matches!(
+                        command,
+                        crate::backend::Command::Download { manual: false, .. }
+                    ))
+                    .count(),
+                1,
+                "a visible thumbnail-less video automatically downloads once"
+            );
+        }
         let mut app = app();
         forwarded_video_sample(&mut app, false);
         app.backend.record_demo_commands();

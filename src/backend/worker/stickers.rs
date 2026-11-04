@@ -1291,7 +1291,7 @@ mod tests {
         for (id, expected) in [("1", 0), ("2", 1)] {
             worker
                 .handle_command(Command::Downloaded {
-                    preview_url: None,
+                    preview: None,
                     card: None,
                     chat: chat.clone(),
                     id: id.into(),
@@ -1386,7 +1386,7 @@ mod tests {
         worker.sticker_downloads = [(chat.clone(), "s3".to_owned())].into();
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s3".into(),
@@ -1417,7 +1417,7 @@ mod tests {
         worker.sticker_downloads = [(chat.clone(), "s1".to_owned())].into();
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s1".into(),
@@ -1447,7 +1447,7 @@ mod tests {
         worker.sticker_downloads = [(chat.clone(), "s1".to_owned())].into();
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s1".into(),
@@ -1548,7 +1548,7 @@ mod tests {
             .await;
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s1".into(),
@@ -1586,7 +1586,7 @@ mod tests {
             .await;
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s1".into(),
@@ -1604,7 +1604,7 @@ mod tests {
         std::fs::write(&file, b"webp").unwrap();
         worker
             .handle_command(Command::Downloaded {
-                preview_url: None,
+                preview: None,
                 card: None,
                 chat: chat.clone(),
                 id: "s1".into(),
@@ -1633,7 +1633,7 @@ mod tests {
             events.try_iter().for_each(drop);
             worker
                 .handle_command(Command::Downloaded {
-                    preview_url: None,
+                    preview: None,
                     card: None,
                     chat,
                     id,

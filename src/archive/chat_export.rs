@@ -343,6 +343,7 @@ mod tests {
         row.content = Content::Text {
             text: url.into(),
             preview: Some(crate::model::LinkPreview {
+                image_sha256: None,
                 url: url.into(),
                 title: Some("Article".into()),
                 description: None,
