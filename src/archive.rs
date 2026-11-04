@@ -2429,9 +2429,11 @@ impl Archive {
     }
 
     /// Attachment paths of the messages matching `filter` (over `messages m`),
-    /// including an interactive card's image and each carousel card's image.
+    /// including card and preview images. Shared files stay until their last
+    /// message is removed.
     fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
-        let mut statement = self.connection.prepare(&format!(
+        let paths = |filter: &str| {
+            format!(
             "SELECT file FROM (
                  SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
                  UNION ALL
@@ -2444,6 +2446,12 @@ impl Archive {
                  SELECT json_extract(c.value, '$.image.path')
                  FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
              ) WHERE file IS NOT NULL"
+        )
+        };
+        let mut statement = self.connection.prepare(&format!(
+            "{} EXCEPT {}",
+            paths(filter),
+            paths(&format!("NOT ({filter})")),
         ))?;
         let rows =
             statement.query_map(params, |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
@@ -4501,7 +4509,11 @@ pub(crate) mod tests {
         let archive = Archive::in_memory().expect("opens");
         let media = PathBuf::from("/cache/zapfast/media/m2.jpg");
         let gone = furnished_chat(&archive, "1@s.whatsapp.net", &media);
-        let kept = furnished_chat(&archive, "2@s.whatsapp.net", &media);
+        let kept = furnished_chat(
+            &archive,
+            "2@s.whatsapp.net",
+            Path::new("/cache/zapfast/media/kept.jpg"),
+        );
 
         let removed = archive.delete_chat(&gone).expect("delete");
 
@@ -4671,6 +4683,64 @@ pub(crate) mod tests {
             .media;
             removed.sort();
             assert_eq!(removed, expected, "{removal}");
+        }
+    }
+
+    #[test]
+    fn chat_removal_keeps_preview_files_referenced_by_surviving_messages() {
+        for removal in ["clear", "delete", "through"] {
+            let archive = Archive::in_memory().unwrap();
+            let chat = "1@s.whatsapp.net";
+            let kept_chat = if removal == "through" {
+                chat
+            } else {
+                "2@s.whatsapp.net"
+            };
+            for (id, at, target, file) in [
+                ("source", 100, chat, "shared.jpg"),
+                ("unshared", 100, chat, "unshared.jpg"),
+                ("forwarded", 200, kept_chat, "shared.jpg"),
+            ] {
+                archive.ensure_chat(target, "Synthetic").unwrap();
+                let mut row = message(target, id, at, false);
+                row.forwarded = id == "forwarded";
+                row.content = Content::Text {
+                    text: "https://example.com".into(),
+                    preview: Some(crate::model::LinkPreview {
+                        url: "https://example.com".into(),
+                        title: None,
+                        description: None,
+                        video: false,
+                        image_sha256: None,
+                        image: Some(Box::new(crate::model::Media {
+                            mime: "image/jpeg".into(),
+                            size: 1,
+                            width: None,
+                            height: None,
+                            album: None,
+                            path: Some(PathBuf::from(file)),
+                            state: crate::model::MediaState::Idle,
+                        })),
+                    }),
+                };
+                archive.insert_message(&row, None).unwrap();
+            }
+            let removed = match removal {
+                "clear" => archive.clear_chat(chat),
+                "delete" => archive.delete_chat(chat),
+                _ => archive.remove_chat_through(chat, 100, false),
+            }
+            .unwrap();
+            assert_eq!(removed.media, [PathBuf::from("unshared.jpg")], "{removal}");
+            let kept = archive.message(kept_chat, "forwarded").unwrap().unwrap();
+            assert_eq!(
+                kept.content.media().unwrap().path.as_deref(),
+                Some(Path::new("shared.jpg"))
+            );
+            assert_eq!(
+                archive.delete_chat(kept_chat).unwrap().media,
+                [PathBuf::from("shared.jpg")]
+            );
         }
     }
 

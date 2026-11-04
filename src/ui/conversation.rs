@@ -2569,7 +2569,7 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
                     let right = ui.max_rect().right();
                     let (bar, _) = ui.allocate_exact_size(vec2(3.0, 0.0), Sense::hover());
                     let width = (ui.available_width() - 46.0).max(0.0);
-                    let card =
+                    let (card, _) =
                         composer_preview_layout(ui, &palette, &composed.preview, thumbnail, width);
                     ui.painter().rect_filled(
                         Rect::from_x_y_ranges(bar.x_range(), card.y_range()),
@@ -10043,7 +10043,13 @@ fn preview_card(
             if large {
                 preview_layout(ui, &palette, preview, message, card_width, actions);
             } else {
-                composer_preview_layout(ui, &palette, preview, thumbnail, card_width);
+                let (_, unreadable) =
+                    composer_preview_layout(ui, &palette, preview, thumbnail, card_width);
+                if unreadable
+                    && let Some(path) = preview.image.as_ref().and_then(|image| image.path.as_ref())
+                {
+                    actions.push(unreadable_media(view, message, path));
+                }
             }
         })
         .response;
@@ -10301,14 +10307,14 @@ fn preview_layout(
 /// The inside of a link preview card, a bubble's or the composer's: a
 /// 64-point thumbnail (from `thumbnail`'s chat, image id and JPEG), then the
 /// title, up to two lines of description and the domain, `card_width` wide.
-/// Returns where it was laid out.
+/// Returns its bounds and whether the cached picture failed to load.
 fn composer_preview_layout(
     ui: &mut egui::Ui,
     palette: &Palette,
     preview: &LinkPreview,
     thumbnail: Option<(&str, &str, &[u8])>,
     card_width: f32,
-) -> Rect {
+) -> (Rect, bool) {
     let domain = preview
         .url
         .split("://")
@@ -10322,68 +10328,74 @@ fn composer_preview_layout(
     // left-aligned in own bubbles.
     let has_picture = thumbnail.is_some() || preview.image.is_some();
     let column = (card_width - if has_picture { 72.0 } else { 0.0 }).max(0.0);
-    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
-        ui.set_width(card_width);
-        ui.horizontal(|ui| {
-            if has_picture {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-                // Off-screen cards are laid out too; only a visible
-                // one keeps its thumbnail resident.
-                if ui.is_rect_visible(rect) {
-                    let uri = preview
-                        .image
-                        .as_ref()
-                        .and_then(|image| image.path.as_ref())
-                        .and_then(|path| {
-                            let uri = crate::util::image_uri(path);
-                            crate::image_cache::touch(ui.ctx(), &uri);
-                            matches!(
-                                ui.ctx().try_load_texture(
+    let mut unreadable = false;
+    let rect = ui
+        .allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+            ui.set_width(card_width);
+            ui.horizontal(|ui| {
+                if has_picture {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                    // Off-screen cards are laid out too; only a visible
+                    // one keeps its thumbnail resident.
+                    if ui.is_rect_visible(rect) {
+                        let uri = preview
+                            .image
+                            .as_ref()
+                            .and_then(|image| image.path.as_ref())
+                            .and_then(|path| {
+                                let uri = crate::util::image_uri(path);
+                                crate::image_cache::touch(ui.ctx(), &uri);
+                                match ui.ctx().try_load_texture(
                                     &uri,
                                     egui::TextureOptions::LINEAR,
-                                    egui::load::SizeHint::default()
-                                ),
-                                Ok(egui::load::TexturePoll::Ready { .. })
-                            )
-                            .then_some(uri)
-                        })
-                        .or_else(|| {
-                            thumbnail.map(|(chat, id, bytes)| {
-                                link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes)
+                                    egui::load::SizeHint::default(),
+                                ) {
+                                    Ok(egui::load::TexturePoll::Ready { .. }) => Some(uri),
+                                    Ok(egui::load::TexturePoll::Pending { .. }) => None,
+                                    Err(_) => {
+                                        unreadable = true;
+                                        None
+                                    }
+                                }
                             })
-                        });
-                    if let Some(uri) = uri {
-                        egui::Image::new(uri)
-                            .fit_to_exact_size(rect.size())
-                            .corner_radius(4.0)
-                            .paint_at(ui, rect);
+                            .or_else(|| {
+                                thumbnail.map(|(chat, id, bytes)| {
+                                    link_thumbnail_uri(ui.ctx(), preview, chat, id, bytes)
+                                })
+                            });
+                        if let Some(uri) = uri {
+                            egui::Image::new(uri)
+                                .fit_to_exact_size(rect.size())
+                                .corner_radius(4.0)
+                                .paint_at(ui, rect);
+                        }
                     }
                 }
-            }
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.set_width(column);
-                if let Some(title) = &preview.title {
-                    widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
-                }
-                if let Some(description) = &preview.description {
-                    let line = widgets::line(
-                        ui,
-                        description,
-                        theme::regular(12.5),
-                        palette.secondary,
-                        ui.available_width(),
-                        2,
-                    );
-                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                    line.paint(ui, rect.min, palette.secondary);
-                }
-                theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.set_width(column);
+                    if let Some(title) = &preview.title {
+                        widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
+                    }
+                    if let Some(description) = &preview.description {
+                        let line = widgets::line(
+                            ui,
+                            description,
+                            theme::regular(12.5),
+                            palette.secondary,
+                            ui.available_width(),
+                            2,
+                        );
+                        let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                        line.paint(ui, rect.min, palette.secondary);
+                    }
+                    theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+                });
             });
-        });
-    })
-    .response
-    .rect
+        })
+        .response
+        .rect;
+    (rect, unreadable)
 }
 
 /// A location as a card: the map preview WhatsApp sent across the top, then
@@ -12284,6 +12296,57 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn compact_preview_reports_unreadable_cached_images_for_repair() {
+        for corrupt in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("icon.png");
+            if corrupt {
+                std::fs::write(&path, b"not an image").unwrap();
+            }
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            egui_extras::install_image_loaders(&ctx);
+            let preview = LinkPreview {
+                url: "https://example.com".into(),
+                title: None,
+                description: None,
+                video: false,
+                image_sha256: None,
+                image: Some(Box::new(Media {
+                    path: Some(path.clone()),
+                    ..media(Some(64), Some(64))
+                })),
+            };
+            with_still_view(|view| {
+                let mut row = message(Content::Text {
+                    text: preview.url.clone(),
+                    preview: Some(preview.clone()),
+                });
+                row.chat = view.chat.id.clone();
+                let mut actions = Vec::new();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while std::time::Instant::now() < deadline {
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        preview_card(ui, view, &row, &preview, 240.0, &mut actions);
+                    });
+                    output.textures_delta.clear();
+                    if !actions.is_empty() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                assert!(
+                    actions.iter().any(|action| matches!(action,
+                        Action::UnreadableMedia { chat, message, path: failed }
+                            if chat == &row.chat && message == &row.id && failed == &path
+                    )),
+                    "the stale compact path must be repaired, corrupt={corrupt}"
+                );
+            });
+        }
+    }
+
+    #[test]
     fn compact_preview_uses_inline_pixels_when_the_cached_file_is_unreadable() {
         let root = tempfile::tempdir().unwrap();
         let ctx = egui::Context::default();
@@ -12306,7 +12369,8 @@ mod tests {
             .unwrap();
         let inline = link_thumbnail_uri(&ctx, &preview, "synthetic", "icon", jpeg.get_ref());
         let mut painted = false;
-        for _ in 0..100 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 composer_preview_layout(
                     ui,
