@@ -2298,6 +2298,12 @@ pub struct PictureEdit {
     pub crop: PictureCrop,
     /// Quarter turns clockwise already applied to the source.
     pub turns: u8,
+    /// What has been drawn on the picture, oldest first.
+    pub marks: Vec<Mark>,
+    /// Marks taken back by Undo, the latest last, for Redo to put back.
+    pub undone: Vec<Mark>,
+    /// The mark the pointer is drawing now, until it lets go.
+    pub drawing: Option<Mark>,
 }
 
 impl PictureEdit {
@@ -2315,7 +2321,81 @@ impl PictureEdit {
             height: height.max(1),
             crop: PictureCrop::full(width, height),
             turns: 0,
+            marks: Vec::new(),
+            undone: Vec::new(),
+            drawing: None,
         }
+    }
+
+    /// The editor reopened on a picture edited before, with its crop, turn
+    /// and marks as they were left.
+    pub fn reopened(target: crate::app::AttachmentId, origin: PictureOrigin) -> Self {
+        Self {
+            crop: origin.crop,
+            turns: origin.turns,
+            marks: origin.marks,
+            ..Self::new(target, origin.source, origin.width, origin.height)
+        }
+    }
+
+    /// What applying the edit writes, and what reopening it starts from.
+    pub fn origin(&self) -> PictureOrigin {
+        PictureOrigin {
+            source: self.source.clone(),
+            width: self.width,
+            height: self.height,
+            crop: self.crop,
+            turns: self.turns,
+            marks: self.marks.clone(),
+        }
+    }
+
+    /// Starts a mark at `at`, in the source's own pixels. The crop tool
+    /// draws nothing.
+    pub fn begin_mark(&mut self, brush: Brush, at: Point) {
+        self.drawing = Mark::start(brush, self.inside(at), self.width, self.height);
+    }
+
+    /// Carries the mark being drawn to `at`. A pen only takes a point once
+    /// it is at least `step` pixels from the last one.
+    pub fn extend_mark(&mut self, at: Point, step: f32) {
+        let at = self.inside(at);
+        if let Some(mark) = &mut self.drawing {
+            mark.extend(at, step);
+        }
+    }
+
+    /// Keeps the mark being drawn, unless it came to nothing. A new mark
+    /// leaves nothing for Redo.
+    pub fn finish_mark(&mut self) {
+        if let Some(mark) = self.drawing.take()
+            && mark.visible()
+        {
+            self.marks.push(mark);
+            self.undone.clear();
+        }
+    }
+
+    /// Takes the latest mark back.
+    pub fn undo(&mut self) {
+        if let Some(mark) = self.marks.pop() {
+            self.undone.push(mark);
+        }
+    }
+
+    /// Puts back the mark Undo took last.
+    pub fn redo(&mut self) {
+        if let Some(mark) = self.undone.pop() {
+            self.marks.push(mark);
+        }
+    }
+
+    /// A point held inside the source picture.
+    fn inside(&self, [x, y]: Point) -> Point {
+        [
+            x.clamp(0.0, self.width as f32),
+            y.clamp(0.0, self.height as f32),
+        ]
     }
 
     /// The source turned to the side the crop is measured in.
@@ -2353,6 +2433,9 @@ impl PictureEdit {
         Self {
             crop: PictureCrop::full(self.width, self.height),
             turns: 0,
+            marks: Vec::new(),
+            undone: Vec::new(),
+            drawing: None,
             ..self
         }
     }
@@ -2368,6 +2451,290 @@ pub struct PictureOrigin {
     pub height: u32,
     pub crop: PictureCrop,
     pub turns: u8,
+    /// Kept apart from the pixels, so reopening the picture can still take
+    /// them back.
+    pub marks: Vec<Mark>,
+}
+
+/// A point on a picture being edited, in the source's own pixels before any
+/// turn, so turning or cropping afterwards leaves a mark where it was drawn.
+pub type Point = [f32; 2];
+
+/// What a drag on the picture does in the editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PictureTool {
+    Crop,
+    Pen,
+    Highlighter,
+    Arrow,
+    Rectangle,
+    Pixelate,
+}
+
+impl PictureTool {
+    /// Every tool, in the order the editor offers them.
+    pub const ALL: [Self; 6] = [
+        Self::Crop,
+        Self::Pen,
+        Self::Highlighter,
+        Self::Arrow,
+        Self::Rectangle,
+        Self::Pixelate,
+    ];
+
+    /// Whether the tool draws in an ink and a thickness.
+    pub fn inked(self) -> bool {
+        !matches!(self, Self::Crop | Self::Pixelate)
+    }
+}
+
+/// The editor's fixed choice of colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ink {
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    White,
+    Black,
+}
+
+impl Ink {
+    pub const ALL: [Self; 7] = [
+        Self::Red,
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Purple,
+        Self::White,
+        Self::Black,
+    ];
+
+    pub fn rgb(self) -> [u8; 3] {
+        match self {
+            Self::Red => [235, 64, 52],
+            Self::Yellow => [250, 204, 21],
+            Self::Green => [34, 197, 94],
+            Self::Blue => [59, 130, 246],
+            Self::Purple => [168, 85, 247],
+            Self::White => [255, 255, 255],
+            Self::Black => [17, 17, 17],
+        }
+    }
+}
+
+/// A line's weight, measured against the picture's longer side so a mark
+/// looks the same on a small screenshot as on a large photo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Thickness {
+    Thin,
+    Medium,
+    Thick,
+}
+
+impl Thickness {
+    pub const ALL: [Self; 3] = [Self::Thin, Self::Medium, Self::Thick];
+
+    /// The line's width in the pixels of a picture this big.
+    pub fn pixels(self, width: u32, height: u32) -> f32 {
+        let share = match self {
+            Self::Thin => 0.004,
+            Self::Medium => 0.008,
+            Self::Thick => 0.016,
+        };
+        (width.max(height) as f32 * share).max(2.0)
+    }
+}
+
+/// How many times wider a highlighter is than a pen of the same thickness.
+pub const HIGHLIGHTER_SPREAD: f32 = 3.0;
+/// The highlighter's opacity, so what is under it still reads.
+pub const HIGHLIGHTER_ALPHA: u8 = 102;
+
+/// The editor's drawing choices. The app keeps them for the session, never
+/// in settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Brush {
+    pub tool: PictureTool,
+    pub ink: Ink,
+    pub thickness: Thickness,
+}
+
+impl Default for Brush {
+    fn default() -> Self {
+        Self {
+            tool: PictureTool::Pen,
+            ink: Ink::Red,
+            thickness: Thickness::Medium,
+        }
+    }
+}
+
+/// Something drawn on a picture, in the source's own pixels before any turn.
+/// Widths are in the same pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mark {
+    Pen {
+        points: Vec<Point>,
+        ink: Ink,
+        width: f32,
+    },
+    Highlighter {
+        points: Vec<Point>,
+        ink: Ink,
+        width: f32,
+    },
+    Arrow {
+        from: Point,
+        to: Point,
+        ink: Ink,
+        width: f32,
+    },
+    Rectangle {
+        from: Point,
+        to: Point,
+        ink: Ink,
+        width: f32,
+    },
+    /// Every block of `pixel_block`'s side the region touches is painted
+    /// over with its average colour.
+    Pixelate { from: Point, to: Point },
+}
+
+impl Mark {
+    /// The mark a drag starting at `at` begins, on a picture this big.
+    fn start(brush: Brush, at: Point, width: u32, height: u32) -> Option<Self> {
+        let ink = brush.ink;
+        let line = brush.thickness.pixels(width, height);
+        Some(match brush.tool {
+            PictureTool::Crop => return None,
+            PictureTool::Pen => Self::Pen {
+                points: vec![at],
+                ink,
+                width: line,
+            },
+            PictureTool::Highlighter => Self::Highlighter {
+                points: vec![at],
+                ink,
+                width: line * HIGHLIGHTER_SPREAD,
+            },
+            PictureTool::Arrow => Self::Arrow {
+                from: at,
+                to: at,
+                ink,
+                width: line,
+            },
+            PictureTool::Rectangle => Self::Rectangle {
+                from: at,
+                to: at,
+                ink,
+                width: line,
+            },
+            PictureTool::Pixelate => Self::Pixelate { from: at, to: at },
+        })
+    }
+
+    fn extend(&mut self, at: Point, step: f32) {
+        match self {
+            Self::Pen { points, .. } | Self::Highlighter { points, .. } => {
+                let far = points
+                    .last()
+                    .is_none_or(|last| (last[0] - at[0]).hypot(last[1] - at[1]) >= step);
+                if far {
+                    points.push(at);
+                }
+            }
+            Self::Arrow { to, .. } | Self::Rectangle { to, .. } | Self::Pixelate { to, .. } => {
+                *to = at;
+            }
+        }
+    }
+
+    /// Whether the mark leaves anything to see: a click with the pen leaves
+    /// a dot, but a shape needs some size.
+    fn visible(&self) -> bool {
+        match self {
+            Self::Pen { .. } | Self::Highlighter { .. } => true,
+            Self::Arrow { from, to, .. }
+            | Self::Rectangle { from, to, .. }
+            | Self::Pixelate { from, to } => (from[0] - to[0]).hypot(from[1] - to[1]) >= 1.0,
+        }
+    }
+
+    /// The colour it is drawn in, straight RGBA, when it has one.
+    pub fn rgba(&self) -> Option<[u8; 4]> {
+        let ([r, g, b], alpha) = match self {
+            Self::Pen { ink, .. } | Self::Arrow { ink, .. } | Self::Rectangle { ink, .. } => {
+                (ink.rgb(), u8::MAX)
+            }
+            Self::Highlighter { ink, .. } => (ink.rgb(), HIGHLIGHTER_ALPHA),
+            Self::Pixelate { .. } => return None,
+        };
+        Some([r, g, b, alpha])
+    }
+}
+
+/// The ends of an arrow's two barbs, which both start at its point.
+pub fn arrow_barbs(from: Point, to: Point, width: f32) -> [Point; 2] {
+    let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+    let length = dx.hypot(dy).max(f32::EPSILON);
+    let head = (width * 4.0).min(length * 0.6);
+    let (ux, uy) = (dx / length, dy / length);
+    let (sin, cos) = std::f32::consts::FRAC_PI_6.sin_cos();
+    [-1.0f32, 1.0].map(|side| {
+        let (rx, ry) = (ux * cos - side * uy * sin, side * ux * sin + uy * cos);
+        [to[0] - rx * head, to[1] - ry * head]
+    })
+}
+
+/// The side of a pixelated block in a picture this big, in its pixels.
+pub fn pixel_block(width: u32, height: u32) -> u32 {
+    (width.max(height) / 60).max(8)
+}
+
+/// The blocks a pixelated region covers, as `[left, top, right, bottom]` in
+/// the source's pixels: the region grown out to whole blocks of a grid that
+/// starts at the picture's corner, and kept inside the picture.
+pub fn pixel_cells(from: Point, to: Point, width: u32, height: u32) -> Vec<[u32; 4]> {
+    let block = pixel_block(width, height);
+    let span = |a: f32, b: f32, limit: u32| {
+        let low = (a.min(b).max(0.0) as u32 / block) * block;
+        let high = (a.max(b).max(0.0).ceil() as u32).min(limit);
+        (low, high)
+    };
+    let (left, right) = span(from[0], to[0], width);
+    let (top, bottom) = span(from[1], to[1], height);
+    let mut cells = Vec::new();
+    for y in (top..bottom).step_by(block as usize) {
+        for x in (left..right).step_by(block as usize) {
+            cells.push([x, y, (x + block).min(width), (y + block).min(height)]);
+        }
+    }
+    cells
+}
+
+/// Where a point of the source is once the picture is turned `turns`
+/// quarters clockwise. `width` and `height` are the source's own.
+pub fn turned_point([x, y]: Point, turns: u8, width: u32, height: u32) -> Point {
+    let (w, h) = (width as f32, height as f32);
+    match turns % 4 {
+        1 => [h - y, x],
+        2 => [w - x, h - y],
+        3 => [y, w - x],
+        _ => [x, y],
+    }
+}
+
+/// The source's point that a point of the turned picture shows.
+pub fn unturned_point([x, y]: Point, turns: u8, width: u32, height: u32) -> Point {
+    let (w, h) = (width as f32, height as f32);
+    match turns % 4 {
+        1 => [y, h - x],
+        2 => [w - x, h - y],
+        3 => [w - y, x],
+        _ => [x, y],
+    }
 }
 
 /// A picture on its way to becoming a sticker.
@@ -3876,6 +4243,168 @@ mod tests {
         assert_eq!(edit.turns, 0, "the turn goes back too");
         assert_eq!(edit.displayed_size(), (800, 600));
         assert_eq!(edit.crop, PictureCrop::full(800, 600));
+    }
+
+    fn pen() -> super::Brush {
+        super::Brush::default()
+    }
+
+    fn drawn(edit: &mut PictureEdit, from: super::Point, to: super::Point) {
+        edit.begin_mark(pen(), from);
+        edit.extend_mark(to, 1.0);
+        edit.finish_mark();
+    }
+
+    #[test]
+    fn a_point_turned_and_turned_back_lands_where_it_started() {
+        use super::{turned_point, unturned_point};
+        let (width, height) = (800, 600);
+        let point = [100.0, 50.0];
+        // A quarter clockwise puts the top-left corner at the top right of
+        // a picture 600 wide.
+        assert_eq!(turned_point([0.0, 0.0], 1, width, height), [600.0, 0.0]);
+        assert_eq!(turned_point(point, 1, width, height), [550.0, 100.0]);
+        assert_eq!(turned_point(point, 2, width, height), [700.0, 550.0]);
+        assert_eq!(turned_point(point, 3, width, height), [50.0, 700.0]);
+        for turns in 0..8 {
+            let shown = turned_point(point, turns, width, height);
+            assert_eq!(
+                unturned_point(shown, turns, width, height),
+                point,
+                "{turns}"
+            );
+        }
+    }
+
+    #[test]
+    fn undo_takes_the_latest_mark_back_and_redo_returns_it() {
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        drawn(&mut edit, [10.0, 10.0], [20.0, 20.0]);
+        drawn(&mut edit, [30.0, 30.0], [40.0, 40.0]);
+        assert_eq!(edit.marks.len(), 2);
+        let latest = edit.marks[1].clone();
+        edit.undo();
+        assert_eq!(edit.marks.len(), 1);
+        edit.redo();
+        assert_eq!(edit.marks.last(), Some(&latest));
+        edit.undo();
+        edit.undo();
+        edit.undo();
+        assert!(edit.marks.is_empty(), "nothing left to undo");
+        edit.redo();
+        assert_eq!(edit.marks.len(), 1, "the oldest comes back first");
+        // A new mark drops what was undone.
+        drawn(&mut edit, [50.0, 50.0], [60.0, 60.0]);
+        edit.redo();
+        assert_eq!(edit.marks.len(), 2);
+        assert!(edit.undone.is_empty());
+    }
+
+    #[test]
+    fn marks_stay_inside_the_picture_and_shapes_need_some_size() {
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        let arrow = super::Brush {
+            tool: super::PictureTool::Arrow,
+            ..pen()
+        };
+        edit.begin_mark(arrow, [5.0, 5.0]);
+        edit.finish_mark();
+        assert!(edit.marks.is_empty(), "a click draws no arrow");
+        edit.begin_mark(arrow, [-50.0, 5.0]);
+        edit.extend_mark([900.0, 700.0], 1.0);
+        edit.finish_mark();
+        assert!(matches!(
+            edit.marks[0],
+            super::Mark::Arrow {
+                from: [0.0, 5.0],
+                to: [800.0, 600.0],
+                ..
+            }
+        ));
+        // A click with the pen leaves a dot.
+        edit.begin_mark(pen(), [5.0, 5.0]);
+        edit.finish_mark();
+        assert_eq!(edit.marks.len(), 2);
+        // The crop tool draws nothing.
+        edit.begin_mark(
+            super::Brush {
+                tool: super::PictureTool::Crop,
+                ..pen()
+            },
+            [5.0, 5.0],
+        );
+        assert!(edit.drawing.is_none());
+    }
+
+    #[test]
+    fn reset_takes_the_marks_away_and_a_turn_keeps_them() {
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        drawn(&mut edit, [10.0, 10.0], [20.0, 20.0]);
+        drawn(&mut edit, [30.0, 30.0], [40.0, 40.0]);
+        edit.undo();
+        let turned = edit.clone().turned(true);
+        assert_eq!(turned.marks, edit.marks, "marks are in the source's pixels");
+        let reset = turned.reset();
+        assert!(reset.marks.is_empty());
+        assert!(reset.undone.is_empty(), "nothing to redo after a reset");
+    }
+
+    #[test]
+    fn reopening_an_edit_keeps_its_marks() {
+        let mut edit =
+            PictureEdit::new(3, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600)
+                .turned(true);
+        drawn(&mut edit, [10.0, 10.0], [20.0, 20.0]);
+        let again = PictureEdit::reopened(3, edit.origin());
+        assert_eq!(again.marks, edit.marks);
+        assert_eq!((again.turns, again.crop), (edit.turns, edit.crop));
+    }
+
+    #[test]
+    fn lines_keep_their_weight_against_the_picture() {
+        use super::Thickness;
+        assert_eq!(Thickness::Medium.pixels(1000, 400), 8.0);
+        assert_eq!(Thickness::Thick.pixels(300, 2000), 32.0);
+        assert_eq!(
+            Thickness::Thin.pixels(100, 100),
+            2.0,
+            "never thinner than 2"
+        );
+    }
+
+    #[test]
+    fn pixelated_blocks_cover_the_region_on_the_pictures_grid() {
+        use super::{pixel_block, pixel_cells};
+        assert_eq!(pixel_block(100, 100), 8);
+        assert_eq!(pixel_block(1200, 900), 20);
+        // From the middle of one block to the middle of another: both whole.
+        let cells = pixel_cells([12.0, 3.0], [21.0, 9.0], 100, 100);
+        assert_eq!(
+            cells,
+            [
+                [8, 0, 16, 8],
+                [16, 0, 24, 8],
+                [8, 8, 16, 16],
+                [16, 8, 24, 16]
+            ]
+        );
+        // Dragged backwards, and past the edge, the blocks stay inside.
+        let edge = pixel_cells([100.0, 100.0], [95.0, 97.0], 100, 100);
+        assert_eq!(edge, [[88, 96, 96, 100], [96, 96, 100, 100]]);
+    }
+
+    #[test]
+    fn an_arrows_barbs_spread_back_from_its_point() {
+        let [left, right] = super::arrow_barbs([0.0, 0.0], [100.0, 0.0], 5.0);
+        assert!(left[0] < 100.0 && right[0] < 100.0);
+        assert!(
+            (left[1] + right[1]).abs() < 1e-4,
+            "symmetric about the shaft"
+        );
+        assert!((left[0] - (100.0 - 20.0 * 30f32.to_radians().cos())).abs() < 1e-3);
     }
 
     use super::*;

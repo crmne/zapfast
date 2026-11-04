@@ -735,6 +735,9 @@ pub struct App {
     /// they came from. Cropping a pasted picture leaves a file where the strip
     /// had the pixels, so the cropper has to draw from the buffer itself.
     pub picture_texture: Option<(usize, egui::TextureHandle)>,
+    /// The picture editor's last tool, ink and thickness, kept for the
+    /// session only so the next picture opens with them.
+    pub picture_brush: crate::model::Brush,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.
@@ -1682,6 +1685,7 @@ impl App {
             picture_applying: Default::default(),
             picture_origins: Default::default(),
             picture_texture: None,
+            picture_brush: Default::default(),
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
@@ -8473,14 +8477,8 @@ impl App {
                     // with the crop it had, so cropping it again does not
                     // stack another lossy pass on the one before it.
                     if let Some(origin) = self.picture_origins.get(&target).cloned() {
-                        self.picture_edit = Some(crate::model::PictureEdit {
-                            target,
-                            source: origin.source,
-                            width: origin.width,
-                            height: origin.height,
-                            crop: origin.crop,
-                            turns: origin.turns,
-                        });
+                        self.picture_edit =
+                            Some(crate::model::PictureEdit::reopened(target, origin));
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
                         // on it, and only this answer may open it.
@@ -8493,23 +8491,11 @@ impl App {
                 if let Some(edit) = self.picture_edit.take() {
                     // Held against the attachment until the file lands, so a
                     // second edit started meanwhile cannot take its origin.
-                    self.picture_applying.insert(
-                        edit.target,
-                        crate::model::PictureOrigin {
-                            source: edit.source.clone(),
-                            width: edit.width,
-                            height: edit.height,
-                            crop: edit.crop,
-                            turns: edit.turns,
-                        },
-                    );
+                    let origin = edit.origin();
+                    self.picture_applying.insert(edit.target, origin.clone());
                     self.backend.send(Command::ApplyPictureEdit {
                         target: edit.target,
-                        source: edit.source,
-                        width: edit.width,
-                        height: edit.height,
-                        crop: edit.crop,
-                        turns: edit.turns,
+                        origin,
                     });
                 }
             }
@@ -13284,6 +13270,7 @@ mod tests {
                 height: 6,
                 crop: crate::model::PictureCrop::full(8, 6),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         let first_id = app.account().id.clone();
@@ -22392,6 +22379,7 @@ mod tests {
                 height: 4,
                 crop: crate::model::PictureCrop::full(4, 4),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         // Unstaged while its crop is still being written.

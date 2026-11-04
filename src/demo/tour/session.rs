@@ -120,21 +120,10 @@ pub fn respond(app: &mut App) {
                     Err(error) => app.toast_error(error),
                 }
             }
-            Command::ApplyPictureEdit {
-                target,
-                source,
-                width,
-                height,
-                crop,
-                turns,
-            } => {
+            Command::ApplyPictureEdit { target, origin } => {
                 // The same work the worker would do, on this thread instead.
                 let written = crate::backend::picture_edit::write(
-                    &source,
-                    width,
-                    height,
-                    crop,
-                    turns,
+                    &origin,
                     &app.dirs.media_cache_dir().join("edited"),
                 );
                 match written {

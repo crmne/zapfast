@@ -825,15 +825,12 @@ pub enum Command {
         target: crate::app::AttachmentId,
         result: Result<(u32, u32), String>,
     },
-    /// Turns and crops a staged picture, writing the result beside the media
-    /// cache so it can be sent in place of the original.
+    /// Draws the marks on a staged picture, then turns and crops it, writing
+    /// the result beside the media cache so it can be sent in place of the
+    /// original.
     ApplyPictureEdit {
         target: crate::app::AttachmentId,
-        source: crate::model::PictureSource,
-        width: u32,
-        height: u32,
-        crop: crate::model::PictureCrop,
-        turns: u8,
+        origin: crate::model::PictureOrigin,
     },
     /// Internal: the edited picture, ready to replace the staged attachment.
     PictureEdited {

@@ -1,10 +1,10 @@
-//! Crops and turns a picture on its way out, so an attachment can be trimmed
-//! before it is sent.
+//! Draws on, crops and turns a picture on its way out, so an attachment can
+//! be marked up and trimmed before it is sent.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::model::{PictureCrop, PictureSource};
+use crate::model::{Mark, PictureCrop, PictureOrigin, PictureSource};
 
 /// Quality of an opaque picture written back. The send path passes a JPEG
 /// through untouched, so this is the only lossy step for one.
@@ -55,13 +55,14 @@ pub fn inspect(bytes: &[u8]) -> Result<(u32, u32), String> {
     Ok((picture.width(), picture.height()))
 }
 
-/// The picture turned by whole quarter turns clockwise, then cropped. The
+/// The picture with its marks drawn, then turned by whole quarter turns
+/// clockwise, then cropped. The marks are in the source's own pixels; the
 /// crop is measured in the turned picture, which is what the editor showed.
-pub fn edit(bytes: &[u8], crop: PictureCrop, turns: u8) -> Result<Edited, String> {
+pub fn edit(bytes: &[u8], crop: PictureCrop, turns: u8, marks: &[Mark]) -> Result<Edited, String> {
     let picture = image::load_from_memory(bytes)
         .map_err(|error| format!("This picture could not be read: {error}"))?
         .to_rgba8();
-    turned_and_cropped(picture, crop, turns)
+    turned_and_cropped(marked(picture, marks), crop, turns)
 }
 
 /// The same for a pasted picture, which has no file to read back.
@@ -71,34 +72,201 @@ pub fn edit_pasted(
     height: u32,
     crop: PictureCrop,
     turns: u8,
+    marks: &[Mark],
 ) -> Result<Edited, String> {
     let picture = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())
         .ok_or_else(|| "This picture could not be read".to_owned())?;
-    turned_and_cropped(picture, crop, turns)
+    turned_and_cropped(marked(picture, marks), crop, turns)
 }
 
-/// Turns and crops a staged picture, writes the result in `dir` beside the
-/// other media, and answers with the file it wrote. The name comes from the
-/// picture's own bytes, so the same crop of the same picture is written once.
-pub fn write(
-    source: &PictureSource,
-    width: u32,
-    height: u32,
-    crop: PictureCrop,
-    turns: u8,
-    dir: &Path,
-) -> Result<PathBuf, String> {
+/// Draws on, turns and crops a staged picture, writes the result in `dir`
+/// beside the other media, and answers with the file it wrote. The name comes
+/// from the picture's own bytes, so the same edit of the same picture is
+/// written once.
+pub fn write(origin: &PictureOrigin, dir: &Path) -> Result<PathBuf, String> {
+    let PictureOrigin {
+        source,
+        width,
+        height,
+        crop,
+        turns,
+        marks,
+    } = origin;
     let picture = match source {
         PictureSource::File(path) => std::fs::read(path)
             .map_err(|error| error.to_string())
-            .and_then(|bytes| edit(&bytes, crop, turns)),
-        PictureSource::Pasted(rgba) => edit_pasted(rgba, width, height, crop, turns),
+            .and_then(|bytes| edit(&bytes, *crop, *turns, marks)),
+        PictureSource::Pasted(rgba) => edit_pasted(rgba, *width, *height, *crop, *turns, marks),
     }?;
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let name = super::sticker_store::content_hash(&picture.bytes);
     let path = dir.join(format!("{name}.{}", picture.extension));
     std::fs::write(&path, picture.bytes).map_err(|error| error.to_string())?;
     Ok(path)
+}
+
+/// The picture with its marks drawn on in order. Lines are drawn with
+/// anti-aliasing onto a see-through layer and laid over the picture; a
+/// pixelated region paints each block in the average of the untouched
+/// picture under it, as the editor's preview samples the untouched picture.
+fn marked(mut picture: image::RgbaImage, marks: &[Mark]) -> image::RgbaImage {
+    if marks.is_empty() {
+        return picture;
+    }
+    let (width, height) = picture.dimensions();
+    let Some(mut layer) = tiny_skia::Pixmap::new(width, height) else {
+        return picture;
+    };
+    let untouched = marks
+        .iter()
+        .any(|mark| matches!(mark, Mark::Pixelate { .. }))
+        .then(|| picture.clone());
+    let mut drawn = false;
+    for mark in marks {
+        match (mark, &untouched) {
+            (Mark::Pixelate { from, to }, Some(untouched)) => {
+                if std::mem::take(&mut drawn) {
+                    lay_over(&mut picture, &layer);
+                    layer.fill(tiny_skia::Color::TRANSPARENT);
+                }
+                for cell in crate::model::pixel_cells(*from, *to, width, height) {
+                    let colour = image::Rgba(average(untouched, cell));
+                    for y in cell[1]..cell[3] {
+                        for x in cell[0]..cell[2] {
+                            picture.put_pixel(x, y, colour);
+                        }
+                    }
+                }
+            }
+            _ => drawn |= stroke(&mut layer, mark),
+        }
+    }
+    if drawn {
+        lay_over(&mut picture, &layer);
+    }
+    picture
+}
+
+/// Draws one inked mark on `layer`, answering whether it drew anything.
+fn stroke(layer: &mut tiny_skia::Pixmap, mark: &Mark) -> bool {
+    use tiny_skia::{LineCap, LineJoin, PathBuilder};
+    let Some([r, g, b, a]) = mark.rgba() else {
+        return false;
+    };
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color_rgba8(r, g, b, a);
+    paint.anti_alias = true;
+    let line = |points: &[[f32; 2]]| {
+        let mut path = PathBuilder::new();
+        for (at, [x, y]) in points.iter().enumerate() {
+            if at == 0 {
+                path.move_to(*x, *y);
+            } else {
+                path.line_to(*x, *y);
+            }
+        }
+        path
+    };
+    let (path, width, line_cap, line_join) = match mark {
+        Mark::Pen { points, width, .. } | Mark::Highlighter { points, width, .. }
+            if points.len() < 2 =>
+        {
+            // A click leaves a dot as wide as the line.
+            let Some(&[x, y]) = points.first() else {
+                return false;
+            };
+            let Some(dot) = PathBuilder::from_circle(x, y, width / 2.0) else {
+                return false;
+            };
+            let transform = tiny_skia::Transform::identity();
+            layer.fill_path(&dot, &paint, tiny_skia::FillRule::Winding, transform, None);
+            return true;
+        }
+        Mark::Pen { points, width, .. } => (line(points), *width, LineCap::Round, LineJoin::Round),
+        Mark::Highlighter { points, width, .. } => {
+            (line(points), *width, LineCap::Butt, LineJoin::Round)
+        }
+        Mark::Arrow {
+            from, to, width, ..
+        } => {
+            let mut path = line(&[*from, *to]);
+            for barb in crate::model::arrow_barbs(*from, *to, *width) {
+                path.move_to(barb[0], barb[1]);
+                path.line_to(to[0], to[1]);
+            }
+            (path, *width, LineCap::Round, LineJoin::Round)
+        }
+        Mark::Rectangle {
+            from, to, width, ..
+        } => {
+            let mut path = line(&[*from, [to[0], from[1]], *to, [from[0], to[1]]]);
+            path.close();
+            (path, *width, LineCap::Butt, LineJoin::Miter)
+        }
+        Mark::Pixelate { .. } => return false,
+    };
+    let Some(path) = path.finish() else {
+        return false;
+    };
+    let stroke = tiny_skia::Stroke {
+        width,
+        line_cap,
+        line_join,
+        ..Default::default()
+    };
+    layer.stroke_path(
+        &path,
+        &paint,
+        &stroke,
+        tiny_skia::Transform::identity(),
+        None,
+    );
+    true
+}
+
+/// Lays the premultiplied layer over the picture's straight colours.
+fn lay_over(picture: &mut image::RgbaImage, layer: &tiny_skia::Pixmap) {
+    for (pixel, over) in picture.pixels_mut().zip(layer.pixels()) {
+        let over_alpha = f32::from(over.alpha()) / 255.0;
+        if over_alpha == 0.0 {
+            continue;
+        }
+        let under_alpha = f32::from(pixel[3]) / 255.0;
+        let alpha = over_alpha + under_alpha * (1.0 - over_alpha);
+        let blend = |over: u8, under: u8| {
+            let premultiplied = f32::from(over) / 255.0
+                + f32::from(under) / 255.0 * under_alpha * (1.0 - over_alpha);
+            (premultiplied / alpha * 255.0).round().clamp(0.0, 255.0) as u8
+        };
+        *pixel = image::Rgba([
+            blend(over.red(), pixel[0]),
+            blend(over.green(), pixel[1]),
+            blend(over.blue(), pixel[2]),
+            (alpha * 255.0).round() as u8,
+        ]);
+    }
+}
+
+/// The average colour of a block, weighed by how opaque each pixel is, so the
+/// hidden colour of see-through pixels does not tint it.
+fn average(picture: &image::RgbaImage, [left, top, right, bottom]: [u32; 4]) -> [u8; 4] {
+    let (mut colour, mut alpha, mut count) = ([0u64; 3], 0u64, 0u64);
+    for y in top..bottom {
+        for x in left..right {
+            let pixel = picture.get_pixel(x, y);
+            let weight = u64::from(pixel[3]);
+            for (sum, channel) in colour.iter_mut().zip(&pixel.0[..3]) {
+                *sum += u64::from(*channel) * weight;
+            }
+            alpha += weight;
+            count += 1;
+        }
+    }
+    if alpha == 0 {
+        return [0; 4];
+    }
+    let [r, g, b] = colour.map(|sum| ((sum + alpha / 2) / alpha) as u8);
+    [r, g, b, ((alpha + count / 2) / count) as u8]
 }
 
 /// Turns the picture, keeps the region, and writes it out.
@@ -241,6 +409,7 @@ mod tests {
                 height: 120,
             },
             0,
+            &[],
         )
         .expect("edits");
         assert_eq!(decoded(&bytes).dimensions(), (200, 120));
@@ -248,7 +417,7 @@ mod tests {
 
     #[test]
     fn a_quarter_turn_clockwise_moves_the_top_left_to_the_top_right() {
-        let bytes = edit(&png(4, 2), PictureCrop::full(2, 4), 1).expect("edits");
+        let bytes = edit(&png(4, 2), PictureCrop::full(2, 4), 1, &[]).expect("edits");
         let picture = decoded(&bytes);
         assert_eq!(picture.dimensions(), (2, 4));
         // The red corner started top-left of a wide picture, so turning
@@ -278,6 +447,7 @@ mod tests {
                 height: 2,
             },
             1,
+            &[],
         )
         .expect("edits");
         let picture = decoded(&bytes);
@@ -304,7 +474,7 @@ mod tests {
                 image::ExtendedColorType::Rgba8,
             )
             .expect("encodes");
-        let edited = edit(&source, PictureCrop::full(8, 8), 0).expect("edits");
+        let edited = edit(&source, PictureCrop::full(8, 8), 0, &[]).expect("edits");
         assert_eq!(edited.extension, "png");
         let picture = decoded(&edited);
         assert_eq!(picture.get_pixel(2, 2)[3], 0);
@@ -313,7 +483,7 @@ mod tests {
 
     #[test]
     fn an_opaque_picture_is_written_as_a_jpeg() {
-        let edited = edit(&png(8, 8), PictureCrop::full(8, 8), 0).expect("edits");
+        let edited = edit(&png(8, 8), PictureCrop::full(8, 8), 0, &[]).expect("edits");
         assert_eq!(edited.extension, "jpg");
     }
 
@@ -323,7 +493,8 @@ mod tests {
         let (width, height) = (4u32, 2u32);
         let mut rgba = [0u8, 0, 255, 255].repeat((width * height) as usize);
         rgba[..4].copy_from_slice(&[255, 0, 0, 255]);
-        let bytes = edit_pasted(&rgba, width, height, PictureCrop::full(2, 4), 1).expect("edits");
+        let bytes =
+            edit_pasted(&rgba, width, height, PictureCrop::full(2, 4), 1, &[]).expect("edits");
         let picture = decoded(&bytes);
         assert_eq!(picture.dimensions(), (2, 4));
         let top_right = picture.get_pixel(1, 0);
@@ -335,7 +506,7 @@ mod tests {
 
     #[test]
     fn a_pasted_picture_that_is_not_rgba_is_refused() {
-        assert!(edit_pasted(&[0, 0, 0], 4, 4, PictureCrop::full(4, 4), 0).is_err());
+        assert!(edit_pasted(&[0, 0, 0], 4, 4, PictureCrop::full(4, 4), 0, &[]).is_err());
     }
 
     #[test]
@@ -351,11 +522,7 @@ mod tests {
             height: 120,
         };
         let written = write(
-            &PictureSource::File(source.clone()),
-            800,
-            600,
-            crop,
-            0,
+            &origin(PictureSource::File(source.clone()), 800, 600, crop),
             &dir,
         )
         .expect("writes the crop");
@@ -366,14 +533,25 @@ mod tests {
         assert_eq!(read(&written).dimensions(), (200, 120));
         // The same crop of the same picture lands on the same name, so a
         // second look at it writes nothing new.
-        let again =
-            write(&PictureSource::File(source), 800, 600, crop, 0, &dir).expect("writes it again");
+        let again = write(&origin(PictureSource::File(source), 800, 600, crop), &dir)
+            .expect("writes it again");
         assert_eq!(again, written);
         // A pasted picture goes the same way, from the pixels it was given.
         let pasted = std::sync::Arc::new([0u8, 0, 255, 255].repeat(800 * 600));
-        let pasted = write(&PictureSource::Pasted(pasted), 800, 600, crop, 0, &dir)
+        let pasted = write(&origin(PictureSource::Pasted(pasted), 800, 600, crop), &dir)
             .expect("writes the pasted crop");
         assert_eq!(read(&pasted).dimensions(), (200, 120));
+    }
+
+    fn origin(source: PictureSource, width: u32, height: u32, crop: PictureCrop) -> PictureOrigin {
+        PictureOrigin {
+            source,
+            width,
+            height,
+            crop,
+            turns: 0,
+            marks: Vec::new(),
+        }
     }
 
     fn read(path: &Path) -> image::RgbaImage {
@@ -385,14 +563,117 @@ mod tests {
         let root = tempfile::tempdir().expect("makes the directory");
         let dir = root.path().to_path_buf();
         let error = write(
-            &PictureSource::File(dir.join("gone.png")),
-            4,
-            4,
-            PictureCrop::full(4, 4),
-            0,
+            &origin(
+                PictureSource::File(dir.join("gone.png")),
+                4,
+                4,
+                PictureCrop::full(4, 4),
+            ),
             &dir,
         )
         .expect_err("refuses");
         assert!(!error.is_empty());
+    }
+
+    fn white(width: u32, height: u32) -> image::RgbaImage {
+        image::RgbaImage::from_pixel(width, height, image::Rgba([255, 255, 255, 255]))
+    }
+
+    fn red_line(from: [f32; 2], to: [f32; 2]) -> Mark {
+        Mark::Pen {
+            points: vec![from, to],
+            ink: crate::model::Ink::Red,
+            width: 4.0,
+        }
+    }
+
+    #[test]
+    fn a_red_line_turns_the_pixels_under_it_red_and_leaves_the_rest() {
+        let picture = marked(white(100, 100), &[red_line([10.0, 50.0], [90.0, 50.0])]);
+        assert_eq!(*picture.get_pixel(50, 50), image::Rgba([235, 64, 52, 255]));
+        assert_eq!(*picture.get_pixel(0, 0), image::Rgba([255, 255, 255, 255]));
+        assert_eq!(
+            *picture.get_pixel(50, 55),
+            image::Rgba([255, 255, 255, 255])
+        );
+    }
+
+    #[test]
+    fn a_highlighter_lets_the_picture_show_through() {
+        let mark = Mark::Highlighter {
+            points: vec![[10.0, 50.0], [90.0, 50.0]],
+            ink: crate::model::Ink::Blue,
+            width: 12.0,
+        };
+        let [r, g, b, a] = marked(white(100, 100), &[mark]).get_pixel(50, 50).0;
+        assert_eq!(a, 255, "an opaque picture stays opaque");
+        // 40% blue over white.
+        assert!(
+            r > 150 && r < 200 && g > 180 && g < 220 && b > 245,
+            "{r} {g} {b}"
+        );
+    }
+
+    #[test]
+    fn pixelating_paints_each_block_in_its_average() {
+        // Black and white pixels by turns average to a mid grey.
+        let checks = image::RgbaImage::from_fn(100, 100, |x, y| {
+            let shade = if (x + y) % 2 == 0 { 0 } else { 255 };
+            image::Rgba([shade, shade, shade, 255])
+        });
+        let picture = marked(
+            checks,
+            &[Mark::Pixelate {
+                from: [2.0, 2.0],
+                to: [10.0, 4.0],
+            }],
+        );
+        // The region grows to whole 8-pixel blocks: two across, one down.
+        for (x, y) in [(0, 0), (7, 7), (8, 0), (15, 7)] {
+            assert_eq!(*picture.get_pixel(x, y), image::Rgba([128, 128, 128, 255]));
+        }
+        assert_eq!(
+            picture.get_pixel(17, 0)[0],
+            255,
+            "the next block is left alone"
+        );
+        assert_eq!(picture.get_pixel(0, 8)[0], 0);
+    }
+
+    #[test]
+    fn marks_are_drawn_before_the_turn_and_the_crop() {
+        // A dot at the source's top left ends up at the top right once the
+        // picture is turned clockwise.
+        let dot = Mark::Pen {
+            points: vec![[4.0, 4.0]],
+            ink: crate::model::Ink::Red,
+            width: 6.0,
+        };
+        let rgba = white(40, 20).into_raw();
+        let edited =
+            edit_pasted(&rgba, 40, 20, PictureCrop::full(20, 40), 1, &[dot]).expect("edits");
+        let picture = decoded(&edited);
+        assert_eq!(picture.dimensions(), (20, 40));
+        let corner = picture.get_pixel(15, 4);
+        assert!(corner[0] > 200 && corner[1] < 120, "red, got {corner:?}");
+        let other = picture.get_pixel(4, 4);
+        assert!(other[1] > 200, "white, got {other:?}");
+    }
+
+    #[test]
+    fn without_marks_the_picture_is_written_exactly_as_before() {
+        let bytes = png(40, 30);
+        let crop = PictureCrop {
+            x: 3,
+            y: 4,
+            width: 20,
+            height: 10,
+        };
+        let edited = edit(&bytes, crop, 1, &[]).expect("edits");
+        let source = image::load_from_memory(&bytes).unwrap().to_rgba8();
+        let turned = image::imageops::rotate90(&source);
+        let kept = image::imageops::crop_imm(&turned, 3, 4, 20, 10).to_image();
+        assert_eq!(edited.bytes, encode(&kept).unwrap().bytes);
+        assert_eq!(marked(source.clone(), &[]), source);
     }
 }
