@@ -7974,25 +7974,100 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let result = match rfd::FileDialog::new()
                         .set_title("Make a sticker")
-                        .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "gif"])
+                        .add_filter(
+                            "Pictures and videos",
+                            &["png", "jpg", "jpeg", "webp", "gif", "mp4", "m4v", "mov"],
+                        )
                         .pick_file()
                     {
                         Some(path) => std::fs::read(&path)
                             .map_err(|error| error.to_string())
                             .and_then(|bytes| super::sticker_maker::inspect(&bytes))
-                            .map(|(width, height, transparent)| (path, width, height, transparent)),
+                            .map(|inspected| (path, inspected)),
                         // Ignore file-picker cancellation.
                         None => Err(String::new()),
                     };
                     let _ = commands.send(Command::StickerPicturePicked { result });
                 });
             }
+            Command::FetchGifSticker { id, url } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.sticker_cache_dir().join("sources");
+                tokio::task::spawn_blocking(move || {
+                    let name = format!("giphy-{}.gif", sanitize(&id));
+                    let path = dir.join(name);
+                    let result = crate::proxy::agent()
+                        .get(&url)
+                        .call()
+                        .and_then(|mut response| {
+                            response
+                                .body_mut()
+                                .with_config()
+                                .limit(GIF_STICKER_LIMIT)
+                                .read_to_vec()
+                        })
+                        .map_err(|_| "Could not download this GIF".to_owned())
+                        .and_then(|bytes| {
+                            let inspected = super::sticker_maker::inspect(&bytes)?;
+                            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+                            std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+                            Ok(inspected)
+                        })
+                        .map(|inspected| (path, inspected));
+                    let _ = commands.send(Command::StickerPicturePicked { result });
+                });
+            }
+            Command::StickerFromPixels {
+                width,
+                height,
+                rgba,
+                link,
+            } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.sticker_cache_dir().join("sources");
+                tokio::task::spawn_blocking(move || {
+                    if let Some(picked) = link.and_then(|link| moving_picture(&link, &dir)) {
+                        let _ = commands.send(Command::StickerPicturePicked { result: Ok(picked) });
+                        return;
+                    }
+                    let result = image::RgbaImage::from_raw(width, height, rgba)
+                        .ok_or_else(|| "The pasted picture could not be read".to_owned())
+                        .and_then(|picture| {
+                            let mut png = Vec::new();
+                            picture
+                                .write_to(
+                                    &mut std::io::Cursor::new(&mut png),
+                                    image::ImageFormat::Png,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            let inspected = super::sticker_maker::inspect(&png)?;
+                            let hash = super::sticker_store::content_hash(&png);
+                            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+                            let path = dir.join(format!("pasted-{hash}.png"));
+                            std::fs::write(&path, png).map_err(|error| error.to_string())?;
+                            Ok((path, inspected))
+                        });
+                    let _ = commands.send(Command::StickerPicturePicked { result });
+                });
+            }
+            Command::OpenStickerPicture(path) => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = std::fs::read(&path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| super::sticker_maker::inspect(&bytes))
+                        .map(|inspected| (path, inspected));
+                    let _ = commands.send(Command::StickerPicturePicked { result });
+                });
+            }
             Command::StickerPicturePicked { result } => match result {
-                Ok((path, width, height, transparent)) => self.emit(Event::StickerPicture {
+                Ok((path, inspected)) => self.emit(Event::StickerPicture {
                     path,
-                    width,
-                    height,
-                    transparent,
+                    width: inspected.width,
+                    height: inspected.height,
+                    transparent: inspected.transparent,
+                    animated: inspected.animated,
+                    poster: inspected.poster,
                 }),
                 Err(error) if error.is_empty() => {}
                 Err(error) => self.emit(Event::Error(error)),
@@ -8001,6 +8076,7 @@ impl Worker {
                 source,
                 crop,
                 transparent,
+                key,
                 emojis,
                 chat,
                 quoting,
@@ -8011,7 +8087,7 @@ impl Worker {
                     let result = std::fs::read(&source)
                         .map_err(|error| error.to_string())
                         .and_then(|bytes| {
-                            super::sticker_maker::make(&bytes, crop, transparent, &emojis)
+                            super::sticker_maker::make(&bytes, crop, transparent, key, &emojis)
                         })
                         .and_then(|sticker| {
                             std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
@@ -8086,6 +8162,18 @@ impl Worker {
             }
             Command::PictureEdited { target, result } => {
                 self.emit(Event::PictureEdited { target, result });
+            }
+            Command::FetchPastedPicture { target, link } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.media_cache_dir().join("pasted");
+                tokio::task::spawn_blocking(move || {
+                    if let Some((path, _)) = moving_picture(&link, &dir) {
+                        let _ = commands.send(Command::PictureEdited {
+                            target,
+                            result: Ok(path),
+                        });
+                    }
+                });
             }
             Command::PickStickerArchive => {
                 let commands = self.commands.clone();
@@ -8229,6 +8317,32 @@ impl Worker {
                     self.emit(Event::Error(format!("Could not add sticker pack: {error}")))
                 }
             },
+            Command::ExportStickerPack { dir } => {
+                let pack = super::sticker_store::packs(&self.packs_dir())
+                    .into_iter()
+                    .find(|pack| pack.dir == dir);
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let Some(pack) = pack else {
+                        return;
+                    };
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export the sticker pack")
+                        .set_file_name(format!("{}.wastickers", sanitize(&pack.name)))
+                        .add_filter("Sticker packs", &["wastickers"])
+                        .save_file()
+                    else {
+                        return;
+                    };
+                    let event = match super::sticker_import::export_archive(&pack, &path) {
+                        Ok(()) => Event::Info(format!("Exported sticker pack \"{}\"", pack.name)),
+                        Err(error) => Event::Error(error),
+                    };
+                    let _ = events.send(event);
+                    waker.wake();
+                });
+            }
             Command::DeleteStickerPack { dir } => {
                 let root = self.packs_dir();
                 if dir.starts_with(&root) && dir != root && std::fs::remove_dir_all(&dir).is_ok() {
@@ -13474,6 +13588,22 @@ async fn prepare_media(
     gif: bool,
     uploading: Option<&Uploading>,
 ) -> Result<Prepared, String> {
+    // WhatsApp shows a picture file as a still, so a moving one goes as the
+    // looping video it plays as a GIF.
+    let moving = matches!(mime, "image/gif" | "image/png")
+        || (mime == "image/webp" && crate::animation::webp_moves(&bytes));
+    let video = if moving {
+        let bytes = bytes.clone();
+        tokio::task::spawn_blocking(move || super::gif_video::encode(&bytes))
+            .await
+            .map_err(|error| error.to_string())??
+    } else {
+        None
+    };
+    let (bytes, mime, file_name, gif) = match video {
+        Some(video) => (video, "video/mp4", None, true),
+        None => (bytes, mime, file_name, gif),
+    };
     let is_picture = matches!(
         mime,
         "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
@@ -13702,6 +13832,41 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
+/// The largest GIF the sticker maker downloads.
+const GIF_STICKER_LIMIT: u64 = 20 * 1024 * 1024;
+/// Downloads a pasted picture's web address into `dir` when it moves, for
+/// the sticker maker. `None` for a still picture or a failed download, which
+/// leave the pasted pixels to use.
+fn moving_picture(link: &str, dir: &Path) -> Option<(PathBuf, super::sticker_maker::Inspected)> {
+    let bytes = crate::proxy::agent()
+        .get(link)
+        .call()
+        .and_then(|mut response| {
+            response
+                .body_mut()
+                .with_config()
+                .limit(GIF_STICKER_LIMIT)
+                .read_to_vec()
+        })
+        .ok()?;
+    let inspected = super::sticker_maker::inspect(&bytes).ok()?;
+    if !inspected.animated {
+        return None;
+    }
+    // The player picks its decoder by extension.
+    let extension = match image::guess_format(&bytes) {
+        Ok(image::ImageFormat::Gif) => "gif",
+        Ok(image::ImageFormat::WebP) => "webp",
+        Ok(image::ImageFormat::Png) => "png",
+        _ => "mp4",
+    };
+    let hash = super::sticker_store::content_hash(&bytes);
+    std::fs::create_dir_all(dir).ok()?;
+    let path = dir.join(format!("pasted-{hash}.{extension}"));
+    std::fs::write(&path, bytes).ok()?;
+    Some((path, inspected))
+}
+
 /// A search result with its still and animated renditions.
 type GifResult = (Gif, Option<String>, Option<(String, &'static str)>);
 
@@ -13801,6 +13966,8 @@ fn search_gifs(query: &str, key: &str, dir: &Path, offset: usize) -> Result<GifP
                     animated: None,
                     animated_source,
                     mp4,
+                    // Downsized stays a few MB; the original can be far more.
+                    sticker_source: pick(&["downsized", "fixed_width", "original"], "url"),
                     width: number("width"),
                     height: number("height"),
                 },
@@ -24117,6 +24284,7 @@ mod receipt_tests {
             animated: None,
             animated_source: None,
             mp4: "https://example.invalid/fixture.mp4".into(),
+            sticker_source: None,
             width: 2,
             height: 2,
         };

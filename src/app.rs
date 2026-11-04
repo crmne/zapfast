@@ -1188,6 +1188,19 @@ impl Pending {
             .is_some_and(|mime| mime.type_() == "image")
     }
 
+    /// Whether the sticker maker can open this staged item: a picture, or a
+    /// picture or video file, not a document.
+    pub fn can_become_sticker(&self) -> bool {
+        match self {
+            Pending::Picture { .. } => true,
+            Pending::File(path) => mime_guess2::from_path(path).first().is_some_and(|mime| {
+                mime.type_() == "image"
+                    || matches!(mime.essence_str(), "video/mp4" | "video/quicktime")
+            }),
+            Pending::Document(_) => false,
+        }
+    }
+
     /// Whether this file can be decoded and sent as a WhatsApp view-once photo.
     pub fn is_view_once_photo_file(path: &std::path::Path) -> bool {
         mime_guess2::from_path(path)
@@ -3755,6 +3768,9 @@ impl App {
                 self.me_lid = lid;
                 self.me_name = name;
                 self.me_about = about;
+                // The chat's sticker menu and the large sticker card list the
+                // packs, which otherwise load only with the sticker tab.
+                self.backend.send(Command::RecentStickers);
             }
             Event::LinkPreviewsDisabled(disabled) => {
                 self.link_previews_disabled = disabled;
@@ -4765,7 +4781,11 @@ impl App {
                 width,
                 height,
                 transparent,
+                animated,
+                poster,
             } => {
+                // A corner is most often the background to take out.
+                let corner = poster.get_pixel(0, 0);
                 self.sticker_draft = Some(crate::model::StickerDraft {
                     source: path,
                     width,
@@ -4774,6 +4794,14 @@ impl App {
                     crop: crate::model::StickerCrop::centered(width, height),
                     keep_transparent: transparent,
                     emojis: String::new(),
+                    animated,
+                    remove_color: false,
+                    key: crate::model::ColorKey {
+                        color: [corner[0], corner[1], corner[2]],
+                        tolerance: 40,
+                    },
+                    picking: false,
+                    poster,
                 });
                 if live {
                     self.picker = None;
@@ -7916,6 +7944,9 @@ impl App {
             }
             Action::PreviewSticker(path) => {
                 if path.is_file() {
+                    // Its "Add to pack" menu lists packs made or imported
+                    // since they were last loaded.
+                    self.backend.send(Command::RecentStickers);
                     self.sticker_view = Some(crate::image_preview::StickerPreview::new(path));
                     self.dialog = None;
                     self.picker = None;
@@ -8480,6 +8511,26 @@ impl App {
             Action::SetPendingViewOnce(view_once) => {
                 self.set_pending_view_once(view_once);
             }
+            Action::StickerFromPending(target) => {
+                let staged = self.staged_at(target).map(|at| &self.pending[at].item);
+                match staged {
+                    Some(Pending::Picture {
+                        width,
+                        height,
+                        rgba,
+                        ..
+                    }) => self.backend.send(Command::StickerFromPixels {
+                        width: *width as u32,
+                        height: *height as u32,
+                        rgba: rgba.to_vec(),
+                        link: None,
+                    }),
+                    Some(Pending::File(path)) => {
+                        self.backend.send(Command::OpenStickerPicture(path.clone()));
+                    }
+                    Some(Pending::Document(_)) | None => {}
+                }
+            }
             Action::EditPicture(target) => {
                 // Whatever was being waited for is not what is wanted now.
                 self.picture_inspecting = None;
@@ -8841,6 +8892,9 @@ impl App {
                 }
                 self.backend.send(Command::DeleteStickerPack { dir });
             }
+            Action::ExportStickerPack(dir) => {
+                self.backend.send(Command::ExportStickerPack { dir });
+            }
             Action::CreateStickerPack(name) => {
                 let name = name.trim().to_owned();
                 if !name.is_empty() {
@@ -8862,6 +8916,31 @@ impl App {
                         .send(Command::ViewStickerPack { chat, message });
                 }
             }
+            Action::MakeGifSticker(gif) => match gif.sticker_source {
+                Some(url) => {
+                    self.toast("Opening the GIF…");
+                    self.backend
+                        .send(Command::FetchGifSticker { id: gif.id, url });
+                }
+                None => self.toast_error("This GIF has no animated version to make a sticker from"),
+            },
+            Action::PasteStickerPicture => match read_clipboard(ctx, &self.clipboard_reader) {
+                Ok(ClipboardPaste::Files(paths)) => match paths.into_iter().next() {
+                    Some(path) => self.backend.send(Command::OpenStickerPicture(path)),
+                    None => self.toast_error("There is no picture to paste"),
+                },
+                Ok(ClipboardPaste::Image {
+                    width,
+                    height,
+                    rgba,
+                }) => self.backend.send(Command::StickerFromPixels {
+                    width: width as u32,
+                    height: height as u32,
+                    rgba,
+                    link: read_clipboard_html(ctx).as_deref().and_then(picture_link),
+                }),
+                Err(_) => self.toast_error("There is no picture to paste"),
+            },
             Action::PickStickerPicture => {
                 self.backend.send(Command::PickStickerPicture);
             }
@@ -8869,10 +8948,12 @@ impl App {
                 if let Some(draft) = self.sticker_draft.take() {
                     let chat = if send { self.open_chat.clone() } else { None };
                     let quoting = chat.as_ref().and(self.reply_to.clone());
+                    let key = draft.color_key();
                     self.backend.send(Command::MakeSticker {
                         source: draft.source,
                         crop: draft.crop,
                         transparent: draft.transparent && draft.keep_transparent,
+                        key,
                         emojis: crate::sticker_meta::clean_emojis(&draft.emojis),
                         chat,
                         quoting,
@@ -11686,32 +11767,9 @@ impl App {
                 .iter()
                 .any(|event| matches!(event, egui::Event::Paste(_)))
         });
-        // Tests inject fixtures and must never read the system clipboard.
         let clipboard = self.clipboard_reader.clone();
         self.take_clipboard_paste(ctx, || {
-            let contents = if cfg!(test) {
-                clipboard_contents(
-                    || {
-                        ctx.data_mut(|data| {
-                            data.remove_temp::<Vec<PathBuf>>(egui::Id::new(
-                                "fixture-clipboard-files",
-                            ))
-                        })
-                        .ok_or_else(|| "no fixture files".to_owned())
-                    },
-                    || {
-                        ctx.data_mut(|data| {
-                            data.remove_temp::<(usize, usize, Vec<u8>)>(egui::Id::new(
-                                "fixture-clipboard-image",
-                            ))
-                        })
-                        .ok_or_else(|| "no fixture picture".to_owned())
-                    },
-                )
-            } else {
-                clipboard_contents(|| clipboard.files(), || clipboard.image())
-            };
-            contents
+            read_clipboard(ctx, &clipboard)
                 .inspect_err(|why| {
                     if !text {
                         // Only the reason: never the paths or the pixels.
@@ -11733,12 +11791,17 @@ impl App {
                 rgba,
             } => {
                 if self.open_chat.is_some() {
-                    self.stage(Pending::Picture {
+                    let target = self.stage(Pending::Picture {
                         width,
                         height,
                         rgba: std::sync::Arc::new(rgba),
                         texture: None,
                     });
+                    // A browser pastes a moving picture's first frame only.
+                    if let Some(link) = read_clipboard_html(ctx).as_deref().and_then(picture_link) {
+                        self.backend
+                            .send(Command::FetchPastedPicture { target, link });
+                    }
                 }
             }
         }
@@ -12139,6 +12202,22 @@ fn native_clipboard_image(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), Strin
 }
 
 #[cfg(test)]
+mod pending_sticker_tests {
+    use super::Pending;
+
+    /// Pictures and short videos can become stickers; documents go as files.
+    #[test]
+    fn pictures_and_videos_can_become_stickers_but_documents_cannot() {
+        let file = |name: &str| Pending::File(name.into());
+        assert!(file("cat.gif").can_become_sticker());
+        assert!(file("clip.mp4").can_become_sticker());
+        assert!(file("clip.mov").can_become_sticker());
+        assert!(!file("notes.pdf").can_become_sticker());
+        assert!(!Pending::Document("cat.png".into()).can_become_sticker());
+    }
+}
+
+#[cfg(test)]
 mod native_clipboard_tests {
     use super::*;
 
@@ -12173,6 +12252,34 @@ mod native_clipboard_tests {
         .unwrap();
         assert!(matches!(contents, ClipboardPaste::Files(paths) if paths == [path]));
         assert!(native_clipboard_files(b"\xff").is_err());
+    }
+}
+
+/// The clipboard's files or picture. Tests inject fixtures and must never
+/// read the system clipboard.
+fn read_clipboard(
+    ctx: &egui::Context,
+    clipboard: &ClipboardReader,
+) -> Result<ClipboardPaste, String> {
+    if cfg!(test) {
+        clipboard_contents(
+            || {
+                ctx.data_mut(|data| {
+                    data.remove_temp::<Vec<PathBuf>>(egui::Id::new("fixture-clipboard-files"))
+                })
+                .ok_or_else(|| "no fixture files".to_owned())
+            },
+            || {
+                ctx.data_mut(|data| {
+                    data.remove_temp::<(usize, usize, Vec<u8>)>(egui::Id::new(
+                        "fixture-clipboard-image",
+                    ))
+                })
+                .ok_or_else(|| "no fixture picture".to_owned())
+            },
+        )
+    } else {
+        clipboard_contents(|| clipboard.files(), || clipboard.image())
     }
 }
 
@@ -12220,6 +12327,45 @@ fn clipboard_contents(
         }),
         Err(why) => Err(format!("{files}, no picture ({why})")),
     }
+}
+
+/// The clipboard's HTML, which a browser copies alongside a picture. Tests
+/// inject fixtures and must never read the system clipboard.
+fn read_clipboard_html(ctx: &egui::Context) -> Option<String> {
+    if cfg!(test) {
+        ctx.data_mut(|data| data.remove_temp::<String>(egui::Id::new("fixture-clipboard-html")))
+    } else {
+        arboard::Clipboard::new().ok()?.get().html().ok()
+    }
+}
+
+/// The web address of the one picture in copied HTML, such as a browser's
+/// "Copy image" leaves. `None` when the HTML holds no picture or several,
+/// or the address is not on the web.
+fn picture_link(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut tags = lower.match_indices("<img").map(|(at, _)| at);
+    let start = tags.next()?;
+    if tags.next().is_some() {
+        return None;
+    }
+    let end = start + lower[start..].find('>')?;
+    let tag = &lower[start..end];
+    let at = tag.match_indices("src").map(|(at, _)| at).find(|&at| {
+        tag[..at].ends_with(|c: char| c.is_ascii_whitespace())
+            && tag[at + 3..].trim_start().starts_with('=')
+    })?;
+    let value = tag[at + 3..].trim_start()[1..].trim_start();
+    // ASCII lowercasing keeps byte offsets, so the original text is sliced.
+    let offset = end - value.len();
+    let original = &html[offset..end];
+    let link = match original.chars().next()? {
+        quote @ ('"' | '\'') => original[1..].split(quote).next()?,
+        _ => original.split(|c: char| c.is_ascii_whitespace()).next()?,
+    };
+    let link = link.trim().replace("&amp;", "&");
+    let scheme = link.get(..8)?.to_ascii_lowercase();
+    (scheme.starts_with("http://") || scheme == "https://").then_some(link)
 }
 
 /// The clipboard's text, if it holds any.
@@ -12725,6 +12871,7 @@ mod tests {
             animated: None,
             animated_source: None,
             mp4: "https://example.test/gif.mp4".into(),
+            sticker_source: None,
             width: 100,
             height: 100,
         };
@@ -14044,6 +14191,146 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_pasted_picture_carries_the_link_a_browser_copied_with_it() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-image"),
+                (1usize, 1usize, vec![255u8, 0, 0, 255]),
+            );
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-html"),
+                r#"<meta charset='utf-8'><img src="https://media.example/a.gif?w=1&amp;h=2" alt="cat"/>"#
+                    .to_owned(),
+            );
+        });
+        app.apply(Action::PasteStickerPicture, &ctx);
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(
+                command,
+                Command::StickerFromPixels { link: Some(link), .. }
+                    if link == "https://media.example/a.gif?w=1&h=2"
+            )),
+            "{sent:?}"
+        );
+    }
+
+    /// A browser's "Copy image" pasted into a chat stages the still at once
+    /// and asks for the moving original, which takes its place when it moves.
+    #[test]
+    fn a_picture_pasted_into_a_chat_fetches_its_moving_original() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-html"),
+                r#"<img src="https://media.example/hello.gif" alt="hi"/>"#.to_owned(),
+            );
+        });
+        app.stage_clipboard(
+            &ctx,
+            ClipboardPaste::Image {
+                width: 1,
+                height: 1,
+                rgba: vec![255, 0, 0, 255],
+            },
+        );
+        let target = app.pending[0].id;
+        assert!(matches!(app.pending[0].item, Pending::Picture { .. }));
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(
+                command,
+                Command::FetchPastedPicture { target: sent, link }
+                    if *sent == target && link == "https://media.example/hello.gif"
+            )),
+            "{sent:?}"
+        );
+        let gif = PathBuf::from("/fixture/pasted/hello.gif");
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(gif.clone()),
+            },
+            true,
+        );
+        assert!(matches!(&app.pending[0].item, Pending::File(path) if *path == gif));
+    }
+
+    #[test]
+    fn picture_link_reads_the_one_web_picture_in_copied_html() {
+        assert_eq!(
+            picture_link("<html><body>\r\n<!--StartFragment--><IMG SRC='https://a.example/x.webp'><!--EndFragment-->").as_deref(),
+            Some("https://a.example/x.webp"),
+            "a Windows fragment, upper case and single quotes"
+        );
+        assert_eq!(
+            picture_link(
+                r#"<img data-src="https://a.example/lazy.gif" src = "http://a.example/real.gif">"#
+            )
+            .as_deref(),
+            Some("http://a.example/real.gif"),
+            "not data-src"
+        );
+        assert_eq!(
+            picture_link("<img src=https://a.example/bare.gif alt=x>").as_deref(),
+            Some("https://a.example/bare.gif"),
+            "an unquoted address"
+        );
+        assert_eq!(
+            picture_link(
+                r#"<img src="https://a.example/1.gif"><img src="https://a.example/2.gif">"#
+            ),
+            None
+        );
+        assert_eq!(picture_link(r#"<img src="javascript:alert(1)">"#), None);
+        assert_eq!(picture_link(r#"<img src="ftp://a.example/x.gif">"#), None);
+        assert_eq!(
+            picture_link(r#"<img src="data:image/gif;base64,R0lG">"#),
+            None
+        );
+        assert_eq!(picture_link("<p>no picture</p>"), None);
+    }
+
+    #[test]
+    fn a_pasted_picture_opens_the_sticker_maker_through_the_worker() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-image"),
+                (2usize, 1usize, vec![255u8, 0, 0, 255, 0, 255, 0, 255]),
+            )
+        });
+        app.apply(Action::PasteStickerPicture, &ctx);
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(
+                command,
+                Command::StickerFromPixels { width: 2, height: 1, rgba, link: None }
+                    if rgba.len() == 8
+            )),
+            "{sent:?}"
+        );
+        app.apply(Action::PasteStickerPicture, &ctx);
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == "There is no picture to paste"),
+            "an empty clipboard says so"
+        );
+    }
+
     /// Verifies that a later sticker dialog survives dispatching a completed number lookup.
     #[test]
     fn completed_number_lookup_preserves_a_later_sticker_dialog() {
@@ -14075,6 +14362,8 @@ mod tests {
                 width: 32,
                 height: 32,
                 transparent: false,
+                animated: false,
+                poster: std::sync::Arc::new(image::RgbaImage::new(32, 32)),
             })
             .unwrap();
         app.handle_events();
@@ -14559,6 +14848,7 @@ mod tests {
             animated: None,
             animated_source: None,
             mp4: String::new(),
+            sticker_source: None,
             width: 200,
             height: 200,
         };
@@ -22069,6 +22359,7 @@ mod tests {
                 still: None,
                 animated: None,
                 animated_source: None,
+                sticker_source: None,
                 mp4: "https://example.invalid/fixture.mp4".into(),
                 width: 2,
                 height: 2,
@@ -23077,6 +23368,7 @@ mod tests {
                         still: None,
                         animated: None,
                         animated_source: None,
+                        sticker_source: None,
                         mp4: "https://example.invalid/fixture.mp4".into(),
                         width: 2,
                         height: 2,
@@ -23102,6 +23394,14 @@ mod tests {
                             crop: crate::model::StickerCrop::centered(1, 1),
                             keep_transparent: false,
                             emojis: String::new(),
+                            animated: false,
+                            poster: std::sync::Arc::new(image::RgbaImage::new(1, 1)),
+                            remove_color: false,
+                            key: crate::model::ColorKey {
+                                color: [255; 3],
+                                tolerance: 40,
+                            },
+                            picking: false,
                         });
                         Action::MakeSticker { send: true }
                     }

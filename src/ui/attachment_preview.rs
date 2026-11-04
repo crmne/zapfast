@@ -296,8 +296,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     };
     let target = item.id;
     let can_edit = editable(&item.item);
+    let can_sticker = item.item.can_become_sticker();
     let name = file_name(&item.item);
     let mut edit = false;
+    let mut sticker = false;
     let mut close = false;
     ui.painter()
         .rect_filled(ui.available_rect_before_wrap(), 0.0, palette.surface);
@@ -325,6 +327,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     &crate::i18n::gettext(app.locale, "Edit picture"),
                 )
                 .tab_stop(Stop::ReviewEdit)
+                .clicked();
+            }
+            if can_sticker {
+                sticker = theme::icon_button(
+                    ui,
+                    Icon::Sticker,
+                    20.0,
+                    palette.secondary,
+                    palette.text,
+                    &crate::i18n::gettext(app.locale, "Create sticker"),
+                )
+                .tab_stop(Stop::ReviewSticker)
                 .clicked();
             }
         });
@@ -369,6 +383,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     if edit {
         app.actions.push(Action::EditPicture(target));
+    }
+    if sticker {
+        app.actions.push(Action::StickerFromPending(target));
     }
     if close {
         app.actions.push(Action::ClearPending);

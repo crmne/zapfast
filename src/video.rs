@@ -1208,7 +1208,7 @@ impl Reorder {
 
 /// How many quarter turns clockwise a track's matrix rotates the picture.
 /// The matrix is `[a b; c d]` in 16.16 fixed point.
-fn quarter_turns(a: i32, b: i32, c: i32, d: i32) -> u8 {
+pub(crate) fn quarter_turns(a: i32, b: i32, c: i32, d: i32) -> u8 {
     match (a.signum(), b.signum(), c.signum(), d.signum()) {
         (0, 1, -1, 0) => 1,
         (-1, 0, 0, -1) => 2,

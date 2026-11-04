@@ -1325,6 +1325,161 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// The sticker maker's picture: its scaled-down first frame, uploaded once
+/// per picture. Only the latest picture's texture is kept, so the pictures
+/// made into stickers earlier are freed.
+fn sticker_poster(ui: &egui::Ui, draft: &crate::model::StickerDraft) -> egui::TextureHandle {
+    let id = egui::Id::new("sticker-poster");
+    if let Some((source, texture)) =
+        ui.data(|data| data.get_temp::<(std::path::PathBuf, egui::TextureHandle)>(id))
+        && source == draft.source
+    {
+        return texture;
+    }
+    let poster = &draft.poster;
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [poster.width() as usize, poster.height() as usize],
+        poster.as_raw(),
+    );
+    let texture = ui
+        .ctx()
+        .load_texture("sticker-poster", image, egui::TextureOptions::LINEAR);
+    ui.data_mut(|data| data.insert_temp(id, (draft.source.clone(), texture.clone())));
+    texture
+}
+
+/// A checkerboard over `rect`, which shows what is see-through.
+fn checkerboard(ui: &egui::Ui, rect: Rect, cell: f32) {
+    let painter = ui.painter().with_clip_rect(rect);
+    let columns = (rect.width() / cell).ceil() as usize;
+    let rows = (rect.height() / cell).ceil() as usize;
+    for row in 0..rows {
+        for column in 0..columns {
+            let shade = if (row + column) % 2 == 0 {
+                egui::Color32::from_gray(200)
+            } else {
+                egui::Color32::from_gray(150)
+            };
+            painter.rect_filled(
+                Rect::from_min_size(
+                    rect.min + vec2(column as f32 * cell, row as f32 * cell),
+                    egui::Vec2::splat(cell),
+                ),
+                0.0,
+                shade,
+            );
+        }
+    }
+}
+
+/// Side of the sticker maker's result preview.
+const MAKER_PREVIEW: f32 = 112.0;
+
+/// The colour to take out of the sticker, and a preview of the result on a
+/// checkerboard, drawn the way the sticker is made.
+fn sticker_key_controls(
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    draft: &mut crate::model::StickerDraft,
+) {
+    ui.horizontal(|ui| {
+        super::widgets::switch(ui, palette, &mut draft.remove_color);
+        theme::text(
+            ui,
+            "Make a colour transparent",
+            theme::regular(13.0),
+            palette.text,
+        );
+    });
+    if draft.remove_color {
+        ui.horizontal(|ui| {
+            egui::widgets::color_picker::color_edit_button_srgb(ui, &mut draft.key.color);
+            let label = if draft.picking {
+                "Click the picture…"
+            } else {
+                "Pick from the picture"
+            };
+            if theme::pill_button(ui, palette, label, false).clicked() {
+                draft.picking = !draft.picking;
+            }
+        });
+        ui.horizontal(|ui| {
+            theme::text(ui, "Tolerance", theme::regular(13.0), palette.secondary);
+            ui.spacing_mut().slider_width = ui.available_width() - 8.0;
+            ui.add(egui::Slider::new(&mut draft.key.tolerance, 0..=160).show_value(false));
+        });
+    }
+    let transparent = (draft.transparent && draft.keep_transparent)
+        || draft.remove_color
+        || !draft.crop.inside(draft.width, draft.height);
+    // The poster stands for the picture at a smaller size.
+    let scale = draft.poster.width() as f32 / draft.width.max(1) as f32;
+    let crop = crate::model::StickerCrop {
+        x: (draft.crop.x as f32 * scale).round() as i64,
+        y: (draft.crop.y as f32 * scale).round() as i64,
+        side: ((draft.crop.side as f32 * scale) as u32).max(1),
+    }
+    .clamped(draft.poster.width(), draft.poster.height());
+    let key = draft.color_key();
+    let made = (
+        &draft.source,
+        crop.x,
+        crop.y,
+        crop.side,
+        key.map(|key| (key.color, key.tolerance)),
+        transparent,
+    );
+    let id = egui::Id::new("sticker-preview");
+    let hash = egui::Id::new(made);
+    let cached = ui
+        .data(|data| data.get_temp::<(egui::Id, egui::TextureHandle)>(id))
+        .filter(|(made, _)| *made == hash);
+    let texture = match cached {
+        Some((_, texture)) => texture,
+        None => {
+            let preview = crate::backend::sticker_maker::shape_at(
+                &draft.poster,
+                crop,
+                transparent,
+                key,
+                MAKER_PREVIEW as u32 * 2,
+                image::imageops::FilterType::Triangle,
+            );
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [preview.width() as usize, preview.height() as usize],
+                preview.as_raw(),
+            );
+            let texture =
+                ui.ctx()
+                    .load_texture("sticker-preview", image, egui::TextureOptions::LINEAR);
+            ui.data_mut(|data| data.insert_temp(id, (hash, texture.clone())));
+            texture
+        }
+    };
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(MAKER_PREVIEW), Sense::hover());
+        if ui.is_rect_visible(rect) {
+            checkerboard(ui, rect, MAKER_PREVIEW / 8.0);
+            egui::Image::new((texture.id(), texture.size_vec2()))
+                .fit_to_exact_size(rect.size())
+                .paint_at(ui, rect);
+        }
+        ui.vertical(|ui| {
+            theme::text(ui, "Preview", theme::medium(13.0), palette.text);
+            if draft.animated {
+                theme::paragraph(
+                    ui,
+                    "It moves: it is sent as an animated sticker, every frame cropped and keyed the same way.",
+                    theme::regular(12.5),
+                    palette.secondary,
+                );
+            }
+        });
+    });
+    ui.add_space(6.0);
+}
+
 /// Height of the sticker maker's picture area.
 const MAKER_VIEW: f32 = 300.0;
 
@@ -1338,14 +1493,44 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
         cancel_row(app, ui);
         return;
     };
-    let (area, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), MAKER_VIEW), Sense::drag());
-    let scale = (area.width() / draft.width as f32).min(area.height() / draft.height as f32);
-    let picture = egui::Rect::from_center_size(
-        area.center(),
-        vec2(draft.width as f32 * scale, draft.height as f32 * scale),
+    let (area, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), MAKER_VIEW),
+        Sense::click_and_drag(),
     );
-    if response.dragged() && scale > 0.0 {
+    // The view holds the picture and the whole square, which may reach past
+    // the picture's edges when the sticker shows it smaller.
+    let (width, height) = (draft.width as f32, draft.height as f32);
+    let (crop_x, crop_y, crop_side) = (
+        draft.crop.x as f32,
+        draft.crop.y as f32,
+        draft.crop.side as f32,
+    );
+    let (min_x, min_y) = (crop_x.min(0.0), crop_y.min(0.0));
+    let (max_x, max_y) = (
+        (crop_x + crop_side).max(width),
+        (crop_y + crop_side).max(height),
+    );
+    let scale = (area.width() / (max_x - min_x)).min(area.height() / (max_y - min_y));
+    let view = egui::Rect::from_center_size(
+        area.center(),
+        vec2((max_x - min_x) * scale, (max_y - min_y) * scale),
+    );
+    let origin = view.min - vec2(min_x, min_y) * scale;
+    let picture = egui::Rect::from_min_size(origin, vec2(width * scale, height * scale));
+    // Picking a colour: the next click on the picture takes it.
+    if draft.picking
+        && response.clicked()
+        && let Some(at) = response.interact_pointer_pos()
+        && picture.contains(at)
+    {
+        let poster = &draft.poster;
+        let x = ((at.x - picture.min.x) / picture.width() * poster.width() as f32) as u32;
+        let y = ((at.y - picture.min.y) / picture.height() * poster.height() as f32) as u32;
+        let pixel = poster.get_pixel(x.min(poster.width() - 1), y.min(poster.height() - 1));
+        draft.key.color = [pixel[0], pixel[1], pixel[2]];
+        draft.remove_color = true;
+        draft.picking = false;
+    } else if response.dragged() && scale > 0.0 && !draft.picking {
         let delta = response.drag_delta() / scale;
         draft.crop = draft.crop.moved(
             delta.x.round() as i64,
@@ -1357,15 +1542,30 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
     if ui.is_rect_visible(area) {
         ui.painter()
             .rect_filled(area, CornerRadius::same(theme::RADIUS), palette.surface);
-        super::widgets::file_image(ui, &draft.source)
+        let crop = egui::Rect::from_min_size(
+            origin + vec2(crop_x, crop_y) * scale,
+            egui::Vec2::splat(crop_side * scale),
+        );
+        // What the square holds beyond the picture comes out see-through.
+        checkerboard(ui, crop, 12.0);
+        // An animation plays while it is framed, so the crop is checked
+        // against every frame; the poster stands in until it decodes.
+        let playing = if draft.animated {
+            match crate::animation::frame(ui, &draft.source, picture, true) {
+                crate::animation::Frame::Ready(texture) => Some(texture),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let texture = playing.unwrap_or_else(|| sticker_poster(ui, &draft));
+        egui::Image::new((texture.id(), texture.size_vec2()))
             .fit_to_exact_size(picture.size())
             .paint_at(ui, picture);
-        let crop = egui::Rect::from_min_size(
-            picture.min + vec2(draft.crop.x as f32, draft.crop.y as f32) * scale,
-            egui::Vec2::splat(draft.crop.side as f32 * scale),
-        );
         // Dim what the sticker leaves out.
         let shade = palette.shadow.gamma_multiply(1.6);
+        let crop_on_picture = crop.intersect(picture);
+        let crop = crop_on_picture;
         for outside in [
             egui::Rect::from_min_max(picture.min, pos2(picture.max.x, crop.min.y)),
             egui::Rect::from_min_max(pos2(picture.min.x, crop.max.y), picture.max),
@@ -1383,16 +1583,22 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             }
         }
         ui.painter().rect_stroke(
-            crop,
+            egui::Rect::from_min_size(
+                origin + vec2(crop_x, crop_y) * scale,
+                egui::Vec2::splat(crop_side * scale),
+            ),
             0.0,
             Stroke::new(2.0, egui::Color32::WHITE),
             egui::StrokeKind::Inside,
         );
     }
-    let response = response.on_hover_cursor(egui::CursorIcon::Grab);
-    let _ = response;
-    let largest = draft.width.min(draft.height).max(1);
-    let smallest = (largest / 8).max(1);
+    let _ = response.on_hover_cursor(if draft.picking {
+        egui::CursorIcon::Crosshair
+    } else {
+        egui::CursorIcon::Grab
+    });
+    let largest = crate::model::StickerCrop::largest(draft.width, draft.height);
+    let smallest = (draft.width.min(draft.height) / 8).max(1);
     let mut side = draft.crop.side;
     ui.horizontal(|ui| {
         theme::text(
@@ -1402,7 +1608,11 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             palette.secondary,
         );
         ui.spacing_mut().slider_width = ui.available_width() - 8.0;
-        ui.add(egui::Slider::new(&mut side, smallest..=largest).show_value(false));
+        ui.add(
+            egui::Slider::new(&mut side, smallest..=largest)
+                .logarithmic(true)
+                .show_value(false),
+        );
     });
     if side != draft.crop.side {
         draft.crop = draft.crop.resized(side, draft.width, draft.height);
@@ -1418,6 +1628,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             );
         });
     }
+    sticker_key_controls(ui, &palette, &mut draft);
     Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))

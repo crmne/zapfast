@@ -53,7 +53,8 @@ including the stickers used on the phone. GIF searches and trending results
 load 24 at a time; **Load more** below the grid fetches the next page. A failed
 page keeps the earlier results and offers **Retry**; pressing Enter with the
 same search also retries that page. GIF search results play when they come into
-view and pause when they scroll away.
+view and pause when they scroll away. Right-click a GIF and choose **Make a
+sticker** to open it in the sticker maker.
 
 When you write a new text message with a web link and pause, ZapFast fetches
 that page, and its picture from wherever the page says it is, directly, through
@@ -224,7 +225,7 @@ or unfavorite on either side follows on the other.
 
 Click a downloaded sticker in a chat to see it on its own, larger and playing
 if it is animated, with **Add to favorites** or **Remove from favorites** below
-it. Click the sticker or outside it, or press Escape, to close it.
+it, and **Add to pack** to file it into any of your packs. Click the sticker or outside it, or press Escape, to close it.
 
 Type in the search field to find stickers by emoji (😂), by a word that names
 an emoji ("laugh", "duck"), or by pack name. Stickers carry the emojis they
@@ -233,7 +234,9 @@ express in their metadata, as WhatsApp's own stickers do.
 Under **+**, paste a `signal.art` link from
 [signalstickers.org](https://signalstickers.org) (or click **Find packs**), or
 open a `.wastickers` file, to import a pack. Signal packs keep each sticker's
-emoji. Open a pack's tab and use its delete button to remove it; ZapFast asks
+emoji. To save a pack as a `.wastickers` file, open its tab and click the
+download button beside its name; the file imports back into ZapFast and into
+other sticker apps. Open a pack's tab and use its delete button to remove it; ZapFast asks
 first, since that deletes the pack's files. Packs are stored as WebP files on
 your computer.
 
@@ -244,20 +247,32 @@ and click the send arrow beside its name: it goes to the open chat as a
 WhatsApp sticker pack of up to 60 stickers, with each sticker's emojis.
 
 You can also make packs of your own: type a name under **Make your own** and
-click **Create pack**. Right-click any sticker and choose one of your packs in
-the menu to add it; a check mark shows the packs it is already in, and
+click **Create pack**. Right-click any sticker in the picker and choose a pack
+in the menu to add it, or right-click a sticker in a chat and use **Add to
+pack**. Every pack takes stickers, those you made and those you imported or
+added from a chat; a check mark shows the packs a sticker is already in, and
 choosing a checked one takes it back out. A pack keeps its own copy of each
 sticker, named by the sticker's content, so the same picture is added once
 however many chats it came from. Deleting a pack removes its copies and leaves
 your favorites and other packs alone.
 
 To make a sticker from a picture, click **Make a sticker from a picture…**
-under **+** and choose a PNG, JPEG, WebP, or GIF. Drag the square to choose
-the part you want and use **Size** to resize it. A picture with a transparent
-background keeps it unless you turn that off, and then the background becomes
-white. Type the emojis that describe it, for search here and for WhatsApp's
+under **+** and choose a PNG, JPEG, WebP, GIF, or a video of up to 10
+seconds (H.264 MP4 or MOV), or click **Paste a picture as a sticker**. An
+animated GIF, WebP or PNG, or a video, becomes an animated sticker. A picture
+copied from a browser pastes as its first frame only, so ZapFast downloads it
+from the address the browser copied with it and uses the animation when it
+has one. Drag the square to choose
+the part you want and use **Size** to resize it; a square larger than the
+picture makes it smaller in the sticker, with see-through space around it. A
+picture with a transparent background keeps it unless you turn that off, and
+then the background becomes white. **Make a colour transparent** and **Pick
+from the picture** take out a plain background, with **Tolerance** for how
+close a colour has to be. Type the emojis that describe it, for search here and for WhatsApp's
 sticker suggestions, then **Send** it to the open chat or **Add to favorites**.
-The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
+The sticker is a 512 × 512 WebP under WhatsApp's limits: 100 KB for a still
+one, 500 KB and 10 seconds for an animated one, lowering its quality and
+frame rate until it fits.
 
 ## Attachments
 
@@ -276,9 +291,15 @@ a tile along the bottom to review another file, or **+** to add more. The
 normal composer stays below the preview for your caption, emoji and mentions;
 Send is at the right of the file strip. Enter still follows your send-key
 setting. To reply with an attachment, start a reply and then attach the file.
+An animated GIF, WebP or PNG goes as a looping GIF video, which is how
+WhatsApp plays one. A picture copied from a browser pastes as its first frame,
+so ZapFast downloads the original from the address the browser copied with it
+and, when it moves, swaps it in for the still.
 When sending several files, the caption and reply quote belong to the first
 one. Hover a tile to remove that file. Escape or the review area's close button
 discards all staged files, the caption and its reply quote.
+**Create sticker** above the selected picture, GIF or video opens the
+sticker maker on it; the attachment stays staged.
 
 With exactly one supported photo (JPEG, PNG, or WebP) staged, select
 the **View once** icon (a 1 inside a dashed circle) beside the caption. It lights

@@ -393,6 +393,42 @@ pub fn extract_whatsapp_pack(
     Ok(written)
 }
 
+/// Writes a pack as a .wastickers archive at `to`: `title.txt`, a 96-pixel
+/// `tray.png` from its first sticker, and the stickers in their order, as
+/// [`import_archive`] and other sticker apps read them.
+pub fn export_archive(pack: &crate::model::StickerPack, to: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let first = pack
+        .stickers
+        .first()
+        .ok_or("This pack has no stickers to export")?;
+    let fail = |error: &dyn std::fmt::Display| format!("Could not export the pack: {error}");
+    let mut tray = Vec::new();
+    image::load_from_memory(&std::fs::read(first).map_err(|error| fail(&error))?)
+        .map_err(|error| fail(&error))?
+        .resize(96, 96, image::imageops::FilterType::Lanczos3)
+        .write_to(std::io::Cursor::new(&mut tray), image::ImageFormat::Png)
+        .map_err(|error| fail(&error))?;
+    let file = std::fs::File::create(to).map_err(|error| fail(&error))?;
+    let mut zip = zip::ZipWriter::new(file);
+    // WebP and PNG are compressed already.
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut entry = |name: &str, bytes: &[u8]| -> Result<(), String> {
+        zip.start_file(name, options)
+            .map_err(|error| fail(&error))?;
+        zip.write_all(bytes).map_err(|error| fail(&error))
+    };
+    entry("title.txt", pack.name.as_bytes())?;
+    entry("tray.png", &tray)?;
+    for (index, sticker) in pack.stickers.iter().enumerate() {
+        let bytes = std::fs::read(sticker).map_err(|error| fail(&error))?;
+        entry(&format!("{index:03}.webp"), &bytes)?;
+    }
+    zip.finish().map_err(|error| fail(&error))?;
+    Ok(())
+}
+
 /// Copies a pack's stickers into a new pack folder named after it, and
 /// returns the folder's name.
 pub fn copy_pack(from: &Path, packs: &Path, name: &str) -> Result<String, String> {
@@ -465,7 +501,7 @@ fn webp_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return Some(bytes);
     }
-    if let Some(frames) = animation_frames(&bytes) {
+    if let Some(frames) = super::sticker_maker::animation_frames(&bytes) {
         return encode_animated(frames);
     }
     let picture = image::load_from_memory(&bytes).ok()?;
@@ -487,64 +523,29 @@ fn webp_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Returns frames and millisecond delays for animated APNG or GIF data.
-fn animation_frames(bytes: &[u8]) -> Option<Vec<(image::RgbaImage, u32)>> {
-    use image::AnimationDecoder;
-    let cursor = std::io::Cursor::new(bytes);
-    let frames = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        let decoder = image::codecs::png::PngDecoder::new(cursor).ok()?;
-        if !decoder.is_apng().ok()? {
-            return None;
-        }
-        decoder.apng().ok()?.into_frames()
-    } else if bytes.starts_with(b"GIF8") {
-        image::codecs::gif::GifDecoder::new(cursor)
-            .ok()?
-            .into_frames()
-    } else {
-        return None;
-    };
-    let frames: Vec<(image::RgbaImage, u32)> = frames
-        .take(200)
-        .filter_map(|frame| frame.ok())
-        .map(|frame| {
-            let (numerator, denominator) = frame.delay().numer_denom_ms();
-            (frame.into_buffer(), numerator / denominator.max(1))
-        })
-        .collect();
-    (frames.len() > 1).then_some(frames)
-}
-
-/// Encodes frames as a lossy animated WebP at sticker size.
+/// Encodes frames as a lossy animated WebP, scaled to fit 512 pixels.
 fn encode_animated(frames: Vec<(image::RgbaImage, u32)>) -> Option<Vec<u8>> {
-    use webp_animation::prelude::*;
     let (source_width, source_height) = frames.first().map(|(frame, _)| frame.dimensions())?;
     let scale = (512.0 / f64::from(source_width.max(source_height))).min(1.0);
     let width = (f64::from(source_width) * scale).round().max(1.0) as u32;
     let height = (f64::from(source_height) * scale).round().max(1.0) as u32;
-    let mut encoder = Encoder::new_with_options(
-        (width, height),
-        EncoderOptions {
-            encoding_config: Some(EncodingConfig {
-                quality: 80.0,
-                encoding_type: EncodingType::Lossy(LossyEncodingConfig::default()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-    )
-    .ok()?;
-    let mut clock = 0i32;
-    for (frame, delay) in frames {
-        let frame = if frame.dimensions() == (width, height) {
-            frame
-        } else {
-            image::imageops::resize(&frame, width, height, image::imageops::FilterType::Lanczos3)
-        };
-        encoder.add_frame(frame.as_raw(), clock).ok()?;
-        clock += delay.clamp(10, 10_000) as i32;
-    }
-    Some(encoder.finalize(clock).ok()?.to_vec())
+    let frames: Vec<_> = frames
+        .into_iter()
+        .map(|(frame, delay)| {
+            let frame = if frame.dimensions() == (width, height) {
+                frame
+            } else {
+                image::imageops::resize(
+                    &frame,
+                    width,
+                    height,
+                    image::imageops::FilterType::Lanczos3,
+                )
+            };
+            (frame, delay)
+        })
+        .collect();
+    super::sticker_maker::encode_frames(&frames, 80.0)
 }
 
 /// Creates a unique pack directory from a sanitized title.
@@ -690,6 +691,60 @@ mod tests {
         let again = import_archive(&archive_path, &packs).expect("imports");
         assert_eq!(again, "Happy Frogs 2");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_exported_pack_imports_back_in_its_order() {
+        let root = tempfile::tempdir().expect("temp");
+        let source = root.path().join("source");
+        std::fs::create_dir_all(&source).expect("dirs");
+        let stickers: Vec<PathBuf> = [[255u8, 0, 0], [0, 0, 255]]
+            .iter()
+            .enumerate()
+            .map(|(index, colour)| {
+                let picture = image::RgbaImage::from_pixel(
+                    8,
+                    8,
+                    image::Rgba([colour[0], colour[1], colour[2], 255]),
+                );
+                let mut bytes = Vec::new();
+                image::codecs::webp::WebPEncoder::new_lossless(&mut bytes)
+                    .encode(&picture, 8, 8, image::ExtendedColorType::Rgba8)
+                    .expect("encodes");
+                // Names out of order: the pack's order is what counts.
+                let path = source.join(format!("{}.webp", 9 - index));
+                std::fs::write(&path, bytes).expect("writes");
+                path
+            })
+            .collect();
+        let pack = crate::model::StickerPack {
+            name: "Mixed".to_owned(),
+            dir: source.clone(),
+            stickers: stickers.clone(),
+            local: true,
+        };
+        let archive = root.path().join("Mixed.wastickers");
+        export_archive(&pack, &archive).expect("exports");
+        let packs = root.path().join("packs");
+        assert_eq!(import_archive(&archive, &packs).expect("imports"), "Mixed");
+        for (index, original) in stickers.iter().enumerate() {
+            assert_eq!(
+                std::fs::read(packs.join("Mixed").join(format!("{index:03}.webp"))).expect("reads"),
+                std::fs::read(original).expect("reads"),
+                "sticker {index} keeps its place and bytes"
+            );
+        }
+        assert!(
+            export_archive(
+                &crate::model::StickerPack {
+                    stickers: Vec::new(),
+                    ..pack
+                },
+                &archive
+            )
+            .is_err(),
+            "an empty pack has nothing to export"
+        );
     }
 
     #[test]

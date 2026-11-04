@@ -2678,6 +2678,8 @@ struct View<'a> {
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// How far this chat's downloading attachments have got, by message.
     download_progress: Option<&'a HashMap<String, u8>>,
+    /// Packs a sticker in the chat can be filed into.
+    sticker_packs: &'a [crate::model::StickerPack],
 }
 
 /// How far `message`'s attachment download has got, once the worker has said.
@@ -3142,6 +3144,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
         download_progress: app.download_progress.get(&chat.id),
+        sticker_packs: &app.sticker_packs,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -7040,6 +7043,7 @@ fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
         gettext(locale, "Delete for everyone"),
         gettext(locale, "Delete for me"),
         gettext(locale, "Add to favorites"),
+        gettext(locale, "Add to pack"),
         gettext(locale, "Open in system player"),
         gettext(locale, "Open file"),
         gettext(locale, "Copy image"),
@@ -7120,6 +7124,7 @@ pub(crate) fn list_menu(
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
         download_progress: app.download_progress.get(&chat.id),
+        sticker_packs: &app.sticker_packs,
         selecting: false,
         motion_playing: None,
         starred: marks.starred.then_some(&stars),
@@ -7568,6 +7573,28 @@ fn context_menu(
         )
     {
         actions.push(Action::SaveSticker(path.clone()));
+    }
+    if let Content::Sticker { media, .. } = &message.content
+        && let Some(path) = &media.path
+        && !view.sticker_packs.is_empty()
+    {
+        let names: Vec<&str> = view
+            .sticker_packs
+            .iter()
+            .map(|pack| pack.name.as_str())
+            .collect();
+        let label = crate::i18n::gettext(view.locale, "Add to pack");
+        let picked = widgets::submenu(ui, &palette, Icon::Sticker, &label, &names, |ui| {
+            super::picker::pack_menu_items(ui, &palette, view.sticker_packs, path)
+        })
+        .and_then(|shown| shown.inner);
+        if let Some((pack, member)) = picked {
+            actions.push(Action::SetStickerPack {
+                pack,
+                sticker: path.clone(),
+                member,
+            });
+        }
     }
     if let Some(media) = message.content.media() {
         match &media.path {
@@ -12840,6 +12867,7 @@ mod tests {
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
             download_progress: None,
+            sticker_packs: &app.sticker_packs,
             selecting: false,
             motion_playing: None,
             starred: None,
@@ -13524,13 +13552,14 @@ mod reaction_tests {
             assert!(measured.contains(label), "menu width leaves out {label}");
         }
         // The fixtures reach every entry a list row's menu can show. A private
-        // reply starts from the group on screen, so only the chat offers it.
+        // reply starts from the group on screen, so only the chat offers it,
+        // and filing a sticker needs a pack, which the fixtures have none of.
         let undrawn: Vec<&str> = measured
             .iter()
             .map(String::as_str)
             .filter(|label| !labels.iter().any(|drawn| drawn == label))
             .collect();
-        assert_eq!(undrawn, ["Reply privately"]);
+        assert_eq!(undrawn, ["Reply privately", "Add to pack"]);
         // Hover texts are not in the accessibility tree (React with any
         // emoji is, as its button's name).
         labels.extend(["React with any emoji".into(), "Remove your reaction".into()]);

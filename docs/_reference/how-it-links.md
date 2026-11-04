@@ -43,8 +43,11 @@ The message archive, media, and session keys stay on your computer.
 to WhatsApp's servers, GIPHY for the GIF picker and search, and Signal's sticker
 CDN when you import a Signal sticker pack. While you write a link in a new text
 message, it also contacts that link's site, and whichever site the page names
-for its picture, to build a [preview](/using-zapfast/#writing). It has no
-telemetry. It also asks
+for its picture, to build a [preview](/using-zapfast/#writing). When you
+paste a picture copied from a browser, as an attachment or a sticker, it
+downloads that picture from the address the browser copied with it, through
+your proxy if one is set, to keep its animation. It has no telemetry. It also
+asks
 `api.github.com` once a day whether a newer release exists; you can turn this
 off in Settings. Downloading an update fetches release files from GitHub.
 
