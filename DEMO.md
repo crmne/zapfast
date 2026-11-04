@@ -66,7 +66,8 @@ Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page social-previews` for Instagram and Facebook reel posters
 and a landscape article preview. `instagram-preview`, `facebook-preview`,
-and `article-preview` show each separately; the Facebook example has a
+and `article-preview` show each separately; `instagram-post-preview` shows a
+square post with a wrapped link and timestamp. The Facebook example has a
 full-size image without an inline JPEG.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
 and its attachment and poll menu, or `--demo-page location` for the location

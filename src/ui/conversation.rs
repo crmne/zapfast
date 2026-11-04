@@ -5591,133 +5591,150 @@ fn bubble_frame(
     // A picture without a caption carries its time over its corner, so
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = album.is_none() && time_over_picture(message);
+    let media_preview = whatsapp_media_preview(&palette, message);
+    let mut margin = bubble_margin(&palette, message, over_picture);
+    if media_preview {
+        margin.left = 9;
+        margin.right = 9;
+        margin.bottom = 3;
+        if !(show_sender && view.chat.is_group()) && !message.forwarded && message.quoted.is_none()
+        {
+            margin.top = 3;
+        }
+    }
     let mut tiles: Vec<(Rect, String)> = Vec::new();
-    let inner = Frame::new()
-        .inner_margin(bubble_margin(&palette, message, over_picture))
-        .show(ui, |ui| {
-            ui.set_max_width(max_width);
-            ui.spacing_mut().item_spacing.y = 4.0;
-            if show_sender && view.chat.is_group() {
-                let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
-                let response = widgets::rich_text(
-                    ui,
-                    &name,
-                    theme::semibold(13.0),
-                    palette.sender(crate::util::hue(&message.sender)),
-                );
-                let response = ui
-                    .interact(
-                        response.rect,
-                        ui.id().with(("sender", &message.id)),
-                        Sense::CLICK,
-                    )
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(bubble_id.with("sender"), response.rect));
-                if response.clicked() {
-                    actions.push(sender_info_action(message));
-                }
-            } else {
-                // A name from an earlier frame must not trim the text's
-                // click target below.
-                ui.ctx()
-                    .data_mut(|data| data.remove::<Rect>(bubble_id.with("sender")));
+    let inner = Frame::new().inner_margin(margin).show(ui, |ui| {
+        ui.set_max_width(max_width);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        if show_sender && view.chat.is_group() {
+            let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
+            let response = widgets::rich_text(
+                ui,
+                &name,
+                theme::semibold(13.0),
+                palette.sender(crate::util::hue(&message.sender)),
+            );
+            let response = ui
+                .interact(
+                    response.rect,
+                    ui.id().with(("sender", &message.id)),
+                    Sense::CLICK,
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(bubble_id.with("sender"), response.rect));
+            if response.clicked() {
+                actions.push(sender_info_action(message));
             }
-            // Reserve the label's line now and paint it once the contents
-            // are measured, at their start: an own bubble lays out from the
-            // right, and its width is known only then.
-            let forwarded = message.forwarded.then(|| forwarded_label(ui, &palette));
-            // Cards share the bubble's settled width: at least CARD_WIDTH and
-            // no more than the cap. Text spans that width and stays left-aligned.
-            // Bubbles without cards use the natural text width.
-            let inset = if palette.bubbles == theme::BubbleStyle::Messages
-                && !bare_picture(&palette, message)
-            {
-                MESSAGES_BUBBLE_MARGIN.sum().x
-            } else {
-                20.0
-            };
-            let cap = ((max_width - inset).min(ui.available_width())).max(0.0);
-            let last = album
-                .and_then(|messages| messages.last())
-                .unwrap_or(message);
-            // An album's footer is its last member's, marks included.
-            let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
-            let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let reserve = footer_width(ui, last, starred, pinned);
-            let settled = album
-                .map(|_| CARD_WIDTH.min(cap))
-                .or_else(|| settled_width(ui, view, message, cap));
-            let slot = if let Some(messages) = album {
-                let mut quoted_targets = HashMap::new();
-                let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
-                for member in messages {
-                    if let Some(quoted) = &member.quoted {
-                        // WhatsApp can repeat the same reply on every album
-                        // item. Show each target once, keeping distinct replies.
-                        let target = (
-                            quoted.chat.as_deref().unwrap_or(&view.chat.id),
-                            quoted.id.as_str(),
-                            quoted.sender.as_str(),
-                        );
-                        let index = *quoted_targets.entry(target).or_insert_with(|| {
-                            quotes.push((member, quoted));
-                            quotes.len() - 1
-                        });
-                        // Keep targets in their first-seen order, but let a
-                        // later copy supply text missing from the first one.
-                        if quotes[index].1.summary.trim().is_empty()
-                            && !quoted.summary.trim().is_empty()
-                        {
-                            quotes[index] = (member, quoted);
-                        }
+        } else {
+            // A name from an earlier frame must not trim the text's
+            // click target below.
+            ui.ctx()
+                .data_mut(|data| data.remove::<Rect>(bubble_id.with("sender")));
+        }
+        // Reserve the label's line now and paint it once the contents
+        // are measured, at their start: an own bubble lays out from the
+        // right, and its width is known only then.
+        let forwarded = message.forwarded.then(|| forwarded_label(ui, &palette));
+        // Cards settle the text width within the cap. Their pictures may
+        // reach into the side padding; text stays left-aligned.
+        // Bubbles without cards use the natural text width.
+        let inset = if bare_picture(&palette, message) {
+            20.0
+        } else {
+            margin.sum().x
+        };
+        let cap = ((max_width - inset).min(ui.available_width())).max(0.0);
+        let last = album
+            .and_then(|messages| messages.last())
+            .unwrap_or(message);
+        // An album's footer is its last member's, marks included.
+        let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
+        let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
+        let reserve = footer_width(ui, last, starred, pinned);
+        let settled = album
+            .map(|_| CARD_WIDTH.min(cap))
+            .or_else(|| settled_width(ui, view, message, cap));
+        let slot = if let Some(messages) = album {
+            let mut quoted_targets = HashMap::new();
+            let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
+            for member in messages {
+                if let Some(quoted) = &member.quoted {
+                    // WhatsApp can repeat the same reply on every album
+                    // item. Show each target once, keeping distinct replies.
+                    let target = (
+                        quoted.chat.as_deref().unwrap_or(&view.chat.id),
+                        quoted.id.as_str(),
+                        quoted.sender.as_str(),
+                    );
+                    let index = *quoted_targets.entry(target).or_insert_with(|| {
+                        quotes.push((member, quoted));
+                        quotes.len() - 1
+                    });
+                    // Keep targets in their first-seen order, but let a
+                    // later copy supply text missing from the first one.
+                    if quotes[index].1.summary.trim().is_empty()
+                        && !quoted.summary.trim().is_empty()
+                    {
+                        quotes[index] = (member, quoted);
                     }
                 }
-                for (member, quoted) in quotes {
-                    quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
-                }
-                tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
-                None
-            } else {
-                match settled {
-                    Some(width) => {
-                        if let Some(quoted) = &message.quoted {
-                            quote_block(ui, view, message, quoted, width, actions);
-                        }
-                        content(ui, view, message, width, reserve, actions)
+            }
+            for (member, quoted) in quotes {
+                quote_block(ui, view, member, quoted, settled.unwrap_or(cap), actions);
+            }
+            tiles = album_content(ui, view, messages, settled.unwrap_or(cap), actions);
+            None
+        } else {
+            match settled {
+                Some(width) => {
+                    if let Some(quoted) = &message.quoted {
+                        quote_block(ui, view, message, quoted, width, actions);
                     }
-                    None => content(ui, view, message, cap, reserve, actions),
+                    content(ui, view, message, width, reserve, actions)
                 }
-            };
-            if over_picture && let Some(picture) = slot {
-                footer_over_picture(ui, view, message, picture, starred, pinned, actions);
-            } else {
-                footer(ui, view, last, slot, starred, pinned, actions);
+                None => content(ui, view, message, cap, reserve, actions),
             }
-            if matches!(message.content, Content::Poll { .. }) {
-                super::polls::results_button(
-                    ui,
-                    &palette,
-                    view.locale,
-                    message,
-                    settled.unwrap_or(cap),
-                    actions,
-                );
-            }
-            if let Content::Interactive {
-                card: Some(card), ..
-            } = &message.content
-            {
-                interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
-            }
-            if let Some((reserved, galley)) = forwarded {
-                let at = pos2(ui.min_rect().left(), reserved.top());
-                let painted = paint_forwarded_label(ui, &palette, at, galley);
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(bubble_id.with("forwarded"), painted);
-                });
-            }
-        });
+        };
+        let slot = if media_preview {
+            slot.map(|slot| {
+                // WhatsApp lowers inline metadata below the link's baseline.
+                let slot = slot.translate(vec2(0.0, 7.0));
+                ui.expand_to_include_rect(slot);
+                slot
+            })
+        } else {
+            slot
+        };
+        if over_picture && let Some(picture) = slot {
+            footer_over_picture(ui, view, message, picture, starred, pinned, actions);
+        } else {
+            footer(ui, view, last, slot, starred, pinned, actions);
+        }
+        if matches!(message.content, Content::Poll { .. }) {
+            super::polls::results_button(
+                ui,
+                &palette,
+                view.locale,
+                message,
+                settled.unwrap_or(cap),
+                actions,
+            );
+        }
+        if let Content::Interactive {
+            card: Some(card), ..
+        } = &message.content
+        {
+            interactive_buttons(ui, view, message, card, settled.unwrap_or(cap), actions);
+        }
+        if let Some((reserved, galley)) = forwarded {
+            let at = pos2(ui.min_rect().left(), reserved.top());
+            let painted = paint_forwarded_label(ui, &palette, at, galley);
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(bubble_id.with("forwarded"), painted);
+            });
+        }
+    });
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         ui.painter().set(
             backdrop,
@@ -6023,6 +6040,8 @@ fn bubble_frame(
 
 /// Minimum shared width for cards inside message bubbles.
 const CARD_WIDTH: f32 = 320.0;
+/// Space between a media preview's edge and its message text.
+const PREVIEW_TEXT_INSET: i8 = 6;
 const CAROUSEL_CARD_WIDTH: f32 = 280.0;
 /// Location cards: a map preview across the top, then the details.
 const LOCATION_CARD_WIDTH: f32 = 300.0;
@@ -6036,15 +6055,20 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
     } = &message.content
         && large_preview(preview, message.thumbnail.as_deref())
     {
-        return Some(
-            (if preview.is_video() {
-                240.0_f32
-            } else {
-                CARD_WIDTH
-            })
-            .min(cap)
-            .max(0.0),
-        );
+        let whatsapp = view.palette.bubbles == theme::BubbleStyle::WhatsApp;
+        let picture = if preview.is_video() {
+            240.0
+        } else if whatsapp {
+            330.0
+        } else {
+            CARD_WIDTH
+        };
+        let inset = if whatsapp {
+            2.0 * f32::from(PREVIEW_TEXT_INSET)
+        } else {
+            0.0
+        };
+        return Some((picture - inset).min(cap).max(0.0));
     }
     if matches!(
         message.content,
@@ -8206,7 +8230,24 @@ fn content(
         }
         Content::Text { text, preview } => {
             if let Some(preview) = preview {
-                preview_card(ui, view, message, preview, width, actions);
+                if whatsapp_media_preview(&palette, message) {
+                    // The picture reaches toward the bubble edge; text keeps
+                    // WhatsApp's wider inset without increasing the bubble.
+                    Frame::new()
+                        .inner_margin(Margin::symmetric(-PREVIEW_TEXT_INSET, 0))
+                        .show(ui, |ui| {
+                            preview_card(
+                                ui,
+                                view,
+                                message,
+                                preview,
+                                width + 2.0 * f32::from(PREVIEW_TEXT_INSET),
+                                actions,
+                            );
+                        });
+                } else {
+                    preview_card(ui, view, message, preview, width, actions);
+                }
             }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
             rich_body(ui, view, message, text, width, Some(reserve), span, actions)
@@ -9651,7 +9692,11 @@ fn rich_body(
     let palette = view.palette;
     let mentions = mentions_of(view, message);
     let style = markup::Style {
-        size: BODY_SIZE,
+        size: if whatsapp_media_preview(&palette, message) {
+            14.0
+        } else {
+            BODY_SIZE
+        },
         color: palette.text,
         secondary: palette.secondary,
         link: palette.link,
@@ -9960,6 +10005,12 @@ fn preview_card(
     }
 }
 
+fn whatsapp_media_preview(palette: &Palette, message: &Message) -> bool {
+    palette.bubbles == theme::BubbleStyle::WhatsApp
+        && matches!(&message.content, Content::Text { preview: Some(preview), .. }
+            if large_preview(preview, message.thumbnail.as_deref()))
+}
+
 /// Small site icons stay compact; media posters and WhatsApp's larger
 /// downloadable pictures use the expanded layout.
 fn large_preview(preview: &LinkPreview, thumbnail: Option<&[u8]>) -> bool {
@@ -10084,44 +10135,59 @@ fn preview_layout(
                 }
             }
         }
-        Frame::new().inner_margin(Margin::same(8)).show(ui, |ui| {
-            ui.set_width((card_width - 16.0).max(0.0));
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for (text, font, color, lines) in [
-                (
-                    preview.title.as_deref(),
-                    theme::semibold(13.5),
-                    palette.text,
-                    2,
-                ),
-                (
-                    preview.description.as_deref(),
-                    theme::regular(12.5),
-                    palette.secondary,
-                    3,
-                ),
-            ] {
-                if let Some(text) = text.filter(|text| !text.is_empty()) {
-                    let line = widgets::line(ui, text, font, color, ui.available_width(), lines);
-                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                    line.paint(ui, rect.min, color);
+        Frame::new()
+            .inner_margin(Margin {
+                left: 10,
+                right: 10,
+                top: 8,
+                bottom: 10,
+            })
+            .show(ui, |ui| {
+                ui.set_width((card_width - 20.0).max(0.0));
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (text, font, color, lines, line_height) in [
+                    (
+                        preview.title.as_deref(),
+                        theme::semibold(12.5),
+                        palette.text,
+                        2,
+                        Some(19.0),
+                    ),
+                    (
+                        preview.description.as_deref(),
+                        theme::regular(12.5),
+                        palette.secondary,
+                        3,
+                        None,
+                    ),
+                ] {
+                    if let Some(text) = text.filter(|text| !text.is_empty()) {
+                        let format = egui::TextFormat {
+                            line_height,
+                            valign: Align::TOP,
+                            ..egui::TextFormat::simple(font, color)
+                        };
+                        let line =
+                            widgets::formatted_line(ui, text, format, ui.available_width(), lines);
+                        let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                        line.paint(ui, rect.min, color);
+                    }
                 }
-            }
-            let domain = reqwest::Url::parse(&preview.url)
-                .ok()
-                .and_then(|url| url.host_str().map(str::to_owned))
-                .unwrap_or_default();
-            let line = widgets::line(
-                ui,
-                &domain,
-                theme::regular(12.0),
-                palette.dim,
-                ui.available_width(),
-                1,
-            );
-            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-            line.paint(ui, rect.min, palette.dim);
-        });
+                let domain = reqwest::Url::parse(&preview.url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .unwrap_or_default();
+                let line = widgets::line(
+                    ui,
+                    &domain,
+                    theme::regular(12.0),
+                    palette.dim,
+                    ui.available_width(),
+                    1,
+                );
+                let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                line.paint(ui, rect.min, palette.dim);
+            });
     })
     .response
     .rect
@@ -11999,6 +12065,90 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn whatsapp_media_preview_matches_card_and_timestamp_insets() {
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        for palette in [Palette::dark(), Palette::light()] {
+            for own in [false, true] {
+                for video in [false, true] {
+                    for viewport in [420.0, 920.0] {
+                        let ctx = egui::Context::default();
+                        crate::theme::install(&ctx);
+                        with_still_view(|view| {
+                            let view = View { palette, ..*view };
+                            let url = "https://www.instagram.com/p/example/?q=abc";
+                            let mut row = message(Content::Text {
+                                text: url.into(),
+                                preview: Some(LinkPreview {
+                                    url: url.into(),
+                                    title: Some("A synthetic post on Instagram".into()),
+                                    description: None,
+                                    video,
+                                    image: Some(Box::new(media(Some(640), Some(640)))),
+                                }),
+                            });
+                            row.chat = view.chat.id.clone();
+                            row.from_me = own;
+                            row.thumbnail = Some(jpeg.get_ref().clone());
+                            let mut output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(Rect::from_min_size(
+                                        egui::Pos2::ZERO,
+                                        vec2(viewport, 1000.0),
+                                    )),
+                                    ..Default::default()
+                                },
+                                |ui| {
+                                    bubble(
+                                        ui,
+                                        &view,
+                                        &row,
+                                        None,
+                                        RunPlace {
+                                            show_sender: false,
+                                            show_avatar: false,
+                                            tailed: false,
+                                        },
+                                        &mut Vec::new(),
+                                    );
+                                },
+                            );
+                            output.textures_delta.clear();
+                            let id = bubble_id(&row.chat, &row.id);
+                            let rect = |key| ctx.data(|data| data.get_temp::<Rect>(key)).unwrap();
+                            let frame = rect(id.with("rect"));
+                            let preview = rect(id.with("preview"));
+                            let body = rect(id.with("body"));
+                            let clock = rect(footer_id(&row.chat, &row.id));
+                            let maximum = if video { 246.0 } else { 336.0 };
+                            assert!(
+                                frame.width() <= maximum + 0.5,
+                                "card is too wide: {frame:?}, {maximum}"
+                            );
+                            assert!(
+                                (preview.left() - frame.left() - 3.0).abs() < 0.5,
+                                "picture inset: frame={frame:?}, preview={preview:?}"
+                            );
+                            assert!((frame.right() - preview.right() - 3.0).abs() < 0.5);
+                            assert!(
+                                clock.bottom() >= body.bottom() + 5.0,
+                                "timestamp sits too high: body={body:?}, clock={clock:?}"
+                            );
+                            assert!(
+                                frame.bottom() >= body.bottom() + 9.0,
+                                "link needs bottom breathing room: body={body:?}, frame={frame:?}"
+                            );
+                            assert!((frame.right() - clock.right() - 9.0).abs() < 0.5);
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn link_preview_puts_a_large_picture_above_its_caption() {
         let ctx = egui::Context::default();

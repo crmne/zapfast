@@ -1343,7 +1343,7 @@ fn short_chat_sample(app: &mut App) {
 }
 
 /// Offline examples of a reel poster, a full thumbnail without an inline
-/// JPEG, and a landscape article preview. All pictures are bundled stock.
+/// JPEG, a landscape article, and a square post. Pictures are bundled stock.
 fn social_previews_sample(app: &mut App, only: Option<usize>) {
     let chat = SAMPLES[0].id;
     let examples = [
@@ -1366,6 +1366,13 @@ fn social_previews_sample(app: &mut App, only: Option<usize>) {
             "A launch over the water",
             "The launch leaves a bright trail across the evening sky. A landscape article keeps the whole picture.",
             stock::DUSK,
+            true,
+        ),
+        (
+            "https://www.instagram.com/p/demo/?src=synthetic",
+            "Spotifast on Instagram: A native player for your desktop 🎧",
+            "",
+            stock::SPOTIFAST,
             true,
         ),
     ];
@@ -2127,6 +2134,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
         match part {
             "social-previews" => social_previews_sample(app, None),
             "instagram-preview" => social_previews_sample(app, Some(0)),
+            "instagram-post-preview" => social_previews_sample(app, Some(3)),
             "facebook-preview" => social_previews_sample(app, Some(1)),
             "article-preview" => social_previews_sample(app, Some(2)),
             "history-date" => history_date_sample(app),

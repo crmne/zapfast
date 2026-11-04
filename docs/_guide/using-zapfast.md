@@ -71,7 +71,9 @@ setting from your phone.
 Link previews in messages show a large picture above the title, description,
 and site name. Reels and other video links have a square poster with a play
 button; clicking the preview opens the link. Article pictures keep their
-aspect ratio. When WhatsApp supplies a larger preview picture, ZapFast
+aspect ratio. In the WhatsApp bubble style, pictures sit close to the bubble
+edges and the timestamp sits below the last link's baseline.
+When WhatsApp supplies a larger preview picture, ZapFast
 downloads it from WhatsApp into the account's cache, keeping the inline
 thumbnail while it loads. Preview pictures load even when automatic attachment
 downloads are off; the attachment setting still controls full photos and videos.
