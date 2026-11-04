@@ -442,8 +442,32 @@ fn has_closer(
             at = link_format_end(chars, at, end, flags);
             continue;
         }
-        if chars[at] == marker && is_closer(chars, at) {
-            return true;
+        // Match inline's code spans: their markers cannot close a style.
+        let triple = |i: usize| chars.get(i..i + 3) == Some(&['`', '`', '`']);
+        if triple(at)
+            && let Some(close) = (at + 3..chars.len()).find(|&i| triple(i))
+            && close > at + 3
+        {
+            at = close + 3;
+            continue;
+        }
+        if chars[at] == '`'
+            && let Some(close) = chars[at + 1..].iter().position(|c| *c == '`')
+            && close > 0
+        {
+            at += close + 2;
+            continue;
+        }
+        if is_closer(chars, at) {
+            if chars[at] == marker {
+                return true;
+            }
+            match chars[at] {
+                '*' => flags[0] = false,
+                '_' => flags[1] = false,
+                '~' => flags[2] = false,
+                _ => {}
+            }
         }
         at += 1;
     }
@@ -996,11 +1020,15 @@ mod tests {
             for suffix in ["~", "_", "*", "~.", ".~"] {
                 let text = format!("{address}{suffix}");
                 assert_eq!(plain(&text, &[]), text);
-                let targets: Vec<_> = parse(&text, &[])
+                let linked: Vec<_> = parse(&text, &[])
                     .into_iter()
-                    .filter_map(|span| span.link)
+                    .filter_map(|span| span.link.map(|link| (span.text, link)))
                     .collect();
-                assert_eq!(targets, vec![target], "{text}");
+                assert_eq!(
+                    linked,
+                    vec![(address.to_owned(), target.to_owned())],
+                    "{text}"
+                );
             }
         }
     }
@@ -1013,6 +1041,56 @@ mod tests {
             assert_eq!(links(&text), vec!["https://example.com"]);
             let spans = parse(&text, &[]);
             assert!(spans.iter().any(|span| span.mono && span.text == "code"));
+        }
+    }
+
+    #[test]
+    fn lookahead_retires_styles_closed_before_an_address() {
+        let address = "https://example.com/end~*";
+        let text = format!("*a ~b* {address}");
+        assert_eq!(plain(&text, &[]), format!("a ~b {address}"));
+        let spans = parse(&text, &[]);
+        assert!(spans.iter().all(|span| !span.strike));
+        let link = spans.iter().find(|span| span.link.is_some()).unwrap();
+        assert_eq!(link.text, address);
+        assert_eq!(link.link.as_deref(), Some(address));
+        assert!(!link.bold);
+    }
+
+    #[test]
+    fn lookahead_ignores_markers_inside_code_spans() {
+        for marker in ['*', '_', '~'] {
+            for delimiter in ["`", "```"] {
+                let text =
+                    format!("{marker}https://example.com{delimiter}code{marker}{delimiter} after");
+                assert_eq!(
+                    plain(&text, &[]),
+                    format!("{marker}https://example.comcode{marker} after")
+                );
+                let spans = parse(&text, &[]);
+                assert!(
+                    spans
+                        .iter()
+                        .all(|span| !span.bold && !span.italic && !span.strike)
+                );
+                assert!(
+                    spans
+                        .iter()
+                        .any(|span| span.mono && span.text == format!("code{marker}"))
+                );
+                assert_eq!(links(&text), vec!["https://example.com"]);
+                let paired = format!(
+                    "{marker}https://example.com{delimiter}code{marker}{delimiter} after{marker} tail"
+                );
+                let spans = parse(&paired, &[]);
+                let link = spans.iter().find(|span| span.link.is_some()).unwrap();
+                assert_eq!(
+                    (link.bold, link.italic, link.strike),
+                    (marker == '*', marker == '_', marker == '~')
+                );
+                let tail = spans.last().unwrap();
+                assert_eq!((tail.bold, tail.italic, tail.strike), (false, false, false));
+            }
         }
     }
 
