@@ -2369,7 +2369,7 @@ impl PictureEdit {
     /// leaves nothing for Redo.
     pub fn finish_mark(&mut self) {
         if let Some(mark) = self.drawing.take()
-            && mark.visible()
+            && mark.visible(self.width, self.height)
         {
             self.marks.push(mark);
             self.undone.clear();
@@ -2651,14 +2651,17 @@ impl Mark {
         }
     }
 
-    /// Whether the mark leaves anything to see: a click with the pen leaves
-    /// a dot, but a shape needs some size.
-    fn visible(&self) -> bool {
+    /// Whether the mark leaves anything to see on a picture this big: a
+    /// click with the pen leaves a dot, but a shape needs some size, and a
+    /// pixelated region at least one block.
+    fn visible(&self, width: u32, height: u32) -> bool {
+        let sized = |from: &Point, to: &Point| (from[0] - to[0]).hypot(from[1] - to[1]) >= 1.0;
         match self {
             Self::Pen { .. } | Self::Highlighter { .. } => true,
-            Self::Arrow { from, to, .. }
-            | Self::Rectangle { from, to, .. }
-            | Self::Pixelate { from, to } => (from[0] - to[0]).hypot(from[1] - to[1]) >= 1.0,
+            Self::Arrow { from, to, .. } | Self::Rectangle { from, to, .. } => sized(from, to),
+            Self::Pixelate { from, to } => {
+                sized(from, to) && !pixel_cells(*from, *to, width, height).is_empty()
+            }
         }
     }
 
@@ -4336,6 +4339,26 @@ mod tests {
             [5.0, 5.0],
         );
         assert!(edit.drawing.is_none());
+    }
+
+    /// A drag along the picture's top edge spans no rows, so it pixelates
+    /// nothing and leaves nothing to undo.
+    #[test]
+    fn a_pixelated_region_without_a_block_is_not_kept() {
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        let pixelate = super::Brush {
+            tool: super::PictureTool::Pixelate,
+            ..pen()
+        };
+        edit.begin_mark(pixelate, [10.0, -5.0]);
+        edit.extend_mark([200.0, -40.0], 1.0);
+        edit.finish_mark();
+        assert!(edit.marks.is_empty(), "nothing pixelated along the edge");
+        edit.begin_mark(pixelate, [10.0, 0.0]);
+        edit.extend_mark([200.0, 3.0], 1.0);
+        edit.finish_mark();
+        assert_eq!(edit.marks.len(), 1, "a sliver still covers a row of blocks");
     }
 
     #[test]
