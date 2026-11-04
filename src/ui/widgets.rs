@@ -1244,7 +1244,8 @@ pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
 /// hovered plates look as the selected and hovered chat rows do.
 pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
-    let radius = CornerRadius::same(theme::RADIUS + 2);
+    // Material 3 Expressive list items: a rounded tonal container.
+    let radius = CornerRadius::same(theme::RADIUS + 4);
     // Over a vibrant window's material, a flat tint: the selected row
     // stronger than the one under the pointer.
     if palette.vibrant() {
@@ -1257,16 +1258,8 @@ pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
             .rect_filled(card, radius, palette.tint(strength));
         return;
     }
-    // Raised like a message bubble, only more gently: the list sits on a
-    // flat panel, and a hovered row should not jump out.
-    let mut shadow = palette.bubble_shadow();
-    shadow.color = shadow.color.gamma_multiply(0.6);
-    ui.painter().add(shadow.as_shape(card, radius));
-    ui.painter().rect_filled(
-        card.translate(vec2(0.0, -theme::RAISED_EDGE)),
-        radius,
-        palette.raised_edge(color),
-    );
+    // Flat, as Material shows a state by tone alone: the hovered row in a
+    // higher surface container, the selected one in the secondary container.
     ui.painter().rect_filled(card, radius, color);
 }
 
@@ -1471,29 +1464,33 @@ pub enum Side {
     Right,
 }
 
-/// Corner radius of a message bubble.
-pub const BUBBLE_RADIUS: u8 = 10;
+/// Corner radius of a message bubble: Material 3 Expressive's large-increased
+/// shape, as Google Messages rounds its bubbles.
+pub const BUBBLE_RADIUS: u8 = 20;
+/// The tighter corner a run's first bubble keeps toward its sender, where
+/// WhatsApp draws a tail.
+pub const BUBBLE_TAIL_RADIUS: u8 = 6;
 /// How far a bubble's tail reaches out from its side, and down from its top.
+/// Material bubbles draw no tail but keep its room, so runs line up.
 pub const TAIL_WIDTH: f32 = 8.0;
-const TAIL_HEIGHT: f32 = 11.0;
 
-/// The corners of a message bubble: the one its tail leaves is square.
+/// The corners of a message bubble: the one toward its sender is tighter.
 pub fn bubble_corners(tail: Option<Side>) -> CornerRadius {
     let mut corners = CornerRadius::same(BUBBLE_RADIUS);
     match tail {
-        Some(Side::Left) => corners.nw = 0,
-        Some(Side::Right) => corners.ne = 0,
+        Some(Side::Left) => corners.nw = BUBBLE_TAIL_RADIUS,
+        Some(Side::Right) => corners.ne = BUBBLE_TAIL_RADIUS,
         None => {}
     }
     corners
 }
 
-/// A message bubble's backdrop: its soft shadow, its fill, and on the first
-/// message of a run a small tail at the top corner toward the sender, as the
-/// phone draws it. A handful of vertices; bubbles off screen are culled
-/// before tessellation. `pixels_per_point` sets the soft edge the Messages
-/// style draws for itself, and `screen` is the span of the view the bubble
-/// scrolls in, down which Messages shades your own balloons; WhatsApp's
+/// A message bubble's backdrop: a flat tonal fill, as Material 3 draws a
+/// container, its corner toward the sender tightened on the first message
+/// of a run. A handful of vertices; bubbles off screen are culled before
+/// tessellation. `pixels_per_point` sets the soft edge the Messages style
+/// draws for itself, and `screen` is the span of the view the bubble
+/// scrolls in, down which Messages shades your own balloons; the Material
 /// style ignores both.
 pub fn bubble_shape(
     palette: &Palette,
@@ -1520,55 +1517,7 @@ pub fn bubble_shape(
         let outline = messages_balloon(rect, tail, MESSAGES_SCALE);
         return egui::Shape::mesh(fill_outline(&outline, color, 1.0 / pixels_per_point));
     }
-    let corners = bubble_corners(tail);
-    let shadow = palette.bubble_shadow();
-    let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
-    // The tail overlaps the bubble by a few points so no seam shows where
-    // the two anti-aliased edges meet.
-    let tail_points = tail.map(|side| {
-        let (edge, out, into): (f32, f32, f32) = match side {
-            Side::Left => (rect.left(), -TAIL_WIDTH, 3.0),
-            Side::Right => (rect.right(), TAIL_WIDTH, -3.0),
-        };
-        let top = rect.top();
-        let reach = TAIL_HEIGHT * (TAIL_WIDTH + into.abs()) / TAIL_WIDTH;
-        let mut points = vec![
-            pos2(edge + into, top),
-            pos2(edge + into, top + reach),
-            pos2(edge + out, top),
-        ];
-        // Clockwise winding either way.
-        if side == Side::Right {
-            points.reverse();
-        }
-        points
-    });
-    if let Some(points) = &tail_points {
-        let offset = vec2(shadow.offset[0].into(), shadow.offset[1].into());
-        let points: Vec<_> = points.iter().map(|point| *point + offset).collect();
-        shapes.push(soft_triangle(&points, shadow.color, shadow.blur.into()));
-    }
-    // The raised edge: the same outline a hair higher, under the fill, so
-    // only its top shows, thinning out down the rounded corners.
-    let edge = palette.raised_edge(fill);
-    let lift = vec2(0.0, -theme::RAISED_EDGE);
-    shapes.push(egui::Shape::rect_filled(
-        rect.translate(lift),
-        corners,
-        edge,
-    ));
-    if let Some(points) = &tail_points {
-        shapes.push(egui::Shape::convex_polygon(
-            points.iter().map(|point| *point + lift).collect(),
-            edge,
-            Stroke::NONE,
-        ));
-    }
-    shapes.push(egui::Shape::rect_filled(rect, corners, fill));
-    if let Some(points) = tail_points {
-        shapes.push(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
-    }
-    egui::Shape::Vec(shapes)
+    egui::Shape::rect_filled(rect, bubble_corners(tail), fill)
 }
 
 /// The text size Messages lays its balloons out for on the Mac: ChatKit's
@@ -1913,32 +1862,6 @@ fn ear_clip(points: &[egui::Pos2], winding: f32) -> Vec<[u32; 3]> {
     }
     triangles.push([left[0], left[1], left[2]].map(|v| v as u32));
     triangles
-}
-
-/// A triangle in `color` that fades out over `blur` points around its
-/// edges, like the blurred shadow of the bubble it belongs to: a sharp one
-/// showed as a grey wedge beneath the tail's tip. Six vertices.
-fn soft_triangle(points: &[egui::Pos2], color: Color32, blur: f32) -> egui::Shape {
-    let centre = (points
-        .iter()
-        .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
-        / points.len() as f32)
-        .to_pos2();
-    let mut mesh = egui::Mesh::default();
-    for point in points {
-        let out = (*point - centre).normalized();
-        mesh.colored_vertex(*point - out * blur / 4.0, color);
-        mesh.colored_vertex(*point + out * blur / 2.0, Color32::TRANSPARENT);
-    }
-    let count = points.len() as u32;
-    // Inner vertices are even, their faded partners odd.
-    mesh.add_triangle(0, 2, 4);
-    for index in 0..count {
-        let next = (index + 1) % count;
-        mesh.add_triangle(2 * index, 2 * index + 1, 2 * next + 1);
-        mesh.add_triangle(2 * index, 2 * next + 1, 2 * next);
-    }
-    egui::Shape::mesh(mesh)
 }
 
 /// Small pill label used for date separators and pinned markers.
@@ -2595,72 +2518,31 @@ mod tests {
     }
 
     #[test]
-    fn a_tail_squares_its_corner_and_points_toward_the_sender() {
+    fn a_run_tightens_the_corner_toward_its_sender() {
         assert_eq!(bubble_corners(None), CornerRadius::same(BUBBLE_RADIUS));
         let left = bubble_corners(Some(Side::Left));
-        assert_eq!((left.nw, left.ne), (0, BUBBLE_RADIUS));
+        assert_eq!((left.nw, left.ne), (BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS));
         let right = bubble_corners(Some(Side::Right));
-        assert_eq!((right.nw, right.ne), (BUBBLE_RADIUS, 0));
-
-        let rect = Rect::from_min_size(pos2(100.0, 50.0), vec2(200.0, 40.0));
-        let palette = Palette::light();
-        for (side, outside) in [(Side::Left, 92.0), (Side::Right, 308.0)] {
-            let egui::Shape::Vec(shapes) =
-                bubble_shape(&palette, rect, palette.bubble_out, Some(side), 2.0, SCREEN)
-            else {
-                panic!("a bubble is a list of shapes");
-            };
-            // The tail's tip reaches out of the bubble at its top edge. The
-            // tail is the last filled triangle, over its shadow and edge.
-            let tip = shapes
-                .iter()
-                .rev()
-                .find_map(|shape| match shape {
-                    egui::Shape::Path(path) if path.fill == palette.bubble_out => Some(path),
-                    _ => None,
-                })
-                .into_iter()
-                .flat_map(|path| path.points.iter())
-                .find(|point| !rect.contains(**point));
-            assert_eq!(tip.copied(), Some(pos2(outside, rect.top())));
-        }
-        // Later messages of a run draw no tail.
-        let egui::Shape::Vec(shapes) =
-            bubble_shape(&palette, rect, palette.bubble_in, None, 2.0, SCREEN)
-        else {
-            panic!("a bubble is a list of shapes");
-        };
-        assert!(
-            !shapes
-                .iter()
-                .any(|shape| matches!(shape, egui::Shape::Path(_)))
-        );
+        assert_eq!((right.nw, right.ne), (BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS));
     }
 
-    /// WhatsApp's bubbles are drawn exactly as before the Messages balloon
-    /// was rebuilt: every shape, point and colour of a tailed and a tailless
-    /// bubble, in both palettes, hashes to the value recorded then.
+    /// Material bubbles are one flat tonal rectangle, with no shadow, lit
+    /// edge or tail around them.
     #[test]
-    fn whatsapp_bubbles_are_unchanged() {
-        let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
-        // FNV-1a, stable across toolchains, over every shape's debug text.
-        let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
+    fn material_bubbles_are_flat_tonal_containers() {
+        let rect = Rect::from_min_size(pos2(100.0, 50.0), vec2(200.0, 40.0));
         for palette in [Palette::dark(), Palette::light()] {
             for tail in [None, Some(Side::Left), Some(Side::Right)] {
-                for (fill, ppp) in [(palette.bubble_out, 1.0), (palette.bubble_in, 1.5)] {
-                    let shape = bubble_shape(&palette, rect, fill, tail, ppp, SCREEN);
-                    for byte in format!("{shape:?}").bytes() {
-                        fingerprint = (fingerprint ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
-                    }
-                }
+                let shape = bubble_shape(&palette, rect, palette.bubble_out, tail, 2.0, SCREEN);
+                let egui::Shape::Rect(drawn) = shape else {
+                    panic!("a Material bubble is one rectangle");
+                };
+                assert_eq!(drawn.rect, rect);
+                assert_eq!(drawn.fill, palette.bubble_out);
+                assert_eq!(drawn.corner_radius, bubble_corners(tail));
             }
         }
-        println!("whatsapp bubble fingerprint {fingerprint:#x}");
-        assert_eq!(fingerprint, WHATSAPP_BUBBLES);
     }
-
-    /// The fingerprint [`whatsapp_bubbles_are_unchanged`] recorded.
-    const WHATSAPP_BUBBLES: u64 = 0x179b_3424_7615_2b9a;
 
     /// Every shape-checking test below draws into this view.
     const SCREEN: egui::Rangef = egui::Rangef {

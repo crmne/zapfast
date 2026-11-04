@@ -1,7 +1,9 @@
 //! Colors, typography, icons, and base widgets.
 //!
 //! The UI uses Inter's font weights and Lucide icons. [`Palette`] holds all
-//! light and dark theme colors.
+//! light and dark theme colors. The built-in Light and Dark themes follow
+//! Material 3 Expressive: tonal colour roles from one seed, rounder shapes,
+//! and depth shown by tone rather than shadow.
 
 use egui::{Color32, CornerRadius, Response, Sense, Stroke, Vec2};
 
@@ -105,32 +107,48 @@ pub enum BubbleStyle {
 }
 
 impl Palette {
+    /// Material 3's dark scheme, generated with Material Color Utilities
+    /// (TonalSpot, 2025 spec) from WhatsApp's green, #00A884. The comments
+    /// name the Material colour role each field takes.
     pub fn dark() -> Self {
         Self {
             dark: true,
-            window: Color32::from_rgb(0x0b, 0x14, 0x1a),
-            panel: Color32::from_rgb(0x11, 0x1b, 0x21),
-            surface: Color32::from_rgb(0x20, 0x2c, 0x33),
-            surface_hover: Color32::from_rgb(0x2a, 0x39, 0x42),
-            surface_active: Color32::from_rgb(0x35, 0x44, 0x4d),
-            outline: Color32::from_rgb(0x22, 0x2d, 0x34),
-            text: Color32::from_rgb(0xe9, 0xed, 0xef),
-            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
-            // panel, surface, and menu colours.
-            secondary: Color32::from_rgb(0x97, 0xa5, 0xae),
-            dim: Color32::from_rgb(0x8a, 0x98, 0x9f),
-            accent: Color32::from_rgb(0x00, 0xa8, 0x84),
-            accent_hover: Color32::from_rgb(0x06, 0xcf, 0x9c),
-            on_accent: Color32::from_rgb(0x0b, 0x14, 0x1a),
-            danger: Color32::from_rgb(0xf1, 0x5c, 0x6d),
+            // surface
+            window: Color32::from_rgb(0x0b, 0x0f, 0x0d),
+            // surface-container-low
+            panel: Color32::from_rgb(0x0e, 0x15, 0x12),
+            // surface-container-high
+            surface: Color32::from_rgb(0x19, 0x21, 0x1e),
+            // surface-container-highest
+            surface_hover: Color32::from_rgb(0x1e, 0x28, 0x24),
+            // secondary-container: the active indicator and selected rows
+            surface_active: Color32::from_rgb(0x29, 0x40, 0x37),
+            // outline-variant, halfway to the surface for hairlines
+            outline: Color32::from_rgb(0x2a, 0x33, 0x2f),
+            // on-surface
+            text: Color32::from_rgb(0xdd, 0xe8, 0xe1),
+            // on-surface-variant. Secondary and dim text reach WCAG AA
+            // (4.5:1) on the window, panel, surface, and menu colours.
+            secondary: Color32::from_rgb(0xa3, 0xae, 0xa8),
+            dim: Color32::from_rgb(0x98, 0xa3, 0x9d),
+            // primary, its hover state layer, and on-primary
+            accent: Color32::from_rgb(0x9f, 0xd1, 0xbd),
+            accent_hover: Color32::from_rgb(0xae, 0xe0, 0xcc),
+            on_accent: Color32::from_rgb(0x17, 0x48, 0x3a),
+            // error
+            danger: Color32::from_rgb(0xfa, 0x74, 0x6f),
             warning: Color32::from_rgb(0xff, 0xd2, 0x79),
-            overlay: Color32::from_rgb(0x23, 0x31, 0x38),
-            shadow: Color32::from_black_alpha(140),
-            chat: Color32::from_rgb(0x0b, 0x14, 0x1a),
-            bubble_in: Color32::from_rgb(0x20, 0x2c, 0x33),
-            bubble_out: Color32::from_rgb(0x00, 0x5c, 0x4b),
-            link: Color32::from_rgb(0x53, 0xbd, 0xeb),
-            read: Color32::from_rgb(0x53, 0xbd, 0xeb),
+            // surface-container-high: menus and dialogs
+            overlay: Color32::from_rgb(0x19, 0x21, 0x1e),
+            // Material lifts with tone, not shadow: only a light one.
+            shadow: Color32::from_black_alpha(110),
+            chat: Color32::from_rgb(0x0b, 0x0f, 0x0d),
+            // surface-container-highest and primary-container
+            bubble_in: Color32::from_rgb(0x1e, 0x28, 0x24),
+            bubble_out: Color32::from_rgb(0x2c, 0x5b, 0x4b),
+            // tertiary
+            link: Color32::from_rgb(0x8a, 0xd4, 0xe3),
+            read: Color32::from_rgb(0x8a, 0xd4, 0xe3),
             bubbles: BubbleStyle::WhatsApp,
         }
     }
@@ -201,35 +219,46 @@ impl Palette {
         }
     }
 
+    /// Material 3's light scheme, from the same seed as [`Palette::dark`].
     pub fn light() -> Self {
         Self {
             dark: false,
-            window: Color32::from_rgb(0xf0, 0xf2, 0xf5),
-            panel: Color32::from_rgb(0xff, 0xff, 0xff),
-            surface: Color32::from_rgb(0xf0, 0xf2, 0xf5),
-            surface_hover: Color32::from_rgb(0xe6, 0xe9, 0xec),
-            surface_active: Color32::from_rgb(0xd9, 0xdd, 0xe1),
-            outline: Color32::from_rgb(0xe9, 0xed, 0xef),
-            text: Color32::from_rgb(0x11, 0x1b, 0x21),
-            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
-            // panel, surface, chat, and menu colours. The accent is the green
-            // WhatsApp uses in its light theme, readable as text on white and
-            // under white button labels.
-            secondary: Color32::from_rgb(0x51, 0x5f, 0x67),
-            dim: Color32::from_rgb(0x63, 0x6b, 0x72),
-            accent: Color32::from_rgb(0x00, 0x80, 0x69),
-            accent_hover: Color32::from_rgb(0x00, 0x6e, 0x5a),
-            on_accent: Color32::WHITE,
-            danger: Color32::from_rgb(0xea, 0x00, 0x38),
+            // surface
+            window: Color32::from_rgb(0xf6, 0xfa, 0xf6),
+            // surface-container-low
+            panel: Color32::from_rgb(0xef, 0xf5, 0xf0),
+            // surface-container-high
+            surface: Color32::from_rgb(0xe1, 0xea, 0xe4),
+            // surface-container-highest
+            surface_hover: Color32::from_rgb(0xda, 0xe5, 0xdf),
+            // secondary-container: the active indicator and selected rows
+            surface_active: Color32::from_rgb(0xce, 0xe9, 0xdc),
+            // outline-variant, halfway to the surface for hairlines
+            outline: Color32::from_rgb(0xd5, 0xdd, 0xd8),
+            // on-surface
+            text: Color32::from_rgb(0x2b, 0x35, 0x30),
+            // on-surface-variant. Secondary and dim text reach WCAG AA
+            // (4.5:1) on the window, panel, surface, chat, and menu colours,
+            // and the primary is readable as text and under its own labels.
+            secondary: Color32::from_rgb(0x57, 0x61, 0x5c),
+            dim: Color32::from_rgb(0x5c, 0x66, 0x61),
+            // primary, its pressed state layer, and on-primary
+            accent: Color32::from_rgb(0x28, 0x6a, 0x56),
+            accent_hover: Color32::from_rgb(0x23, 0x5d, 0x4c),
+            on_accent: Color32::from_rgb(0xe4, 0xff, 0xf2),
+            // error
+            danger: Color32::from_rgb(0xa8, 0x38, 0x36),
             warning: Color32::from_rgb(0xa0, 0x6b, 0x00),
-            overlay: Color32::from_rgb(0xff, 0xff, 0xff),
+            // surface-container: menus and dialogs
+            overlay: Color32::from_rgb(0xe8, 0xf0, 0xea),
             shadow: Color32::from_black_alpha(LIGHT_SHADOW_ALPHA),
-            chat: Color32::from_rgb(0xef, 0xea, 0xe2),
-            bubble_in: Color32::from_rgb(0xff, 0xff, 0xff),
-            bubble_out: Color32::from_rgb(0xd9, 0xfd, 0xd3),
-            link: Color32::from_rgb(0x02, 0x7e, 0xb5),
-            // The lighter blue vanished on the green outgoing bubble.
-            read: Color32::from_rgb(0x02, 0x7e, 0xb5),
+            chat: Color32::from_rgb(0xf6, 0xfa, 0xf6),
+            // surface-container-high and primary-container
+            bubble_in: Color32::from_rgb(0xe1, 0xea, 0xe4),
+            bubble_out: Color32::from_rgb(0xae, 0xf0, 0xd7),
+            // tertiary, deepened to read on both bubbles
+            link: Color32::from_rgb(0x1f, 0x5c, 0x66),
+            read: Color32::from_rgb(0x1f, 0x5c, 0x66),
             bubbles: BubbleStyle::WhatsApp,
         }
     }
@@ -621,8 +650,11 @@ fn hsl(hue: f32, saturation: f32, lightness: f32) -> Color32 {
     Color32::from_rgb(channel(r), channel(g), channel(b))
 }
 
-pub const RADIUS: u8 = 8;
-pub const RADIUS_SMALL: u8 = 4;
+/// Material's shape scale: medium (12) for cards and rows, small (8) for
+/// fields, and extra-large (28) for dialogs.
+pub const RADIUS: u8 = 12;
+pub const RADIUS_SMALL: u8 = 8;
+pub const RADIUS_DIALOG: u8 = 28;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
@@ -694,8 +726,9 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
     visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
     visuals.window_stroke = Stroke::new(1.0, palette.outline);
-    visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
-    visuals.menu_corner_radius = CornerRadius::same(RADIUS);
+    visuals.window_corner_radius = CornerRadius::same(RADIUS_DIALOG);
+    // Material 3 Expressive menus take the large shape.
+    visuals.menu_corner_radius = CornerRadius::same(RADIUS + 4);
     visuals.window_shadow = palette.modal_shadow();
     visuals.popup_shadow = palette.float_shadow();
     let corner = CornerRadius::same(RADIUS_SMALL + 2);
@@ -740,8 +773,8 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
     style.spacing.button_padding = Vec2::new(12.0, 6.0);
     style.spacing.interact_size = Vec2::new(40.0, 28.0);
-    style.spacing.menu_margin = egui::Margin::same(6);
-    style.spacing.window_margin = egui::Margin::same(16);
+    style.spacing.menu_margin = egui::Margin::same(8);
+    style.spacing.window_margin = egui::Margin::same(24);
     style.spacing.scroll = egui::style::ScrollStyle {
         bar_width: 8.0,
         floating_width: 6.0,
@@ -759,7 +792,8 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     };
     style.interaction.selectable_labels = false;
     style.interaction.tooltip_delay = 0.4;
-    style.animation_time = 0.12;
+    // Material's short durations (150 to 200 ms) for state changes.
+    style.animation_time = 0.18;
     style.url_in_tooltip = false;
     ctx.set_global_style(style);
 }
@@ -768,11 +802,22 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
 /// platform's font (Settings, Appearance, Font).
 static INTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether the interface is drawn in the bundled Roboto, Material 3's
+/// typeface, with the platform's font behind it for other scripts.
+static ROBOTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Roboto's variable face, with `wght` from 100 to 900 (SIL Open Font
+/// License, `assets/fonts/Roboto-OFL.txt`).
+const ROBOTO_TTF: &[u8] = include_bytes!("../assets/fonts/Roboto.ttf");
+
 /// Chooses the interface's typeface and installs it. Call it before
 /// [`install`] with the saved choice, and again when the choice changes.
 pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
+    use std::sync::atomic::Ordering::AcqRel;
     let inter = font == crate::settings::FontChoice::Inter;
-    if INTER.swap(inter, std::sync::atomic::Ordering::AcqRel) != inter {
+    let roboto = font == crate::settings::FontChoice::Roboto;
+    let changed = INTER.swap(inter, AcqRel) != inter;
+    if ROBOTO.swap(roboto, AcqRel) != roboto || changed {
         install_fonts(ctx);
     }
 }
@@ -793,15 +838,32 @@ fn primary_font() -> fastframe_fonts::Primary {
     }
 }
 
-/// The chosen interface font at four weights (the platform's, or Inter
-/// where there is none), egui's own fonts behind it, and installed fonts
-/// for the scripts it lacks, hinted as the desktop asks. Inter also draws
-/// the [`tabular`] timers.
+/// Roboto, validated once, when it is the chosen typeface outside tests.
+fn roboto() -> Option<fastframe_fonts::LocalFont> {
+    static FACE: std::sync::OnceLock<Option<fastframe_fonts::LocalFont>> =
+        std::sync::OnceLock::new();
+    if cfg!(test) || !ROBOTO.load(std::sync::atomic::Ordering::Acquire) {
+        return None;
+    }
+    FACE.get_or_init(|| {
+        fastframe_fonts::LocalFont::from_bytes(ROBOTO_TTF.to_vec(), 0)
+            .inspect_err(|error| log::warn!("the bundled Roboto is unusable: {error}"))
+            .ok()
+    })
+    .clone()
+}
+
+/// The chosen interface font at four weights (Roboto, the platform's, or
+/// Inter where there is none), egui's own fonts behind it, and installed
+/// fonts for the scripts it lacks, hinted as the desktop asks. Inter also
+/// draws the [`tabular`] timers.
 fn install_fonts(ctx: &egui::Context) {
     let primary = primary_font();
-    let mut fonts = fastframe_fonts::FontSetup::default()
-        .primary(primary)
-        .definitions();
+    let mut setup = fastframe_fonts::FontSetup::default().primary(primary);
+    if let Some(face) = roboto() {
+        setup = setup.local_font(face);
+    }
+    let mut fonts = setup.definitions();
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);

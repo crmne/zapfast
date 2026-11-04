@@ -1,0 +1,165 @@
+name: Custom build
+
+# Unsigned builds of this fork for macOS, Windows and Arch Linux, run by
+# hand from the Actions tab (or on a pushed custom-* tag). Nothing here
+# needs the upstream project's signing secrets or environments; every
+# package lands as a workflow artifact, and a custom-* tag also gets a
+# GitHub release holding them.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["custom-*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux (x86_64)
+    runs-on: ubuntu-24.04
+    # Debian 12's glibc (2.36) keeps the binary running on every current
+    # Arch, Debian, Ubuntu and Fedora, as the upstream release does.
+    container: debian:12
+    steps:
+      - name: GUI build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
+            libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release
+      - name: Package
+        run: |
+          name=zapfast-material-x86_64-linux
+          mkdir -p "dist/$name"
+          cp target/release/zapfast README.md LICENSE THIRD-PARTY-NOTICES.md "dist/$name/"
+          cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg \
+            packaging/arch/zapfast.install "dist/$name/"
+          tar czf "dist/$name.tar.gz" -C dist "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux package
+    needs: linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: linux-x86_64
+          path: pkg
+      - name: makepkg
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          cat > pkg/PKGBUILD <<EOF
+          pkgname=zapfast-material
+          pkgver=${version}
+          pkgrel=1
+          pkgdesc='ZapFast WhatsApp client with a Material 3 Expressive theme (custom build)'
+          arch=('x86_64')
+          url='https://zapfast.rocks'
+          license=('MIT')
+          depends=('glibc' 'gcc-libs' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland'
+                   'libx11' 'libxcursor' 'libxi' 'libxrandr' 'alsa-lib' 'libpipewire')
+          provides=('zapfast')
+          conflicts=('zapfast' 'zapfast-bin' 'zapfast-git')
+          install=zapfast.install
+          source=('zapfast-material-x86_64-linux.tar.gz')
+          sha256sums=('SKIP')
+          package() {
+            cd zapfast-material-x86_64-linux
+            install -Dm755 zapfast "\$pkgdir/usr/bin/zapfast"
+            install -Dm644 LICENSE "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+            install -Dm644 THIRD-PARTY-NOTICES.md "\$pkgdir/usr/share/licenses/\$pkgname/THIRD-PARTY-NOTICES.md"
+            install -Dm644 packaging/applications/zapfast.desktop "\$pkgdir/usr/share/applications/zapfast.desktop"
+            install -Dm644 packaging/icons/zapfast.svg "\$pkgdir/usr/share/icons/hicolor/scalable/apps/zapfast.svg"
+          }
+          EOF
+          cp packaging/arch/zapfast.install pkg/
+          # makepkg refuses to run as root.
+          useradd -m builder
+          chown -R builder pkg
+          su builder -c 'cd pkg && makepkg --nodeps --noconfirm'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arch-x86_64
+          path: pkg/*.pkg.tar.zst
+          if-no-files-found: error
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release
+      - name: Package
+        shell: bash
+        run: |
+          name=zapfast-material-x64-windows
+          mkdir -p "dist/$name"
+          cp target/release/zapfast.exe README.md LICENSE THIRD-PARTY-NOTICES.md "dist/$name/"
+          cd dist && 7z a "$name.zip" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+          lipo -create target/aarch64-apple-darwin/release/zapfast \
+            target/x86_64-apple-darwin/release/zapfast -output zapfast
+      - name: App bundle and disk image (ad-hoc signed)
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist/dmg
+          bash packaging/macos/bundle.sh zapfast dist/dmg/ZapFast.app "$version"
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname ZapFast -srcfolder dist/dmg -ov -format UDZO \
+            dist/zapfast-material-macos-universal.dmg
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/custom-')
+    needs: [arch, linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          name: ZapFast Material ${{ github.ref_name }}
+          body: Unsigned custom build with the Material 3 Expressive theme.
+          make_latest: true
