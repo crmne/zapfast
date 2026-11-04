@@ -1968,6 +1968,7 @@ impl Worker {
                     | Event::Messages { .. }
                     | Event::MessageUpdated(_)
                     | Event::Incoming { .. }
+                    | Event::Reacted { .. }
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
@@ -5578,20 +5579,34 @@ impl Worker {
             // As on WhatsApp, someone reacting to one of our messages brings
             // the chat up the list; history (which passes its secrets) and a
             // removed reaction do not.
-            let raised = secrets.is_none()
-                && !from_me
-                && updated.from_me
-                && updated
-                    .reactions
-                    .iter()
-                    .any(|reaction| reaction.sender == sender && !reaction.emoji.is_empty());
+            let added = (secrets.is_none() && !from_me && updated.from_me)
+                .then(|| {
+                    updated
+                        .reactions
+                        .iter()
+                        .find(|reaction| reaction.sender == sender && !reaction.emoji.is_empty())
+                        .map(|reaction| reaction.emoji.clone())
+                })
+                .flatten();
+            // Only a live reaction notifies: one replayed while catching up
+            // with the phone is old news.
+            let notify = (added.is_some() && !self.syncing).then(|| updated.clone());
             self.emit(Event::MessageUpdated(Box::new(updated)));
-            if raised {
+            if let Some(emoji) = added {
                 let at = (sent_at / 1000).min(crate::util::now());
                 if let Err(error) = self.archive.touch_activity(&chat, at) {
                     log::warn!("could not date a chat by its reaction: {error}");
                 }
                 self.emit_chat(&chat);
+                if let Some(message) = notify {
+                    self.emit(Event::Reacted {
+                        chat,
+                        message: Box::new(message),
+                        sender,
+                        emoji,
+                        sent_at: at,
+                    });
+                }
             }
         }
     }
@@ -21827,6 +21842,61 @@ mod receipt_tests {
         assert_eq!(stored.reactions[0].emoji, "🏆");
         assert!(!stored.reactions[0].from_me);
         assert_eq!(stored.reactions[0].sender, PEER);
+    }
+
+    #[test]
+    fn only_a_live_reaction_to_our_message_asks_for_a_notification() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Ada").unwrap();
+        worker
+            .archive
+            .insert_message(&own_message("ours", 10), None)
+            .unwrap();
+        worker
+            .archive
+            .insert_message(&incoming("theirs", 11), None)
+            .unwrap();
+        let react = |worker: &mut Worker, target: &str, emoji: &str| {
+            let reaction = {
+                let mut proto = wa::message::ReactionMessage::default();
+                proto.key = MessageField::some({
+                    let mut proto = wa::MessageKey::default();
+                    proto.remote_jid = Some(PEER.into());
+                    proto.id = Some(target.into());
+                    proto
+                });
+                proto.text = Some(emoji.into());
+                proto
+            };
+            let now = crate::util::now() * 1000;
+            worker.store_plain_reaction(PEER, PEER, false, &reaction, now);
+        };
+        let reacted = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::Reacted { message, emoji, .. } => Some((message.id, emoji)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        while events.try_recv().is_ok() {}
+
+        react(&mut worker, "theirs", "👍");
+        assert!(
+            reacted(&events).is_empty(),
+            "only reactions to our messages"
+        );
+        react(&mut worker, "ours", "❤️");
+        assert_eq!(reacted(&events), [("ours".to_owned(), "❤️".to_owned())]);
+        react(&mut worker, "ours", "");
+        assert!(reacted(&events).is_empty(), "a removal notifies nothing");
+        worker.syncing = true;
+        react(&mut worker, "ours", "😂");
+        assert!(
+            reacted(&events).is_empty(),
+            "nor one replayed while syncing"
+        );
     }
 
     #[test]

@@ -530,6 +530,14 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "When off, they say only “New message”."),
             |settings| &mut settings.notification_content,
         );
+        notifications.toggle(
+            translated(locale, "Reaction notifications"),
+            translated(
+                locale,
+                "Notify when someone reacts to one of your messages.",
+            ),
+            |settings| &mut settings.reaction_notifications,
+        );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
         notifications.row(
             translated(locale, "Limit repeat notifications"),

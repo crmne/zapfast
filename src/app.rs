@@ -2569,6 +2569,104 @@ impl App {
         self.wants_attention = true;
     }
 
+    /// Sends a desktop notification when someone reacts to one of our
+    /// messages, as the phone does: "Ada: Reacted 👍 to “the plan”" in a
+    /// group, the same without the name in a one-to-one chat. It follows the
+    /// message notifications' rules: muted, archived and locked chats stay
+    /// quiet, the chat on screen does not notify, a limited chat waits, and
+    /// behind the app lock or without notification content it says only
+    /// "New message".
+    fn maybe_notify_reaction(
+        &mut self,
+        chat_id: &str,
+        message: &Message,
+        sender: &str,
+        emoji: &str,
+        sent_at: i64,
+    ) {
+        if !self.settings.reaction_notifications
+            || !self.account().settings.notifications
+            || self.power.conditions().display_off
+        {
+            return;
+        }
+        let Some(chat) = self.chat(chat_id) else {
+            return;
+        };
+        if !reaction_notification_eligible(chat, crate::util::now(), sent_at) {
+            return;
+        }
+        let reading = !self.events_hidden
+            && !self.window_hidden
+            && self.window_focused
+            && self.chat_view()
+            && self.open_chat.as_deref() == Some(chat_id);
+        if reading {
+            return;
+        }
+        let is_group = chat.is_group();
+        let limited = self
+            .account()
+            .settings
+            .limit_notifications
+            .applies(is_group);
+        let account = self.account().id.clone();
+        if !self
+            .notifications
+            .allow(&account, chat_id, std::time::Instant::now(), limited)
+        {
+            return;
+        }
+        if self.app_lock.is_locked() || !self.settings.notification_content {
+            self.notify_without_content(chat_id, is_group, &message.id, limited);
+            return;
+        }
+        let Some(chat) = self.chat(chat_id) else {
+            return;
+        };
+        let name = self.chat_title(chat);
+        let chat_sound = chat.notification_sound.clone();
+        let reactor = self.display_name_or(sender, None);
+        let summary = crate::a11y::fill(
+            // Translators: a notification that someone reacted to one of
+            // your messages. {emoji} is the reaction, {text} the message.
+            &crate::i18n::gettext(self.locale, "Reacted {emoji} to “{text}”"),
+            &[("emoji", emoji), ("text", &self.message_text(message))],
+        );
+        let account_label = self
+            .has_several_accounts()
+            .then(|| self.account().display_label(self.locale));
+        let (title, body) = crate::notify::lines(
+            &name,
+            is_group,
+            &reactor,
+            &summary,
+            account_label.as_deref(),
+        );
+        let picture = self
+            .avatar(chat_id)
+            .or_else(|| self.cached_avatar(chat_id))
+            .or_else(|| self.avatar(sender))
+            .or_else(|| self.cached_avatar(sender));
+        let waker = self.waker.clone();
+        let sound = notification_sound(&self.settings, chat_sound, is_group, false);
+        self.notifications.show(
+            title,
+            body,
+            picture,
+            sound,
+            crate::notify::NotificationTarget {
+                account,
+                chat: chat_id.to_owned(),
+                message: Some(message.id.clone()),
+            },
+            std::sync::Arc::clone(&self.notification_opens),
+            move || waker.wake(),
+            limited,
+        );
+        self.wants_attention = true;
+    }
+
     /// Announces a message while the app lock is on, or with notification
     /// content turned off: "New message" from ZapFast, without the chat, the
     /// sender, the text or a picture, so the desktop shows nothing the lock
@@ -4042,6 +4140,13 @@ impl App {
                 }
             }
             Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
+            Event::Reacted {
+                chat,
+                message,
+                sender,
+                emoji,
+                sent_at,
+            } => self.maybe_notify_reaction(&chat, &message, &sender, &emoji, sent_at),
             Event::Picked {
                 chat,
                 paths,
@@ -12322,6 +12427,13 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
         return false;
     }
     now - message_at <= 60
+}
+
+/// Whether a reaction may notify. A reaction leaves the chat read, so unlike
+/// a message it does not need an unread count; it is still old news after a
+/// minute.
+fn reaction_notification_eligible(chat: &Chat, now: i64, reacted_at: i64) -> bool {
+    !(chat.archived || chat.muted(now) || chat.locked) && now - reacted_at <= 60
 }
 
 mod calls;
@@ -26813,6 +26925,83 @@ mod app_lock_tests {
         let shown = app.notifications.shown.last().unwrap();
         assert_eq!(shown.title, "Ada Lovelace");
         assert_eq!(shown.body, "the engine is ready");
+    }
+
+    /// Our message, which Ada has just reacted to, in a read chat.
+    fn reacted(app: &mut App) -> Message {
+        let mut message = incoming(app);
+        app.chats[0].unread = 0;
+        message.from_me = true;
+        message.sender = String::new();
+        message.reactions.push(crate::model::Reaction {
+            sender: CHAT.into(),
+            from_me: false,
+            emoji: "👍".into(),
+        });
+        message
+    }
+
+    #[test]
+    fn a_reaction_to_our_message_notifies_with_the_emoji_and_the_message() {
+        let mut app = unlocked_app();
+        let message = reacted(&mut app);
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", crate::util::now());
+        let shown = app.notifications.shown.last().unwrap();
+        assert_eq!(shown.title, "Ada Lovelace");
+        assert_eq!(shown.body, "Reacted 👍 to “the engine is ready”");
+        assert!(app.wants_attention);
+    }
+
+    #[test]
+    fn reaction_notifications_follow_their_setting() {
+        let mut app = unlocked_app();
+        let message = reacted(&mut app);
+        app.settings.reaction_notifications = false;
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", crate::util::now());
+        assert!(app.notifications.shown.is_empty());
+        assert!(!app.wants_attention);
+
+        app.settings.reaction_notifications = true;
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", crate::util::now());
+        assert_eq!(app.notifications.shown.len(), 1);
+    }
+
+    #[test]
+    fn reactions_stay_quiet_where_messages_would() {
+        let mut app = unlocked_app();
+        let message = reacted(&mut app);
+        let now = crate::util::now();
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", now - 120);
+        assert!(app.notifications.shown.is_empty(), "an old reaction");
+
+        app.account_mut().settings.notifications = false;
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", now);
+        assert!(app.notifications.shown.is_empty(), "notifications off");
+        app.account_mut().settings.notifications = true;
+
+        app.chats[0].archived = true;
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", now);
+        assert!(app.notifications.shown.is_empty(), "an archived chat");
+        app.chats[0].archived = false;
+
+        app.window_hidden = false;
+        app.window_focused = true;
+        app.page = Page::Chats;
+        app.open_chat = Some(CHAT.into());
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", now);
+        assert!(app.notifications.shown.is_empty(), "the chat on screen");
+    }
+
+    #[test]
+    fn reaction_notifications_without_content_say_only_new_message() {
+        let mut app = unlocked_app();
+        let message = reacted(&mut app);
+        app.settings.notification_content = false;
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", crate::util::now());
+        let shown = app.notifications.shown.last().unwrap();
+        assert_eq!(shown.title, "ZapFast");
+        assert_eq!(shown.body, "New message");
+        assert_eq!(shown.picture, None);
     }
 
     #[test]
