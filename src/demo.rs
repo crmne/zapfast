@@ -2270,9 +2270,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "tiktok-video" => forwarded_video_sample(app, false),
             "tiktok-video-ready" => forwarded_video_sample(app, true),
-            "video-preview" => {
+            "video-preview" | "video-preview-edited" => {
                 forwarded_video_sample(app, true);
                 let row = &mut app.conversations.get_mut(SAMPLES[0].id).unwrap().messages[0];
+                row.edited = part == "video-preview-edited";
                 if let Content::Video { caption, .. } = &mut row.content {
                     *caption = None;
                 }
@@ -9849,6 +9850,7 @@ mod tests {
             "tiktok-video",
             "tiktok-video-ready",
             "video-preview",
+            "video-preview-edited",
             "video",
             "video-playing",
             "video-expanded",

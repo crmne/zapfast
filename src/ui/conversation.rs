@@ -6642,9 +6642,15 @@ fn footer_over_picture(
         picture
     };
     let font = theme::regular(11.0);
-    let time =
+    let time = ui.painter().layout_no_wrap(
+        crate::util::clock(message.timestamp),
+        font.clone(),
+        Color32::WHITE,
+    );
+    let edited = message.edited.then(|| {
         ui.painter()
-            .layout_no_wrap(crate::util::clock(message.timestamp), font, Color32::WHITE);
+            .layout_no_wrap("edited".to_owned(), font, Color32::WHITE)
+    });
     let failed = not_sent(message).then(|| {
         ui.painter()
             .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
@@ -6653,6 +6659,7 @@ fn footer_over_picture(
     let marks =
         if starred { FOOTER_MARK_SLOT } else { 0.0 } + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     let width = time.size().x
+        + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
         + tick_width
         + marks;
@@ -6689,6 +6696,14 @@ fn footer_over_picture(
     let status =
         Rect::from_x_y_ranges(x..=row.right(), row.center().y - 7.5..=row.center().y + 7.5);
     status_opens_info(ui, view, message, status, actions);
+    if let Some(edited) = edited {
+        x -= edited.size().x + 4.0;
+        ui.painter().galley(
+            pos2(x, row.center().y - edited.size().y / 2.0),
+            edited,
+            Color32::WHITE,
+        );
+    }
     if let Some(failed) = failed {
         x -= failed.size().x + 6.0;
         let label = Rect::from_min_size(
@@ -10074,21 +10089,29 @@ fn whatsapp_media_preview(palette: &Palette, message: &Message) -> bool {
 /// Small site icons stay compact; media posters and WhatsApp's larger
 /// downloadable pictures use the expanded layout.
 fn large_preview(preview: &LinkPreview, thumbnail: Option<&[u8]>) -> bool {
-    preview.is_video()
-        || preview.image.as_ref().is_some_and(|image| {
+    if preview.is_video() {
+        return true;
+    }
+    let dimensions = preview
+        .image
+        .as_ref()
+        .and_then(|image| {
             image
                 .width
                 .zip(image.height)
                 .filter(|(width, height)| *width > 0 && *height > 0)
-                .is_none_or(|(width, height)| width >= 200 || height >= 200)
         })
-        || thumbnail.is_some_and(|bytes| {
-            image::ImageReader::new(std::io::Cursor::new(bytes))
-                .with_guessed_format()
-                .ok()
-                .and_then(|reader| reader.into_dimensions().ok())
-                .is_some_and(|(w, h)| w >= 200 || h >= 200)
-        })
+        .or_else(|| {
+            thumbnail.and_then(|bytes| {
+                image::ImageReader::new(std::io::Cursor::new(bytes))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|reader| reader.into_dimensions().ok())
+            })
+        });
+    dimensions.map_or(preview.image.is_some(), |(width, height)| {
+        width >= 200 || height >= 200
+    })
 }
 
 /// Received/sent link cards put the image above the caption, as WhatsApp
@@ -10311,10 +10334,18 @@ fn composer_preview_layout(
                         .image
                         .as_ref()
                         .and_then(|image| image.path.as_ref())
-                        .map(|path| {
+                        .and_then(|path| {
                             let uri = crate::util::image_uri(path);
                             crate::image_cache::touch(ui.ctx(), &uri);
-                            uri
+                            matches!(
+                                ui.ctx().try_load_texture(
+                                    &uri,
+                                    egui::TextureOptions::LINEAR,
+                                    egui::load::SizeHint::default()
+                                ),
+                                Ok(egui::load::TexturePoll::Ready { .. })
+                            )
+                            .then_some(uri)
                         })
                         .or_else(|| {
                             thumbnail.map(|(chat, id, bytes)| {
@@ -12253,73 +12284,143 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn narrow_video_metadata_does_not_overlap_or_escape_the_bubble() {
-        for status in [Delivery::Sent, Delivery::Failed] {
-            let ctx = egui::Context::default();
-            crate::theme::install(&ctx);
-            with_still_view(|view| {
-                let mut row = message(Content::Video {
-                    caption: None,
-                    media: media(Some(80), Some(640)),
-                    seconds: Some(178),
-                    gif: false,
-                    note: false,
-                });
-                row.chat = view.chat.id.clone();
-                row.from_me = true;
-                row.status = status;
-                let marked = [row.id.clone()].into_iter().collect();
-                let view = View {
-                    starred: Some(&marked),
-                    pins: Some(&marked),
-                    ..*view
-                };
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            vec2(920.0, 1000.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        bubble(
-                            ui,
-                            &view,
-                            &row,
-                            None,
-                            RunPlace {
-                                show_sender: false,
-                                show_avatar: false,
-                                tailed: false,
-                            },
-                            &mut Vec::new(),
-                        );
-                    },
+    fn compact_preview_uses_inline_pixels_when_the_cached_file_is_unreadable() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let preview = LinkPreview {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            video: false,
+            image_sha256: None,
+            image: Some(Box::new(Media {
+                path: Some(root.path().join("missing.png")),
+                ..media(Some(64), Some(64))
+            })),
+        };
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(72, 72)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let inline = link_thumbnail_uri(&ctx, &preview, "synthetic", "icon", jpeg.get_ref());
+        let mut painted = false;
+        for _ in 0..100 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                composer_preview_layout(
+                    ui,
+                    &Palette::dark(),
+                    &preview,
+                    Some(("synthetic", "icon", jpeg.get_ref())),
+                    240.0,
                 );
-                output.textures_delta.clear();
-                let id = bubble_id(&row.chat, &row.id);
-                let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
-                let frame = rect(id.with("rect"));
-                let video = rect(id.with("video"));
-                let clock = rect(footer_id(&row.chat, &row.id));
-                assert!(
-                    frame.contains_rect(clock),
-                    "footer escapes the bubble: {clock:?}, {frame:?}"
-                );
-                for shape in &output.shapes {
-                    if let egui::Shape::Text(text) = &shape.shape
-                        && text.galley.text().starts_with("2:58")
-                    {
-                        let duration = Rect::from_min_size(text.pos, text.galley.size());
-                        assert!(
-                            !clock.intersects(duration),
-                            "duration overlaps the timestamp"
-                        );
-                        assert!(video.contains_rect(duration), "duration escapes the video");
-                    }
-                }
             });
+            output.textures_delta.clear();
+            painted = output.shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) => rect.brush.as_ref().is_some_and(|brush| {
+                    ctx.tex_manager()
+                        .read()
+                        .meta(brush.fill_texture_id)
+                        .is_some_and(|meta| meta.name.contains(&inline))
+                }),
+                egui::Shape::Mesh(mesh) => ctx
+                    .tex_manager()
+                    .read()
+                    .meta(mesh.texture_id)
+                    .is_some_and(|meta| meta.name.contains(&inline)),
+                _ => false,
+            });
+            if painted {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            painted,
+            "a missing cached icon must not hide its inline thumbnail"
+        );
+    }
+
+    #[test]
+    fn narrow_video_metadata_does_not_overlap_or_escape_the_bubble() {
+        for width in [80, 720] {
+            for status in [Delivery::Sent, Delivery::Failed] {
+                let ctx = egui::Context::default();
+                crate::theme::install(&ctx);
+                with_still_view(|view| {
+                    let mut row = message(Content::Video {
+                        caption: None,
+                        media: media(Some(width), Some(640)),
+                        seconds: Some(178),
+                        gif: false,
+                        note: false,
+                    });
+                    row.chat = view.chat.id.clone();
+                    row.from_me = true;
+                    row.status = status;
+                    let marked = [row.id.clone()].into_iter().collect();
+                    let view = View {
+                        starred: Some(&marked),
+                        pins: Some(&marked),
+                        ..*view
+                    };
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                vec2(920.0, 1000.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            bubble(
+                                ui,
+                                &view,
+                                &row,
+                                None,
+                                RunPlace {
+                                    show_sender: false,
+                                    show_avatar: false,
+                                    tailed: false,
+                                },
+                                &mut Vec::new(),
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let id = bubble_id(&row.chat, &row.id);
+                    let rect = |id| ctx.data(|data| data.get_temp::<Rect>(id)).unwrap();
+                    let frame = rect(id.with("rect"));
+                    let video = rect(id.with("video"));
+                    let clock = rect(footer_id(&row.chat, &row.id));
+                    assert!(
+                        frame.contains_rect(clock),
+                        "footer escapes the bubble: {clock:?}, {frame:?}"
+                    );
+                    let mut durations = 0;
+                    for shape in &output.shapes {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && text.galley.text().starts_with("2:58")
+                        {
+                            durations += 1;
+                            let duration = Rect::from_min_size(text.pos, text.galley.size());
+                            assert!(
+                                !clock.intersects(duration),
+                                "duration overlaps the timestamp"
+                            );
+                            assert!(video.contains_rect(duration), "duration escapes the video");
+                        }
+                    }
+                    assert_eq!(
+                        durations,
+                        // A failed narrow footer moves below the picture,
+                        // leaving the duration the whole bottom band.
+                        usize::from(width == 720 || status == Delivery::Failed),
+                        "duration visibility must match the deliberately chosen frame width"
+                    );
+                });
+            }
         }
     }
 
@@ -12342,6 +12443,7 @@ mod tests {
                         row.chat = view.chat.id.clone();
                         row.from_me = own;
                         row.forwarded = true;
+                        row.edited = true;
                         let mut output = ctx.run_ui(
                             egui::RawInput {
                                 screen_rect: Some(Rect::from_min_size(
@@ -12370,6 +12472,11 @@ mod tests {
                         let id = bubble_id(&row.chat, &row.id);
                         let video = rect(id.with("video"));
                         let clock = rect(footer_id(&row.chat, &row.id));
+                        assert!(
+                            output.shapes.iter().any(|shape| matches!(&shape.shape,
+                            egui::Shape::Text(text) if text.galley.text() == "edited")),
+                            "edited videos keep their edit indicator"
+                        );
                         let duration = output
                             .shapes
                             .iter()
@@ -12647,6 +12754,12 @@ mod tests {
         assert!(
             !large_preview(&preview, Some(jpeg.get_ref())),
             "download metadata does not enlarge a favicon"
+        );
+        preview.image.as_mut().unwrap().width = None;
+        preview.image.as_mut().unwrap().height = None;
+        assert!(
+            !large_preview(&preview, Some(jpeg.get_ref())),
+            "inline dimensions classify an icon when download dimensions are absent"
         );
         let old_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", jpeg.get_ref());
         let new_uri = link_thumbnail_uri(&ctx, &preview, "synthetic", "edited", b"replacement");

@@ -18057,6 +18057,35 @@ mod tests {
     }
 
     #[test]
+    fn preview_paths_recover_after_the_cached_file_is_removed() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let root = tempfile::tempdir().unwrap();
+        let chat = "200@s.whatsapp.net";
+        worker.archive.ensure_chat(chat, "Synthetic").unwrap();
+        let raw = full_link_preview_fixture();
+        let mut row = crate::archive::tests::message(chat, "missing-preview", 1, false);
+        row.content = classify(&raw).unwrap();
+        row.content.media_mut().unwrap().path = Some(root.path().join("missing.jpg"));
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+        worker.relocate_media();
+        assert!(
+            worker
+                .archive
+                .message(chat, &row.id)
+                .unwrap()
+                .unwrap()
+                .content
+                .media()
+                .unwrap()
+                .path
+                .is_none()
+        );
+    }
+
+    #[test]
     fn changed_link_picture_keys_invalidate_same_url_paths() {
         let raw = full_link_preview_fixture();
         let mut old = classify(&raw).unwrap();
@@ -18148,7 +18177,7 @@ mod tests {
     #[tokio::test]
     async fn link_preview_download_cannot_attach_to_a_link_edited_during_transfer() {
         for change_url in [false, true] {
-            let (mut worker, _events, _, _) = receipt_tests::worker();
+            let (mut worker, events, _, _) = receipt_tests::worker();
             let chat = "200@s.whatsapp.net";
             worker.archive.ensure_chat(chat, "Synthetic").unwrap();
             let raw = full_link_preview_fixture();
@@ -18199,6 +18228,13 @@ mod tests {
                     .is_none()
             );
             assert!(worker.downloads.is_empty());
+            assert!(
+                events.try_iter().any(|event| matches!(event,
+                    Event::Media { message, result: Err(error), .. }
+                        if message == row.id && error == "Not connected to WhatsApp"
+                )),
+                "the replacement download was attempted, even without a connected client"
+            );
         }
     }
 

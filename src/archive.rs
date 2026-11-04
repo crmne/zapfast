@@ -1141,7 +1141,8 @@ impl Archive {
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
             "SELECT chat, id, coalesce(json_extract(content, '$.media.path'),
-                 json_extract(content, '$.card.image.path')) AS path
+                 json_extract(content, '$.card.image.path'),
+                 json_extract(content, '$.preview.image.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -4688,6 +4689,7 @@ pub(crate) mod tests {
         }
         let mut after = 0;
         let mut ids = Vec::new();
+        let mut raw_lengths = Vec::new();
         loop {
             let rows = archive.link_previews_with_raw(after).unwrap();
             if rows.is_empty() {
@@ -4700,9 +4702,19 @@ pub(crate) mod tests {
                     <= 8 * 1024 * 1024
             );
             after = rows.last().unwrap().rowid;
+            raw_lengths.extend(rows.iter().map(|row| row.raw.as_ref().map(Vec::len)));
             ids.extend(rows.into_iter().map(|row| row.id));
         }
         assert_eq!(ids, ["oversized", "first", "second", "third"]);
+        assert_eq!(
+            raw_lengths,
+            [
+                None,
+                Some(3 * 1024 * 1024),
+                Some(3 * 1024 * 1024),
+                Some(3 * 1024 * 1024)
+            ]
+        );
     }
 
     #[test]

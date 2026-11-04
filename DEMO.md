@@ -100,6 +100,7 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 before download; `tiktok-video-ready` shows its recovered first-frame poster.
 `video-preview` shows a downloaded portrait video with a small inline JPEG
 and no caption, for checking poster quality and the timestamp overlay.
+`video-preview-edited` also shows the edit indicator beside the timestamp.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
