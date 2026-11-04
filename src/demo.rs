@@ -420,6 +420,18 @@ fn tint(hue: f32, saturation: f32, value: f32) -> image::Rgb<u8> {
 }
 
 /// One mark of each kind on a picture this big, placed by share of its sides.
+/// A synthetic screenshot: lines of black "words" on white, as text reads
+/// from afar.
+fn print_screenshot(width: u32, height: u32) -> Vec<u8> {
+    image::RgbaImage::from_fn(width, height, |x, y| {
+        let (line, row) = (y / 30, y % 30);
+        let word = (x / 9 + line * 7) % 11;
+        let ink = x >= 40 && x < width - 40 && (8..20).contains(&row) && word < 8 && x % 9 > 1;
+        image::Rgba(if ink { [20, 20, 20, 255] } else { [255; 4] })
+    })
+    .into_raw()
+}
+
 fn picture_marks(width: f32, height: f32) -> Vec<crate::model::Mark> {
     use crate::model::{Ink, Mark, Thickness};
     let at = |x: f32, y: f32| [x * width, y * height];
@@ -435,8 +447,10 @@ fn picture_marks(width: f32, height: f32) -> Vec<crate::model::Mark> {
             from: at(0.62, 0.12),
             to: at(0.9, 0.34),
         },
+        // A zigzag over itself, so the crossings show the highlighter is one
+        // even wash, as it is written.
         Mark::Highlighter {
-            points: vec![at(0.1, 0.2), at(0.45, 0.2)],
+            points: vec![at(0.1, 0.16), at(0.45, 0.28), at(0.45, 0.16), at(0.1, 0.28)],
             ink: Ink::Yellow,
             width: line(Thickness::Thick) * crate::model::HIGHLIGHTER_SPREAD,
         },
@@ -3941,6 +3955,30 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     ink: crate::model::Ink::Yellow,
                     thickness: crate::model::Thickness::Thick,
                 };
+            }
+            // A pasted screenshot of text with a line of it pixelated, the
+            // pixelate tool picked.
+            "picture-pixelate" => {
+                let (width, height) = (720u32, 420u32);
+                let rgba = print_screenshot(width, height);
+                let target = app.stage(crate::app::Pending::Picture {
+                    width: width as usize,
+                    height: height as usize,
+                    rgba: std::sync::Arc::new(rgba.clone()),
+                    texture: None,
+                });
+                let mut edit = crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::Pasted(std::sync::Arc::new(rgba)),
+                    width,
+                    height,
+                );
+                edit.marks = vec![crate::model::Mark::Pixelate {
+                    from: [40.0, 130.0],
+                    to: [520.0, 190.0],
+                }];
+                app.open_picture_edit(edit);
+                app.picture_brush.tool = crate::model::PictureTool::Pixelate;
             }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
@@ -9991,6 +10029,7 @@ mod tests {
             "crop",
             "picture-marks",
             "picture-marks,light",
+            "picture-pixelate",
             "compose-emoji",
             "voice",
             "voice,voice-menu",
