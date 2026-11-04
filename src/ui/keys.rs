@@ -39,10 +39,14 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let jump_allowed =
         jump_keys_reach_chat(editing_text, composer_focused, app.composer.is_empty());
     // The emoji keys open the picker only where the smiley would: beside the
-    // focused message field, which hides the smiley while editing.
+    // focused message field, which hides the smiley while editing. A
+    // selection, a block or a read-only chat replaces the field, which can
+    // keep its focus for a frame after.
     let emoji_keys_allowed = composer_focused
         && app.chat_view()
-        && app.open_chat.is_some()
+        && app.current_chat().is_some_and(|chat| {
+            chat.can_send() && !app.blocklist.contains(&chat.id) && !app.selecting_in(&chat.id)
+        })
         && app.editing.is_none()
         && app.dialog.is_none()
         && !app.show_update
@@ -2268,6 +2272,26 @@ mod tests {
         );
         app.call = None;
         app.call_surface_hidden = false;
+        // A selection or a block replaces the message field, and the keys
+        // open nothing in the frame it may still hold focus.
+        app.selection = Some((ids[0].clone(), Vec::new()));
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.selection = None;
+        app.blocklist.ids = Some(std::iter::once(ids[0].clone()).collect());
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.blocklist.ids = None;
+        app.chats[0].read_only = true;
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.chats[0].read_only = false;
         // Without the message field focused, the keys are not the picker's.
         ctx.memory_mut(|memory| memory.surrender_focus(composer));
         app.actions.clear();
