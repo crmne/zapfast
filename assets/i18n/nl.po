@@ -1790,8 +1790,8 @@ msgid ""
 "After one notification, a chat stays quiet for 10 minutes. Opening the chat "
 "resets this. In groups, mentions and replies to you still notify."
 msgstr ""
-"Na één melding blijft een chat 10 minuten stil. Als je de chat opent, begint "
-"die periode opnieuw. In groepen krijg je wel meldingen van vermeldingen en "
+"Na één melding blijft een chat 10 minuten stil. Als je de chat opent, stopt "
+"die stilte meteen. In groepen krijg je wel meldingen van vermeldingen en "
 "antwoorden aan jou."
 
 #: src/ui/settings.rs:564 src/ui/settings.rs:2123
