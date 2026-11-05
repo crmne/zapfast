@@ -1003,6 +1003,9 @@ mutes all of that number's notifications while it stays connected, and leaves
 its unread chats out of the app icon's badge, as a muted chat's are.
 To keep messages off the screen, turn off **Show message content in
 notifications** in Settings: notifications then say only "New message".
+Messages that arrive within 5 seconds of a chat's notification make no new
+notification or sound, so a burst of messages announces itself once; in a group,
+a mention of you or a reply to you still notifies at once.
 To hear less from busy chats, set **Limit repeat notifications** in
 **Settings > Notifications** to direct messages, groups, or both: a chat then
 sends one notification, then stays quiet for 10 minutes or until you read it,
