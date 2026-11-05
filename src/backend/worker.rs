@@ -7916,6 +7916,12 @@ impl Worker {
                 }
             }
             Command::ChatSoundsAdopted(copied) => {
+                // A chat merged under its phone number while its sound was
+                // copied takes the copy there, if it still names the file.
+                let copied = copied
+                    .into_iter()
+                    .map(|(chat, from, to)| (self.canonical_str(&chat), from, to))
+                    .collect();
                 for chat in crate::sounds::apply_adopted(&self.archive, copied) {
                     self.emit_chat(&chat);
                 }
