@@ -57,7 +57,9 @@ view and pause when they scroll away.
 
 When you write a new text message with a web link and pause, ZapFast fetches
 that page, and its picture from wherever the page says it is, directly, through
-your proxy if one is set, and shows a preview card above the message box, for the first link. Edits
+your proxy if one is set, and shows a preview card above the message box, for the first link. Of the
+page it downloads only the start, up to the end of its head (`</head>` or
+`<body`), and never more than 2 MiB. Edits
 and captions get no card. The card is sent with the message. ZapFast identifies
 itself to the site as ZapFast, and some sites give no preview to apps they do
 not recognise, in which case the message goes out with a plain link. ZapFast
