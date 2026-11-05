@@ -168,7 +168,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         let row_gap = ui.spacing().item_spacing.y;
         ui.spacing_mut().item_spacing.y = 0.0;
         let width = ui.available_width();
-        if theme::traffic_light_inset(ui.ctx()) > 0.0 {
+        if super::macos_title_strip(app, ui.ctx()) {
+            // The lights have a strip of their own above the rail. Its
+            // destinations stay where they are beside the list.
+            let below = (LIGHTS_CLEARANCE - super::title_strip_height(ui.ctx())).max(GAP);
+            let (strip, _) = ui.allocate_exact_size(vec2(width, below), Sense::hover());
+            super::titlebar_drag(ui, strip);
+        } else if theme::traffic_light_inset(ui.ctx()) > 0.0 {
             // The traffic lights, or the caption buttons ZapFast draws where
             // the desktop puts them on the left (GNOME's round ones end 42
             // points down), take the rail's top; it starts under them.

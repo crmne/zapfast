@@ -25719,6 +25719,61 @@ mod rail_tests {
             );
             // Under Show the chat list, which takes a cell of its own.
             assert!(avatar.top() >= show.bottom());
+            if crate::theme::macos_chrome(&ctx) {
+                // Over the rail alone the lights get a strip of their own,
+                // and the rail and the open chat's header start under it.
+                assert!(crate::ui::macos_title_strip(&app, &ctx));
+                let strip = crate::ui::title_strip_height(&ctx);
+                assert_eq!(strip, 32.0);
+                assert_eq!(rail.top(), strip, "the rail starts under the strip");
+                let header = recorded(&ctx, crate::ui::conversation::header_rect_id())
+                    .expect("the open chat's header");
+                assert!(header.top() >= strip, "{header:?} starts under the strip");
+                // Nothing interactive under the lights, centred in the strip.
+                let lights = egui::Rect::from_min_max(
+                    egui::pos2(0.0, strip / 2.0 - 9.0),
+                    egui::pos2(84.0, strip / 2.0 + 9.0),
+                );
+                for (stop, id) in focus::stops(&ctx) {
+                    let response = ctx.read_response(id).unwrap();
+                    assert!(
+                        !response.rect.intersects(lights),
+                        "{stop:?} at {:?} is under the traffic lights",
+                        response.rect
+                    );
+                }
+            }
+        }
+    }
+
+    /// With the list shown, the lights sit in its header's row and there is
+    /// no strip; in full screen there are no lights and no strip either.
+    #[test]
+    fn the_macos_title_strip_appears_only_over_the_rail_alone() {
+        let (app, ctx) = open("chat", true);
+        assert!(!crate::ui::macos_title_strip(&app, &ctx));
+        assert_eq!(rail_rect(&ctx).unwrap().top(), 0.0);
+        // Over the rail alone there is a strip on macOS, and only there.
+        let (app, ctx) = open("rail", false);
+        let mac = crate::theme::macos_chrome(&ctx);
+        assert_eq!(crate::ui::macos_title_strip(&app, &ctx), mac);
+        let strip = if mac {
+            crate::ui::title_strip_height(&ctx)
+        } else {
+            0.0
+        };
+        assert_eq!(rail_rect(&ctx).unwrap().top(), strip);
+        // Whole points of room around the 14-point buttons at any zoom.
+        for zoom in [0.8_f32, 1.0, 1.1, 1.25, 1.5, 2.0] {
+            for bar in [32.0, crate::theme::TOP_BAR_HEIGHT] {
+                let height = crate::ui::appkit_bar_height(bar, zoom);
+                let room = (height * zoom - 14.0) / 2.0;
+                assert!(
+                    (room - room.round()).abs() < 1e-3,
+                    "{bar} at {zoom}: {room}"
+                );
+                assert!((height - bar).abs() * zoom <= 1.0 + 1e-3);
+            }
         }
     }
 
@@ -25783,7 +25838,12 @@ mod rail_tests {
                         let response = ctx.read_response(id).unwrap();
                         let mut viewport = rail_rect(&ctx).unwrap();
                         if crate::theme::traffic_light_inset(&ctx) > 0.0 {
-                            viewport.min.y += crate::theme::TOP_BAR_HEIGHT / 2.0 + 12.0;
+                            // Under the lights, whether they sit over the
+                            // rail or in the strip above it.
+                            viewport.min.y = viewport
+                                .min
+                                .y
+                                .max(crate::theme::TOP_BAR_HEIGHT / 2.0 + 12.0);
                         }
                         assert_eq!(
                             response.interact_rect, response.rect,

@@ -802,8 +802,11 @@ impl Shell {
         }
         // The chat header is 60 points and zooms; the linking screen keeps
         // AppKit's own 28-point strip.
-        let title_bar = if app.is_linked() && !app.app_lock.is_locked() {
-            zapfast::theme::TOP_BAR_HEIGHT
+        // Over the rail alone the lights have a 32-point strip of their own.
+        let title_bar = if zapfast::ui::macos_title_strip(app, ctx) {
+            zapfast::ui::title_strip_height(ctx)
+        } else if app.is_linked() && !app.app_lock.is_locked() {
+            zapfast::ui::appkit_bar_height(zapfast::theme::TOP_BAR_HEIGHT, ctx.zoom_factor())
         } else {
             28.0 / ctx.zoom_factor()
         };

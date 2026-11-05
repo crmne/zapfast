@@ -462,8 +462,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     ui.add_space(theme::traffic_light_inset(ui.ctx()));
                 } else if app.sidebar_mode() == crate::model::SidebarDisplayMode::CollapsedIconsOnly
                     && app.page == crate::model::Page::Chats
+                    && !super::macos_title_strip(app, ui.ctx())
                 {
-                    // Beside the rail alone, the lights reach over this header.
+                    // Beside the rail alone, the lights reach over this header,
+                    // unless they have the strip above it.
                     ui.add_space(super::rail::lights_overhang(ui.ctx()));
                 }
                 ui.add_space(room.left);

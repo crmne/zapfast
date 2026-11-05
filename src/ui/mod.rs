@@ -167,6 +167,9 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     }
     let crowded = app.info_visible()
         && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
+    if macos_title_strip(app, ui.ctx()) {
+        title_strip(app, ui);
+    }
     if !narrow(ui.ctx()) && !crowded {
         rail::show(app, ui, !full_list);
         if full_list {
@@ -827,6 +830,71 @@ fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let rect = ui.max_rect();
             titlebar_drag(ui, rect);
+        });
+}
+
+/// Height of the strip that holds the macOS traffic lights over the rail
+/// alone: AppKit's own title bar on macOS 26 and 27.
+pub const TITLE_STRIP_HEIGHT: f32 = 32.0;
+
+/// Whether the traffic lights get a strip of their own across the window's
+/// top: on macOS, out of full screen, while the hidden chat list leaves the
+/// rail alone at the left, too narrow for them. With the list shown they sit
+/// in its header's row instead. Decided from the state that lays the left
+/// column out, before anything is laid out, so `main` can place the lights
+/// for the same frame.
+pub fn macos_title_strip(app: &App, ctx: &egui::Context) -> bool {
+    if !theme::macos_chrome(ctx)
+        || theme::traffic_light_inset(ctx) == 0.0
+        || !app.is_linked()
+        || app.app_lock.is_locked()
+        || narrow(ctx)
+    {
+        return false;
+    }
+    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
+    // The info panel can push the rail aside, as `main_view` decides.
+    let crowded = app.info_visible()
+        && ctx.content_rect().width() - chats::compact_width(ctx)
+            < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
+    !full_list && !crowded
+}
+
+/// The strip's height in points at the current zoom, whole points of room
+/// above and below AppKit's 14-point buttons so they land on whole pixels.
+pub fn title_strip_height(ctx: &egui::Context) -> f32 {
+    appkit_bar_height(TITLE_STRIP_HEIGHT, ctx.zoom_factor())
+}
+
+/// `bar` adjusted so the room above and below the 14-point traffic lights
+/// is a whole number of window points at `zoom`.
+pub fn appkit_bar_height(bar: f32, zoom: f32) -> f32 {
+    const BUTTON: f32 = 14.0;
+    let room = ((bar * zoom - BUTTON) / 2.0).round().max(0.0);
+    (2.0 * room + BUTTON) / zoom
+}
+
+/// The strip over the rail alone: the rail's surface, with the hairline the
+/// headers end on under it beside the rail. It drags the window.
+fn title_strip(app: &App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    egui::Panel::top("macos-title-strip")
+        .exact_size(title_strip_height(ui.ctx()))
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.rail()))
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            titlebar_drag(ui, rect);
+            let ppp = ui.ctx().pixels_per_point();
+            let left = ((rect.left() + rail::WIDTH - 1.0) * ppp).round() / ppp;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(left, rect.bottom() - 1.0),
+                    egui::pos2(rect.right(), rect.bottom()),
+                ),
+                0.0,
+                palette.outline,
+            );
         });
 }
 
