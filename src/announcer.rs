@@ -70,6 +70,13 @@ impl Announcer {
         }
     }
 
+    /// Drops `text` from the queue before it is spoken, when what it said
+    /// no longer holds.
+    pub fn retract(&mut self, category: Category, text: &str) {
+        self.queue
+            .retain(|(queued, said, _)| *queued != category || said != text);
+    }
+
     /// Drops the private text waiting to be spoken and empties the slots
     /// that hold some, so it is no longer readable in the tree: behind the
     /// lock screen, or once another account is on screen.
@@ -167,6 +174,18 @@ mod tests {
                 *at = at.checked_sub(by).unwrap_or(*at);
             }
         }
+    }
+
+    #[test]
+    fn a_retracted_error_is_not_spoken() {
+        let mut announcer = Announcer::default();
+        announcer.say(Category::Error, "Phone silent");
+        announcer.say(Category::Toast, "Phone silent");
+        announcer.say(Category::Error, "Could not send");
+        announcer.retract(Category::Error, "Phone silent");
+        frame(&mut announcer, true);
+        // The toast with the same words stays.
+        assert_eq!(announcer.spoken()[0], "Could not send. Phone silent");
     }
 
     #[test]

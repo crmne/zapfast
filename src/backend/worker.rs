@@ -1041,6 +1041,7 @@ pub async fn run(
         channel_list_generation: 0,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
+        phone_silence_shown: false,
         pending_avatars: HashMap::new(),
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
@@ -1601,6 +1602,9 @@ struct Worker {
     /// Chats already told that the phone did not answer; cleared when the
     /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
+    /// Whether the window shows the phone-silence warning. Any page from the
+    /// phone takes it back, so it outlives `older_warned`'s resets.
+    phone_silence_shown: bool,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
     /// Followed channels' pictures, which no profile-picture lookup finds.
@@ -6722,10 +6726,14 @@ impl Worker {
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
-            // The phone answers for this chat again; a later silence is news,
-            // and the warning about its silence no longer holds.
-            if count > 0 && self.older_warned.remove(&chat) {
-                self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
+            if count > 0 {
+                // The phone answers for this chat again; a later silence is
+                // news. It is online, so the warning that it may not be no
+                // longer holds for any chat.
+                self.older_warned.remove(&chat);
+                if std::mem::take(&mut self.phone_silence_shown) {
+                    self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
+                }
             }
             match self.owner_of_answer(&chat, session) {
                 AnswerOwner::Pending => {
@@ -6883,6 +6891,7 @@ impl Worker {
             // the reader made reports the silence, once per chat; later
             // retries back off quietly.
             if explicit && self.older_warned.insert(chat) {
+                self.phone_silence_shown = true;
                 self.emit(Event::Error(super::PHONE_SILENT.to_owned()));
             }
         }
@@ -20103,6 +20112,7 @@ mod receipt_tests {
             channel_list_generation: 0,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
+            phone_silence_shown: false,
             pending_avatars: HashMap::new(),
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
@@ -27343,6 +27353,26 @@ mod older_history_tests {
         worker.answer_older(filed, None);
         assert!(
             !drain(&events)
+                .iter()
+                .any(|event| matches!(event, Event::ErrorResolved(_)))
+        );
+    }
+
+    /// A reconnect forgets which chats were warned, so that a later silence
+    /// is news. The warning stays on screen all the same, and the phone's
+    /// next page still takes it back.
+    #[test]
+    fn a_warning_from_before_a_reconnect_is_still_taken_back() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.older_warned.clear();
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed, None);
+        assert!(
+            drain(&events)
                 .iter()
                 .any(|event| matches!(event, Event::ErrorResolved(_)))
         );
