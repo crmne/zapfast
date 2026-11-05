@@ -3398,7 +3398,7 @@ impl App {
                 // not a query to match.
                 (self.locked_folder && !self.chat_lock_authenticated())
                     || needle.is_empty()
-                    || self.text_matches(&self.chat_title(chat), &needle)
+                    || self.name_matches(&self.chat_title(chat), &needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat
                         .last
@@ -3456,7 +3456,7 @@ impl App {
             .filter(|contact| {
                 contact
                     .display_name()
-                    .is_some_and(|name| self.text_matches(name, &needle))
+                    .is_some_and(|name| self.name_matches(name, &needle))
                     || contact
                         .id
                         .split('@')
@@ -5554,13 +5554,23 @@ impl App {
     /// Whether `text` holds `needle` once both are normalized, remembering
     /// the normalized form so the next frame does not pay for it again.
     fn text_matches(&self, text: &str, needle: &str) -> bool {
+        self.cached_key(text, |key| key.contains(needle))
+    }
+
+    /// Whether a name finds `needle` as the whole text or word by word (see
+    /// `util::search_matches`), sharing `text_matches`' cache.
+    fn name_matches(&self, name: &str, needle: &str) -> bool {
+        self.cached_key(name, |key| crate::util::search_matches(key, needle))
+    }
+
+    fn cached_key(&self, text: &str, hit: impl Fn(&str) -> bool) -> bool {
         if let Some(key) = self.search_keys.borrow().get(text) {
-            return key.contains(needle);
+            return hit(key.as_str());
         }
         let key = crate::util::search_key(text);
-        let hit = key.contains(needle);
+        let found = hit(key.as_str());
         self.search_keys.borrow_mut().insert(text.to_owned(), key);
-        hit
+        found
     }
 
     /// Asks the archive to be scanned for the chat list's search text.
@@ -25448,6 +25458,30 @@ mod tests {
         }
         assert_eq!(app.chats[0].name, "Ángel");
         app.search = "bob".into();
+        assert!(app.visible_chats().is_empty());
+        assert!(app.matching_contacts().is_empty());
+    }
+
+    #[test]
+    fn chat_and_contact_search_match_the_start_of_each_word() {
+        let mut app = app();
+        app.chats.push(Chat::new(
+            "1@s.whatsapp.net".into(),
+            "William Shakespeare".into(),
+        ));
+        let contact = Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: Some("John Doe".into()),
+            first_name: None,
+            push_name: None,
+        };
+        app.contacts.insert(contact.id.clone(), contact);
+        app.search = "will shak".into();
+        assert_eq!(app.visible_chats().len(), 1);
+        app.search = "j d".into();
+        assert!(app.visible_chats().is_empty());
+        assert_eq!(app.matching_contacts().len(), 1);
+        app.search = "will x".into();
         assert!(app.visible_chats().is_empty());
         assert!(app.matching_contacts().is_empty());
     }
