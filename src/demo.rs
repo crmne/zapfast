@@ -24656,6 +24656,32 @@ mod bubble_detail_tests {
         }
     }
 
+    /// The tints of the icons painted with their centre at `at`: an icon is
+    /// a rectangle filled with its texture, and its fill is the tint.
+    fn icon_tints(shapes: &[egui::epaint::ClippedShape], at: egui::Pos2) -> Vec<egui::Color32> {
+        fn collect(shape: &egui::Shape, at: egui::Pos2, out: &mut Vec<egui::Color32>) {
+            match shape {
+                // The painter snaps the rectangle to pixels, so within one.
+                egui::Shape::Rect(rect)
+                    if rect.brush.is_some() && rect.rect.center().distance(at) < 1.0 =>
+                {
+                    out.push(rect.fill);
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, at, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in shapes {
+            collect(&shape.shape, at, &mut out);
+        }
+        out
+    }
+
     /// Our voice message shows a microphone beside its length, lit once
     /// they have played it; theirs and audio files never have one.
     #[test]
@@ -24676,7 +24702,7 @@ mod bubble_detail_tests {
             }
             let ctx = egui::Context::default();
             app.attach(&ctx);
-            frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+            let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
             let bubble = crate::ui::conversation::bubble_id(&chat, "audio-original");
             let shown = rect(&ctx, bubble.with("mic"));
             assert_eq!(shown.is_some(), mic, "from me: {from_me}, {status:?}");
@@ -24690,6 +24716,20 @@ mod bubble_detail_tests {
                 assert!(
                     frame.contains_rect(shown),
                     "the microphone is inside its bubble"
+                );
+                // Grey until played, then the read ticks' colour, both as
+                // our bubble draws them.
+                let inside = app.palette.on_bubble(true);
+                let expected = if played {
+                    inside.read
+                } else {
+                    inside.secondary
+                };
+                assert_ne!(inside.read, inside.secondary, "the two states differ");
+                assert_eq!(
+                    icon_tints(&shapes, shown.center()),
+                    vec![expected],
+                    "the microphone is painted once, in its colour: {status:?}"
                 );
             }
             let file = crate::ui::conversation::bubble_id(&chat, "audio-file");
