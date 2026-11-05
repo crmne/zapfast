@@ -597,10 +597,14 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
-    /// Asks for an audio file to use as a notification sound.
+    /// Asks for an audio file to use as a notification sound, copied into
+    /// `slot` (`sounds::global_slot`, in the app's state folder).
     PickNotificationSound {
         mention: bool,
+        slot: std::path::PathBuf,
     },
+    /// Deletes a notification sound's copy that no setting uses any more.
+    RemoveSoundCopy(std::path::PathBuf),
     /// Stores a chat's own notification sound.
     SetChatSound {
         chat: ChatId,
@@ -1481,19 +1485,21 @@ pub enum Event {
     /// The followed message's receipts, sent when following starts and
     /// whenever one arrives.
     Receipts(crate::model::MessageReceipts),
-    /// An audio file chosen for one chat's notifications.
+    /// ZapFast's copy of an audio file chosen for one chat's notifications,
+    /// or why it could not be used.
     ChatSoundPicked {
         chat: ChatId,
-        path: std::path::PathBuf,
+        result: Result<std::path::PathBuf, String>,
     },
     /// A folder chosen for new downloads.
     DownloadFolderPicked(std::path::PathBuf),
     /// The copy of a chosen wallpaper image, or why it could not be used.
     WallpaperImagePicked(Result<std::path::PathBuf, String>),
-    /// An audio file chosen as a notification sound.
+    /// ZapFast's copy of an audio file chosen as a notification sound, or why
+    /// it could not be used.
     NotificationSoundPicked {
         mention: bool,
-        path: std::path::PathBuf,
+        result: Result<std::path::PathBuf, String>,
     },
     /// The group behind an invite link.
     InvitePreview {

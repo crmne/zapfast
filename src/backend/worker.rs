@@ -901,6 +901,9 @@ pub async fn run(
             }
         }
     };
+    // Releases before ZapFast kept its own copies stored only the path of a
+    // chat's chosen sound; copy those files while the originals are there.
+    crate::sounds::adopt_chat_sounds(&archive, &dirs.state);
     let (wa_sender, wa_events) = mpsc::unbounded_channel();
     let privacy_confirmed = archive
         .meta("chat_privacy_ready_v1")
@@ -7644,6 +7647,12 @@ impl Worker {
             Command::SetKeepChatsArchived(keep) => self.keep_chats_archived = keep,
             Command::Resumed => self.resumed(),
             Command::SetChatSound { chat, sound } => {
+                // A picked file arrives already copied; any other choice
+                // leaves the chat's copy unused.
+                if !matches!(sound, Some(crate::settings::NotificationSound::Custom(_))) {
+                    let slot = crate::sounds::chat_slot(&self.dirs.state, &chat);
+                    tokio::task::spawn_blocking(move || crate::sounds::remove(&slot));
+                }
                 let _ = self.archive.set_notification_sound(&chat, sound.as_ref());
                 self.emit_chat(&chat);
             }
@@ -7654,6 +7663,7 @@ impl Worker {
                 self.emit_chat(&chat);
             }
             Command::PickChatSound(chat) => {
+                let slot = crate::sounds::chat_slot(&self.dirs.state, &chat);
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -7662,7 +7672,8 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let _ = events.send(Event::ChatSoundPicked { chat, path });
+                        let result = crate::sounds::import(&path, &slot);
+                        let _ = events.send(Event::ChatSoundPicked { chat, result });
                         waker.wake();
                     }
                 });
@@ -7854,7 +7865,7 @@ impl Worker {
                 }
                 self.emit(self.me_event());
             }
-            Command::PickNotificationSound { mention } => {
+            Command::PickNotificationSound { mention, slot } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -7863,10 +7874,14 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let _ = events.send(Event::NotificationSoundPicked { mention, path });
+                        let result = crate::sounds::import(&path, &slot);
+                        let _ = events.send(Event::NotificationSoundPicked { mention, result });
                         waker.wake();
                     }
                 });
+            }
+            Command::RemoveSoundCopy(slot) => {
+                tokio::task::spawn_blocking(move || crate::sounds::remove(&slot));
             }
             Command::SaveAttachmentAs { source, name } => {
                 let events = self.events.clone();

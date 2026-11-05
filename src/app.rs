@@ -4569,13 +4569,23 @@ impl App {
                     self.message_receipts = Some(receipts);
                 }
             }
-            Event::ChatSoundPicked { chat, path } => {
-                crate::notify::play_sound(crate::settings::NotificationSound::Custom(path.clone()));
-                self.actions.push(Action::SetChatSound {
-                    chat,
-                    sound: Some(crate::settings::NotificationSound::Custom(path)),
-                });
-            }
+            Event::ChatSoundPicked { chat, result } => match result {
+                Ok(path) => {
+                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                        path.clone(),
+                    ));
+                    self.actions.push(Action::SetChatSound {
+                        chat,
+                        sound: Some(crate::settings::NotificationSound::Custom(path)),
+                    });
+                }
+                Err(error) => {
+                    if live {
+                        let message = crate::i18n::gettext(self.locale, "Could not use this sound");
+                        self.toast_error(format!("{message}: {error}"));
+                    }
+                }
+            },
             Event::DownloadFolderPicked(path) => {
                 if live {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
@@ -4593,15 +4603,24 @@ impl App {
                 let message = crate::i18n::gettext(self.locale, "Could not use this image");
                 self.toast_error(format!("{message}: {error}"));
             }
-            Event::NotificationSoundPicked { mention, path } => {
+            Event::NotificationSoundPicked { mention, result } => {
                 if live {
-                    crate::notify::play_sound(crate::settings::NotificationSound::Custom(
-                        path.clone(),
-                    ));
-                    self.actions.push(Action::SetNotificationSound {
-                        mention,
-                        sound: crate::settings::NotificationSound::Custom(path),
-                    });
+                    match result {
+                        Ok(path) => {
+                            crate::notify::play_sound(crate::settings::NotificationSound::Custom(
+                                path.clone(),
+                            ));
+                            self.actions.push(Action::SetNotificationSound {
+                                mention,
+                                sound: crate::settings::NotificationSound::Custom(path),
+                            });
+                        }
+                        Err(error) => {
+                            let message =
+                                crate::i18n::gettext(self.locale, "Could not use this sound");
+                            self.toast_error(format!("{message}: {error}"));
+                        }
+                    }
                 }
             }
             Event::InvitePreview { code, result } => {
@@ -9684,6 +9703,15 @@ impl App {
                 }
             }
             Action::SetNotificationSound { mention, sound } => {
+                // A picked file arrives already copied; any other choice
+                // leaves the copy unused.
+                if !matches!(sound, crate::settings::NotificationSound::Custom(_)) {
+                    self.backend
+                        .send(Command::RemoveSoundCopy(crate::sounds::global_slot(
+                            &self.dirs.state,
+                            mention,
+                        )));
+                }
                 if mention {
                     self.settings.mention_sound = sound;
                 } else {
@@ -9692,8 +9720,10 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::PickNotificationSound { mention } => {
-                self.backend
-                    .send(Command::PickNotificationSound { mention });
+                self.backend.send(Command::PickNotificationSound {
+                    mention,
+                    slot: crate::sounds::global_slot(&self.dirs.state, mention),
+                });
             }
             Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
@@ -15226,7 +15256,7 @@ mod tests {
         events
             .send(crate::backend::Event::ChatSoundPicked {
                 chat: "1@s.whatsapp.net".into(),
-                path: directory.path().join("ding.ogg"),
+                result: Ok(directory.path().join("ding.ogg")),
             })
             .unwrap();
         app.handle_events();
