@@ -34,6 +34,9 @@ pub struct Account {
     pub me_about: Option<String>,
     /// The phone's "Disable link previews", for this account.
     pub link_previews_disabled: bool,
+    /// Whether this account's phone-silence warning is up. The warning is
+    /// one toast for every account, taken back once none has it up.
+    pub phone_silent: bool,
     pub chats: Vec<Chat>,
     pub contacts: HashMap<String, Contact>,
     pub conversations: HashMap<ChatId, Conversation>,
@@ -186,6 +189,7 @@ impl Account {
             me_name: None,
             me_about: None,
             link_previews_disabled: false,
+            phone_silent: false,
             chats: Vec::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),

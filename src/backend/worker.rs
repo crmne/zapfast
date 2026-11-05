@@ -1041,6 +1041,7 @@ pub async fn run(
         channel_list_generation: 0,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
+        phone_silence_shown: false,
         pending_avatars: HashMap::new(),
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
@@ -1599,8 +1600,12 @@ struct Worker {
     /// Pending phone-history requests by chat.
     pending_older: HashMap<ChatId, OlderRequest>,
     /// Chats already told that the phone did not answer; cleared when the
-    /// phone sends that chat's history or the link reconnects.
+    /// phone sends that chat's history, the warning is taken back, or the
+    /// link reconnects.
     older_warned: HashSet<ChatId>,
+    /// Whether the window shows the phone-silence warning. Any page from the
+    /// phone takes it back, so it outlives `older_warned`'s resets.
+    phone_silence_shown: bool,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
     /// Followed channels' pictures, which no profile-picture lookup finds.
@@ -4687,6 +4692,8 @@ impl Worker {
         self.older_ids_match = false;
         self.forward_queue = None;
         self.pending_older.clear();
+        // No phone is linked to be silent any more.
+        self.retract_phone_silence();
         self.pending_avatars.clear();
         // A star request belongs to the account that just left. A task that
         // finishes after logout must not write the next account, whose
@@ -6717,9 +6724,22 @@ impl Worker {
         filed
     }
 
+    /// Takes the phone-silence warning back, if it is showing. Every chat may
+    /// warn again then: a chat warned before would otherwise stay quiet
+    /// through a new silence while no warning is on screen.
+    fn retract_phone_silence(&mut self) {
+        if std::mem::take(&mut self.phone_silence_shown) {
+            self.older_warned.clear();
+            self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
+        }
+    }
+
     /// Completes the requests an on-demand history chunk answers. `session`
     /// is the id of the request the phone says it is answering.
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
+        // Any answer, even one with nothing older, shows the phone is online:
+        // the warning that it may not be no longer holds for any chat.
+        self.retract_phone_silence();
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
             if count > 0 {
@@ -6882,9 +6902,8 @@ impl Worker {
             // the reader made reports the silence, once per chat; later
             // retries back off quietly.
             if explicit && self.older_warned.insert(chat) {
-                self.emit(Event::Error(
-                    "Your phone did not send older messages. Check that it is online".to_owned(),
-                ));
+                self.phone_silence_shown = true;
+                self.emit(Event::Error(super::PHONE_SILENT.to_owned()));
             }
         }
     }
@@ -8862,6 +8881,8 @@ impl Worker {
                     log::warn!("unlinking a removed account timed out");
                 }
                 self.stop_bot().await;
+                // Before the account goes, so its warning does not outlive it.
+                self.retract_phone_silence();
                 self.emit(Event::AccountRemoved);
             }
             Command::Reconnect => {
@@ -20104,6 +20125,7 @@ mod receipt_tests {
             channel_list_generation: 0,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
+            phone_silence_shown: false,
             pending_avatars: HashMap::new(),
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
@@ -27315,6 +27337,118 @@ mod older_history_tests {
         waiting(&mut worker, true);
         worker.expire_older_requests();
         assert_eq!(warnings(&drain(&events)), 1);
+    }
+
+    /// The reader opens WhatsApp on the phone after the warning, and its
+    /// late answer arrives: the warning no longer holds and is taken back.
+    #[test]
+    fn a_late_answer_takes_back_the_warning() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed, None);
+        let events_now = drain(&events);
+        assert_eq!(silences(&events_now), [false], "the reader's page shows");
+        assert!(
+            events_now.iter().any(|event| matches!(
+                event,
+                Event::ErrorResolved(message) if message == crate::backend::PHONE_SILENT
+            )),
+            "{events_now:?}"
+        );
+
+        // An answer with no warning out takes nothing back.
+        asked(&mut worker, true, false, 1, None);
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[40]), false);
+        worker.answer_older(filed, None);
+        assert!(
+            !drain(&events)
+                .iter()
+                .any(|event| matches!(event, Event::ErrorResolved(_)))
+        );
+    }
+
+    /// A reconnect forgets which chats were warned, so that a later silence
+    /// is news. The warning stays on screen all the same, and the phone's
+    /// next page still takes it back.
+    #[test]
+    fn a_warning_from_before_a_reconnect_is_still_taken_back() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.older_warned.clear();
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed, None);
+        assert!(resolved(&drain(&events)));
+    }
+
+    /// A phone that answers it holds nothing older is online all the same.
+    #[test]
+    fn an_empty_answer_takes_back_the_warning() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.answer_older(vec![(CHAT.to_owned(), 0, Some(false))], None);
+        assert!(resolved(&drain(&events)));
+    }
+
+    /// Another chat's answer takes the warning back. A new silence in the
+    /// chat that warned is news again, since nothing on screen says it.
+    #[test]
+    fn a_chat_warns_again_after_another_chats_answer() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.answer_older(vec![("other@s.whatsapp.net".to_owned(), 1, None)], None);
+        assert!(resolved(&drain(&events)));
+
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+    }
+
+    /// Unlinking or removing the account leaves no phone to be silent.
+    #[tokio::test]
+    async fn leaving_the_account_takes_back_the_warning() {
+        for remove in [false, true] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            waiting(&mut worker, true);
+            worker.expire_older_requests();
+            assert_eq!(warnings(&drain(&events)), 1);
+
+            if remove {
+                worker.handle_command(Command::RemoveAccount).await;
+            } else {
+                worker.on_logged_out().await;
+            }
+            let events = drain(&events);
+            assert!(resolved(&events), "remove: {remove}");
+            if remove {
+                // The app applies it while the account is still listed.
+                let resolution = events
+                    .iter()
+                    .position(|event| matches!(event, Event::ErrorResolved(_)));
+                let removal = events
+                    .iter()
+                    .position(|event| matches!(event, Event::AccountRemoved));
+                assert!(resolution < removal, "{events:?}");
+            }
+        }
+    }
+
+    fn resolved(events: &[Event]) -> bool {
+        events.iter().any(|event| {
+            matches!(event, Event::ErrorResolved(message) if message == crate::backend::PHONE_SILENT)
+        })
     }
 
     #[test]
