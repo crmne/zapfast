@@ -6722,9 +6722,10 @@ impl Worker {
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
-            if count > 0 {
-                // The phone answers for this chat again; a later silence is news.
-                self.older_warned.remove(&chat);
+            // The phone answers for this chat again; a later silence is news,
+            // and the warning about its silence no longer holds.
+            if count > 0 && self.older_warned.remove(&chat) {
+                self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
             }
             match self.owner_of_answer(&chat, session) {
                 AnswerOwner::Pending => {
@@ -6882,9 +6883,7 @@ impl Worker {
             // the reader made reports the silence, once per chat; later
             // retries back off quietly.
             if explicit && self.older_warned.insert(chat) {
-                self.emit(Event::Error(
-                    "Your phone did not send older messages. Check that it is online".to_owned(),
-                ));
+                self.emit(Event::Error(super::PHONE_SILENT.to_owned()));
             }
         }
     }
@@ -27315,6 +27314,38 @@ mod older_history_tests {
         waiting(&mut worker, true);
         worker.expire_older_requests();
         assert_eq!(warnings(&drain(&events)), 1);
+    }
+
+    /// The reader opens WhatsApp on the phone after the warning, and its
+    /// late answer arrives: the warning no longer holds and is taken back.
+    #[test]
+    fn a_late_answer_takes_back_the_warning() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
+        worker.answer_older(filed, None);
+        let events_now = drain(&events);
+        assert_eq!(silences(&events_now), [false], "the reader's page shows");
+        assert!(
+            events_now.iter().any(|event| matches!(
+                event,
+                Event::ErrorResolved(message) if message == crate::backend::PHONE_SILENT
+            )),
+            "{events_now:?}"
+        );
+
+        // An answer with no warning out takes nothing back.
+        asked(&mut worker, true, false, 1, None);
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[40]), false);
+        worker.answer_older(filed, None);
+        assert!(
+            !drain(&events)
+                .iter()
+                .any(|event| matches!(event, Event::ErrorResolved(_)))
+        );
     }
 
     #[test]

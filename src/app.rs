@@ -4886,6 +4886,10 @@ impl App {
                     self.timer_saving.remove(&chat);
                 }
             }
+            Event::ErrorResolved(message) => {
+                self.toasts
+                    .retain(|toast| toast.kind != ToastKind::Error || toast.message != message);
+            }
             Event::Error(message) => {
                 self.sticker_import_pending = false;
                 // The worker sends the English catalog key. `gettext` only
@@ -19851,6 +19855,31 @@ mod tests {
                 .any(|toast| toast.message.contains("fijados")),
             "the toast is translated"
         );
+    }
+
+    /// Errors stay until dismissed, unless the worker says one no longer
+    /// holds: then only that toast goes.
+    #[test]
+    fn a_resolved_error_takes_its_toast_back() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        for message in [
+            crate::backend::PHONE_SILENT,
+            "Could not save the attachment",
+        ] {
+            events.send(Event::Error(message.into())).unwrap();
+        }
+        app.handle_events();
+        assert_eq!(app.toasts.len(), 2);
+
+        events
+            .send(Event::ErrorResolved(crate::backend::PHONE_SILENT.into()))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.toasts.len(), 1);
+        assert_eq!(app.toasts[0].message, "Could not save the attachment");
+        assert_eq!(app.toasts[0].kind, ToastKind::Error);
     }
 
     /// A pin that expires while the chat is closed leaves the line when it is
