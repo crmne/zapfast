@@ -11478,6 +11478,41 @@ fn voice_player(
                         );
                     });
                 }
+                // Our voice message carries a microphone beside the length,
+                // as on the phone: grey until they play it, then the read
+                // ticks' blue, so the chat says it was heard and not only seen.
+                if voice_note
+                    && message.from_me
+                    && matches!(
+                        message.status,
+                        Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
+                    )
+                    && !matches!(media.state, MediaState::Failed(_))
+                {
+                    let played = message.status == Delivery::Played;
+                    let mic = Rect::from_center_size(
+                        pos2(shown.right() + 10.0, shown.center().y),
+                        Vec2::splat(13.0),
+                    );
+                    let colour = if played {
+                        palette.read
+                    } else {
+                        palette.secondary
+                    };
+                    theme::paint_icon(ui, Icon::Mic, mic, 13.0, colour);
+                    duration = Some(shown.union(mic));
+                    let key = bubble_id(&view.chat.id, &message.id);
+                    let response = ui.interact(mic, key.with("mic-hover"), Sense::hover());
+                    if played {
+                        response.on_hover_text(crate::i18n::gettext(view.locale, "Played"));
+                    }
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(key.with("mic"), mic);
+                        if played {
+                            data.insert_temp(key.with("played"), mic);
+                        }
+                    });
+                }
             });
             if !voice_note {
                 let (slot, response) = ui.allocate_exact_size(Vec2::splat(button), Sense::hover());

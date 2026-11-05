@@ -24656,6 +24656,90 @@ mod bubble_detail_tests {
         }
     }
 
+    /// The tints of the icons painted with their centre at `at`: an icon is
+    /// a rectangle filled with its texture, and its fill is the tint.
+    fn icon_tints(shapes: &[egui::epaint::ClippedShape], at: egui::Pos2) -> Vec<egui::Color32> {
+        fn collect(shape: &egui::Shape, at: egui::Pos2, out: &mut Vec<egui::Color32>) {
+            match shape {
+                // The painter snaps the rectangle to pixels, so within one.
+                egui::Shape::Rect(rect)
+                    if rect.brush.is_some() && rect.rect.center().distance(at) < 1.0 =>
+                {
+                    out.push(rect.fill);
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, at, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in shapes {
+            collect(&shape.shape, at, &mut out);
+        }
+        out
+    }
+
+    /// Our voice message shows a microphone beside its length, lit once
+    /// they have played it; theirs and audio files never have one.
+    #[test]
+    fn our_voice_message_says_when_it_was_played() {
+        for (from_me, status, mic, played) in [
+            (true, Delivery::Pending, false, false),
+            (true, Delivery::Delivered, true, false),
+            (true, Delivery::Read, true, false),
+            (true, Delivery::Played, true, true),
+            (false, Delivery::Played, false, false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("audio-types"));
+            let chat = app.open_chat.clone().unwrap();
+            for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+                row.from_me = from_me;
+                row.status = status;
+            }
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let shapes = frames(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+            let bubble = crate::ui::conversation::bubble_id(&chat, "audio-original");
+            let shown = rect(&ctx, bubble.with("mic"));
+            assert_eq!(shown.is_some(), mic, "from me: {from_me}, {status:?}");
+            assert_eq!(
+                rect(&ctx, bubble.with("played")).is_some(),
+                played,
+                "from me: {from_me}, {status:?}"
+            );
+            if let Some(shown) = shown {
+                let frame = rect(&ctx, bubble.with("rect")).expect("voice bubble drawn");
+                assert!(
+                    frame.contains_rect(shown),
+                    "the microphone is inside its bubble"
+                );
+                // Grey until played, then the read ticks' colour, both as
+                // our bubble draws them.
+                let inside = app.palette.on_bubble(true);
+                let expected = if played {
+                    inside.read
+                } else {
+                    inside.secondary
+                };
+                assert_ne!(inside.read, inside.secondary, "the two states differ");
+                assert_eq!(
+                    icon_tints(&shapes, shown.center()),
+                    vec![expected],
+                    "the microphone is painted once, in its colour: {status:?}"
+                );
+            }
+            let file = crate::ui::conversation::bubble_id(&chat, "audio-file");
+            assert!(
+                rect(&ctx, file.with("mic")).is_none(),
+                "an audio file has none"
+            );
+        }
+    }
+
     /// Both audio types keep their own player treatment and forwarding label
     /// across themes, bubble sides, download states, and narrow layouts.
     #[test]
