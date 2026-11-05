@@ -260,6 +260,10 @@ pub const RTL_SELF_CHAT: [&str; 4] = [
     "הכלב הגדול קפץ מעל החתול והמשיך לרוץ לאורך כל הרחוב עד שהגיע אל הגינה השקטה שליד הבית, ושם נשכב לנוח בצל העץ\nקבענו ב-18:30 ליד ה-Central Park, אל תשכח להביא את ה-laptop ואת המטען כי הפגישה תהיה ארוכה",
 ];
 
+/// Arabic with descenders, a final yeh, and marks above and below its
+/// letters, typed into the fields on the `arabic-fields` page.
+const ARABIC_DRAFT: &str = "ضِيقٌ جُيُوبُ غُيُومٍ";
+
 /// Numbers inside right-to-left text on the `rtl` page: Arabic-Indic and
 /// European digits, a time, and a phone number, each reading left to right.
 const RTL_NUMBERS: &str = "لدي ٤٥ رسالة، الساعة ١٢:٣٠\nعندي 45 رسالة\nاتصل على +00 (00) 00000-0000";
@@ -2479,6 +2483,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_chat = Some(chat);
                 app.typing.clear();
                 app.scroll_to_bottom = true;
+            }
+            // Arabic, whose marks and descenders reach beyond a Latin line,
+            // in the chat search and the composer (#328).
+            "arabic-fields" => {
+                app.search = ARABIC_DRAFT.into();
+                app.composer = ARABIC_DRAFT.into();
             }
             "arabic-reply" => {
                 let chat = SAMPLES[0].id;
@@ -9773,6 +9783,7 @@ mod tests {
             "chat-search",
             "chat-search-day",
             "chat-search-rtl",
+            "arabic-fields",
             "unread",
             "private",
             "favorites",
@@ -21999,6 +22010,60 @@ mod tests {
         }
     }
 
+    /// Arabic in the search field and the composer is painted inside the
+    /// rectangle its editor clips to. The fallback face is enlarged to read
+    /// as large as Latin text, so its letters and marks reach beyond a line
+    /// box of the interface face; an editor that tall cut them off (#328).
+    #[test]
+    fn arabic_in_fields_is_not_clipped() {
+        const DRAFT: &str = super::ARABIC_DRAFT;
+        for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+            let mut app = app();
+            app.search = DRAFT.into();
+            app.composer = DRAFT.into();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .entry(egui::ViewportId::ROOT)
+                    .or_default()
+                    .native_pixels_per_point = Some(scale);
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+                shapes = output.shapes;
+            }
+            let mut fields = 0;
+            for clipped in &shapes {
+                for (top, bottom, rect) in painted_ink(std::slice::from_ref(clipped), DRAFT) {
+                    fields += 1;
+                    let clip = clipped.clip_rect;
+                    assert!(
+                        clip.top() <= top && bottom <= clip.bottom(),
+                        "at {scale}x the text at {rect:?} draws from {top} to {bottom}, \
+                         clipped to {clip:?}"
+                    );
+                }
+            }
+            assert_eq!(
+                fields, 2,
+                "the search field and the composer show the draft"
+            );
+        }
+    }
+
     /// A call entry draws as WhatsApp's: the glyph's disc centred on the
     /// title and detail together, the detail under the title at its start,
     /// and the time on the detail's line at the bubble's end, on both sides
@@ -22352,10 +22417,12 @@ mod tests {
                     data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id())
                 })
                 .expect("the composer is drawn");
+            // Where the text was painted: the editor's box adds its margin.
             let text = ctx
-                .read_response(egui::Id::new("composer-text"))
-                .unwrap()
-                .rect;
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(crate::ui::conversation::composer_text_id())
+                })
+                .expect("the composer publishes its text's place");
             (
                 pill,
                 text,
