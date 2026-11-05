@@ -489,10 +489,18 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     title(ui, app, &crate::i18n::gettext(app.locale, "New chat"));
     let width = ui.available_width();
     let search_hint = crate::i18n::gettext(app.locale, "Search contacts");
+    let field = egui::Id::new("new-chat-search");
+    // Enter opens the first match the list highlights. It is taken before
+    // the field reads the key, so the field does not lose focus first. The
+    // matches are worked out after the field, so they include this frame's
+    // typing.
+    let open_first = !app.new_chat_search.trim().is_empty()
+        && ui.memory(|memory| memory.has_focus(field))
+        && ui.input_mut(|input| super::keys::take_plain(input, egui::Key::Enter));
     let search = super::widgets::search_field(
         ui,
         &palette,
-        egui::Id::new("new-chat-search"),
+        field,
         &mut app.new_chat_search,
         &search_hint,
         width,
@@ -502,9 +510,34 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     }
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let contacts = contact_choices(app, &needle);
+    let offer_self = app.offers_self(&needle);
+    if let Some(contact) = contacts
+        .first()
+        .filter(|_| open_first && !needle.is_empty())
+    {
+        let name = app.display_name(&contact.id);
+        app.actions.push(Action::StartChat {
+            id: contact.id.clone(),
+            name,
+            dismiss_dialog: true,
+        });
+    }
+    // The list is as tall as its rows, up to the space the dialog has, so a
+    // search with few matches gives a short list and many give a full one.
+    // Its height comes from this frame's rows, not last frame's size.
+    let listed = if contacts.is_empty() && !offer_self {
+        1
+    } else {
+        contacts.len() + usize::from(offer_self)
+    };
+    let rows = 2 + listed;
+    let spacing = ui.spacing().item_spacing.y;
+    let content_height = rows as f32 * theme::ROW_HEIGHT + (rows - 1) as f32 * spacing;
+    let room = (ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0);
+    let list_height = content_height.min(room);
     egui::ScrollArea::vertical()
         .id_salt("new-chat-contacts")
-        .max_height((ui.ctx().content_rect().height() - 280.0).clamp(100.0, 420.0))
+        .max_height(list_height)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             // New group and Add contact head the list, then "Message
@@ -517,11 +550,13 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
             if super::chats::action_row(app, ui, Icon::Plus, &add_contact).clicked() {
                 app.actions.push(Action::ShowDialog(Dialog::NewContact));
             }
-            let offer_self = app.offers_self(&needle);
             if offer_self {
                 super::chats::self_row(app, ui);
             }
             if contacts.is_empty() && !offer_self {
+                // No row is drawn to forget the one scrolled into view last.
+                ui.ctx()
+                    .data_mut(|data| data.remove::<String>(super::chats::revealed_row_id()));
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "No matching contacts"),
@@ -529,9 +564,10 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                     palette.secondary,
                 );
             }
-            for contact in contacts {
+            for (index, contact) in contacts.into_iter().enumerate() {
+                let selected = index == 0 && !needle.is_empty();
                 ui.push_id(&contact.id, |ui| {
-                    super::chats::contact_row(app, ui, &contact)
+                    super::chats::contact_row(app, ui, &contact, selected)
                 });
             }
         });

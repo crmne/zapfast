@@ -1265,7 +1265,9 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                     ui.push_id("self", |ui| self_row(app, ui));
                 }
                 for contact in &contacts {
-                    ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
+                    ui.push_id(("contact", &contact.id), |ui| {
+                        contact_row(app, ui, contact, false)
+                    });
                 }
             }
             ui.add_space(8.0);
@@ -1385,10 +1387,10 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
 }
 
 /// A contact without a chat. Clicking starts one.
-pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
+pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact, selected: bool) {
     let name = app.display_name(&contact.id);
     let detail = crate::model::phone_of(&contact.id).map(crate::util::phone);
-    if person_row(app, ui, &contact.id, &name, detail.as_deref()).clicked() {
+    if person_row(app, ui, &contact.id, &name, detail.as_deref(), selected).clicked() {
         app.actions.push(Action::StartChat {
             id: contact.id.clone(),
             name,
@@ -1404,9 +1406,14 @@ pub(super) fn self_row(app: &mut App, ui: &mut egui::Ui) {
     };
     let name = app.self_title();
     let detail = crate::i18n::gettext(app.locale, "Message yourself");
-    if person_row(app, ui, &me, &name, Some(detail.as_ref())).clicked() {
+    if person_row(app, ui, &me, &name, Some(detail.as_ref()), false).clicked() {
         app.actions.push(Action::MessageYourself);
     }
+}
+
+/// The contact whose row New chat last scrolled into view as its first match.
+pub(super) fn revealed_row_id() -> egui::Id {
+    egui::Id::new("person-row-revealed")
 }
 
 /// A row that starts something, drawn like a person's: an icon on the
@@ -1453,6 +1460,7 @@ fn person_row(
     id: &str,
     name: &str,
     detail: Option<&str>,
+    selected: bool,
 ) -> egui::Response {
     let palette = app.palette;
     let (rect, response) = ui.allocate_exact_size(
@@ -1460,8 +1468,33 @@ fn person_row(
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    // The highlighted row is scrolled into view once each time it changes, so
+    // Enter never opens a chat the list has scrolled past. Scrolling again
+    // every frame would fight the reader.
+    let revealed = revealed_row_id();
+    if selected {
+        if ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(revealed))
+            .as_deref()
+            != Some(id)
+        {
+            response.scroll_to_me(Some(egui::Align::Center));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(revealed, id.to_owned()));
+        }
+    } else if ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(revealed))
+        .as_deref()
+        == Some(id)
+    {
+        ui.ctx().data_mut(|data| data.remove::<String>(revealed));
+    }
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
+        if selected {
+            widgets::row_highlight(ui, &palette, rect, palette.surface_active);
+        } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect =
