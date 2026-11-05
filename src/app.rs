@@ -4887,6 +4887,10 @@ impl App {
                 }
             }
             Event::ErrorResolved(message) => {
+                // What this account said no longer holds, whatever the toast.
+                let said = self.toast_said(&message);
+                self.announcer
+                    .retract(crate::announcer::Category::Error, &said);
                 if message == crate::backend::PHONE_SILENT {
                     self.phone_silent = false;
                     // Another account's phone may still be silent.
@@ -4894,9 +4898,6 @@ impl App {
                         return;
                     }
                 }
-                let said = self.toast_said(&message);
-                self.announcer
-                    .retract(crate::announcer::Category::Error, &said);
                 self.toasts
                     .retain(|toast| toast.kind != ToastKind::Error || toast.message != message);
             }
@@ -19930,6 +19931,16 @@ mod tests {
         first.send(resolved()).unwrap();
         app.handle_events();
         assert!(warned(&app), "the second phone is still silent");
+        // Only the second account's warning is still waiting to be spoken.
+        app.announcer.show(&egui::Context::default(), true);
+        assert_eq!(
+            app.announcer.spoken()[0]
+                .matches(crate::backend::PHONE_SILENT)
+                .count(),
+            1,
+            "{:?}",
+            app.announcer.spoken()
+        );
 
         second.send(resolved()).unwrap();
         app.handle_events();

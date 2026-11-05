@@ -4691,6 +4691,8 @@ impl Worker {
         self.older_ids_match = false;
         self.forward_queue = None;
         self.pending_older.clear();
+        // No phone is linked to be silent any more.
+        self.retract_phone_silence();
         self.pending_avatars.clear();
         // A star request belongs to the account that just left. A task that
         // finishes after logout must not write the next account, whose
@@ -6721,19 +6723,24 @@ impl Worker {
         filed
     }
 
+    /// Takes the phone-silence warning back, if it is showing.
+    fn retract_phone_silence(&mut self) {
+        if std::mem::take(&mut self.phone_silence_shown) {
+            self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
+        }
+    }
+
     /// Completes the requests an on-demand history chunk answers. `session`
     /// is the id of the request the phone says it is answering.
     fn answer_older(&mut self, filed: Vec<(ChatId, usize, Option<bool>)>, session: Option<&str>) {
+        // Any answer, even one with nothing older, shows the phone is online:
+        // the warning that it may not be no longer holds for any chat.
+        self.retract_phone_silence();
         for (chat, count, more_on_phone) in filed {
             let more = count > 0 && more_on_phone != Some(false);
             if count > 0 {
-                // The phone answers for this chat again; a later silence is
-                // news. It is online, so the warning that it may not be no
-                // longer holds for any chat.
+                // The phone answers for this chat again; a later silence is news.
                 self.older_warned.remove(&chat);
-                if std::mem::take(&mut self.phone_silence_shown) {
-                    self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
-                }
             }
             match self.owner_of_answer(&chat, session) {
                 AnswerOwner::Pending => {
@@ -8870,6 +8877,8 @@ impl Worker {
                     log::warn!("unlinking a removed account timed out");
                 }
                 self.stop_bot().await;
+                // Before the account goes, so its warning does not outlive it.
+                self.retract_phone_silence();
                 self.emit(Event::AccountRemoved);
             }
             Command::Reconnect => {
@@ -27371,11 +27380,54 @@ mod older_history_tests {
         worker.older_warned.clear();
         let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[50]), false);
         worker.answer_older(filed, None);
-        assert!(
-            drain(&events)
-                .iter()
-                .any(|event| matches!(event, Event::ErrorResolved(_)))
-        );
+        assert!(resolved(&drain(&events)));
+    }
+
+    /// A phone that answers it holds nothing older is online all the same.
+    #[test]
+    fn an_empty_answer_takes_back_the_warning() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.answer_older(vec![(CHAT.to_owned(), 0, Some(false))], None);
+        assert!(resolved(&drain(&events)));
+    }
+
+    /// Unlinking or removing the account leaves no phone to be silent.
+    #[tokio::test]
+    async fn leaving_the_account_takes_back_the_warning() {
+        for remove in [false, true] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            waiting(&mut worker, true);
+            worker.expire_older_requests();
+            assert_eq!(warnings(&drain(&events)), 1);
+
+            if remove {
+                worker.handle_command(Command::RemoveAccount).await;
+            } else {
+                worker.on_logged_out().await;
+            }
+            let events = drain(&events);
+            assert!(resolved(&events), "remove: {remove}");
+            if remove {
+                // The app applies it while the account is still listed.
+                let resolution = events
+                    .iter()
+                    .position(|event| matches!(event, Event::ErrorResolved(_)));
+                let removal = events
+                    .iter()
+                    .position(|event| matches!(event, Event::AccountRemoved));
+                assert!(resolution < removal, "{events:?}");
+            }
+        }
+    }
+
+    fn resolved(events: &[Event]) -> bool {
+        events.iter().any(|event| {
+            matches!(event, Event::ErrorResolved(message) if message == crate::backend::PHONE_SILENT)
+        })
     }
 
     #[test]
