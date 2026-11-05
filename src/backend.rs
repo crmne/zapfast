@@ -597,10 +597,26 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
-    /// Asks for an audio file to use as a notification sound.
+    /// Asks for an audio file to use as a notification sound, copied under
+    /// `root` (`sounds::settings_root`, in the app's state folder).
     PickNotificationSound {
         mention: bool,
+        root: std::path::PathBuf,
     },
+    /// Copies a message (`false`) or mention (`true`) sound that names a
+    /// file of the person's own under `root`, answered with
+    /// `Event::SoundAdopted`.
+    AdoptSound {
+        mention: bool,
+        from: std::path::PathBuf,
+        root: std::path::PathBuf,
+    },
+    /// Copies the chats' own sounds that name a file of the person's own,
+    /// once at startup and off its path.
+    AdoptChatSounds,
+    /// The copies `AdoptChatSounds` made: the chat, the file it named, and
+    /// the copy.
+    ChatSoundsAdopted(Vec<(ChatId, std::path::PathBuf, std::path::PathBuf)>),
     /// Stores a chat's own notification sound.
     SetChatSound {
         chat: ChatId,
@@ -1481,19 +1497,28 @@ pub enum Event {
     /// The followed message's receipts, sent when following starts and
     /// whenever one arrives.
     Receipts(crate::model::MessageReceipts),
-    /// An audio file chosen for one chat's notifications.
+    /// ZapFast's copy of an audio file chosen for one chat's notifications,
+    /// or why it could not be used.
     ChatSoundPicked {
         chat: ChatId,
-        path: std::path::PathBuf,
+        result: Result<std::path::PathBuf, String>,
     },
     /// A folder chosen for new downloads.
     DownloadFolderPicked(std::path::PathBuf),
     /// The copy of a chosen wallpaper image, or why it could not be used.
     WallpaperImagePicked(Result<std::path::PathBuf, String>),
-    /// An audio file chosen as a notification sound.
+    /// ZapFast's copy of an audio file chosen as a notification sound, or why
+    /// it could not be used.
     NotificationSoundPicked {
         mention: bool,
-        path: std::path::PathBuf,
+        result: Result<std::path::PathBuf, String>,
+    },
+    /// A copy of a message or mention sound that named a file of the
+    /// person's own, stored only while the sound still names `from`.
+    SoundAdopted {
+        mention: bool,
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
     },
     /// The group behind an invite link.
     InvitePreview {

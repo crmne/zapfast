@@ -726,6 +726,24 @@ impl Archive {
         Ok(())
     }
 
+    /// Every chat with a notification sound of its own.
+    pub fn chat_sounds(&self) -> Result<Vec<(String, crate::settings::NotificationSound)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, notification_sound FROM chats WHERE notification_sound IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut sounds = Vec::new();
+        for row in rows {
+            let (id, sound) = row?;
+            if let Ok(sound) = serde_json::from_str(&sound) {
+                sounds.push((id, sound));
+            }
+        }
+        Ok(sounds)
+    }
+
     /// A chat's own voice message speed; `None` follows Settings. Any other
     /// speed is stored as the nearest supported one.
     pub fn set_voice_speed(&self, id: &str, speed: Option<f32>) -> Result<()> {

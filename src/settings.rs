@@ -679,6 +679,12 @@ impl Settings {
     }
 
     pub fn load(path: &Path) -> Self {
+        Self::load_checked(path).0
+    }
+
+    /// [`Settings::load`], and whether a file stood behind it: `false` when
+    /// it is missing, or could not be read or parsed, and defaults stand in.
+    pub fn load_checked(path: &Path) -> (Self, bool) {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<Self>(&contents) {
                 Ok(mut settings) => {
@@ -690,17 +696,17 @@ impl Settings {
                             log::warn!("could not replace the legacy locked-chat code: {error}");
                         }
                     }
-                    settings
+                    (settings, true)
                 }
                 Err(_error) => {
                     log::warn!("settings file is unreadable, using defaults");
-                    Self::default()
+                    (Self::default(), false)
                 }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Self::default(), false),
             Err(error) => {
                 log::warn!("could not read settings: {error}");
-                Self::default()
+                (Self::default(), false)
             }
         }
     }
@@ -1455,6 +1461,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let roster = AccountRoster::load(&dir.path().join("accounts.json")).unwrap();
         assert_eq!(roster, AccountRoster::default());
+    }
+
+    #[test]
+    fn loading_says_whether_the_file_stood_behind_the_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert!(
+            !Settings::load_checked(&path).1,
+            "a missing file is reported"
+        );
+        Settings::default().save(&path).unwrap();
+        assert!(Settings::load_checked(&path).1);
+        std::fs::write(&path, "{ not json").unwrap();
+        let (settings, loaded) = Settings::load_checked(&path);
+        assert!(!loaded, "an unreadable file is reported");
+        assert_eq!(settings, Settings::default());
     }
 }
 
