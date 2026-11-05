@@ -354,7 +354,7 @@ fn run() -> eframe::Result<()> {
     {
         log::warn!("could not set the Dock icon: {error}");
     }
-    let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
+    let eframe_storage = dirs.eframe_storage();
 
     #[allow(unused_mut)]
     let mut app = if demo {
@@ -446,7 +446,7 @@ fn run() -> eframe::Result<()> {
                 )
             });
             zapfast::backdrop::set_window_transparent(transparent);
-            let geometry = if demo_persistence.is_some() {
+            let geometry = if demo {
                 fastframe_shell::window::Geometry::default()
             } else {
                 lease.peek(|app: &app::App| app.settings.window_geometry())
@@ -469,7 +469,7 @@ fn run() -> eframe::Result<()> {
             });
             eframe::run_native(
                 "ZapFast",
-                native_options(demo_persistence.clone(), geometry, transparent),
+                native_options(demo, eframe_storage.clone(), geometry, transparent),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
@@ -607,12 +607,12 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
 }
 
 fn native_options(
-    demo_persistence: Option<std::path::PathBuf>,
+    demo: bool,
+    storage: std::path::PathBuf,
     geometry: fastframe_shell::window::Geometry,
     transparent: bool,
 ) -> eframe::NativeOptions {
     let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
-    let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
         .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
         .with_app_id(if demo {
@@ -646,7 +646,13 @@ fn native_options(
         .with_decorations(!fastframe_titlebar::enabled());
     eframe::NativeOptions {
         viewport,
-        persistence_path: demo_persistence,
+        // eframe loads a window and egui's memory from its storage at every
+        // start: `persist_window` and `persist_egui_memory` only stop it
+        // saving them. ZapFast keeps neither there, so eframe gets a file of
+        // ZapFast's own that nothing writes. Its default file can still hold
+        // the window a version before 0.20 saved, and every window would open
+        // in that place and at that size (#874).
+        persistence_path: Some(storage),
         // The settings remember the window (fastframe_shell::window::Geometry),
         // in logical pixels. eframe's own copy is in points at the zoom of the
         // time, and opened smaller at every launch with the interface zoomed,
@@ -1077,6 +1083,29 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod native_options_tests {
+    use super::*;
+
+    /// #874: eframe loads a window from its storage whatever `persist_window`
+    /// says, so it is given ZapFast's own file rather than its default one,
+    /// where a version before 0.20 left a window that overrode the settings.
+    #[test]
+    fn the_window_comes_from_the_settings_not_eframes_old_storage() {
+        let storage = std::path::PathBuf::from("state/eframe.ron");
+        let geometry = fastframe_shell::window::Geometry {
+            size: Some([1000.0, 700.0]),
+            position: Some([1000.0, 400.0]),
+            maximized: false,
+        };
+        let options = native_options(false, storage.clone(), geometry, false);
+        assert_eq!(options.persistence_path, Some(storage));
+        assert!(!options.persist_window);
+        assert_eq!(options.viewport.position, Some(egui::pos2(1000.0, 400.0)));
+        assert_eq!(options.viewport.inner_size, Some(egui::vec2(1000.0, 700.0)));
     }
 }
 

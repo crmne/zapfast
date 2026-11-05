@@ -265,9 +265,11 @@ playback speed, and the chat list and search pane widths.
 Development builds also remember the window's size, position, and maximized
 state in `settings.json`, including when reopening from the tray or a
 notification. The window opens at the same size whatever the interface's
-zoom. On Wayland the compositor controls placement, so ZapFast keeps the size
-without choosing the position. These window changes and **Keep chats
-archived** are not yet included in 0.19.0.
+zoom. Only `settings.json` places it: a window that a version before 0.20
+saved in eframe's own `app.ron` is ignored. On Wayland the compositor
+controls placement, so ZapFast keeps the size without choosing the position.
+These window changes and **Keep chats archived** are not yet included in
+0.19.0.
 
 Labels always get a chip each, in a row under the filter chips, once a label
 exists. They are kept in the message archive, next to your chats, and never
