@@ -354,8 +354,7 @@ fn run() -> eframe::Result<()> {
     {
         log::warn!("could not set the Dock icon: {error}");
     }
-    // eframe's storage, a file of ZapFast's own; see `native_options`.
-    let eframe_storage = dirs.state.join("eframe.ron");
+    let eframe_storage = dirs.eframe_storage();
 
     #[allow(unused_mut)]
     let mut app = if demo {
