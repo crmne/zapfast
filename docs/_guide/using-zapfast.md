@@ -544,8 +544,11 @@ heard yet shows a dot beside its length; it goes away once you play it here or
 on another device. When the composer is empty, the send button becomes a
 microphone. The light beside the time turns red, and the time starts, once the
 microphone delivers sound: one the system had put to sleep can take a moment to
-wake, and anything said before then is not recorded. Press Enter or the send
-button to send the recording, or Escape or
+wake, and anything said before then is not recorded. The pause button stops
+recording without ending the take: the time stops, the play button plays back
+what you have so far, clicking the waveform jumps to a point in it, and the red
+microphone records again. Press Enter or the send
+button to send the recording, paused or not, as one voice message, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 When someone else records a voice message, a microphone replaces the typing dots.
