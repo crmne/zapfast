@@ -20,7 +20,7 @@ use crate::model::{
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
-use super::focus::{self, Stop, TabStop};
+use super::focus::{Stop, TabStop};
 use super::widgets;
 
 /// Group-message avatar size.
@@ -2653,6 +2653,9 @@ struct View<'a> {
     pins: Option<&'a HashSet<String>>,
     /// Active pins of this chat, for the notices in the transcript.
     pin_notices: &'a [crate::archive::Pinned],
+    /// Open the menu of this message's phone number, by its `tel:` address
+    /// (`App::open_phone_menu`).
+    open_phone_menu: Option<(&'a str, &'a str)>,
     reaction: Option<&'a str>,
     /// The reaction picker was opened from the message's context menu.
     reaction_menu: bool,
@@ -3113,6 +3116,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             .chat_pins
             .get(&chat.id)
             .map_or(&[][..], |rows| rows.as_slice()),
+        open_phone_menu: app
+            .open_phone_menu
+            .as_ref()
+            .filter(|(menu_chat, ..)| *menu_chat == chat.id)
+            .map(|(_, message, url)| (message.as_str(), url.as_str())),
         reaction: app
             .reaction_target
             .as_ref()
@@ -4035,6 +4043,19 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     download_starts_by_itself(&member.content, view.auto_download),
                                 )
                             });
+                            // Two or more things to act on: the arrows move between
+                            // them, so the label says how many. An album's items are
+                            // not among them.
+                            let targets = album
+                                .is_none()
+                                .then(|| {
+                                    crate::a11y::targets_count(
+                                        view.locale,
+                                        &message.content,
+                                        &message.mentions,
+                                    )
+                                })
+                                .flatten();
                             let label = crate::a11y::message_label(
                                 view.locale,
                                 &crate::a11y::MessageLabel {
@@ -4054,6 +4075,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     pinned: view.pins.is_some_and(|ids| ids.contains(&last.id)),
                                     reactions: &reactions,
                                     attachment: attachment.as_deref(),
+                                    targets: targets.as_deref(),
                                 },
                             );
                             super::list_nav::mark_row(
@@ -5844,51 +5866,16 @@ fn bubble_frame(
                 .data(|data| data.get_temp::<bool>(at_message_id))
                 .unwrap_or(false));
     // Opened by the message list's keys: focus goes into the menu, stays in
-    // it, and returns to the list when it closes. True while the first item
-    // is still to be focused.
-    let from_keys_id = bubble_id.with("menu-from-keys");
+    // it, and returns to the list when it closes.
     if force_menu {
         // Opened once: from here on the menu closes as any menu does.
         actions.push(Action::MessageMenuOpened);
-        let keyboard = ui.ctx().data(|data| {
-            data.get_temp::<bool>(theme::keyboard_focus_id())
-                .unwrap_or(false)
-        });
-        if keyboard {
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(from_keys_id, true));
-        }
     }
-    let from_keys = ui.ctx().data(|data| data.get_temp::<bool>(from_keys_id));
-    // Whether keyboard focus is on one of the menu's items (true), on a
-    // widget elsewhere (false), or on nothing drawn (None, as between two
-    // items while Tab moves on).
-    let focus_in_menu = |ctx: &egui::Context| {
-        ctx.memory(|memory| memory.focused())
-            .and_then(|id| ctx.read_response(id))
-            .map(|response| response.layer_id.id == popup_id)
-    };
-    if from_keys == Some(false) && was_open && !reacting && focus_in_menu(ui.ctx()) == Some(true) {
-        // Up and Down walk the items in order and wrap, as Tab does, as in
-        // any desktop menu. egui's own arrow moves go to the nearest widget
-        // on screen, which can be one under the menu.
-        let step = ui.ctx().input_mut(|input| {
-            if super::keys::take_plain(input, egui::Key::ArrowDown) {
-                Some(egui::FocusDirection::Next)
-            } else if super::keys::take_plain(input, egui::Key::ArrowUp) {
-                Some(egui::FocusDirection::Previous)
-            } else {
-                None
-            }
-        });
-        if let Some(step) = step {
-            ui.memory_mut(|memory| memory.move_focus(step));
-        }
-    }
+    let key_menu = KeyMenu::begin(ui.ctx(), popup_id, force_menu, reacting);
     // Opened from the keys, the menu also lists what only a click reaches
     // in the bubble (`inner_entries`), and is wide enough for it. A menu
     // opened with the pointer is as it was.
-    let keys_menu = from_keys.is_some();
+    let keys_menu = key_menu.state.is_some();
     ui.ctx()
         .data_mut(|data| data.insert_temp(keys_menu_id(popup_id), keys_menu));
     let width = if keys_menu {
@@ -5945,52 +5932,23 @@ fn bubble_frame(
         ui.ctx()
             .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
     }
-    let mut open_now = egui::Popup::is_id_open(ui.ctx(), popup_id);
-    if let Some(focus_pending) = from_keys {
-        if open_now && !focus_pending && !reacting && focus_in_menu(ui.ctx()) == Some(false) {
-            // A shortcut (Ctrl+L, Ctrl+K, Alt+2) took focus out of the menu:
-            // it closes, as a desktop menu does when focus leaves, rather
-            // than staying open unseen and holding on to the arrows, Tab and
-            // the next Escape. Focus stays where the shortcut put it.
-            egui::Popup::close_id(ui.ctx(), popup_id);
-            open_now = false;
-            ui.ctx().data_mut(|data| data.remove::<bool>(from_keys_id));
-        } else if !open_now {
-            ui.ctx().data_mut(|data| data.remove::<bool>(from_keys_id));
-            // Closed in this pass by Escape or a chosen item: back to the
-            // message list, drawn earlier in this pass. A click elsewhere
-            // keeps the focus it gave. A menu that went away unseen, its
-            // message not drawn (another chat, Settings), returns nothing:
-            // focus has moved on since.
-            if was_open
-                && !ui.input(|input| input.pointer.any_pressed() || input.pointer.any_click())
-            {
-                let item = ui.memory(|memory| memory.focused());
-                super::overlay::hand_back(ui.ctx(), messages_list_id(&view.chat.id), item);
-            }
-        } else if let Some(menu) = &menu
-            && !reacting
-        {
-            // Tab stays among the menu's items. Not beside the reaction
-            // picker, whose own layer must keep its focus.
-            ui.memory_mut(|memory| memory.set_modal_layer(menu.response.layer_id));
-            // The first item, drawn in this pass, takes focus once.
-            if focus_pending
-                && let Some(first) = ui
-                    .ctx()
-                    .data(|data| {
-                        data.get_temp::<Option<egui::Id>>(menu_first_item_id(
-                            &view.chat.id,
-                            &menu_target.id,
-                        ))
-                    })
-                    .flatten()
-            {
-                ui.memory_mut(|memory| memory.request_focus(first));
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(from_keys_id, false));
-            }
-        }
+    let first = ui
+        .ctx()
+        .data(|data| {
+            data.get_temp::<Option<egui::Id>>(menu_first_item_id(&view.chat.id, &menu_target.id))
+        })
+        .flatten();
+    let open_now = key_menu.finish(
+        ui.ctx(),
+        menu.as_ref().map(|menu| menu.response.layer_id),
+        reacting,
+        first,
+        messages_list_id(&view.chat.id),
+    );
+    if was_open && !open_now {
+        // A card's buttons were for that one opening only.
+        ui.ctx()
+            .data_mut(|data| data.remove::<usize>(bubble_id.with("menu-card")));
     }
     if at_message || was_open {
         ui.ctx().data_mut(|data| {
@@ -7101,6 +7059,7 @@ pub(crate) fn list_menu(
         // Nothing scrolls, highlights, or selects in a list row.
         anchor: None,
         open_menu: None,
+        open_phone_menu: None,
         reaction: None,
         reaction_menu: false,
         reaction_emoji: &app.settings.reaction_emoji,
@@ -7448,7 +7407,8 @@ fn context_menu(
     }
     // What else a pointer reaches in the bubble, above Copy, in a menu the
     // keys opened: a card's buttons, the quote, the sender. A disabled entry
-    // takes no focus, as its row in the bubble.
+    // takes no focus, as its row in the bubble, except the card row Space
+    // chose (below).
     let keys_menu = ui
         .ctx()
         .data(|data| data.get_temp::<bool>(keys_menu_id(ui.layer_id().id)))
@@ -7458,9 +7418,23 @@ fn context_menu(
     } else {
         Vec::new()
     };
+    // Space on a carousel card with no picture opened the menu for that
+    // card's buttons: focus starts on its first usable button, not Reply,
+    // or on its first button when none is usable, a disabled row that then
+    // takes focus so its reason is read.
+    let focus_card = ui
+        .ctx()
+        .data(|data| data.get_temp::<usize>(menu_card_id(chat, &message.id)));
+    let focus_row = focus_card.and_then(|card| {
+        let of_card = |entry: &InnerEntry| entry.card == Some(card);
+        entries
+            .iter()
+            .position(|entry| of_card(entry) && entry.enabled)
+            .or_else(|| entries.iter().position(of_card))
+    });
     if !entries.is_empty() {
         widgets::menu_separator(ui, &palette);
-        for entry in entries {
+        for (row, entry) in entries.into_iter().enumerate() {
             // Hover text is out of a screen reader's reach, so an unavailable
             // entry says why in its name, translated; the hover text stays
             // as the bubble shows it.
@@ -7474,6 +7448,7 @@ fn context_menu(
                 ),
                 _ => entry.label.clone(),
             };
+            let focus_here = focus_row == Some(row);
             let response = widgets::menu_item_focusable(
                 ui,
                 &palette,
@@ -7481,8 +7456,11 @@ fn context_menu(
                 &entry.label,
                 &accessible,
                 entry.enabled,
-                entry.enabled,
+                entry.enabled || focus_here,
             );
+            if focus_here {
+                first = Some(response.id);
+            }
             if entry.enabled {
                 first.get_or_insert(response.id);
             }
@@ -7688,6 +7666,8 @@ struct InnerEntry {
     enabled: bool,
     /// Why the entry is unavailable, shown on hover as in the bubble.
     hint: Option<ButtonBlocker>,
+    /// The carousel card whose button it is, if any.
+    card: Option<usize>,
 }
 
 /// The menu entries for the buttons of one interactive card. `card_number`
@@ -7730,6 +7710,7 @@ fn button_entries(
                 .flatten(),
             enabled,
             hint: (!enabled).then(|| interactive_reason(view, message, button)),
+            card: card_number,
         });
     }
 }
@@ -7761,6 +7742,7 @@ fn inner_entries(view: &View<'_>, message: &Message) -> Vec<InnerEntry> {
             action: Some(quote_key_action(quoted)),
             enabled: true,
             hint: None,
+            card: None,
         });
     }
     if shows_sender_pictures(view.chat) && !message.from_me {
@@ -7774,6 +7756,7 @@ fn inner_entries(view: &View<'_>, message: &Message) -> Vec<InnerEntry> {
             action: Some(sender_info_action(message)),
             enabled: true,
             hint: None,
+            card: None,
         });
     }
     entries
@@ -7789,9 +7772,136 @@ fn sender_info_action(message: &Message) -> Action {
     Action::OpenInfo(message.sender.clone())
 }
 
+/// Where Space records the carousel card whose buttons the menu it opens
+/// starts on.
+pub(crate) fn menu_card_id(chat: &str, message: &str) -> egui::Id {
+    bubble_id(chat, message).with("menu-card")
+}
+
 /// Where the message menu records its first item for this pass.
 fn menu_first_item_id(chat: &str, message: &str) -> egui::Id {
     bubble_id(chat, message).with("menu-first-item")
+}
+
+/// A popup menu the message list's keys can open: the message menu, or a
+/// phone number's menu. Opened from the keys, focus goes to its first item,
+/// Tab, Up and Down stay among its items, focus leaving closes it, and
+/// Escape or a chosen item returns focus to the list. A menu opened with the
+/// pointer is left as it was.
+///
+/// [`KeyMenu::begin`] runs before the popup is shown, [`KeyMenu::finish`]
+/// after it.
+struct KeyMenu {
+    popup: egui::Id,
+    pending: egui::Id,
+    /// Some(true) while the first item is still to be focused, Some(false)
+    /// once it was; None for a menu the keys did not open.
+    state: Option<bool>,
+    was_open: bool,
+}
+
+impl KeyMenu {
+    /// `requested` is true in the pass the list asks for the menu: it then
+    /// opens once, and from there on closes as any menu does. `hold` keeps
+    /// focus on a layer beside the menu, such as the reaction picker.
+    fn begin(ctx: &egui::Context, popup: egui::Id, requested: bool, hold: bool) -> Self {
+        let pending = popup.with("from-keys");
+        let was_open = egui::Popup::is_id_open(ctx, popup);
+        // Only after keyboard navigation: a demo page that opens the menu
+        // moves no focus.
+        let keyboard = ctx.data(|data| {
+            data.get_temp::<bool>(theme::keyboard_focus_id())
+                .unwrap_or(false)
+        });
+        if requested && keyboard {
+            ctx.data_mut(|data| data.insert_temp(pending, true));
+        }
+        let state = ctx.data(|data| data.get_temp::<bool>(pending));
+        if state == Some(false) && was_open && !hold && Self::focus_in(ctx, popup) == Some(true) {
+            // Up and Down walk the items in order and wrap, as Tab does, as
+            // in any desktop menu. egui's own arrow moves go to the nearest
+            // widget on screen, which can be one under the menu.
+            let step = ctx.input_mut(|input| {
+                if super::keys::take_plain(input, egui::Key::ArrowDown) {
+                    Some(egui::FocusDirection::Next)
+                } else if super::keys::take_plain(input, egui::Key::ArrowUp) {
+                    Some(egui::FocusDirection::Previous)
+                } else {
+                    None
+                }
+            });
+            if let Some(step) = step {
+                ctx.memory_mut(|memory| memory.move_focus(step));
+            }
+        }
+        Self {
+            popup,
+            pending,
+            state,
+            was_open,
+        }
+    }
+
+    /// Whether keyboard focus is on one of the popup's items (true), on a
+    /// widget elsewhere (false), or on nothing drawn (None, as between two
+    /// items while Tab moves on).
+    fn focus_in(ctx: &egui::Context, popup: egui::Id) -> Option<bool> {
+        ctx.memory(|memory| memory.focused())
+            .and_then(|id| ctx.read_response(id))
+            .map(|response| response.layer_id.id == popup)
+    }
+
+    /// After the popup was shown on `layer` (None when it was not drawn),
+    /// with `first` its first item drawn in this pass. Focus returns to
+    /// `list` when the menu closes. Returns whether the menu is open now.
+    fn finish(
+        self,
+        ctx: &egui::Context,
+        layer: Option<egui::LayerId>,
+        hold: bool,
+        first: Option<egui::Id>,
+        list: egui::Id,
+    ) -> bool {
+        let open = egui::Popup::is_id_open(ctx, self.popup);
+        let Some(focus_pending) = self.state else {
+            return open;
+        };
+        if open && !focus_pending && !hold && Self::focus_in(ctx, self.popup) == Some(false) {
+            // A shortcut (Ctrl+L, Ctrl+K, Alt+2) took focus out of the menu:
+            // it closes, as a desktop menu does when focus leaves, rather
+            // than staying open unseen and holding on to the arrows, Tab and
+            // the next Escape. Focus stays where the shortcut put it.
+            egui::Popup::close_id(ctx, self.popup);
+            ctx.data_mut(|data| data.remove::<bool>(self.pending));
+            return false;
+        }
+        if !open {
+            ctx.data_mut(|data| data.remove::<bool>(self.pending));
+            // Closed in this pass by Escape or a chosen item: back to the
+            // message list, drawn earlier in this pass. A click elsewhere
+            // keeps the focus it gave. A menu that went away unseen, its
+            // message not drawn (another chat, Settings), returns nothing:
+            // focus has moved on since.
+            if self.was_open
+                && !ctx.input(|input| input.pointer.any_pressed() || input.pointer.any_click())
+            {
+                let item = ctx.memory(|memory| memory.focused());
+                super::overlay::hand_back(ctx, list, item);
+            }
+        } else if let Some(layer) = layer
+            && !hold
+        {
+            // Tab stays among the menu's items. Not beside the reaction
+            // picker, whose own layer must keep its focus.
+            ctx.memory_mut(|memory| memory.set_modal_layer(layer));
+            // The first item, drawn in this pass, takes focus once.
+            if focus_pending && let Some(first) = first {
+                ctx.memory_mut(|memory| memory.request_focus(first));
+                ctx.data_mut(|data| data.insert_temp(self.pending, false));
+            }
+        }
+        open
+    }
 }
 
 /// Whether the message menu offers Reply. A call in the chat is a record,
@@ -7923,6 +8033,304 @@ pub(crate) fn copy_key_action(
     }
 }
 
+/// What Space does on a message whose item cursor was not moved: what
+/// clicking its first target does.
+#[cfg(test)]
+pub(crate) fn primary_key_actions(
+    ctx: &egui::Context,
+    chat: &str,
+    message: &Message,
+) -> Vec<Action> {
+    let targets = crate::a11y::key_targets(&message.content, &message.mentions);
+    let voting = Voting {
+        connected: true,
+        pending: &HashSet::new(),
+    };
+    target_actions(ctx, chat, message, targets.first(), &voting)
+}
+
+/// What a poll's options can do now: votes need the link, and a vote on its
+/// way holds the poll until it lands.
+pub(crate) struct Voting<'a> {
+    pub connected: bool,
+    pub pending: &'a HashSet<(ChatId, String)>,
+}
+
+impl Voting<'_> {
+    fn pending(&self, message: &Message) -> bool {
+        self.pending
+            .contains(&(message.chat.clone(), message.id.clone()))
+    }
+}
+
+/// The messages one row of the list draws, from the one at `index`, which
+/// names the row: the items of an album, or that message alone. A selection
+/// draws each item of an album in a row of its own.
+pub(crate) fn row_members(messages: &[Message], selecting: bool, index: usize) -> &[Message] {
+    let mut end = index + 1;
+    while !selecting && end < messages.len() && album_continues(messages, end) {
+        end += 1;
+    }
+    &messages[index.min(messages.len())..end.min(messages.len())]
+}
+
+/// The targets of a row the keys walk, each with the index in `members`
+/// of the message it belongs to: one message's own (`message_targets`), or,
+/// for an album, each item's photo or video followed by the links in its
+/// caption. The keys act on the album item the cursor is on, as the
+/// pointer's menu does on the tile it was opened over.
+pub(crate) fn row_targets(
+    members: &[Message],
+    contacts: &HashMap<String, crate::model::Contact>,
+) -> (Vec<crate::a11y::KeyTarget>, Vec<usize>) {
+    use crate::a11y::KeyTarget;
+    let album = members.len() > 1;
+    let mut targets = Vec::new();
+    let mut owners = Vec::new();
+    for (owner, member) in members.iter().enumerate() {
+        for target in message_targets(member, contacts) {
+            targets.push(match target {
+                KeyTarget::Attachment if album => KeyTarget::AlbumItem(member.id.clone()),
+                target => target,
+            });
+            owners.push(owner);
+        }
+    }
+    (targets, owners)
+}
+
+/// The targets of a message the keys walk: `crate::a11y::key_targets`, less
+/// a contact's buttons its bubble does not show. Chat and Add need the
+/// contact's WhatsApp account, and Add one not saved yet.
+pub(crate) fn message_targets(
+    message: &Message,
+    contacts: &HashMap<String, crate::model::Contact>,
+) -> Vec<crate::a11y::KeyTarget> {
+    use crate::a11y::KeyTarget;
+    let mut targets = crate::a11y::key_targets(&message.content, &message.mentions);
+    if let Content::Contact {
+        display_name,
+        vcard,
+    } = &message.content
+    {
+        let account =
+            shared_contact_details(vcard, display_name).and_then(|contact| contact.account);
+        targets.retain(|target| match (target, &account) {
+            (KeyTarget::Contact, account) => account.is_some(),
+            (KeyTarget::AddContact, Some(account)) => {
+                !contacts.contains_key(&format!("{account}@s.whatsapp.net"))
+            }
+            (KeyTarget::AddContact, None) => false,
+            _ => true,
+        });
+    }
+    targets
+}
+
+/// What Space does on one target of a message (`crate::a11y::key_targets`):
+/// what clicking that part of the bubble does, through the same functions
+/// the clicks call. That includes fetching a file that is not downloaded
+/// yet or retrying a failed fetch, and nothing while it downloads. `ctx`
+/// tells whether a picture could be drawn, as its click knows.
+pub(crate) fn target_actions(
+    ctx: &egui::Context,
+    chat: &str,
+    message: &Message,
+    target: Option<&crate::a11y::KeyTarget>,
+    voting: &Voting<'_>,
+) -> Vec<Action> {
+    use crate::a11y::KeyTarget;
+    let mut actions = Vec::new();
+    match (target, &message.content) {
+        (Some(KeyTarget::Attachment), _) => {
+            attachment_target(ctx, chat, message, &mut actions);
+        }
+        (Some(KeyTarget::AlbumItem(_)), _) => album_item_clicked(message, &mut actions),
+        (
+            Some(KeyTarget::Preview),
+            Content::Text {
+                preview: Some(preview),
+                ..
+            },
+        ) => preview_clicked(preview, &mut actions),
+        (Some(KeyTarget::Link { url, .. }), _) => link_clicked(url, &mut actions),
+        // Clicking a phone number opens its menu, which Space opens too
+        // (`Action::OpenPhoneMenu`): nothing to do on the spot.
+        (Some(KeyTarget::Phone { .. }), _) => {}
+        (
+            Some(KeyTarget::Card(index)),
+            Content::Interactive {
+                card: Some(card), ..
+            },
+        ) => {
+            // A card without a picture has only its buttons, in the menu.
+            if let Some(image) = card
+                .carousel
+                .get(*index)
+                .and_then(|card| card.image.as_ref())
+            {
+                carousel_picture_clicked(message, *index, image, &mut actions);
+            }
+        }
+        (
+            Some(KeyTarget::Map),
+            Content::Location {
+                latitude,
+                longitude,
+                ..
+            }
+            | Content::LiveLocation {
+                latitude,
+                longitude,
+                ..
+            },
+        ) => map_clicked(*latitude, *longitude, &mut actions),
+        (
+            Some(KeyTarget::Contact),
+            Content::Contact {
+                display_name,
+                vcard,
+            },
+        ) => {
+            if let Some(SharedContact {
+                name,
+                account: Some(account),
+                ..
+            }) = shared_contact_details(vcard, display_name)
+            {
+                contact_chat_clicked(&name, &account, &mut actions);
+            }
+        }
+        (
+            Some(KeyTarget::AddContact),
+            Content::Contact {
+                display_name,
+                vcard,
+            },
+        ) => {
+            if let Some(SharedContact {
+                name,
+                account: Some(account),
+                first_name,
+                ..
+            }) = shared_contact_details(vcard, display_name)
+            {
+                contact_add_clicked(&name, first_name.as_deref(), &account, &mut actions);
+            }
+        }
+        (Some(KeyTarget::StickerPack), _) => sticker_pack_clicked(message, &mut actions),
+        // An option's click, with its conditions: the link, a vote on its
+        // way, the voting key, and how many answers the poll takes.
+        (Some(KeyTarget::PollOption(index)), _) => actions.extend(super::polls::vote_action(
+            message,
+            *index,
+            voting.connected,
+            voting.pending(message),
+        )),
+        (Some(KeyTarget::PollResults), _) => {
+            actions.extend(super::polls::results_action(message));
+        }
+        _ => {}
+    }
+    actions
+}
+
+/// What clicking a message's own file does: the media, document or sticker,
+/// or an interactive card's header picture.
+fn attachment_target(
+    ctx: &egui::Context,
+    chat: &str,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) {
+    let drawn = |media: &Media| {
+        media
+            .path
+            .as_deref()
+            .is_none_or(|path| !picture_failed(ctx, path))
+    };
+    match &message.content {
+        Content::Audio { media, .. } => match &media.path {
+            Some(path) => voice_clicked(message, path, actions),
+            None => download_clicked(chat, message, media, actions),
+        },
+        // A video without a picture to show is drawn as a file card, and
+        // clicking that card only downloads it.
+        Content::Video {
+            media, note: false, ..
+        } if video_is_card(message, media) => {
+            attachment_clicked(chat, message, media, actions);
+        }
+        Content::Video { media, gif, .. } => {
+            video_clicked(chat, message, media, *gif, false, actions);
+        }
+        Content::Image { media, .. } => {
+            picture_clicked(chat, message, media, None, drawn(media), actions);
+        }
+        Content::Sticker { media, animated } => {
+            let drawn = drawn(media);
+            picture_clicked(chat, message, media, Some(*animated), drawn, actions);
+        }
+        Content::Document { media, .. } => attachment_clicked(chat, message, media, actions),
+        Content::Interactive {
+            card: Some(card), ..
+        } => {
+            if let Some(image) = &card.image {
+                picture_clicked(chat, message, image, None, drawn(image), actions);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// What clicking a link preview card does: open its address.
+fn preview_clicked(preview: &LinkPreview, actions: &mut Vec<Action>) {
+    actions.push(Action::OpenUrl(preview.url.clone()));
+}
+
+/// What clicking a link in a text does. The app checks the address before
+/// it opens anything.
+fn link_clicked(url: &str, actions: &mut Vec<Action>) {
+    actions.push(Action::OpenUrl(url.to_owned()));
+}
+
+/// What clicking a location's "Open in a map" does.
+fn map_clicked(latitude: f64, longitude: f64, actions: &mut Vec<Action>) {
+    let spot = Spot {
+        latitude,
+        longitude,
+    };
+    actions.push(Action::OpenUrl(crate::geo::map_url(spot)));
+}
+
+/// What clicking a shared contact's "Chat" does.
+fn contact_chat_clicked(name: &str, account: &str, actions: &mut Vec<Action>) {
+    actions.push(Action::StartChat {
+        id: format!("{account}@s.whatsapp.net"),
+        name: name.to_owned(),
+        dismiss_dialog: true,
+    });
+}
+
+/// What clicking a shared contact's "Add" does: the new contact form,
+/// filled in.
+fn contact_add_clicked(
+    name: &str,
+    first_name: Option<&str>,
+    account: &str,
+    actions: &mut Vec<Action>,
+) {
+    // Split where the card's first name ends, so a first name of several
+    // words stays whole.
+    let (first, last) = crate::util::editor_names(name, first_name);
+    actions.push(Action::NewContact {
+        phone: account.to_owned(),
+        first,
+        last,
+        to_phone: None,
+    });
+}
+
 /// What clicking a quote does: the list moves to the replied message, which
 /// it brings into view, loading older history when needed. A private reply
 /// quotes a message of another chat, which opens at it.
@@ -7943,6 +8351,350 @@ pub(crate) fn quote_key_action(quoted: &crate::model::Quoted) -> Action {
         Some(_) => quote_jump_action(quoted),
         None => Action::GoToReplied(quoted.id.clone()),
     }
+}
+
+/// What clicking a sticker pack's "View stickers" does.
+fn sticker_pack_clicked(message: &Message, actions: &mut Vec<Action>) {
+    actions.push(Action::ViewStickerPack(message.id.clone()));
+}
+
+/// What clicking a carousel card's picture does: a downloaded one opens,
+/// and one that is not downloaded is fetched. Nothing while it downloads.
+fn carousel_picture_clicked(
+    message: &Message,
+    index: usize,
+    media: &Media,
+    actions: &mut Vec<Action>,
+) {
+    match &media.path {
+        // A card's picture opens in the viewer, among the chat's album, as
+        // any other photo does.
+        Some(path) => actions.push(match crate::image_preview::open_target(path, true) {
+            crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
+                path: path.clone(),
+                chat: message.chat.clone(),
+                message: message.id.clone(),
+                card: Some(index),
+            },
+            crate::image_preview::OpenTarget::External => Action::OpenFile(path.clone()),
+        }),
+        None if !matches!(media.state, MediaState::Downloading) => {
+            actions.push(Action::Download {
+                manual: true,
+                chat: message.chat.clone(),
+                message: message.id.clone(),
+                card: Some(index),
+            });
+        }
+        None => {}
+    }
+}
+
+/// How the item cursor names one target of a message as it moves onto it:
+/// "Link 2 of 3, example.com/path", "Phone number 3 of 3, +1 (555)
+/// 010-2040", "Card 2 of 4, Summer sale, not downloaded", "Document 1 of 3,
+/// report.pdf".
+pub(crate) fn target_label(
+    locale: crate::i18n::Locale,
+    message: &Message,
+    targets: &[crate::a11y::KeyTarget],
+    index: usize,
+    voting: &Voting<'_>,
+) -> String {
+    use crate::a11y::{KeyTarget, fill};
+    use crate::i18n::gettext;
+    let Some(target) = targets.get(index) else {
+        return String::new();
+    };
+    let at = (index + 1).to_string();
+    let of = targets.len().to_string();
+    // "Photo 1 of 3", then what else there is to say, if anything.
+    let kind = |kind: &str, extra: Vec<String>| {
+        std::iter::once(fill(
+            &gettext(locale, "{kind} {position} of {total}"),
+            &[("kind", kind), ("position", &at), ("total", &of)],
+        ))
+        .chain(extra.into_iter().filter(|part| !part.is_empty()))
+        .collect::<Vec<_>>()
+        .join(", ")
+    };
+    match target {
+        KeyTarget::Link { written, .. } => fill(
+            &gettext(locale, "Link {position} of {total}, {link}"),
+            &[("position", &at), ("total", &of), ("link", written)],
+        ),
+        KeyTarget::Phone { written, .. } => fill(
+            &gettext(locale, "Phone number {position} of {total}, {number}"),
+            &[("position", &at), ("total", &of), ("number", written)],
+        ),
+        KeyTarget::Preview => {
+            let name = match &message.content {
+                Content::Text {
+                    preview: Some(preview),
+                    ..
+                } => preview
+                    .title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| preview_domain(&preview.url)),
+                _ => String::new(),
+            };
+            fill(
+                &gettext(locale, "Link preview {position} of {total}, {name}"),
+                &[("position", &at), ("total", &of), ("name", &name)],
+            )
+        }
+        KeyTarget::Attachment | KeyTarget::AlbumItem(_) => {
+            let name = match &message.content {
+                Content::Document { file_name, .. } => file_name.clone(),
+                _ => String::new(),
+            };
+            let state = message
+                .content
+                .media()
+                .and_then(|media| crate::a11y::media_state(locale, media, false))
+                .unwrap_or_default();
+            kind(
+                &crate::a11y::file_kind(locale, &message.content),
+                vec![name, state],
+            )
+        }
+        KeyTarget::Card(card) => {
+            let child = match &message.content {
+                Content::Interactive {
+                    card: Some(parent), ..
+                } => parent.carousel.get(*card),
+                _ => None,
+            };
+            let line = child
+                .and_then(|child| child.body.lines().find(|line| !line.trim().is_empty()))
+                .map(|line| crate::a11y::spoken(&markup::plain(line, &[])))
+                .unwrap_or_default();
+            let state = child
+                .and_then(|child| child.image.as_ref())
+                .and_then(|image| crate::a11y::media_state(locale, image, false))
+                .unwrap_or_default();
+            std::iter::once(fill(
+                &gettext(locale, "Card {position} of {total}"),
+                &[("position", &at), ("total", &of)],
+            ))
+            .chain([line, state].into_iter().filter(|part| !part.is_empty()))
+            .collect::<Vec<_>>()
+            .join(", ")
+        }
+        KeyTarget::Map => kind(&gettext(locale, "Location"), Vec::new()),
+        // The button's own name: Space starts a chat.
+        KeyTarget::Contact => kind(&gettext(locale, "Chat"), Vec::new()),
+        KeyTarget::AddContact => kind(&gettext(locale, "Add contact"), Vec::new()),
+        KeyTarget::PollResults => kind(&gettext(locale, "Show votes"), Vec::new()),
+        KeyTarget::PollOption(option) => {
+            poll_option_label(locale, message, *option, voting, &at, &of)
+        }
+        KeyTarget::StickerPack => kind(&gettext(locale, "Sticker pack"), Vec::new()),
+    }
+}
+
+/// A poll option as the item cursor names it: "Afternoon, 1 vote, not
+/// selected, 2 of 3". A poll that takes no vote now leaves out whether it is
+/// chosen, and an option that cannot be chosen ends with why, as the
+/// ballot's own note and the option's hint say it.
+fn poll_option_label(
+    locale: crate::i18n::Locale,
+    message: &Message,
+    option: usize,
+    voting: &Voting<'_>,
+    at: &str,
+    of: &str,
+) -> String {
+    use crate::a11y::fill;
+    use crate::i18n::{gettext, ngettext};
+    let Content::Poll { options, state, .. } = &message.content else {
+        return String::new();
+    };
+    let votes = state.counts.get(option).copied().unwrap_or_default() as u32;
+    let mut parts = vec![
+        crate::a11y::spoken(options.get(option).map_or("", String::as_str)),
+        fill(
+            &ngettext(locale, "{count} vote", "{count} votes", votes),
+            &[("count", &votes.to_string())],
+        ),
+    ];
+    let blocker = super::polls::vote_blocker(state, voting.connected, voting.pending(message));
+    if blocker.is_none() {
+        parts.push(chosen_word(locale, state.selected.contains(&option)));
+    }
+    parts.push(fill(
+        &gettext(locale, "{position} of {total}"),
+        &[("position", at), ("total", of)],
+    ));
+    let text = parts.join(", ");
+    match option_blocked(message, option, voting) {
+        Some(reason) => fill(
+            &gettext(locale, "{option}, unavailable: {reason}"),
+            &[("option", &text), ("reason", &blocker_said(locale, reason))],
+        ),
+        None => text,
+    }
+}
+
+/// "selected" or "not selected".
+fn chosen_word(locale: crate::i18n::Locale, chosen: bool) -> String {
+    if chosen {
+        crate::i18n::gettext(locale, "selected").into_owned()
+    } else {
+        crate::i18n::gettext(locale, "not selected").into_owned()
+    }
+}
+
+/// Why a poll option cannot be chosen now, as its hint says, if it cannot.
+pub(crate) fn option_blocked(
+    message: &Message,
+    option: usize,
+    voting: &Voting<'_>,
+) -> Option<&'static str> {
+    let Content::Poll { state, .. } = &message.content else {
+        return None;
+    };
+    let pending = voting.pending(message);
+    if super::polls::vote_action(message, option, voting.connected, pending).is_some() {
+        return None;
+    }
+    Some(
+        super::polls::vote_blocker(state, voting.connected, pending)
+            .unwrap_or("Remove an answer first to choose another"),
+    )
+}
+
+/// A poll option's reason for taking no vote, as the ballot and the option's
+/// hint show it, in words for a screen reader: translated, and without the
+/// dot the ballot draws between its two parts.
+pub(crate) fn blocker_said(locale: crate::i18n::Locale, reason: &str) -> String {
+    use crate::i18n::gettext;
+    match reason {
+        "Sending vote…" => gettext(locale, "Sending vote…"),
+        "Voting key unavailable · use your phone" => {
+            gettext(locale, "Voting key unavailable, use your phone")
+        }
+        "Reconnect to vote" => gettext(locale, "Reconnect to vote"),
+        "Remove an answer first to choose another" => {
+            gettext(locale, "Remove an answer first to choose another")
+        }
+        other => std::borrow::Cow::Owned(other.replace(" · ", ", ")),
+    }
+    .into_owned()
+}
+
+/// What Space on a poll option says once it voted: the option and how the
+/// vote leaves it, "Afternoon, selected". The vote lands later; this is
+/// the choice it sends.
+pub(crate) fn vote_said(
+    locale: crate::i18n::Locale,
+    message: &Message,
+    option: usize,
+    choices: &[usize],
+) -> String {
+    let Content::Poll { options, .. } = &message.content else {
+        return String::new();
+    };
+    crate::a11y::fill(
+        &crate::i18n::gettext(locale, "{option}, {choice}"),
+        &[
+            (
+                "option",
+                &crate::a11y::spoken(options.get(option).map_or("", String::as_str)),
+            ),
+            ("choice", &chosen_word(locale, choices.contains(&option))),
+        ],
+    )
+}
+
+/// The site a link preview names: its address without scheme or path.
+fn preview_domain(url: &str) -> String {
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// What clicking an attachment that is not downloaded does: fetch it, or
+/// retry a fetch that failed. Nothing while it downloads.
+fn download_clicked(chat: &str, message: &Message, media: &Media, actions: &mut Vec<Action>) {
+    if media.path.is_none() && !matches!(media.state, MediaState::Downloading) {
+        actions.push(Action::Download {
+            manual: true,
+            card: None,
+            chat: chat.to_owned(),
+            message: message.id.clone(),
+        });
+    }
+}
+
+/// What clicking a picture or a sticker (`sticker` says whether it is
+/// animated) does: a downloaded one opens where it was `drawn`, a photo in
+/// the media viewer among the chat's album where the viewer takes it and a
+/// sticker on its own card, and one that could not be drawn in the system's
+/// viewer; one that is not downloaded is fetched.
+fn picture_clicked(
+    chat: &str,
+    message: &Message,
+    media: &Media,
+    sticker: Option<bool>,
+    drawn: bool,
+    actions: &mut Vec<Action>,
+) {
+    match &media.path {
+        Some(path) if sticker.is_some() && drawn => {
+            actions.push(Action::PreviewSticker(path.clone()));
+        }
+        Some(path) => actions.push(
+            match crate::image_preview::open_target(path, drawn && sticker.is_none()) {
+                crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
+                    path: path.clone(),
+                    chat: chat.to_owned(),
+                    message: message.id.clone(),
+                    card: None,
+                },
+                crate::image_preview::OpenTarget::External => Action::OpenFile(path.clone()),
+            },
+        ),
+        None => download_clicked(chat, message, media, actions),
+    }
+}
+
+/// Whether a picture's file could not be drawn, as its bubble last found.
+fn picture_failed(ctx: &egui::Context, path: &Path) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(picture_failed_id(path)))
+        .unwrap_or(false)
+}
+
+fn picture_failed_id(path: &Path) -> egui::Id {
+    egui::Id::new(("picture-failed", path))
+}
+
+/// Whether a video shows as a file card: one with neither a thumbnail nor
+/// its file has no picture to show.
+fn video_is_card(message: &Message, media: &Media) -> bool {
+    message.thumbnail.is_none() && media.path.is_none()
+}
+
+/// What clicking a document card does: a downloaded one opens, and one that
+/// is not downloaded is fetched.
+fn attachment_clicked(chat: &str, message: &Message, media: &Media, actions: &mut Vec<Action>) {
+    match &media.path {
+        Some(path) => actions.push(Action::OpenFile(path.clone())),
+        None => download_clicked(chat, message, media, actions),
+    }
+}
+
+/// What the play button of a downloaded voice or audio message does.
+fn voice_clicked(message: &Message, path: &Path, actions: &mut Vec<Action>) {
+    actions.push(Action::PlayVoice {
+        message: message.id.clone(),
+        path: path.to_owned(),
+    });
 }
 
 fn mentions_of(view: &View<'_>, message: &Message) -> Vec<markup::Mention> {
@@ -8166,7 +8918,10 @@ fn content(
                 return None;
             }
             if let Some(image) = &card.image {
-                picture(ui, view, message, image, width, None, actions);
+                let drawn = picture(ui, view, message, image, width, None, actions);
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(bubble_id(&view.chat.id, &message.id).with("picture"), drawn);
+                });
                 ui.add_space(4.0);
                 if card.body.is_empty() {
                     return None;
@@ -8440,11 +9195,7 @@ fn content(
                                 )
                                 .clicked()
                                 {
-                                    actions.push(Action::StartChat {
-                                        id: id.clone(),
-                                        name: name.to_owned(),
-                                        dismiss_dialog: true,
-                                    });
+                                    contact_chat_clicked(name, account, actions);
                                 }
                                 if !view.contacts.contains_key(&id)
                                     && theme::pill_button(
@@ -8455,16 +9206,12 @@ fn content(
                                     )
                                     .clicked()
                                 {
-                                    // Split where the card's first name ends, so a
-                                    // first name of several words stays whole.
-                                    let (first, last) =
-                                        crate::util::editor_names(name, first_name.as_deref());
-                                    actions.push(Action::NewContact {
-                                        phone: account.clone(),
-                                        first,
-                                        last,
-                                        to_phone: None,
-                                    });
+                                    contact_add_clicked(
+                                        name,
+                                        first_name.as_deref(),
+                                        account,
+                                        actions,
+                                    );
                                 }
                             });
                         }
@@ -8517,7 +9264,7 @@ fn content(
                     )
                     .clicked()
                     {
-                        actions.push(Action::ViewStickerPack(message.id.clone()));
+                        sticker_pack_clicked(message, actions);
                     }
                 });
             });
@@ -8814,6 +9561,15 @@ fn carousel(
         });
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
+}
+
+/// Whether text drawn for the message `drawn` belongs to the message
+/// `message`: the message itself, or one of its carousel cards
+/// ([`carousel_row`]).
+fn drawn_for(drawn: &str, message: &str) -> bool {
+    drawn
+        .strip_prefix(message)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("-card-"))
 }
 
 /// Stands in for one carousel card when drawing its text and actions. Only the
@@ -9147,30 +9903,39 @@ fn album_tile(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        if let Some(path) = &media.path {
-            // A photo or a clip the viewer plays opens there, over the
-            // chat's album; anything else goes to the system's own viewer.
-            actions.push(match crate::image_preview::open_target(path, true) {
-                crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
-                    path: path.clone(),
-                    chat: message.chat.clone(),
-                    message: message.id.clone(),
-                    card: None,
-                },
-                crate::image_preview::OpenTarget::External => Action::OpenFile(path.clone()),
-            });
-        } else if !matches!(media.state, MediaState::Downloading) {
-            actions.push(Action::Download {
-                manual: true,
-                card: None,
-                chat: message.chat.clone(),
-                message: message.id.clone(),
-            });
-        }
+        album_item_clicked(message, actions);
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(album_tile_id(&view.chat.id, &message.id), rect));
     Some(rect)
+}
+
+/// What clicking an album's tile does: a downloaded photo, or a clip the
+/// viewer plays, opens there, over the chat's album, and anything else in
+/// the system's own viewer; one not downloaded is fetched, or fetched again
+/// after a failure. Nothing while it downloads.
+fn album_item_clicked(message: &Message, actions: &mut Vec<Action>) {
+    let Some(media) = message.content.media() else {
+        return;
+    };
+    if let Some(path) = &media.path {
+        actions.push(match crate::image_preview::open_target(path, true) {
+            crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
+                path: path.clone(),
+                chat: message.chat.clone(),
+                message: message.id.clone(),
+                card: None,
+            },
+            crate::image_preview::OpenTarget::External => Action::OpenFile(path.clone()),
+        });
+    } else if !matches!(media.state, MediaState::Downloading) {
+        actions.push(Action::Download {
+            manual: true,
+            card: None,
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+        });
+    }
 }
 
 /// Where an album member's tile was drawn, for interaction tests.
@@ -9290,32 +10055,19 @@ fn carousel_picture(
     if let MediaState::Failed(error) = &media.state {
         response.on_hover_text(format!("{error} · Click to retry"));
     }
-    if let Some(path) = &media.path {
-        if clicked {
-            // A card's picture opens in the viewer, among the chat's album,
-            // as any other photo does.
-            actions.push(match crate::image_preview::open_target(path, true) {
-                crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
-                    path: path.clone(),
-                    chat: message.chat.clone(),
-                    message: message.id.clone(),
-                    card: Some(index),
-                },
-                crate::image_preview::OpenTarget::External => Action::OpenFile(path.clone()),
-            });
-        }
-    } else if !matches!(media.state, MediaState::Downloading)
-        && (clicked
-            || (visible
-                && auto_download_allowed(media, false, view.auto_download)
-                && matches!(media.state, MediaState::Idle)))
-    {
+    let auto = media.path.is_none()
+        && visible
+        && auto_download_allowed(media, false, view.auto_download)
+        && matches!(media.state, MediaState::Idle);
+    if auto {
         actions.push(Action::Download {
             manual: clicked,
             chat: message.chat.clone(),
             message: message.id.clone(),
             card: Some(index),
         });
+    } else if clicked {
+        carousel_picture_clicked(message, index, media, actions);
     }
 }
 
@@ -9670,7 +10422,8 @@ fn rich_body(
             ));
     }
     // Click links and drag to select text.
-    // Text selection and web links do not need a sequential Tab stop.
+    // Text selection, links and phone numbers do not need a sequential Tab
+    // stop: the message list's item cursor reaches the links and numbers.
     // The surrounding transcript remains available to accessibility readers.
     let (_, rect) = ui.allocate_space(allocation);
     // egui matches selection endpoints to widgets by id every frame and drops
@@ -9797,7 +10550,12 @@ fn rich_body(
             .skip(range.start)
             .take(range.len())
             .collect();
-        for (row, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end) {
+        let pieces = crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end);
+        for (piece, (row, bounds)) in pieces.into_iter().enumerate() {
+            // For the pointer only, as a web link in the text is: not
+            // focusable and no node of its own in the accessibility tree.
+            // The message list's item cursor reaches the number, and Space
+            // opens this menu (`KeyTarget::Phone`).
             let link = ui
                 .interact(
                     bounds.translate(origin.to_vec2()).expand(2.0),
@@ -9807,16 +10565,49 @@ fn rich_body(
                         range.end,
                         row,
                     )),
-                    Sense::click(),
+                    Sense::CLICK,
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            link.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), number)
+            // Where tests find each piece of a number, by its address and its
+            // place among the pieces of a wrapped number.
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    bubble_id(&view.chat.id, &message.id).with((
+                        "test-phone-link",
+                        url.as_str(),
+                        piece,
+                    )),
+                    link.id,
+                );
             });
-            theme::reveal_focus(&link);
-            let link = focus::phone_link(link);
-            egui::Popup::menu(&link)
-                .id(link.id.with("popup"))
+            let popup_id = link.id.with("popup");
+            // Space on the number in the message list asks for its menu: the
+            // first piece of the number's first appearance opens it, once.
+            let asked = piece == 0
+                && view.open_phone_menu.is_some_and(|(requested, wanted)| {
+                    wanted == url.as_str() && drawn_for(&message.id, requested)
+                });
+            let requested = asked && !egui::Popup::is_any_open(ui.ctx());
+            if asked {
+                // Opened once: from here on the menu closes as any menu does.
+                // Asked for under another menu, it is dropped rather than
+                // opening once that one closes.
+                actions.push(Action::PhoneMenuOpened);
+            }
+            let key_menu = KeyMenu::begin(ui.ctx(), popup_id, requested, false);
+            let popup = egui::Popup::menu(&link);
+            let popup = if requested {
+                popup.open_memory(egui::SetOpenCommand::Bool(true))
+            } else {
+                popup
+            };
+            let mut first = None;
+            let menu = popup
+                .id(popup_id)
+                // The menu's background takes clicks without being a Tab stop
+                // of its own: Tab walks Message and Copy number only.
+                .sense(Sense::CLICK)
                 .width(widgets::menu_width(ui, &menu_labels, true))
                 .frame(widgets::menu_frame(&view.palette))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -9824,8 +10615,15 @@ fn rich_body(
                     #[cfg(test)]
                     let message_rect =
                         Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
-                    let message_clicked =
-                        widgets::menu_item(ui, &view.palette, None, message_number.as_ref());
+                    let message_item = widgets::menu_item_response(
+                        ui,
+                        &view.palette,
+                        None,
+                        message_number.as_ref(),
+                        true,
+                    );
+                    first = Some(message_item.id);
+                    let message_clicked = message_item.clicked();
                     #[cfg(test)]
                     ui.ctx().data_mut(|data| {
                         data.insert_temp(link.id.with("test-message-action"), message_rect);
@@ -9855,6 +10653,13 @@ fn rich_body(
                         actions.push(Action::CopyText(copy_text.clone()));
                     }
                 });
+            key_menu.finish(
+                ui.ctx(),
+                menu.as_ref().map(|menu| menu.response.layer_id),
+                false,
+                first,
+                messages_list_id(&view.chat.id),
+            );
         }
     }
     if !laid.links.is_empty()
@@ -9869,7 +10674,7 @@ fn rich_body(
         if let Some(url) = laid.link_at(cursor.index.0) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             if !url.starts_with("tel:") && response.clicked() {
-                actions.push(Action::OpenUrl(url.to_owned()));
+                link_clicked(url, actions);
             }
         }
     }
@@ -9920,7 +10725,7 @@ fn preview_card(
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
-        actions.push(Action::OpenUrl(preview.url.clone()));
+        preview_clicked(preview, actions);
     }
 }
 
@@ -9935,15 +10740,7 @@ fn preview_layout(
     thumbnail: Option<(&str, &str, &[u8])>,
     card_width: f32,
 ) -> Rect {
-    let domain = preview
-        .url
-        .split("://")
-        .nth(1)
-        .unwrap_or(&preview.url)
-        .split('/')
-        .next()
-        .unwrap_or_default()
-        .to_owned();
+    let domain = preview_domain(&preview.url);
     // Limit text to the space beside the thumbnail and keep it
     // left-aligned in own bubbles.
     let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
@@ -10044,11 +10841,7 @@ fn location_card(
         )
         .clicked()
         {
-            let spot = Spot {
-                latitude,
-                longitude,
-            };
-            actions.push(Action::OpenUrl(crate::geo::map_url(spot)));
+            map_clicked(latitude, longitude, actions);
         }
     });
 }
@@ -10174,7 +10967,7 @@ fn picture(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
             {
-                actions.push(Action::PreviewSticker(path.clone()));
+                picture_clicked(&view.chat.id, message, media, sticker, true, actions);
             }
             return rect;
         }
@@ -10207,6 +11000,10 @@ fn picture(
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(pixels_id, texture.size));
                 }
+                // A file repaired in place draws again, and Space opens it
+                // as the click does.
+                ui.ctx()
+                    .data_mut(|data| data.remove::<bool>(picture_failed_id(path)));
                 let size = fit(texture.size);
                 let response = ui.add(
                     image
@@ -10219,21 +11016,7 @@ fn picture(
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    let action = match sticker {
-                        Some(_) => Action::PreviewSticker(path.clone()),
-                        None => match crate::image_preview::open_target(path, true) {
-                            crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
-                                path: path.clone(),
-                                chat: view.chat.id.clone(),
-                                message: message.id.clone(),
-                                card: None,
-                            },
-                            crate::image_preview::OpenTarget::External => {
-                                Action::OpenFile(path.clone())
-                            }
-                        },
-                    };
-                    actions.push(action);
+                    picture_clicked(&view.chat.id, message, media, sticker, true, actions);
                 }
                 rect
             }
@@ -10286,8 +11069,11 @@ fn picture(
                         palette.secondary,
                     );
                 }
+                // Space reads this to open the file as the click does.
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(picture_failed_id(path), true));
                 if response.clicked() {
-                    actions.push(Action::OpenFile(path.clone()));
+                    picture_clicked(&view.chat.id, message, media, sticker, false, actions);
                 }
                 rect
             }
@@ -10365,20 +11151,21 @@ fn picture(
             }
         }
     }
-    let wants = response
+    let clicked = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-        && !matches!(media.state, MediaState::Downloading);
+        .clicked();
     let auto = ui.is_rect_visible(rect)
         && matches!(media.state, MediaState::Idle)
         && auto_download_allowed(media, sticker.is_some(), view.auto_download);
-    if wants || auto {
+    if auto {
         actions.push(Action::Download {
-            manual: wants,
+            manual: clicked,
             card: None,
             chat: view.chat.id.clone(),
             message: message.id.clone(),
         });
+    } else if clicked {
+        picture_clicked(&view.chat.id, message, media, sticker, true, actions);
     }
     rect
 }
@@ -10497,7 +11284,7 @@ fn video(
     // A video sent before ZapFast made thumbnails has none; its file is
     // here, so its first frame stands in. Without either, it is a file card.
     let thumbnail = message.thumbnail.as_deref();
-    if thumbnail.is_none() && media.path.is_none() {
+    if video_is_card(message, media) {
         let title = if gif { "GIF" } else { "Video" };
         let mut detail = Vec::new();
         if let Some(seconds) = seconds {
@@ -10702,7 +11489,7 @@ fn video(
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
-        video_clicked(view, message, media, gif, auto, actions);
+        video_clicked(&view.chat.id, message, media, gif, auto, actions);
     }
     // The two clicks of a double-click play and pause between them; the
     // video then opens over the window as it was.
@@ -10731,7 +11518,7 @@ fn expand_video_action(message: &str, path: &Path) -> Action {
 /// its bubble here. `downloading` is set when this frame already asked for the
 /// download.
 fn video_clicked(
-    view: &View<'_>,
+    chat: &str,
     message: &Message,
     media: &Media,
     gif: bool,
@@ -10745,13 +11532,8 @@ fn video_clicked(
             path: path.clone(),
         }),
         None => {
-            if !downloading && !matches!(media.state, MediaState::Downloading) {
-                actions.push(Action::Download {
-                    manual: true,
-                    card: None,
-                    chat: view.chat.id.clone(),
-                    message: message.id.clone(),
-                });
+            if !downloading {
+                download_clicked(chat, message, media, actions);
             }
             if !gif {
                 actions.push(Action::PlayVideoWhenDownloaded(message.id.clone()));
@@ -11098,7 +11880,7 @@ fn video_note(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        video_clicked(view, message, media, false, auto, actions);
+        video_clicked(&view.chat.id, message, media, false, auto, actions);
     }
     NOTE_SIDE
 }
@@ -11218,18 +12000,7 @@ fn attachment(
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() && !auto {
-        match &media.path {
-            Some(path) => actions.push(Action::OpenFile(path.clone())),
-            None if !matches!(media.state, MediaState::Downloading) => {
-                actions.push(Action::Download {
-                    manual: true,
-                    card: None,
-                    chat: view.chat.id.clone(),
-                    message: message.id.clone(),
-                })
-            }
-            None => {}
-        }
+        attachment_clicked(&view.chat.id, message, media, actions);
     }
 }
 
@@ -11316,12 +12087,7 @@ fn voice_player(
                     )
                     .clicked()
                     {
-                        actions.push(Action::Download {
-                            manual: true,
-                            card: None,
-                            chat: view.chat.id.clone(),
-                            message: message.id.clone(),
-                        });
+                        download_clicked(&view.chat.id, message, media, actions);
                     }
                 }
                 (Some(path), _) => match status.state {
@@ -11343,10 +12109,7 @@ fn voice_player(
                         )
                         .clicked()
                         {
-                            actions.push(Action::PlayVoice {
-                                message: message.id.clone(),
-                                path: path.clone(),
-                            });
+                            voice_clicked(message, path, actions);
                         }
                     }
                 },
@@ -11836,6 +12599,27 @@ mod tests {
             assert!(
                 SOURCE.contains(&format!("gettext(locale, \"{shown}\")")),
                 "{blocker:?}: {shown:?} is not a gettext literal"
+            );
+        }
+        // The poll's reasons, spoken the same way, without the visual " · ".
+        for (reason, said) in [
+            ("Sending vote…", "Sending vote…"),
+            (
+                "Voting key unavailable · use your phone",
+                "Voting key unavailable, use your phone",
+            ),
+            ("Reconnect to vote", "Reconnect to vote"),
+            (
+                "Remove an answer first to choose another",
+                "Remove an answer first to choose another",
+            ),
+        ] {
+            let spoken = blocker_said(locale, reason);
+            assert_eq!(spoken, crate::i18n::gettext(locale, said));
+            assert!(!spoken.contains('·'), "{spoken}");
+            assert!(
+                SOURCE.contains(&format!("gettext(locale, \"{said}\")")),
+                "{said:?}"
             );
         }
     }
@@ -12822,6 +13606,7 @@ mod tests {
             interactive_pending: &app.interactive_sending,
             anchor: None,
             open_menu: None,
+            open_phone_menu: None,
             reaction: None,
             reaction_menu: false,
             reaction_emoji: &app.settings.reaction_emoji,

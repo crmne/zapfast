@@ -26,6 +26,9 @@ pub enum Category {
     Toast,
     /// Errors: read before anything else waiting.
     Error,
+    /// What the message list's keys reach inside a message: a link, a
+    /// phone number, a card's text, a file's name or a poll option.
+    Item,
 }
 
 /// Whether a `category` item said at `at` is still worth speaking `now`.
@@ -34,13 +37,13 @@ fn fresh(category: Category, at: Instant, now: Instant) -> bool {
 }
 
 impl Category {
-    /// Categories hidden while locked: messages and typing reveal who wrote
-    /// or what, and toasts, errors included, are not drawn on the lock
-    /// screen and can name a contact or an account.
+    /// Categories hidden while locked: messages, typing and a message's items
+    /// reveal who wrote or what, and toasts, errors included, are not drawn
+    /// on the lock screen and can name a contact or an account.
     fn private(self) -> bool {
         matches!(
             self,
-            Self::Message | Self::Typing | Self::Toast | Self::Error
+            Self::Message | Self::Typing | Self::Item | Self::Toast | Self::Error
         )
     }
 }
@@ -142,6 +145,12 @@ impl Announcer {
     #[cfg(test)]
     pub fn spoken(&self) -> [&str; 2] {
         [&self.slots[0].0, &self.slots[1].0]
+    }
+
+    /// Whether each slot is assertive, as errors are.
+    #[cfg(test)]
+    pub fn assertive(&self) -> [bool; 2] {
+        [self.slots[0].1, self.slots[1].1]
     }
 }
 

@@ -33,3 +33,4 @@ src/group_admin.rs
 src/ui/polls.rs
 src/ui/update.rs
 src/a11y.rs
+src/ui/keys.rs
