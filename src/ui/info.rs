@@ -2056,7 +2056,7 @@ pub fn group_photo_id() -> egui::Id {
     egui::Id::new("group-photo")
 }
 
-/// The group's big photo, which opens a menu to change or remove it.
+/// The group's big photo, which opens a menu to view, change or remove it.
 fn group_photo(
     app: &App,
     ui: &mut egui::Ui,
@@ -2073,15 +2073,30 @@ fn group_photo(
         .on_hover_text(label.as_ref());
     ui.ctx()
         .data_mut(|data| data.insert_temp(group_photo_id(), response.rect));
+    let view = crate::i18n::gettext(app.locale, "View photo");
     let change = crate::i18n::gettext(app.locale, "Change photo");
     let remove = crate::i18n::gettext(app.locale, "Remove photo");
-    let width = widgets::menu_width(ui, &[change.as_ref(), remove.as_ref()], true);
+    let width = widgets::menu_width(ui, &[view.as_ref(), change.as_ref(), remove.as_ref()], true);
     let mut chosen = None;
     egui::Popup::menu(&response)
         .width(width)
         .frame(widgets::menu_frame(&palette))
         .show(|ui| {
-            if widgets::menu_item(ui, &palette, Some(Icon::Image), &change) {
+            if let Some(picture) = picture {
+                let item = widgets::menu_item_response(ui, &palette, Some(Icon::Eye), &view, true);
+                if response.has_focus() && !ui.is_sizing_pass() {
+                    item.request_focus();
+                }
+                if item.clicked() {
+                    chosen = Some(view_photo(picture));
+                    ui.close();
+                }
+            }
+            let item = widgets::menu_item_response(ui, &palette, Some(Icon::Image), &change, true);
+            if picture.is_none() && response.has_focus() && !ui.is_sizing_pass() {
+                item.request_focus();
+            }
+            if item.clicked() {
                 chosen = Some(Action::PickGroupPicture(id.to_owned()));
                 ui.close();
             }

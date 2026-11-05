@@ -3869,6 +3869,7 @@ impl App {
                         .image_preview
                         .as_ref()
                         .map(PreviewState::chat)
+                        .filter(|id| !id.is_empty())
                         .is_some_and(|id| {
                             self.chat(id)
                                 .is_none_or(|chat| chat.locked && !self.locked_folder_open())
@@ -7939,6 +7940,10 @@ impl App {
                 let Some(preview) = self.image_preview.as_ref() else {
                     return;
                 };
+                // Profile pictures have no chat album to step through.
+                if preview.chat().is_empty() {
+                    return;
+                }
                 // A chat that is gone, or locked outside the open folder,
                 // shows nothing more of its album: the viewer closes instead.
                 if self
@@ -10774,12 +10779,10 @@ impl App {
         if self.video.message().is_some() && self.video_chat != self.open_chat {
             self.video.stop();
         }
-        // The viewer shows the open chat's media, and leaves with it.
-        if self
-            .image_preview
-            .as_ref()
-            .is_some_and(|preview| self.open_chat.as_deref() != Some(preview.chat()))
-        {
+        // Chat media leaves with its chat; profile pictures have no chat.
+        if self.image_preview.as_ref().is_some_and(|preview| {
+            !preview.chat().is_empty() && self.open_chat.as_deref() != Some(preview.chat())
+        }) {
             self.image_preview = None;
             self.viewer_media.clear();
             self.viewer_media_chat = None;
@@ -10821,8 +10824,7 @@ impl App {
     }
 
     /// Opens the full-window viewer on `preview`, and asks for the album
-    /// around it, so stepping through the chat's photos and clips works from
-    /// the first frame.
+    /// around chat media. Profile pictures stand alone.
     fn open_viewer(&mut self, preview: PreviewState, ctx: &egui::Context) {
         // The viewer takes the screen: a clip playing in the chat behind it
         // would keep its sound over whatever opens here.
@@ -10831,11 +10833,14 @@ impl App {
         }
         self.viewer_media.clear();
         self.viewer_media_state.clear();
-        self.viewer_media_chat = Some(preview.chat().to_owned());
-        self.backend.send(Command::LoadChatMedia {
-            chat: preview.chat().to_owned(),
-            around: Some(preview.message().to_owned()),
-        });
+        self.viewer_media_chat = None;
+        if !preview.chat().is_empty() {
+            self.viewer_media_chat = Some(preview.chat().to_owned());
+            self.backend.send(Command::LoadChatMedia {
+                chat: preview.chat().to_owned(),
+                around: Some(preview.message().to_owned()),
+            });
+        }
         self.image_preview = Some(preview);
         self.dialog = None;
         self.picker = None;
@@ -17062,6 +17067,96 @@ mod tests {
             ),
             "the album is asked for around the opened message"
         );
+    }
+
+    /// A profile picture is not a chat's attachment: frame updates and album
+    /// navigation must leave it open until the person closes it.
+    #[test]
+    fn a_profile_picture_viewer_survives_frame_updates_and_arrow_keys() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_album(3);
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        let file = tempfile::NamedTempFile::with_suffix(".jpg").unwrap();
+        app.apply(
+            Action::PreviewImage {
+                path: file.path().to_owned(),
+                chat: String::new(),
+                message: String::new(),
+                card: None,
+            },
+            &ctx,
+        );
+
+        for _ in 0..3 {
+            app.tick_video(&ctx);
+            assert!(
+                app.image_preview.is_some(),
+                "the profile picture stays open"
+            );
+        }
+        app.open_chat = None;
+        app.tick_video(&ctx);
+        assert!(
+            app.image_preview.is_some(),
+            "a profile picture does not need an open chat"
+        );
+        app.apply_backend_event(Event::Chats(app.chats.clone()), true);
+        assert!(
+            app.image_preview.is_some(),
+            "a chat snapshot keeps the picture"
+        );
+        for step in [-1, 1] {
+            app.apply(Action::ViewerStep(step), &ctx);
+            assert_eq!(
+                app.image_preview.as_ref().and_then(PreviewState::path),
+                Some(file.path()),
+                "an arrow key leaves the standalone picture in place"
+            );
+        }
+        assert!(app.viewer_media.is_empty());
+        app.apply(Action::CloseImagePreview, &ctx);
+        assert!(app.image_preview.is_none());
+    }
+
+    #[test]
+    fn a_profile_picture_viewer_does_not_request_a_chat_album() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_album(3);
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let file = tempfile::NamedTempFile::with_suffix(".jpg").unwrap();
+        app.apply(
+            Action::PreviewImage {
+                path: file.path().to_owned(),
+                chat: String::new(),
+                message: String::new(),
+                card: None,
+            },
+            &ctx,
+        );
+
+        assert!(app.image_preview.is_some());
+        assert!(app.viewer_media_chat.is_none());
+        assert!(
+            commands.try_recv().is_err(),
+            "there is no chat album to request"
+        );
+    }
+
+    #[test]
+    fn a_chat_photo_viewer_closes_when_its_chat_is_left() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_album(3);
+        app.open_chat = Some("1@s.whatsapp.net".into());
+        open_viewer(&mut app, 0);
+        app.tick_video(&ctx);
+        assert!(app.image_preview.is_some());
+
+        app.open_chat = Some("other@s.whatsapp.net".into());
+        app.tick_video(&ctx);
+        assert!(app.image_preview.is_none());
+        assert!(app.viewer_media.is_empty());
+        assert!(app.viewer_media_chat.is_none());
     }
 
     /// The viewer tracks its own download: progress while it runs, and the
