@@ -972,10 +972,11 @@ mod tests {
             .participant(admin.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 86_400,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral()
+                    .expiration(86_400)
+                    .build(),
+            ))
             .build();
         let event = Arc::new(wa_events::Event::GroupUpdate(update));
         let stopped = worker.account_session;
@@ -1105,10 +1106,11 @@ mod tests {
             .participant_pn(phone.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 86_400,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral()
+                    .expiration(86_400)
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -1242,10 +1244,11 @@ mod tests {
             .group_jid(group.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 604_800,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral()
+                    .expiration(604_800)
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -1310,10 +1313,11 @@ mod tests {
             .notification_id("notice-1".to_owned())
             .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 86_400,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral()
+                    .expiration(86_400)
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -1347,10 +1351,9 @@ mod tests {
             .group_jid(group.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(150).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 0,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral().expiration(0).build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -1391,10 +1394,11 @@ mod tests {
             .group_jid(group.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Ephemeral {
-                expiration: 86_400,
-                trigger: None,
-            }))
+            .action(Box::new(
+                GroupNotificationAction::ephemeral()
+                    .expiration(86_400)
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -1421,10 +1425,11 @@ mod tests {
                 .participant(admin.parse().unwrap())
                 .timestamp(whatsapp_rust::wacore::time::from_secs(200).unwrap())
                 .is_lid_addressing_mode(false)
-                .action(Box::new(GroupNotificationAction::Ephemeral {
-                    expiration,
-                    trigger: None,
-                }))
+                .action(Box::new(
+                    GroupNotificationAction::ephemeral()
+                        .expiration(expiration)
+                        .build(),
+                ))
                 .build()
         };
 
@@ -1471,10 +1476,11 @@ mod tests {
                 .maybe_notification_id(id.map(str::to_owned))
                 .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
                 .is_lid_addressing_mode(false)
-                .action(Box::new(GroupNotificationAction::Ephemeral {
-                    expiration,
-                    trigger: None,
-                }))
+                .action(Box::new(
+                    GroupNotificationAction::ephemeral()
+                        .expiration(expiration)
+                        .build(),
+                ))
                 .build()
         };
 

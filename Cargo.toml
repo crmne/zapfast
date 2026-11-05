@@ -70,16 +70,13 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # (#1763), which the call log prints. The sqlite-wasm-rs 0.6 edge that clashed
 # with rusqlite 0.40 (#1764) is behind a `js` feature since #1765. This is
 # upstream main with XOR FEC for 1:1 video, which an iPhone relies on since it
-# never NACKs (#1783), and dropping video queued before the relay allocates
-# (#1782). The crmne/whatsapp-rust fork (branch `voip-video-timing`) is
-# upstream main ac9d0df3 plus two open changes: interleaved video FEC against
-# burst loss (https://github.com/oxidezap/whatsapp-rust/pull/1789) and video
-# timed from capture, so a peer can lip-sync it
-# (https://github.com/oxidezap/whatsapp-rust/pull/1790). Back to upstream once
-# both merge, and to crates.io once released. `voip` is the call stack: signaling,
-# the sans-IO media engine with MLOW and libopus codecs, and the native UDP
-# relay transport.
-whatsapp-rust = { git = "https://github.com/crmne/whatsapp-rust", rev = "94f7c1376f8f6a77c55d85570a260600ad27de0b", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
+# never NACKs (#1783), dropping video queued before the relay allocates
+# (#1782), interleaved video FEC against burst loss (#1789), video timed from
+# capture so a peer can lip-sync it (#1790), and the native relay RTC stack on
+# 0.21.1 (#1847). Back to crates.io once released. `voip` is the call stack:
+# signaling, the sans-IO media engine with MLOW and libopus codecs, and the
+# native UDP relay transport.
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "e634d245f71d66e2ae55f79ef714c4ca01615ed8", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Queue between the call's audio streams and the engine.
 async-channel = "2.5"
