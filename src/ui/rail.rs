@@ -22,6 +22,10 @@ pub const WIDTH: f32 = 52.0;
 const CELL: f32 = 48.0;
 /// The lit square behind a destination's icon.
 const PLATE: f32 = 36.0;
+/// The active indicator's pill: Material's is 56 by 32, narrowed to fit
+/// the rail's 52 points with a margin either side.
+const INDICATOR_WIDTH: f32 = 44.0;
+const PILL: f32 = 32.0;
 /// A destination's icon.
 const ICON: f32 = 20.0;
 /// Our avatar at the foot of the rail.
@@ -360,12 +364,30 @@ fn destination_button(
     });
     if ui.is_rect_visible(plate) {
         let hovered = response.hovered() || response.has_focus();
-        if lit {
-            widgets::highlight_card(ui, palette, plate, palette.surface_active);
+        // Material's navigation rail: a pill-shaped active indicator in the
+        // secondary container, wider than the icon, behind the lit
+        // destination, and the same pill in a state layer under the pointer.
+        let indicator = Rect::from_center_size(plate.center(), vec2(INDICATOR_WIDTH, PILL));
+        if palette.vibrant() {
+            if lit {
+                widgets::highlight_card(ui, palette, plate, palette.surface_active);
+            } else if hovered {
+                widgets::highlight_card(ui, palette, plate, palette.surface_hover);
+            }
+        } else if lit {
+            ui.painter()
+                .rect_filled(indicator, PILL / 2.0, palette.surface_active);
         } else if hovered {
-            widgets::highlight_card(ui, palette, plate, palette.surface_hover);
+            ui.painter()
+                .rect_filled(indicator, PILL / 2.0, palette.surface_hover);
         }
-        let tint = if lit || hovered {
+        let tint = if lit {
+            if palette.vibrant() {
+                palette.text
+            } else {
+                palette.accent
+            }
+        } else if hovered {
             palette.text
         } else {
             palette.secondary

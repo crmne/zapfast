@@ -58,18 +58,21 @@ impl ThemeChoice {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FontChoice {
-    /// The platform's own interface font.
+    /// The bundled Roboto, Material 3's typeface.
     #[default]
+    Roboto,
+    /// The platform's own interface font.
     System,
     /// The bundled Inter, the same on every machine.
     Inter,
 }
 
 impl FontChoice {
-    pub const ALL: [FontChoice; 2] = [Self::System, Self::Inter];
+    pub const ALL: [FontChoice; 3] = [Self::Roboto, Self::System, Self::Inter];
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Roboto => "Roboto",
             Self::System => "System",
             Self::Inter => "Inter",
         }
@@ -554,7 +557,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::System,
             messages_theme: false,
-            font: FontChoice::System,
+            font: FontChoice::Roboto,
             custom_titlebar: false,
             interface_language: None,
             custom_theme: None,
@@ -1024,12 +1027,12 @@ mod tests {
         assert!(settings.group_sounds);
     }
 
-    /// Settings written before the font could be chosen draw with the
-    /// platform's; the choice is saved by name.
+    /// Settings that name no font draw with Material's Roboto; the choice
+    /// is saved by name.
     #[test]
-    fn the_font_defaults_to_the_platform_and_is_saved_by_name() {
+    fn the_font_defaults_to_roboto_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(older.font, FontChoice::System);
+        assert_eq!(older.font, FontChoice::Roboto);
         let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();

@@ -1175,10 +1175,10 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
     use crate::settings::FontChoice;
     let palette = app.palette;
     let selected = app.settings.font;
-    // "Inter" is a name; "System" is a word.
+    // "Roboto" and "Inter" are names; "System" is a word.
     let label = |choice: FontChoice| match choice {
         FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
-        FontChoice::Inter => choice.label().to_owned(),
+        FontChoice::Roboto | FontChoice::Inter => choice.label().to_owned(),
     };
     let response = egui::ComboBox::from_id_salt("interface_font")
         .selected_text(label(selected))

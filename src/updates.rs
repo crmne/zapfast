@@ -34,8 +34,16 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
     )
 };
 
+/// Whether this build updates itself. Off in the Material custom build: an
+/// official release would install over it and undo its theme. Rebuild from
+/// source to update instead.
+pub const SELF_UPDATE: bool = false;
+
 /// An updater on the proxy-aware reqwest client.
 pub fn updater() -> anyhow::Result<Updater> {
+    if !SELF_UPDATE {
+        anyhow::bail!("updates are off in this custom build; rebuild it from source to update");
+    }
     let mut builder = reqwest::blocking::Client::builder();
     if let Some(proxy) = crate::proxy::reqwest_proxy() {
         builder = builder.proxy(proxy);
@@ -55,7 +63,8 @@ mod tests {
     }
 
     #[test]
-    fn the_updater_starts_on_github() {
-        assert!(updater().unwrap().source().is_github());
+    fn the_custom_build_never_updates_itself() {
+        assert!(!SELF_UPDATE);
+        assert!(updater().is_err());
     }
 }
