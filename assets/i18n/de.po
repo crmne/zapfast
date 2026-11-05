@@ -2763,7 +2763,7 @@ msgstr "Lade die beantwortete Nachricht"
 
 #: src/app.rs:9784
 msgid "Invite link copied"
-msgstr "Einladunslink kopiert"
+msgstr "Einladungslink kopiert"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
