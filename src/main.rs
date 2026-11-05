@@ -343,7 +343,8 @@ fn run() -> eframe::Result<()> {
     // Before anything imports a sound: follow a moved state folder and delete
     // the copies no setting names. Files of the person's own, saved by
     // releases before these copies, are copied later, off this path. A
-    // settings file that failed to load may still name copies: keep them.
+    // settings file that is missing or failed to load may still name copies
+    // somewhere: keep them.
     if !demo
         && settings_loaded
         && zapfast::sounds::tidy(&mut settings, &dirs.state)

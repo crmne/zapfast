@@ -682,9 +682,8 @@ impl Settings {
         Self::load_checked(path).0
     }
 
-    /// [`Settings::load`], and whether the file stood behind it: `false` when
-    /// it exists but could not be read or parsed, and defaults stand in for
-    /// what it holds.
+    /// [`Settings::load`], and whether a file stood behind it: `false` when
+    /// it is missing, or could not be read or parsed, and defaults stand in.
     pub fn load_checked(path: &Path) -> (Self, bool) {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<Self>(&contents) {
@@ -704,7 +703,7 @@ impl Settings {
                     (Self::default(), false)
                 }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Self::default(), true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Self::default(), false),
             Err(error) => {
                 log::warn!("could not read settings: {error}");
                 (Self::default(), false)
@@ -1468,7 +1467,10 @@ mod tests {
     fn loading_says_whether_the_file_stood_behind_the_settings() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        assert!(Settings::load_checked(&path).1, "no file yet is no failure");
+        assert!(
+            !Settings::load_checked(&path).1,
+            "a missing file is reported"
+        );
         Settings::default().save(&path).unwrap();
         assert!(Settings::load_checked(&path).1);
         std::fs::write(&path, "{ not json").unwrap();
