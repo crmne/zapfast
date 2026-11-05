@@ -339,11 +339,13 @@ fn run() -> eframe::Result<()> {
         name: "ZapFast".into(),
         icon: Some("zapfast".into()),
     });
-    let mut settings = settings::Settings::load(&dirs.settings_file());
+    let (mut settings, settings_loaded) = settings::Settings::load_checked(&dirs.settings_file());
     // Before anything imports a sound: follow a moved state folder and delete
     // the copies no setting names. Files of the person's own, saved by
-    // releases before these copies, are copied later, off this path.
+    // releases before these copies, are copied later, off this path. A
+    // settings file that failed to load may still name copies: keep them.
     if !demo
+        && settings_loaded
         && zapfast::sounds::tidy(&mut settings, &dirs.state)
         && let Err(error) = settings.save(&dirs.settings_file())
     {
