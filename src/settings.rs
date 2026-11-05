@@ -449,6 +449,10 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// Keyboard hints: Escape leaves a text field, and F then labels what
+    /// can be clicked, for typing a label to click it. Off by default: it
+    /// changes what Escape and F do.
+    pub keyboard_hints: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -565,6 +569,7 @@ impl Default for Settings {
             search_pane_width: 380.0,
             info_pane_width: 380.0,
             enter_sends: true,
+            keyboard_hints: false,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,

@@ -13,6 +13,20 @@ fn jump_keys_reach_chat(editing_text: bool, composer_focused: bool, composer_emp
 
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    // Keyboard hints on screen take the letters typed for a label.
+    if super::hints::handle(ctx) {
+        return;
+    }
+    // F labels what can be clicked, while no text field takes the letter,
+    // ahead of any F of the screen's own (the message list's Forward).
+    if app.settings.keyboard_hints
+        && !ctx.text_edit_focused()
+        && !egui::Popup::is_any_open(ctx)
+        && ctx.input_mut(|input| take_plain(input, Key::F))
+        && super::hints::start(ctx)
+    {
+        return;
+    }
     // A focused menu takes what is typed before any shortcut sees it.
     super::widgets::menu_letters(ctx);
     if app.picture_edit.is_some() {
@@ -248,8 +262,14 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         });
     }
+    // With keyboard hints, Escape from a text field only leaves it, and
+    // the next Escape does what it otherwise would. egui has let go of the
+    // field already, for an Escape it does not filter.
+    let field_before_escape = app.settings.keyboard_hints
+        && focus_before_escape(ctx).is_some_and(|id| egui::TextEdit::load_state(ctx, id).is_some());
     let escape = (!menu_open || app.reaction_target.is_some())
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let mut left_field = false;
     if escape {
         if app.show_update {
             actions.push(Action::CloseUpdate);
@@ -280,6 +300,13 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
+        } else if field_before_escape {
+            left_field = true;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
         } else if app.call_fullscreen {
             // The window shrinks back first, and only then does the next Escape put the surface
             // aside. Neither one ends the call; only the hang-up button does that.
@@ -334,7 +361,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseLockedFolder);
         }
     }
-    if escape {
+    if escape && !left_field {
         keep_focus_on_escape(app, ctx);
     }
     // Enter sends a recording because the text field is hidden.
@@ -1116,6 +1143,10 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("E", "React to the message (in the message list)"),
     ("C", "Copy the message (in the message list)"),
     ("F", "Forward the message (in the message list)"),
+    (
+        "Escape, then F",
+        "Leave the text field, then label what can be clicked; type a label to click it (with Keyboard hints on)",
+    ),
     (
         DELETE_KEYS,
         "Delete the message for me (in the message list)",
@@ -1984,6 +2015,93 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// A pass of `events`: the shortcuts first, as the window takes them,
+    /// then a message field and a button, as an open chat draws them.
+    fn pass_over_a_field(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                handle(app, ui.ctx());
+                let mut text = String::new();
+                ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new("composer-text")));
+                let _ = ui.button("Send");
+            },
+        );
+        output.textures_delta.clear();
+    }
+
+    fn key_event(key: Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// An app with a chat open, its message field focused.
+    fn typing(keyboard_hints: bool) -> (tempfile::TempDir, App, egui::Context) {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings {
+                keyboard_hints,
+                ..Default::default()
+            },
+        )
+        .0;
+        app.page = Page::Chats;
+        app.open_chat = Some("fixture".into());
+        let ctx = egui::Context::default();
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+        pass_over_a_field(&mut app, &ctx, Vec::new());
+        pass_over_a_field(&mut app, &ctx, Vec::new());
+        assert!(ctx.text_edit_focused());
+        (root, app, ctx)
+    }
+
+    /// With keyboard hints, Escape from the message field only leaves it,
+    /// and the next one closes the chat; without them, the first one does.
+    #[test]
+    fn keyboard_hints_escape_leaves_the_field_before_closing_the_chat() {
+        let (_root, mut app, ctx) = typing(true);
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        assert!(!ctx.text_edit_focused(), "the field let go");
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseChat]));
+
+        let (_root, mut app, ctx) = typing(false);
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseChat]));
+    }
+
+    /// F labels what can be clicked only with keyboard hints on, and only
+    /// while no text field takes the letter.
+    #[test]
+    fn f_shows_keyboard_hints_when_on_and_not_typing() {
+        let (_root, mut app, ctx) = typing(false);
+        ctx.memory_mut(|memory| memory.stop_text_input());
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::F)]);
+        assert!(!crate::ui::hints::active(&ctx), "off by default");
+
+        let (_root, mut app, ctx) = typing(true);
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::F)]);
+        assert!(!crate::ui::hints::active(&ctx), "F is typed in the field");
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::F)]);
+        assert!(crate::ui::hints::active(&ctx));
+        // The labels take the next keys, and Escape takes them away
+        // without closing the chat.
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(!crate::ui::hints::active(&ctx));
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
     }
 
     #[test]

@@ -2683,6 +2683,8 @@ impl App {
         ctx.add_plugin(crate::ui::conversation::SelectionLeash::new(
             std::sync::Arc::clone(&self.selection_view),
         ));
+        // Keyboard hints click through the pointer, before the next pass.
+        ctx.add_plugin(crate::ui::hints::Clicker::default());
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());

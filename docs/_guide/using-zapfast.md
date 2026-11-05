@@ -1011,6 +1011,19 @@ here or on another device. In a group, a mention of you or a reply to you always
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.
 
+## Keyboard hints
+
+To click without the pointer, as browser extensions such as Vimium do, turn on
+**Keyboard hints** in **Settings > Chats**. Escape then leaves the text field
+you are typing in, and only the next Escape does what it did before, such as
+closing the chat. With no text field focused, `F` labels everything on screen
+you can click with one or two letters. Type a label to click it: a text field
+takes focus, a button presses, and a message becomes the current one in the
+message list, for its keys. Backspace takes a letter back, and Escape, any
+other key, a click or a scroll takes the labels away. With the setting on, `F`
+in the message list shows the labels instead of forwarding the message; its
+menu still forwards it.
+
 ## Screen readers
 
 ZapFast announces confirmations, errors, connection changes and history loading

@@ -431,6 +431,14 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    chats.toggle(
+        translated(locale, "Keyboard hints"),
+        translated(
+            locale,
+            "Escape leaves the text field, then F labels everything you can click. Type a label to click it.",
+        ),
+        |settings| &mut settings.keyboard_hints,
+    );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
