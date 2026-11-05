@@ -591,7 +591,7 @@ msgstr "Nachrichten auswählen"
 
 #: src/ui/conversation.rs:665
 msgid "More"
-msgstr "MEhr"
+msgstr "Mehr"
 
 #: src/ui/conversation.rs:682
 msgid "Export chat…"
