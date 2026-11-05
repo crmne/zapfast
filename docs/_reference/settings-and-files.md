@@ -20,7 +20,7 @@ On Linux:
 | Stickers and packs | `~/.local/state/zapfast/accounts/<id>/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/accounts/<id>/wallpaper.jpg` | Copy of the chosen picture (or `.png`, `.webp`, `.gif`) |
 | Notification sounds | `~/.local/state/zapfast/sounds/` | Copies of the chosen message and mention sounds |
-| Chat notification sounds | `~/.local/state/zapfast/accounts/<id>/sounds/` | Copies of the sounds chosen for each chat |
+| Chat notification sounds | `~/.local/state/zapfast/accounts/<id>/chat-sounds/` | Copies of the sounds chosen for each chat |
 | Attachments, avatars | `~/.cache/zapfast/accounts/<id>/` | Safe to delete; available files download again when viewed |
 | Last run's log | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 | The run before's log | `~/.local/state/zapfast/zapfast.previous.log` | Kept for one more start |
@@ -204,7 +204,8 @@ name or description, in the interface language or in English.
   settings for ZapFast silence them; an audio file of your own plays
   regardless. ZapFast keeps its own copy of a chosen audio file (WAV, MP3 or
   Ogg Vorbis, up to 10 MB), so moving or deleting the original keeps the
-  sound; a chat's own sound is copied the same way.
+  sound; a chat's own sound is copied the same way. Copies no setting uses any
+  more are deleted the next time ZapFast starts.
 - **Play sounds for group messages**: when off, only mentions and replies to
   you make a sound in groups.
 - **Limit repeat notifications**: off by default. Choose **Direct messages**,

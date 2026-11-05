@@ -340,14 +340,14 @@ fn run() -> eframe::Result<()> {
         icon: Some("zapfast".into()),
     });
     let mut settings = settings::Settings::load(&dirs.settings_file());
-    // Releases before ZapFast kept its own copies stored only the path of a
-    // chosen notification sound; copy those files while the originals are
-    // there, before the window's thread may no longer write.
+    // Before anything imports a sound: follow a moved state folder and delete
+    // the copies no setting names. Files of the person's own, saved by
+    // releases before these copies, are copied later, off this path.
     if !demo
-        && zapfast::sounds::adopt(&mut settings, &dirs.state)
+        && zapfast::sounds::tidy(&mut settings, &dirs.state)
         && let Err(error) = settings.save(&dirs.settings_file())
     {
-        log::warn!("could not save the copied notification sounds: {error}");
+        log::warn!("could not save the notification sounds' copies: {error}");
     }
     // The drawn title bar (Windows and Linux): GNOME's button layout and
     // icons, read once, and the choice every window is made with.

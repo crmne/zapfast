@@ -901,9 +901,11 @@ pub async fn run(
             }
         }
     };
-    // Releases before ZapFast kept its own copies stored only the path of a
-    // chat's chosen sound; copy those files while the originals are there.
-    crate::sounds::adopt_chat_sounds(&archive, &dirs.state);
+    // Before anything imports a chat's sound: follow a moved state folder and
+    // delete the copies no chat names. Files of the person's own, saved by
+    // releases before these copies, are copied off this path.
+    crate::sounds::tidy_chat_sounds(&archive, &dirs.state);
+    let _ = commands.send(Command::AdoptChatSounds);
     let (wa_sender, wa_events) = mpsc::unbounded_channel();
     let privacy_confirmed = archive
         .meta("chat_privacy_ready_v1")
@@ -7647,13 +7649,9 @@ impl Worker {
             Command::SetKeepChatsArchived(keep) => self.keep_chats_archived = keep,
             Command::Resumed => self.resumed(),
             Command::SetChatSound { chat, sound } => {
-                // A picked file arrives already copied; any other choice
-                // leaves the chat's copy unused.
-                if !matches!(sound, Some(crate::settings::NotificationSound::Custom(_))) {
-                    let slot = crate::sounds::chat_slot(&self.dirs.state, &chat);
-                    tokio::task::spawn_blocking(move || crate::sounds::remove(&slot));
+                if let Err(error) = self.archive.set_notification_sound(&chat, sound.as_ref()) {
+                    log::warn!("could not store a chat's notification sound: {error}");
                 }
-                let _ = self.archive.set_notification_sound(&chat, sound.as_ref());
                 self.emit_chat(&chat);
             }
             Command::SetChatVoiceSpeed { chat, speed } => {
@@ -7663,7 +7661,7 @@ impl Worker {
                 self.emit_chat(&chat);
             }
             Command::PickChatSound(chat) => {
-                let slot = crate::sounds::chat_slot(&self.dirs.state, &chat);
+                let root = crate::sounds::chat_root(&self.dirs.state);
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -7672,7 +7670,7 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let result = crate::sounds::import(&path, &slot);
+                        let result = crate::sounds::import(&path, &root);
                         let _ = events.send(Event::ChatSoundPicked { chat, result });
                         waker.wake();
                     }
@@ -7865,7 +7863,7 @@ impl Worker {
                 }
                 self.emit(self.me_event());
             }
-            Command::PickNotificationSound { mention, slot } => {
+            Command::PickNotificationSound { mention, root } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
@@ -7874,14 +7872,53 @@ impl Worker {
                         .add_filter("Audio", &["wav", "mp3", "ogg", "oga"])
                         .pick_file()
                     {
-                        let result = crate::sounds::import(&path, &slot);
+                        let result = crate::sounds::import(&path, &root);
                         let _ = events.send(Event::NotificationSoundPicked { mention, result });
                         waker.wake();
                     }
                 });
             }
-            Command::RemoveSoundCopy(slot) => {
-                tokio::task::spawn_blocking(move || crate::sounds::remove(&slot));
+            Command::AdoptSound {
+                mention,
+                from,
+                root,
+            } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || match crate::sounds::import(&from, &root) {
+                    Ok(to) => {
+                        let _ = events.send(Event::SoundAdopted { mention, from, to });
+                        waker.wake();
+                    }
+                    Err(error) => log::warn!("could not copy a notification sound: {error}"),
+                });
+            }
+            Command::AdoptChatSounds => {
+                let sounds = crate::sounds::external_chat_sounds(&self.archive, &self.dirs.state);
+                if !sounds.is_empty() {
+                    let root = crate::sounds::chat_root(&self.dirs.state);
+                    let commands = self.commands.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let copied = sounds
+                            .into_iter()
+                            .filter_map(|(chat, from)| match crate::sounds::import(&from, &root) {
+                                Ok(to) => Some((chat, from, to)),
+                                Err(error) => {
+                                    log::warn!(
+                                        "could not copy a chat's notification sound: {error}"
+                                    );
+                                    None
+                                }
+                            })
+                            .collect();
+                        let _ = commands.send(Command::ChatSoundsAdopted(copied));
+                    });
+                }
+            }
+            Command::ChatSoundsAdopted(copied) => {
+                for chat in crate::sounds::apply_adopted(&self.archive, copied) {
+                    self.emit_chat(&chat);
+                }
             }
             Command::SaveAttachmentAs { source, name } => {
                 let events = self.events.clone();

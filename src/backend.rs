@@ -597,14 +597,26 @@ pub enum Command {
     },
     /// Selects and imports a .wastickers or zip archive.
     PickStickerArchive,
-    /// Asks for an audio file to use as a notification sound, copied into
-    /// `slot` (`sounds::global_slot`, in the app's state folder).
+    /// Asks for an audio file to use as a notification sound, copied under
+    /// `root` (`sounds::settings_root`, in the app's state folder).
     PickNotificationSound {
         mention: bool,
-        slot: std::path::PathBuf,
+        root: std::path::PathBuf,
     },
-    /// Deletes a notification sound's copy that no setting uses any more.
-    RemoveSoundCopy(std::path::PathBuf),
+    /// Copies a message (`false`) or mention (`true`) sound that names a
+    /// file of the person's own under `root`, answered with
+    /// `Event::SoundAdopted`.
+    AdoptSound {
+        mention: bool,
+        from: std::path::PathBuf,
+        root: std::path::PathBuf,
+    },
+    /// Copies the chats' own sounds that name a file of the person's own,
+    /// once at startup and off its path.
+    AdoptChatSounds,
+    /// The copies `AdoptChatSounds` made: the chat, the file it named, and
+    /// the copy.
+    ChatSoundsAdopted(Vec<(ChatId, std::path::PathBuf, std::path::PathBuf)>),
     /// Stores a chat's own notification sound.
     SetChatSound {
         chat: ChatId,
@@ -1500,6 +1512,13 @@ pub enum Event {
     NotificationSoundPicked {
         mention: bool,
         result: Result<std::path::PathBuf, String>,
+    },
+    /// A copy of a message or mention sound that named a file of the
+    /// person's own, stored only while the sound still names `from`.
+    SoundAdopted {
+        mention: bool,
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
     },
     /// The group behind an invite link.
     InvitePreview {
