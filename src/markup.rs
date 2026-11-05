@@ -299,6 +299,8 @@ fn inline(line: &str) -> Vec<Span> {
     let mut link_ends = vec![None; chars.len()];
     let mut link_end =
         |at: usize| *link_ends[at].get_or_insert_with(|| link_char_end(line, &chars, &offsets, at));
+    // Whether each opener finds its closer, by the styles active before it.
+    let mut closers = vec![[None; 8]; chars.len()];
     let mut spans = Vec::new();
     let mut run = String::new();
     // bold, italic, strike
@@ -369,7 +371,9 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(&chars, &mut link_end, i + 1, c, flags) {
+            } else if is_opener(&chars, i)
+                && has_closer(&chars, &mut link_end, &mut closers, i, flags)
+            {
                 flush(&mut run, &mut spans, flags);
                 flags[index] = true;
                 i += 1;
@@ -423,20 +427,42 @@ fn link_format_end(chars: &[char], start: usize, mut end: usize, flags: [bool; 3
     end
 }
 
+/// Whether the marker at `opener` finds its closer when `flags` are the
+/// styles active before it. Lookahead meets the same openers again for every
+/// unmatched marker before them, so each answer is kept in `closers`.
 fn has_closer(
     chars: &[char],
     link_end: &mut impl FnMut(usize) -> Option<usize>,
-    from: usize,
-    marker: char,
+    closers: &mut [[Option<bool>; 8]],
+    opener: usize,
+    flags: [bool; 3],
+) -> bool {
+    let state = usize::from(flags[0]) | usize::from(flags[1]) << 1 | usize::from(flags[2]) << 2;
+    if let Some(found) = closers[opener][state] {
+        return found;
+    }
+    let found = find_closer(chars, link_end, closers, opener, flags);
+    closers[opener][state] = Some(found);
+    found
+}
+
+fn find_closer(
+    chars: &[char],
+    link_end: &mut impl FnMut(usize) -> Option<usize>,
+    closers: &mut [[Option<bool>; 8]],
+    opener: usize,
     mut flags: [bool; 3],
 ) -> bool {
+    #[cfg(test)]
+    tests::LOOKAHEADS.with(|count| count.set(count.get() + 1));
+    let marker = chars[opener];
     // Look ahead with the candidate opener active, exactly as inline will.
     flags[match marker {
         '*' => 0,
         '_' => 1,
         _ => 2,
     }] = true;
-    let mut at = from;
+    let mut at = opener + 1;
     while at < chars.len() {
         if let Some(end) = link_end(at) {
             at = link_format_end(chars, at, end, flags);
@@ -458,15 +484,24 @@ fn has_closer(
             at += close + 2;
             continue;
         }
-        if is_closer(chars, at) {
-            if chars[at] == marker {
-                return true;
-            }
-            match chars[at] {
-                '*' => flags[0] = false,
-                '_' => flags[1] = false,
-                '~' => flags[2] = false,
-                _ => {}
+        let index = match chars[at] {
+            '*' => Some(0),
+            '_' => Some(1),
+            '~' => Some(2),
+            _ => None,
+        };
+        if let Some(index) = index {
+            if flags[index] {
+                if is_closer(chars, at) {
+                    if chars[at] == marker {
+                        return true;
+                    }
+                    flags[index] = false;
+                }
+            // A style that opens on the way decides, as in inline, which
+            // closers after an address stay outside it.
+            } else if is_opener(chars, at) && has_closer(chars, link_end, closers, at, flags) {
+                flags[index] = true;
             }
         }
         at += 1;
@@ -875,6 +910,7 @@ mod tests {
 
     thread_local! {
         pub(super) static LINK_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static LOOKAHEADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
     #[test]
@@ -900,6 +936,29 @@ mod tests {
                 text.len()
             );
         }
+    }
+
+    #[test]
+    fn nested_openers_look_ahead_once_per_style_state() {
+        // Each opener looks ahead through the openers after it, which look
+        // ahead in turn. Count lookaheads rather than timing this: without
+        // remembering their answers, each unmatched opener repeats them.
+        let text = "-*a -~b -_c ".repeat(64);
+        LOOKAHEADS.with(|count| count.set(0));
+        assert_eq!(
+            parse(&text, &[]),
+            vec![Span {
+                text: text.clone(),
+                ..Default::default()
+            }]
+        );
+        let openers = 3 * 64;
+        let lookaheads = LOOKAHEADS.with(|count| count.get());
+        eprintln!("{lookaheads} lookaheads for {openers} openers");
+        assert!(
+            lookaheads <= 8 * openers,
+            "{lookaheads} lookaheads for {openers} openers"
+        );
     }
 
     #[test]
@@ -1055,6 +1114,30 @@ mod tests {
         assert_eq!(link.text, address);
         assert_eq!(link.link.as_deref(), Some(address));
         assert!(!link.bold);
+    }
+
+    #[test]
+    fn lookahead_keeps_styles_opened_before_an_address() {
+        // With the strike that opens inside the bold, both markers after the
+        // address close a style instead of staying in it.
+        let address = "https://example.com/end";
+        let text = format!("*a ~b {address}*~ after");
+        assert_eq!(plain(&text, &[]), format!("a b {address} after"));
+        assert_eq!(links(&text), vec![address]);
+        let spans = parse(&text, &[]);
+        let styles: Vec<_> = spans
+            .iter()
+            .map(|span| (span.text.as_str(), span.bold, span.strike))
+            .collect();
+        assert_eq!(
+            styles,
+            vec![
+                ("a ", true, false),
+                ("b ", true, true),
+                (address, true, true),
+                (" after", false, false),
+            ]
+        );
     }
 
     #[test]
