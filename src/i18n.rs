@@ -28,6 +28,8 @@ pub enum Locale {
     French,
     #[serde(rename = "ru")]
     Russian,
+    #[serde(rename = "uk")]
+    Ukrainian,
     #[serde(rename = "zh-Hans")]
     ChineseSimplified,
     #[serde(rename = "zh-Hant")]
@@ -40,7 +42,7 @@ pub enum Locale {
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 11] = [
+    pub const ALL: [Locale; 12] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -48,6 +50,7 @@ impl Locale {
         Self::Italian,
         Self::French,
         Self::Russian,
+        Self::Ukrainian,
         Self::ChineseSimplified,
         Self::ChineseTraditional,
         Self::Turkish,
@@ -64,6 +67,7 @@ impl Locale {
             Self::Italian => "Italiano",
             Self::French => "Français",
             Self::Russian => "Русский",
+            Self::Ukrainian => "Українська",
             Self::ChineseSimplified => "简体中文",
             Self::ChineseTraditional => "繁體中文",
             Self::Turkish => "Türkçe",
@@ -88,6 +92,7 @@ impl Locale {
             "it" => Self::Italian,
             "fr" => Self::French,
             "ru" => Self::Russian,
+            "uk" => Self::Ukrainian,
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
@@ -116,6 +121,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::French => Some(&fr::Translator),
             Self::Italian => Some(&it::Translator),
             Self::Russian => Some(&ru::Translator),
+            Self::Ukrainian => Some(&uk::Translator),
             Self::ChineseSimplified => Some(&zh_hans::Translator),
             Self::ChineseTraditional => Some(&zh_hant::Translator),
             Self::Turkish => Some(&tr::Translator),
@@ -157,6 +163,7 @@ mod tests {
         assert_eq!(Locale::from_system("it-IT"), Some(Locale::Italian));
         assert_eq!(Locale::from_system("fr-FR"), Some(Locale::French));
         assert_eq!(Locale::from_system("ru-RU"), Some(Locale::Russian));
+        assert_eq!(Locale::from_system("uk-UA"), Some(Locale::Ukrainian));
         assert_eq!(
             Locale::from_system("zh-Hans"),
             Some(Locale::ChineseSimplified)
@@ -253,6 +260,14 @@ mod tests {
         let missing = "A string nobody has translated";
         assert_eq!(gettext(Locale::PortugueseBrazil, missing), missing);
         assert_eq!(gettext(Locale::German, missing), missing);
+    }
+
+    #[test]
+    fn theme_choices_use_the_ukrainian_catalog() {
+        assert_eq!(gettext(Locale::Ukrainian, "Follow system"), "Як у системі");
+        assert_eq!(gettext(Locale::Ukrainian, "Light"), "Світла");
+        assert_eq!(gettext(Locale::Ukrainian, "Dark"), "Темна");
+        assert_eq!(gettext(Locale::Ukrainian, "Messages"), "Messages");
     }
 
     /// Checks that private reply controls use dedicated translated catalog entries.
