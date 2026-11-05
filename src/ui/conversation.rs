@@ -6895,24 +6895,26 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
             (view.names_or)(&reaction.sender, None)
         }
     };
+    // Laid out with the bidi layout rather than as an egui label, which
+    // places a right-to-left name's words left to right, so it read
+    // backwards.
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(
-            groups
-                .iter()
-                .map(|(emoji, people)| {
-                    format!(
-                        "{emoji}: {}",
-                        people
-                            .iter()
-                            .map(|reaction| name(reaction))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        .on_hover_ui(|ui| {
+            let color = ui.visuals().text_color();
+            for text in reaction_tooltip_lines(&groups, name) {
+                let line = widgets::line(
+                    ui,
+                    &text,
+                    theme::regular(13.0),
+                    color,
+                    ui.spacing().tooltip_width,
+                    usize::MAX,
+                );
+                let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                line.paint(ui, rect.min, color);
+            }
+        });
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     egui::Popup::menu(&response)
         .id(bubble_id(&message.chat, &message.id).with("reaction-list"))
@@ -6972,7 +6974,12 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
                                         ui.close();
                                     }
                                 } else {
-                                    theme::text(ui, who, theme::regular(13.0), palette.text);
+                                    widgets::rich_text(
+                                        ui,
+                                        &who,
+                                        theme::regular(13.0),
+                                        palette.text,
+                                    );
                                 }
                                 widgets::rich_text(ui, emoji, theme::regular(16.0), palette.text);
                             });
@@ -6980,6 +6987,26 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
                     }
                 });
         });
+}
+
+/// The reactions tooltip's lines, one per emoji: "😂: Ada, Grace". Each name
+/// is isolated so a right-to-left one keeps its words in reading order and
+/// leaves the emoji and the colon where the line puts them.
+pub(crate) fn reaction_tooltip_lines(
+    groups: &[(&str, Vec<&crate::model::Reaction>)],
+    name: impl Fn(&crate::model::Reaction) -> String,
+) -> Vec<String> {
+    groups
+        .iter()
+        .map(|(emoji, people)| {
+            let names = people
+                .iter()
+                .map(|reaction| crate::bidi::isolate(&name(reaction)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{emoji}: {names}")
+        })
+        .collect()
 }
 
 const QUICK_REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];

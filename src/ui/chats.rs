@@ -1356,7 +1356,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             let first = app.short_name(&hit.sender, &sender);
             let who = widgets::line(
                 ui,
-                &format!("{first}: "),
+                &sender_prefix(first),
                 theme::regular(13.0),
                 palette.dim,
                 (right - x) * 0.5,
@@ -1676,7 +1676,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             } else if chat.is_group() {
                 let sender = app.display_name_or(&last.sender, last.sender_name.as_deref());
                 let first = app.short_name(&last.sender, &sender);
-                prefix = format!("{first}: ");
+                prefix = sender_prefix(first);
                 let sender = widgets::line(
                     ui,
                     &prefix,
@@ -1784,6 +1784,13 @@ const FULL_PREVIEW_ROWS: usize = 12;
 /// Characters of a message the tooltip lays out: far more than its rows
 /// hold, so a very long message costs no more than a long one.
 const FULL_PREVIEW_CHARS: usize = 2_000;
+
+/// What a group row shows before its last message: the sender's name and a
+/// colon. The name is isolated so a right-to-left one keeps the colon after
+/// it, on its right, rather than taking the colon to its other side.
+pub fn sender_prefix(name: &str) -> String {
+    format!("{}: ", crate::bidi::isolate(name))
+}
 
 /// Where a chat row's latest-message preview sits, for hover tests.
 pub fn preview_id(chat: &str) -> egui::Id {

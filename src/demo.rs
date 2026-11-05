@@ -2574,6 +2574,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            // Right-to-left names inside interface text: the group rows'
+            // "Name: " and the reactions in Rust Berlin. The tests in
+            // `rtl_names` cover the other right-to-left scripts.
+            "rtl-names" => {
+                for (id, name) in [
+                    ("491701111111@s.whatsapp.net", "إبراهيم حاتم سالم"),
+                    ("491702222222@s.whatsapp.net", "سارة الأحمد"),
+                    ("491703333333@s.whatsapp.net", "خالد منصور"),
+                ] {
+                    if let Some(contact) = app.contacts.get_mut(id) {
+                        contact.full_name = Some(name.to_owned());
+                    }
+                }
+                app.typing.clear();
+                app.open_chat = Some("120363012345678901@g.us".into());
+                app.scroll_to_bottom = true;
+            }
             "rtl-self" => {
                 let now = crate::util::now();
                 let count = RTL_SELF_CHAT.len() as i64;
@@ -9773,6 +9790,7 @@ mod tests {
             "chat-search",
             "chat-search-day",
             "chat-search-rtl",
+            "rtl-names",
             "unread",
             "private",
             "favorites",
@@ -10951,7 +10969,7 @@ mod tests {
             }
         }
         let name = app.display_name_or(sender, Some("Linus Example"));
-        let prefix = format!("{}: ", name.split_whitespace().next().unwrap());
+        let prefix = crate::ui::chats::sender_prefix(name.split_whitespace().next().unwrap());
         render(&mut app, &ctx);
         let long_area = ctx
             .read_response(crate::ui::chats::preview_id(group))
@@ -26165,5 +26183,150 @@ mod rail_tests {
         assert_eq!(app.page, Page::Calls);
         assert!(app.open_chat.is_none());
         assert!(rail_rect(&ctx).is_some() && list_header(&ctx).is_some());
+    }
+}
+
+/// Right-to-left names inside interface text, in every right-to-left script.
+#[cfg(test)]
+mod rtl_names {
+    use std::sync::Arc;
+
+    /// Names in each right-to-left script ZapFast lays out, and controls.
+    const NAMES: [&str; 10] = [
+        "بابا",
+        "إبراهيم حاتم سالم",
+        "שרה כהן",
+        "دانیال رضایی",
+        "عائشہ خان",
+        "ܐܦܪܝܡ ܣܘܪܝܝܐ",
+        "އަޙްމަދު ޙަސަން",
+        "ߡߊߡߊߘߎ ߞߊ߲",
+        "Ada Lovelace",
+        "Ada بابا",
+    ];
+
+    /// Lays `text` out on one line as a chat row or a tooltip does.
+    fn layout(text: &str) -> Arc<egui::Galley> {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut galley = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let line = crate::ui::widgets::line(
+                ui,
+                text,
+                crate::theme::regular(13.0),
+                egui::Color32::WHITE,
+                10_000.0,
+                1,
+            );
+            galley = Some(line.galley);
+        });
+        output.textures_delta.clear();
+        galley.expect("laid out")
+    }
+
+    /// The horizontal centre of the glyph for the character at `index`, in
+    /// characters: the galley keeps its glyphs in logical order.
+    fn centre(galley: &egui::Galley, index: usize) -> f32 {
+        let row = &galley.rows[0];
+        let glyph = &row.glyphs[index];
+        row.pos.x + glyph.pos.x + glyph.advance_width / 2.0
+    }
+
+    /// Where `needle` starts in `haystack`, in characters.
+    fn char_index(haystack: &str, needle: &str) -> usize {
+        haystack[..haystack.find(needle).expect("present")]
+            .chars()
+            .count()
+    }
+
+    /// Whether a name's words read in its own direction: the first word on
+    /// the right of the last for a right-to-left name, on its left otherwise.
+    fn assert_reading_order(galley: &egui::Galley, text: &str, name: &str) {
+        let words: Vec<&str> = name.split(' ').collect();
+        if words.len() < 2 || name.starts_with("Ada") {
+            return;
+        }
+        let at = char_index(text, name);
+        let first = centre(galley, at);
+        let last = centre(galley, at + char_index(name, words[words.len() - 1]));
+        assert!(
+            first > last,
+            "{name:?}: first word at {first}, last at {last}"
+        );
+    }
+
+    /// A group row's "Name: " keeps the colon after the name, on its right,
+    /// whatever script the name is in. A bare right-to-left name took the
+    /// colon to its left: ":بابا".
+    #[test]
+    fn a_senders_colon_follows_their_name_in_every_script() {
+        for name in NAMES {
+            let prefix = crate::ui::chats::sender_prefix(name);
+            let galley = layout(&prefix);
+            let colon = centre(&galley, char_index(&prefix, ":"));
+            let at = char_index(&prefix, name);
+            for (offset, _) in name.chars().enumerate().filter(|(_, c)| !c.is_whitespace()) {
+                let letter = centre(&galley, at + offset);
+                assert!(
+                    colon > letter,
+                    "{name:?}: colon at {colon}, a letter at {letter}"
+                );
+            }
+            assert_reading_order(&galley, &prefix, name);
+        }
+    }
+
+    /// The reactions tooltip reads "😂: name, name": the emoji and the colon
+    /// first, then each name in list order, with a right-to-left name's words
+    /// in its own reading order. An egui label placed those words left to
+    /// right, so "إبراهيم حاتم سالم" read "سالم حاتم إبراهيم".
+    #[test]
+    fn reaction_tooltips_keep_names_in_reading_order_in_every_script() {
+        for pair in NAMES.windows(2) {
+            let reactions: Vec<crate::model::Reaction> = pair
+                .iter()
+                .map(|name| crate::model::Reaction {
+                    sender: (*name).to_owned(),
+                    from_me: false,
+                    emoji: "😂".to_owned(),
+                })
+                .collect();
+            let groups = vec![("😂", reactions.iter().collect::<Vec<_>>())];
+            let lines = crate::ui::conversation::reaction_tooltip_lines(&groups, |reaction| {
+                reaction.sender.clone()
+            });
+            let [text] = lines.as_slice() else {
+                panic!("one line per emoji: {lines:?}");
+            };
+            let galley = layout(text);
+            let colon = centre(&galley, char_index(text, ":"));
+            let emoji = centre(&galley, 0);
+            assert!(emoji < colon, "{text:?}: the emoji leads");
+            let starts: Vec<usize> = pair.iter().map(|name| char_index(text, name)).collect();
+            for (name, at) in pair.iter().zip(&starts) {
+                for (offset, _) in name.chars().enumerate().filter(|(_, c)| !c.is_whitespace()) {
+                    let letter = centre(&galley, at + offset);
+                    assert!(colon < letter, "{name:?} comes after the colon in {text:?}");
+                }
+                assert_reading_order(&galley, text, name);
+            }
+            // The list itself reads left to right, like the line around it.
+            let ends = |name: &str, at: usize| {
+                let xs: Vec<f32> = (0..name.chars().count())
+                    .map(|offset| centre(&galley, at + offset))
+                    .collect();
+                (
+                    xs.iter().copied().fold(f32::INFINITY, f32::min),
+                    xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                )
+            };
+            let (_, first_right) = ends(pair[0], starts[0]);
+            let (second_left, _) = ends(pair[1], starts[1]);
+            assert!(
+                first_right < second_left,
+                "{pair:?} keep their order in {text:?}"
+            );
+        }
     }
 }
