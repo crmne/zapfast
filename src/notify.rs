@@ -188,7 +188,7 @@ impl Notifications {
 
     /// Whether a notification for this chat may be shown at `now`. Unless
     /// `quiet` is [`Quiet::Never`], the chat is allowed once, then refused for
-    /// the quiet window counted from the notification that was shown;
+    /// the quiet window counted from the message that was allowed;
     /// refused messages do not extend the wait. The wait starts here, so a
     /// burst of messages shows one notification; [`Self::show`] ends it again
     /// if the desktop then fails to show that notification.
@@ -204,6 +204,9 @@ impl Notifications {
         };
         let key = (account.as_str().to_owned(), chat.to_owned());
         let mut throttle = self.throttle.lock().unwrap_or_else(|p| p.into_inner());
+        // Every chat that notifies leaves an entry. None can matter past the
+        // longest window, whichever window the chat's next message uses.
+        throttle.retain(|_, last| now.saturating_duration_since(*last) < THROTTLE_WINDOW);
         if throttle
             .get(&key)
             .is_some_and(|last| now.saturating_duration_since(*last) < window)
@@ -725,6 +728,20 @@ mod tests {
         assert!(notifications.allow(&one, "a", start, Quiet::Burst));
         assert!(!notifications.allow(&one, "a", start + BURST_WINDOW, Quiet::Limited));
         assert!(notifications.allow(&one, "a", start + BURST_WINDOW, Quiet::Burst));
+    }
+
+    #[test]
+    fn a_wait_past_the_longest_window_is_forgotten() {
+        let notifications = Notifications::default();
+        let one = account("1");
+        let start = Instant::now();
+        assert!(notifications.allow(&one, "a", start, Quiet::Burst));
+        assert!(notifications.allow(&one, "b", start + Duration::from_secs(1), Quiet::Limited));
+        assert!(notifications.allow(&one, "c", start + THROTTLE_WINDOW, Quiet::Burst));
+        let throttle = notifications.throttle.lock().unwrap();
+        assert!(!throttle.contains_key(&("1".into(), "a".into())));
+        assert!(throttle.contains_key(&("1".into(), "b".into())));
+        assert!(throttle.contains_key(&("1".into(), "c".into())));
     }
 
     #[test]
