@@ -1600,7 +1600,8 @@ struct Worker {
     /// Pending phone-history requests by chat.
     pending_older: HashMap<ChatId, OlderRequest>,
     /// Chats already told that the phone did not answer; cleared when the
-    /// phone sends that chat's history or the link reconnects.
+    /// phone sends that chat's history, the warning is taken back, or the
+    /// link reconnects.
     older_warned: HashSet<ChatId>,
     /// Whether the window shows the phone-silence warning. Any page from the
     /// phone takes it back, so it outlives `older_warned`'s resets.
@@ -6723,9 +6724,12 @@ impl Worker {
         filed
     }
 
-    /// Takes the phone-silence warning back, if it is showing.
+    /// Takes the phone-silence warning back, if it is showing. Every chat may
+    /// warn again then: a chat warned before would otherwise stay quiet
+    /// through a new silence while no warning is on screen.
     fn retract_phone_silence(&mut self) {
         if std::mem::take(&mut self.phone_silence_shown) {
+            self.older_warned.clear();
             self.emit(Event::ErrorResolved(super::PHONE_SILENT.to_owned()));
         }
     }
@@ -27393,6 +27397,23 @@ mod older_history_tests {
 
         worker.answer_older(vec![(CHAT.to_owned(), 0, Some(false))], None);
         assert!(resolved(&drain(&events)));
+    }
+
+    /// Another chat's answer takes the warning back. A new silence in the
+    /// chat that warned is news again, since nothing on screen says it.
+    #[test]
+    fn a_chat_warns_again_after_another_chats_answer() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.answer_older(vec![("other@s.whatsapp.net".to_owned(), 1, None)], None);
+        assert!(resolved(&drain(&events)));
+
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
     }
 
     /// Unlinking or removing the account leaves no phone to be silent.
