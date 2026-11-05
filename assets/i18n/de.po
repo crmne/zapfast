@@ -489,11 +489,11 @@ msgstr "Als ungelesen markieren"
 
 #: src/ui/chats.rs:2109 src/ui/conversation.rs:673
 msgid "Unpin"
-msgstr "nicht mehr anheften"
+msgstr "nicht mehr anpinnen"
 
 #: src/ui/chats.rs:2111 src/ui/conversation.rs:675
 msgid "Pin to top"
-msgstr "Oben anheften"
+msgstr "Oben anpinnen"
 
 #: src/ui/chats.rs:2136 src/ui/conversation.rs:678
 #, fuzzy
@@ -2628,6 +2628,8 @@ msgid ""
 "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: "
 "{missing}."
 msgstr ""
+"{path} gespeichert. Nachrichten: {messages}; Anhänge: {files}; nicht verfügbar: "
+"{missing}."
 
 #: src/app.rs:4499
 msgid "Loading chat history"
@@ -2669,41 +2671,41 @@ msgstr ""
 #: src/app.rs:4919
 #, fuzzy
 msgid "Could not change disappearing messages."
-msgstr "Selbstlöschende Nachrichten"
+msgstr "Konnte selbstlöschende Nachrichten nicht ändern"
 
 #: src/app.rs:4924
 #, fuzzy
 msgid "Only admins can change disappearing messages."
-msgstr "Selbstlöschende Nachrichten"
+msgstr "Nur Admins können selbstlöschende Nachrichten ändern"
 
 #: src/app.rs:4961
 #, fuzzy
 msgid "Connect to WhatsApp to archive this chat"
-msgstr "Verbinde dich mit WhatsApp, um eine Gruppe zu erstellen."
+msgstr "Verbinde dich mit WhatsApp, um die Chat zu archivieren."
 
 #: src/app.rs:4965
 #, fuzzy
 msgid "Connect to WhatsApp to unarchive this chat"
-msgstr "Verbinde dich mit WhatsApp, um eine Gruppe zu erstellen."
+msgstr "Verbinde dich mit WhatsApp, um diesen Chat aus dem Archiv zu holen."
 
 #: src/app.rs:4968
 #, fuzzy
 msgid "Could not read this chat. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr "Der Chat konnte nicht gelesen werden. Versuche es erneut."
 
 #: src/app.rs:4972
 #, fuzzy
 msgid "Could not confirm archiving on WhatsApp. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr ""
 
 #: src/app.rs:4976
 #, fuzzy
 msgid "Could not confirm unarchiving on WhatsApp. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr ""
 
 #: src/app.rs:4980
 msgid "WhatsApp updated this chat, but ZapFast could not save the change"
-msgstr ""
+msgstr "WhatsApp hat den chat aktualisiert, ZapFast konnte die Änderung jedoch nicht speichern"
 
 #: src/app.rs:5068
 msgid "Connecting"
@@ -2711,7 +2713,7 @@ msgstr "Verbindung wird hergestellt"
 
 #: src/app.rs:5736 src/app.rs:7363
 msgid "Unblock this contact to send messages."
-msgstr ""
+msgstr "Hebe die Blockierung des Kontakts auf, um eine Nachricht zu senden"
 
 #: src/app.rs:5740
 msgid "Not sent: ZapFast is not connected to WhatsApp."
@@ -2752,16 +2754,16 @@ msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 #: src/app.rs:9446
 #, fuzzy
 msgid "No chat open"
-msgstr "Code für gesperrte Chats"
+msgstr "Kein Chat geöffnet"
 
 #: src/app.rs:9474
 #, fuzzy
 msgid "Loading the replied message"
-msgstr "Frühere Nachrichten neu laden"
+msgstr "Lade die beantwortete Nachricht"
 
 #: src/app.rs:9784
 msgid "Invite link copied"
-msgstr ""
+msgstr "Einladunslink kopiert"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2772,18 +2774,18 @@ msgstr "{}: {}"
 
 #: src/app.rs:10174
 msgid "The old link no longer works. Here is a new one."
-msgstr ""
+msgstr "Der alte Link funktioniert nicht mehr. Hier ist ein neuer."
 
 #: src/app.rs:10216
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Person wurde zur Gruppe hinzugefügt"
+msgstr[1] "{count} Personen wurden zur Gruppe hinzugefügt"
 
 #: src/app.rs:10276
 msgid "This file is no longer on this computer. Download it again."
-msgstr ""
+msgstr "Die Datei ist auf diesem Gerät nicht mehr verfügbar. Lade sie erneut herunter."
 
 #: src/app.rs:10652
 msgid "App lock password saved"
@@ -2928,29 +2930,29 @@ msgstr "Nachrichten auswählen"
 #: src/ui/picker.rs:488
 #, fuzzy
 msgid "Close reactions"
-msgstr "Suche schließen"
+msgstr "Reaktionen schließen"
 
 #: src/ui/picker.rs:667
 #, fuzzy
 msgid "Search emoji"
-msgstr "Einstellungen durchsuchen"
+msgstr "Emojis durchsuchen"
 
 #: src/ui/picker.rs:1053
 msgid "Search GIFs via GIPHY"
-msgstr ""
+msgstr "Suche GIFs bei GIPHY"
 
 #: src/ui/picker.rs:1070
 #, fuzzy
 msgid "Searching…"
-msgstr "Wird gespeichert…"
+msgstr "Suche…"
 
 #: src/ui/picker.rs:1157 src/ui/mod.rs:656
 msgid "Retry"
-msgstr ""
+msgstr "Wiederholen"
 
 #: src/ui/picker.rs:1159
 msgid "Load more"
-msgstr ""
+msgstr "mehr laden"
 
 #: src/ui/picker.rs:1170
 msgid "Search for a GIF or browse trending results."
@@ -2970,7 +2972,7 @@ msgstr "Sticker hinzufügen"
 
 #: src/ui/picker.rs:1321
 msgid "Search by emoji, word, or pack"
-msgstr "Nach Emoji, Wort oder Pack suchen"
+msgstr "Nach Emoji, Wort oder Sticker-Pack suchen"
 
 #: src/ui/picker.rs:1360
 msgid "No stickers match your search."
@@ -3404,7 +3406,7 @@ msgstr ""
 
 #: src/ui/info.rs:903 src/ui/new_group.rs:76
 msgid "Add members"
-msgstr ""
+msgstr "Mitglieder hinzufügen"
 
 #: src/ui/info.rs:957
 #, rust-format
