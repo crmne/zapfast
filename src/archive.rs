@@ -537,18 +537,31 @@ impl Archive {
     /// [`Archive::end_batch`]. Without it each statement commits on its own,
     /// and a history chunk rewrites the same log pages for every message.
     pub fn begin_batch(&self) -> Result<()> {
-        if !self.connection.is_autocommit() {
-            // Only a rollback that failed leaves a transaction open here.
-            // Nothing would ever commit it, since every later release is
-            // nested inside it, so the batch would save nothing.
-            log::warn!("rolling back a transaction left open");
-            self.connection.execute_batch("ROLLBACK")?;
-        }
+        self.roll_back_leftover()?;
         self.connection.execute_batch("SAVEPOINT batch")
     }
 
-    /// Commits the batch. One that cannot commit is rolled back rather than
-    /// left open, where every later write would join it and never commit.
+    /// Ends a transaction that a rollback which failed left open. Nothing
+    /// would ever commit it, since every later release is nested inside it,
+    /// so each write made in it would be lost when the connection closes.
+    /// Call it only where none of the archive's own transactions can be open:
+    /// between the worker's turns and commands, and when a batch begins.
+    pub fn roll_back_leftover(&self) -> Result<()> {
+        if self.connection.is_autocommit() {
+            return Ok(());
+        }
+        log::warn!("rolling back a transaction left open");
+        self.connection.execute_batch("ROLLBACK")
+    }
+
+    /// Whether a write would join an open transaction rather than commit.
+    pub fn in_transaction(&self) -> bool {
+        !self.connection.is_autocommit()
+    }
+
+    /// Commits the batch. One that cannot commit is rolled back, since every
+    /// later write would join it and never commit. If that rollback fails
+    /// too, [`Archive::roll_back_leftover`] ends the transaction later.
     pub fn end_batch(&self) -> Result<()> {
         let committed = self.connection.execute_batch("RELEASE batch");
         if committed.is_err() && !self.connection.is_autocommit() {
@@ -3011,6 +3024,64 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER temp.block_message_commit; DROP TRIGGER temp.block_vote_commit;"
         }).unwrap();
+    }
+
+    /// Makes every `ROLLBACK` fail, as one that cannot reach the disk would,
+    /// by refusing to prepare it. `ROLLBACK TO` a savepoint still works.
+    pub(crate) fn set_rollback_failure(archive: &super::Archive, fail: bool) {
+        unsafe extern "C" fn refuse_rollback(
+            _: *mut std::ffi::c_void,
+            action: std::ffi::c_int,
+            operation: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+        ) -> std::ffi::c_int {
+            let rollback = action == rusqlite::ffi::SQLITE_TRANSACTION
+                && !operation.is_null()
+                // SAFETY: SQLite passes this operation as a NUL-terminated string.
+                && unsafe { std::ffi::CStr::from_ptr(operation) }.to_bytes() == b"ROLLBACK";
+            if rollback {
+                rusqlite::ffi::SQLITE_DENY
+            } else {
+                rusqlite::ffi::SQLITE_OK
+            }
+        }
+        // SAFETY: the handle is the archive's open connection, used on this
+        // thread only, and the callback keeps no state.
+        unsafe {
+            rusqlite::ffi::sqlite3_set_authorizer(
+                archive.connection.handle(),
+                if fail { Some(refuse_rollback) } else { None },
+                std::ptr::null_mut(),
+            );
+        }
+    }
+
+    #[test]
+    fn a_batch_that_cannot_roll_back_is_ended_by_the_next_recovery() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        set_rollback_failure(&archive, true);
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "undone").unwrap();
+        archive
+            .connection
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(archive.end_batch().is_err());
+        assert!(archive.in_transaction(), "the rollback failed");
+        assert!(
+            archive.begin_batch().is_err(),
+            "a batch never starts inside the transaction left open"
+        );
+        set_rollback_failure(&archive, false);
+        archive.roll_back_leftover().unwrap();
+        assert!(!archive.in_transaction());
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(!archive.in_transaction(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
     }
 
     #[test]
