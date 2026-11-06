@@ -201,7 +201,7 @@ impl Worker {
         let chat = self.canonical_str(&pending.chat);
         let newer_waiting = self.awaiting_ack.values().any(|awaiting| match awaiting {
             AwaitingAck::Timer(other) => !other.reported && self.canonical_str(&other.chat) == chat,
-            AwaitingAck::Message(_) => false,
+            AwaitingAck::Message(..) => false,
         });
         // A timed-out attempt already cleared saving at its deadline. A retry
         // may now be sending but not yet registered in awaiting_ack.
@@ -1018,7 +1018,7 @@ mod tests {
         worker.learn_pair(&lid.parse().unwrap(), &PEER.parse().unwrap());
         worker.awaiting_ack.insert(
             "ordinary-message".into(),
-            AwaitingAck::Message("15550002222@s.whatsapp.net".into()),
+            AwaitingAck::Message("15550002222@s.whatsapp.net".into(), None),
         );
         events.try_iter().for_each(drop);
 
