@@ -68,6 +68,57 @@ pub struct Archive {
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
+/// A transaction that nests. On its own it begins and commits like any
+/// other; inside an open one it is a savepoint, so the writes that open their
+/// own still work while history filing holds one for a whole chunk.
+struct Scope<'a> {
+    connection: &'a Connection,
+    open: bool,
+    /// Began outside any transaction, so it rolls back with `ROLLBACK`:
+    /// `RELEASE` after `ROLLBACK TO` commits, and a commit that fails leaves
+    /// the connection inside the transaction for every later write.
+    outermost: bool,
+}
+
+impl<'a> Scope<'a> {
+    fn begin(connection: &'a Connection) -> Result<Self> {
+        let outermost = connection.is_autocommit();
+        connection.execute_batch("SAVEPOINT scope")?;
+        Ok(Self {
+            connection,
+            open: true,
+            outermost,
+        })
+    }
+
+    fn commit(mut self) -> Result<()> {
+        self.connection.execute_batch("RELEASE scope")?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl std::ops::Deref for Scope<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.connection
+    }
+}
+
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        if !self.open {
+            return;
+        }
+        let _ = self.connection.execute_batch(if self.outermost {
+            "ROLLBACK"
+        } else {
+            "ROLLBACK TO scope; RELEASE scope"
+        });
+    }
+}
+
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
@@ -480,6 +531,23 @@ impl Archive {
 
     fn open_with_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(Self::prepare(encryption::open(path, key)?)?)
+    }
+
+    /// Holds the writes that follow in one transaction until
+    /// [`Archive::end_batch`]. Without it each statement commits on its own,
+    /// and a history chunk rewrites the same log pages for every message.
+    pub fn begin_batch(&self) -> Result<()> {
+        self.connection.execute_batch("SAVEPOINT batch")
+    }
+
+    /// Commits the batch. One that cannot commit is rolled back rather than
+    /// left open, where every later write would wait on it.
+    pub fn end_batch(&self) -> Result<()> {
+        let committed = self.connection.execute_batch("RELEASE batch");
+        if committed.is_err() && !self.connection.is_autocommit() {
+            let _ = self.connection.execute_batch("ROLLBACK");
+        }
+        committed
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -1167,7 +1235,7 @@ impl Archive {
     /// Stores a privacy id mapping and reconciles history already filed under
     /// the privacy id with the canonical phone-number chat.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let lid_chat = format!("{lid}@lid");
         let phone_chat = format!("{pn}@s.whatsapp.net");
         Self::merge_group_recipient(&transaction, &lid_chat, &phone_chat)?;
@@ -2023,7 +2091,7 @@ impl Archive {
 
     /// Commits removal, barriers, and pending cleanup for every known identity.
     pub fn delete_message_aliases(&self, chats: &[String], id: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let mut deleted = 0;
         for chat in chats {
             transaction.execute(
@@ -2070,7 +2138,7 @@ impl Archive {
 
     /// Saves authoritative acceptance separately from fallible physical cleanup.
     pub fn confirm_message_removal(&self, account: &str, chats: &[String], id: &str) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         // The caller supplies the current protocol account, including before its
         // Connected event. Bind replay checks to that same persisted identity.
         transaction.execute(
@@ -2151,7 +2219,7 @@ impl Archive {
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
     pub fn remove_chat_through(&self, chat: &str, through: i64, delete: bool) -> Result<Removed> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let through = self
             .removal_point(chat)?
             .map_or(through, |old| old.max(through));
@@ -2581,7 +2649,7 @@ impl Archive {
     /// The chat's activity follows: an activity time this message set moves
     /// to the chat's newest message, and later activity stays.
     pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let Some(old) = transaction
             .query_row(
                 "SELECT timestamp FROM messages
@@ -2882,6 +2950,25 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// An encrypted archive on disk whose log starts empty and is never
+    /// checkpointed on its own, so [`wal_frames`] counts every page the
+    /// test's writes put in it.
+    pub(crate) fn on_disk(path: &std::path::Path) -> super::Archive {
+        let archive = super::Archive::open_with_key(path, &[7; 32]).unwrap();
+        archive
+            .connection
+            .execute_batch("PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        archive
+    }
+
+    pub(crate) fn wal_frames(archive: &super::Archive) -> i64 {
+        archive
+            .connection
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| row.get(1))
+            .unwrap()
+    }
+
     pub(crate) fn reject_archive_updates(archive: &super::Archive) {
         archive.connection.execute_batch(
             "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
@@ -2902,6 +2989,37 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
+    }
+
+    #[test]
+    fn a_scope_that_fails_inside_a_batch_undoes_only_its_own_writes() {
+        let archive = Archive::in_memory().unwrap();
+        archive.begin_batch().unwrap();
+        archive.set_meta("before", "kept").unwrap();
+        {
+            let scope = Scope::begin(&archive.connection).unwrap();
+            scope
+                .execute(
+                    "INSERT INTO meta (key, value) VALUES ('inside', 'undone')",
+                    [],
+                )
+                .unwrap();
+        }
+        let scope = Scope::begin(&archive.connection).unwrap();
+        scope
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('committed', 'kept')",
+                [],
+            )
+            .unwrap();
+        scope.commit().unwrap();
+        archive.set_meta("after", "kept").unwrap();
+        archive.end_batch().unwrap();
+        assert!(archive.connection.is_autocommit(), "the batch is closed");
+        assert_eq!(archive.meta("before").unwrap().as_deref(), Some("kept"));
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        assert_eq!(archive.meta("committed").unwrap().as_deref(), Some("kept"));
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
     }
 
     /// Failed unlink cannot apply the previous account's terminal barriers.

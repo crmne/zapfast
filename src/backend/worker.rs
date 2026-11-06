@@ -6240,9 +6240,23 @@ impl Worker {
         self.emit_chats();
     }
 
-    /// Archives a history chunk. `metadata` controls chat-state updates.
-    /// Returns each chat's message count and whether the phone has more.
+    /// Archives a history chunk in one transaction. `metadata` controls
+    /// chat-state updates. Returns each chat's message count and whether the
+    /// phone has more.
     fn apply_history(
+        &mut self,
+        parsed: ParsedHistory,
+        metadata: bool,
+    ) -> Vec<(ChatId, usize, Option<bool>)> {
+        let batched = self.archive.begin_batch().is_ok();
+        let filed = self.file_history(parsed, metadata);
+        if batched && let Err(error) = self.archive.end_batch() {
+            log::warn!("could not commit a history chunk: {error}");
+        }
+        filed
+    }
+
+    fn file_history(
         &mut self,
         parsed: ParsedHistory,
         metadata: bool,
@@ -22325,6 +22339,69 @@ mod receipt_tests {
         assert_eq!(receipts[0].id, PEER);
         assert!(!receipts[0].expected, "a partial list is not the audience");
         assert_eq!(receipts[0].read_at, Some(123));
+    }
+
+    #[test]
+    fn a_history_chunk_is_filed_without_a_commit_per_message() {
+        const MESSAGES: usize = 300;
+        let group = "123-456@g.us";
+        let dir = tempfile::tempdir().unwrap();
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.archive = crate::archive::tests::on_disk(&dir.path().join("archive.db"));
+        let messages = (0..MESSAGES)
+            .map(|n| {
+                let mut entry = history_entry(
+                    group,
+                    &format!("m{n}"),
+                    true,
+                    None,
+                    {
+                        let mut proto = wa::Message::default();
+                        proto.conversation = Some(format!("message number {n}"));
+                        proto
+                    },
+                    Vec::new(),
+                    None,
+                );
+                entry.message.as_option_mut().unwrap().user_receipt = vec![{
+                    let mut proto = wa::UserReceipt::default();
+                    proto.user_jid = PEER.into();
+                    proto.receipt_timestamp = Some(100);
+                    proto.read_timestamp = Some(123);
+                    proto
+                }];
+                entry
+            })
+            .collect();
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![parse_conversation({
+                    let mut proto = wa::Conversation::default();
+                    proto.id = group.into();
+                    proto.messages = messages;
+                    proto
+                })],
+                push_names: Vec::new(),
+                lids: vec![("4242@lid".into(), "15550004242@s.whatsapp.net".into())],
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        // Writes nested inside the chunk's transaction still land.
+        assert_eq!(
+            worker.archive.lids().unwrap(),
+            vec![("4242".to_owned(), "15550004242".to_owned())]
+        );
+        for n in [0, MESSAGES - 1] {
+            let id = format!("m{n}");
+            assert!(worker.archive.message(group, &id).unwrap().is_some());
+            assert_eq!(worker.archive.receipts(group, &id).unwrap().len(), 1);
+        }
+        let frames = crate::archive::tests::wal_frames(&worker.archive);
+        assert!(
+            frames < MESSAGES as i64,
+            "{frames} WAL frames for {MESSAGES} messages: each message committed on its own"
+        );
     }
 
     #[test]
