@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: ZapFast\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-11-01 20:11+0100\n"
+"POT-Creation-Date: 2026-11-05 03:48+0200\n"
 "PO-Revision-Date: 2026-11-06 00:00+0100\n"
 "Last-Translator: ZapFast contributors\n"
 "Language-Team: Czech\n"
@@ -14,1655 +14,2392 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : (n==2 || n==3 || n==4) ? 1 : 2);\n"
+"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : (n==2 || n==3 || n==4) ? 1 : "
+"2);\n"
 
 #. Translators: one word, no spaces. The word after @ that mentions everyone.
+#: src/mentions.rs:80
 msgctxt "mention"
 msgid "all"
 msgstr "všichni"
 
+#: src/new_group.rs:190 src/ui/new_group.rs:452
 msgid "Enter a name for the group."
 msgstr "Zadejte název skupiny."
 
+#: src/new_group.rs:192
 #, rust-format
 msgid "A group name can have at most {count} characters."
 msgstr "Název skupiny může mít nejvýše {count} znaků."
 
+#: src/new_group.rs:196
 msgid "Choose at least one person for the group."
 msgstr "Vyberte alespoň jednu osobu do skupiny."
 
+#: src/new_group.rs:198
 msgid "Connect to WhatsApp to create a group."
 msgstr "Pro vytvoření skupiny se připojte k WhatsAppu."
 
+#: src/new_group.rs:201
+msgid ""
+"WhatsApp did not answer in time. If the group does not appear shortly, try "
+"again."
+msgstr ""
+"WhatsApp včas neodpověděl. Pokud se skupina brzy neobjeví, zkuste to znovu."
+
+#: src/new_group.rs:206
 msgid "WhatsApp does not allow this account to create groups right now."
 msgstr "WhatsApp tomuto účtu momentálně nedovoluje vytvářet skupiny."
 
+#: src/new_group.rs:211
 msgid "You have created too many groups recently. Try again later."
 msgstr "V poslední době jste vytvořili příliš mnoho skupin. Zkuste to později."
 
+#: src/new_group.rs:216
+msgid "WhatsApp did not accept this group's name or members."
+msgstr "WhatsApp nepřijal název skupiny nebo její členy."
+
+#: src/new_group.rs:219
 msgid "Could not create the group. Try again."
 msgstr "Skupinu se nepodařilo vytvořit. Zkuste to znovu."
 
+#: src/new_group.rs:258
+#, rust-format
+msgid ""
+"{names} could not be added to the group. Their privacy settings may not "
+"allow it."
+msgstr ""
+"{names} se nepodařilo přidat do skupiny. Jejich nastavení soukromí to možná "
+"neumožňuje."
+
+#: src/model.rs:203 src/model.rs:240
 msgid "All"
 msgstr "Vše"
 
+#: src/model.rs:204 src/a11y.rs:112 src/a11y.rs:697
 msgid "Unread"
 msgstr "Nepřečtené"
 
+#: src/model.rs:205
 msgid "Private"
 msgstr "Soukromé"
 
+#: src/model.rs:206 src/ui/picker.rs:1284
 msgid "Favorites"
 msgstr "Oblíbené"
 
+#: src/model.rs:207 src/settings.rs:382
 msgid "Groups"
 msgstr "Skupiny"
 
+#: src/model.rs:208
 msgid "Channels"
 msgstr "Kanály"
 
+#: src/model.rs:241
 msgid "Missed"
 msgstr "Zmeškané"
 
+#: src/model.rs:1738 src/ui/conversation.rs:2399 src/ui/image_preview.rs:1061
+#: src/ui/info.rs:1412 src/a11y.rs:199
 msgid "Photo"
 msgstr "Fotografie"
 
+#: src/model.rs:1739 src/ui/image_preview.rs:1059 src/ui/info.rs:1410
+#: src/a11y.rs:211
 msgid "Video"
 msgstr "Video"
 
+#: src/model.rs:1740 src/ui/picker.rs:141 src/a11y.rs:207
 msgid "GIF"
 msgstr "GIF"
 
+#: src/model.rs:1741 src/a11y.rs:209
 msgid "Video message"
 msgstr "Videozpráva"
 
+#: src/model.rs:1742 src/app.rs:10956 src/a11y.rs:221
 msgid "Voice message"
 msgstr "Hlasová zpráva"
 
+#: src/model.rs:1743 src/ui/conversation.rs:11490 src/a11y.rs:223
 msgid "Audio"
 msgstr "Zvuk"
 
+#: src/model.rs:1744 src/a11y.rs:228
 msgid "Document"
 msgstr "Dokument"
 
+#: src/model.rs:1745 src/a11y.rs:232
 msgid "Sticker"
 msgstr "Nálepka"
 
+#: src/model.rs:1746 src/ui/dialogs.rs:1247 src/a11y.rs:234
 msgid "Sticker pack"
 msgstr "Balíček nálepek"
 
+#: src/model.rs:1747 src/ui/conversation.rs:8324 src/a11y.rs:239
 msgid "Location"
 msgstr "Poloha"
 
+#: src/model.rs:1748 src/ui/conversation.rs:8371 src/ui/conversation.rs:8597
+#: src/a11y.rs:243 src/a11y.rs:275
 msgid "Live location"
 msgstr "Živá poloha"
 
+#: src/model.rs:1749 src/ui/conversation.rs:8369 src/a11y.rs:262
 msgid "Live location ended"
 msgstr "Sdílení živé polohy skončilo"
 
+#: src/model.rs:1750 src/a11y.rs:245
 msgid "Contact"
 msgstr "Kontakt"
 
+#: src/model.rs:1751
 msgid "Poll"
 msgstr "Anketa"
 
+#: src/model.rs:1752 src/ui/conversation.rs:7851 src/a11y.rs:267
+#: src/a11y.rs:695
 msgid "This message was deleted"
 msgstr "Tato zpráva byla smazána"
 
+#: src/model.rs:1753
 msgid "Unsupported message"
 msgstr "Nepodporovaná zpráva"
 
+#: src/model.rs:1754 src/a11y.rs:279
 msgid "View once photo"
 msgstr "Fotografie k jednorázovému zobrazení"
 
+#: src/model.rs:1755 src/a11y.rs:280
 msgid "View once video"
 msgstr "Video k jednorázovému zobrazení"
 
+#: src/model.rs:1756 src/a11y.rs:281
 msgid "View once voice message"
 msgstr "Hlasová zpráva k jednorázovému přehrání"
 
+#: src/model.rs:1757 src/a11y.rs:282
 msgid "View once audio"
 msgstr "Zvuk k jednorázovému přehrání"
 
+#: src/model.rs:1758 src/a11y.rs:287
 msgid "View once message"
 msgstr "Zpráva k jednorázovému zobrazení"
 
+#: src/model.rs:1759 src/a11y.rs:288
 msgid "Message on your phone"
 msgstr "Zpráva v telefonu"
 
+#: src/model.rs:1760 src/ui/calls.rs:100
 msgid "Missed voice call"
 msgstr "Zmeškaný hlasový hovor"
 
+#: src/model.rs:1761 src/ui/calls.rs:101
 msgid "Missed video call"
 msgstr "Zmeškaný videohovor"
 
+#: src/model.rs:1762 src/ui/conversation.rs:689 src/ui/conversation.rs:856
+#: src/ui/conversation.rs:5306 src/ui/calls.rs:104 src/ui/calls.rs:389
 msgid "Voice call"
 msgstr "Hlasový hovor"
 
+#: src/model.rs:1763 src/ui/conversation.rs:690 src/ui/conversation.rs:884
+#: src/ui/conversation.rs:5323 src/ui/calls.rs:105 src/ui/calls.rs:387
 msgid "Video call"
 msgstr "Videohovor"
 
+#: src/model.rs:1773 src/util.rs:303 src/ui/info.rs:565 src/a11y.rs:265
 msgid "Disappearing messages"
 msgstr "Mizející zprávy"
 
+#: src/util.rs:245 src/util.rs:386
 msgid "Yesterday"
 msgstr "Včera"
 
+#: src/util.rs:282
 #, rust-format
 msgid "Yesterday at {time}"
 msgstr "Včera v {time}"
 
+#: src/util.rs:283
 #, rust-format
 msgid "{weekday} at {time}"
 msgstr "{weekday} v {time}"
 
+#: src/util.rs:286
 #, rust-format
 msgid "{date} at {time}"
 msgstr "{date} v {time}"
 
+#: src/util.rs:312 src/settings.rs:380 src/ui/info.rs:628
 msgid "Off"
 msgstr "Vypnuto"
 
+#: src/util.rs:313 src/ui/info.rs:629
 msgid "24 hours"
 msgstr "24 hodin"
 
+#: src/util.rs:314 src/ui/info.rs:630
 msgid "7 days"
 msgstr "7 dní"
 
+#: src/util.rs:315 src/ui/info.rs:631
 msgid "90 days"
 msgstr "90 dní"
 
+#: src/util.rs:325
+#, rust-format
+msgid "{name} turned off disappearing messages"
+msgstr "{name} vypnul(a) mizející zprávy"
+
+#: src/util.rs:329
+#, rust-format
+msgid "{name} changed the disappearing messages setting to {duration}"
+msgstr "{name} změnil(a) dobu mizení zpráv na {duration}"
+
+#: src/util.rs:356
+#, rust-format
+msgid "last seen today at {time}"
+msgstr "naposledy dnes v {time}"
+
+#: src/util.rs:357
+#, rust-format
+msgid "last seen yesterday at {time}"
+msgstr "naposledy včera v {time}"
+
+#: src/util.rs:365
+#, rust-format
+msgid "last seen {weekday} at {time}"
+msgstr "naposledy {weekday} v {time}"
+
+#: src/util.rs:369
+#, rust-format
+msgid "last seen {date}"
+msgstr "naposledy {date}"
+
+#: src/util.rs:385
 msgid "Today"
 msgstr "Dnes"
 
+#: src/util.rs:421
 msgid "Monday"
 msgstr "pondělí"
 
+#: src/util.rs:422
 msgid "Tuesday"
 msgstr "úterý"
 
+#: src/util.rs:423
 msgid "Wednesday"
 msgstr "středa"
 
+#: src/util.rs:424
 msgid "Thursday"
 msgstr "čtvrtek"
 
+#: src/util.rs:425
 msgid "Friday"
 msgstr "pátek"
 
+#: src/util.rs:426
 msgid "Saturday"
 msgstr "sobota"
 
+#: src/util.rs:427
 msgid "Sunday"
 msgstr "neděle"
 
+#: src/util.rs:435
 msgid "January"
 msgstr "leden"
 
+#: src/util.rs:436
 msgid "February"
 msgstr "únor"
 
+#: src/util.rs:437
 msgid "March"
 msgstr "březen"
 
+#: src/util.rs:438
 msgid "April"
 msgstr "duben"
 
+#: src/util.rs:439
 msgid "May"
 msgstr "květen"
 
+#: src/util.rs:440
 msgid "June"
 msgstr "červen"
 
+#: src/util.rs:441
 msgid "July"
 msgstr "červenec"
 
+#: src/util.rs:442
 msgid "August"
 msgstr "srpen"
 
+#: src/util.rs:443
 msgid "September"
 msgstr "září"
 
+#: src/util.rs:444
 msgid "October"
 msgstr "říjen"
 
+#: src/util.rs:445
 msgid "November"
 msgstr "listopad"
 
+#: src/util.rs:446
 msgid "December"
 msgstr "prosinec"
 
+#: src/util.rs:637
+#, rust-format
+msgid "{seconds} s"
+msgstr "{seconds} s"
+
+#: src/util.rs:638
+#, rust-format
+msgid "{minutes} min"
+msgstr "{minutes} min"
+
+#: src/util.rs:639
+#, rust-format
+msgid "{minutes} min {seconds} s"
+msgstr "{minutes} min {seconds} s"
+
+#: src/util.rs:640
+#, rust-format
+msgid "{hours} h"
+msgstr "{hours} h"
+
+#: src/util.rs:641
+#, rust-format
+msgid "{hours} h {minutes} min"
+msgstr "{hours} h {minutes} min"
+
+#: src/ui/chats.rs:188 src/ui/chats.rs:523 src/app.rs:3809
 msgid "Starred"
 msgstr "Označené"
 
+#: src/ui/chats.rs:268 src/ui/conversation.rs:952
 msgid "Back to the calls"
 msgstr "Zpět k hovorům"
 
+#: src/ui/chats.rs:277 src/ui/chats.rs:410
 msgid "New call"
 msgstr "Nový hovor"
 
+#: src/ui/chats.rs:291
 msgid "Search name or number"
 msgstr "Hledat jméno nebo číslo"
 
+#: src/ui/chats.rs:324 src/ui/pane.rs:260
 msgid "Search"
 msgstr "Hledat"
 
+#: src/ui/chats.rs:695
 msgid "No starred messages"
 msgstr "Žádné označené zprávy"
 
+#: src/ui/chats.rs:698
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "Kliknutím pravým tlačítkem na zprávu a volbou Označit ji tu ponecháte."
+
+#: src/ui/chats.rs:945
 msgid "No favorites yet"
 msgstr "Zatím žádné oblíbené"
 
+#: src/ui/chats.rs:1100 src/ui/chats.rs:1970 src/ui/dialogs.rs:352
 msgid "Locked chats"
 msgstr "Uzamčené chaty"
 
+#: src/ui/chats.rs:1406 src/app.rs:3078
 msgid "Message yourself"
 msgstr "Zpráva sobě"
 
+#: src/ui/chats.rs:1620 src/ui/conversation.rs:1019
+#, rust-format
+msgid "{name} is recording audio…"
+msgstr "{name} právě nahrává zvuk…"
+
+#: src/ui/chats.rs:1625 src/ui/conversation.rs:1039
+msgid "recording audio…"
+msgstr "nahrává zvuk…"
+
+#: src/ui/chats.rs:1639
 msgid "Draft:"
 msgstr "Koncept:"
 
+#: src/ui/chats.rs:1729 src/ui/chats.rs:2126 src/ui/picker.rs:1715
 msgid "Remove from favorites"
 msgstr "Odebrat z oblíbených"
 
+#: src/ui/chats.rs:1731 src/ui/chats.rs:2128 src/ui/conversation.rs:7042
+#: src/ui/conversation.rs:7567 src/ui/dialogs.rs:1421 src/ui/picker.rs:1716
 msgid "Add to favorites"
 msgstr "Přidat k oblíbeným"
 
+#: src/ui/chats.rs:1741 src/ui/chats.rs:2148 src/ui/conversation.rs:650
+#: src/ui/dialogs.rs:1758 src/ui/info.rs:777
 msgid "Leave group"
 msgstr "Opustit skupinu"
 
+#: src/ui/chats.rs:1742 src/ui/chats.rs:2146 src/ui/conversation.rs:648
+#: src/ui/dialogs.rs:1756 src/ui/info.rs:775
 msgid "Leave channel"
 msgstr "Opustit kanál"
 
+#: src/ui/chats.rs:1745 src/ui/chats.rs:2223 src/ui/chats.rs:2496
+#: src/ui/conversation.rs:685 src/ui/dialogs.rs:1131
 msgid "Clear chat"
 msgstr "Vymazat chat"
 
+#: src/ui/chats.rs:1746 src/ui/chats.rs:2235
 msgid "Delete chat"
 msgstr "Smazat chat"
 
+#: src/ui/chats.rs:1756 src/ui/chats.rs:2323 src/ui/conversation.rs:10870
+#: src/ui/call.rs:529
 msgid "Mute"
 msgstr "Ztlumit"
 
+#: src/ui/chats.rs:1759 src/ui/labels.rs:178 src/ui/labels.rs:223
 msgid "Labels"
 msgstr "Štítky"
 
+#: src/ui/chats.rs:2093
 msgid "Mark as read"
 msgstr "Označit jako přečtené"
 
+#: src/ui/chats.rs:2103
 msgid "Mark as unread"
 msgstr "Označit jako nepřečtené"
 
+#: src/ui/chats.rs:2109 src/ui/conversation.rs:675
 msgid "Unpin"
 msgstr "Odepnout"
 
+#: src/ui/chats.rs:2111 src/ui/conversation.rs:677
 msgid "Pin to top"
 msgstr "Připnout nahoru"
 
+#: src/ui/chats.rs:2136 src/ui/conversation.rs:680
 msgid "Unarchive"
 msgstr "Obnovit z archivu"
 
+#: src/ui/chats.rs:2138 src/ui/conversation.rs:682
 msgid "Archive"
 msgstr "Archivovat"
 
+#: src/ui/chats.rs:2164 src/ui/conversation.rs:10868 src/ui/call.rs:522
 msgid "Unmute"
 msgstr "Zapnout zvuk"
 
+#: src/ui/chats.rs:2175
 msgid "Unlock chat"
 msgstr "Odemknout chat"
 
+#: src/ui/chats.rs:2177 src/ui/dialogs.rs:458
 msgid "Lock chat"
 msgstr "Uzamknout chat"
 
+#: src/ui/chats.rs:2201 src/ui/conversation.rs:686 src/ui/conversation.rs:9788
 msgid "Copy number"
 msgstr "Kopírovat číslo"
 
+#: src/ui/chats.rs:2210 src/ui/conversation.rs:673
 msgid "Info"
 msgstr "Informace"
 
+#: src/ui/chats.rs:2262
 msgid "Default"
 msgstr "Výchozí"
 
+#: src/ui/chats.rs:2263
 msgid "System sound"
 msgstr "Systémový zvuk"
 
+#: src/ui/chats.rs:2264
 msgid "No sound"
 msgstr "Bez zvuku"
 
+#: src/ui/chats.rs:2274
 msgid "Custom"
 msgstr "Vlastní"
 
+#: src/ui/chats.rs:2279 src/ui/settings.rs:2005
 msgid "Choose a file…"
 msgstr "Vybrat soubor…"
 
+#: src/ui/chats.rs:2286
 msgid "Notification sound"
 msgstr "Zvuk oznámení"
 
+#: src/ui/chats.rs:2313
 msgid "8 hours"
 msgstr "8 hodin"
 
+#: src/ui/chats.rs:2317
 msgid "1 week"
 msgstr "1 týden"
 
+#: src/ui/chats.rs:2320
 msgid "Always"
 msgstr "Vždy"
 
+#: src/ui/conversation.rs:264
+#, rust-format
+msgid "Pinned message {index} of {count}: {text}"
+msgstr "Připnutá zpráva {index} z {count}: {text}"
+
+#: src/ui/conversation.rs:308
 msgid "Your chats appear on the left as they load."
 msgstr "Načtené chaty se zobrazí vlevo."
 
+#: src/ui/conversation.rs:310
 msgid "Select a chat on the left."
 msgstr "Vyberte chat vlevo."
 
+#: src/ui/conversation.rs:320
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Hledat můžete pomocí Ctrl+K · klávesové zkratky zobrazíte pomocí ?"
+
+#: src/ui/conversation.rs:652
 msgid "Select messages"
 msgstr "Vybrat zprávy"
 
+#: src/ui/conversation.rs:667
 msgid "More"
 msgstr "Další"
 
+#: src/ui/conversation.rs:684
 msgid "Export chat…"
 msgstr "Exportovat chat…"
 
+#: src/ui/conversation.rs:687
 msgid "Close chat"
 msgstr "Zavřít chat"
 
+#: src/ui/conversation.rs:688 src/ui/conversation.rs:910 src/ui/pane.rs:224
 msgid "Search messages"
 msgstr "Hledat ve zprávách"
 
+#: src/ui/conversation.rs:849 src/ui/call.rs:129 src/ui/call.rs:577
 msgid "Hang up"
 msgstr "Zavěsit"
 
+#: src/ui/conversation.rs:1023
+#, rust-format
+msgid "{names} and {last} are recording audio…"
+msgstr "{names} a {last} nahrávají zvuk…"
+
+#: src/ui/conversation.rs:1525
 msgid "You blocked this contact"
 msgstr "Tento kontakt jste zablokovali"
 
+#: src/ui/conversation.rs:1537
 msgid "You left this channel"
 msgstr "Opustili jste tento kanál"
 
+#: src/ui/conversation.rs:1541
 msgid "Channels are read-only in ZapFast"
 msgstr "Kanály jsou v ZapFast pouze pro čtení"
 
+#: src/ui/conversation.rs:1564
 msgid "You left this group"
 msgstr "Opustili jste tuto skupinu"
 
+#: src/ui/conversation.rs:1615
 msgid "Original group message unavailable"
 msgstr "Původní zpráva ze skupiny není k dispozici"
 
+#: src/ui/conversation.rs:1743
 msgid "Attach"
 msgstr "Připojit"
 
+#: src/ui/conversation.rs:1842
 msgid "Type a message"
 msgstr "Napište zprávu"
 
+#: src/ui/conversation.rs:1845
 msgid "Add a caption"
 msgstr "Přidat popisek"
 
+#: src/ui/conversation.rs:1946
 msgid "Bold"
 msgstr "Tučné"
 
+#: src/ui/conversation.rs:1947
 msgid "Italic"
 msgstr "Kurzíva"
 
+#: src/ui/conversation.rs:1948
 msgid "Strikethrough"
 msgstr "Přeškrtnuté"
 
+#: src/ui/conversation.rs:1949
 msgid "Monospace"
 msgstr "Neproporcionální písmo"
 
+#: src/ui/conversation.rs:2123
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
+"pastes a picture"
+msgstr ""
+"Enter odešle zprávu · Shift+Enter vloží nový řádek · *tučně* _kurzíva_ "
+"~přeškrtnutě~ · Ctrl+V vloží obrázek"
+
+#: src/ui/conversation.rs:2125
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr ""
+"Ctrl+Enter odešle zprávu · *tučně* _kurzíva_ ~přeškrtnutě~ · Ctrl+V vloží "
+"obrázek"
+
+#: src/ui/conversation.rs:2136
+msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
+msgstr "Skrýt nápovědu ke zkratkám (znovu ji zapnete v Klávesových zkratkách)"
+
+#: src/ui/conversation.rs:2151
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "Všechny klávesové zkratky ({})"
+
+#: src/ui/conversation.rs:2284
 msgid "Send files"
 msgstr "Odeslat soubory"
 
+#: src/ui/conversation.rs:2290
 msgid "Send as document"
 msgstr "Odeslat jako dokument"
 
+#: src/ui/conversation.rs:2294 src/ui/locations.rs:16
 msgid "Send location"
 msgstr "Odeslat polohu"
 
+#: src/ui/conversation.rs:2299 src/ui/polls.rs:16
 msgid "Create poll"
 msgstr "Vytvořit anketu"
 
+#: src/ui/conversation.rs:2361
 #, rust-format
 msgid "Voice message ({duration}) not sent"
 msgstr "Hlasová zpráva ({duration}) nebyla odeslána"
 
+#: src/ui/conversation.rs:2363
 msgid "Discard voice message"
 msgstr "Zahodit hlasovou zprávu"
 
+#: src/ui/conversation.rs:2395
+#, rust-format
+msgid "Cancel sending {name}"
+msgstr "Zrušit odesílání: {name}"
+
+#: src/ui/conversation.rs:2403
+#, rust-format
+msgid "Sending {name}"
+msgstr "Odesílá se: {name}"
+
+#: src/ui/conversation.rs:2409
 #, rust-format
 msgid "{time} left"
 msgstr "Zbývá {time}"
 
+#: src/ui/conversation.rs:2545
+msgid "Loading preview…"
+msgstr "Načítá se náhled…"
+
+#: src/ui/conversation.rs:2556
 msgid "Remove link preview"
 msgstr "Odebrat náhled odkazu"
 
+#: src/ui/conversation.rs:2873
 msgid "You pinned a message"
 msgstr "Připnuli jste zprávu"
 
+#: src/ui/conversation.rs:2876
 msgid "A message was pinned"
 msgstr "Zpráva byla připnuta"
 
+#: src/ui/conversation.rs:2878
+#, rust-format
+msgid "{} pinned a message"
+msgstr "{} připnul(a) zprávu"
+
+#: src/ui/conversation.rs:3624 src/notify.rs:19
+#, rust-format
 msgid "{} unread message"
 msgid_plural "{} unread messages"
 msgstr[0] "{} nepřečtená zpráva"
 msgstr[1] "{} nepřečtené zprávy"
 msgstr[2] "{} nepřečtených zpráv"
 
+#: src/ui/conversation.rs:3812 src/ui/conversation.rs:3949
+#: src/ui/conversation.rs:4006 src/ui/conversation.rs:4849
+#: src/ui/conversation.rs:6895 src/ui/call.rs:1017 src/app/calls.rs:135
+#: src/app.rs:3060 src/app.rs:3079
 msgid "You"
 msgstr "Vy"
 
-msgid "React"
-msgstr "Reagovat"
-
-msgid "Reply"
-msgstr "Odpovědět"
-
-msgid "Forward"
-msgstr "Přeposlat"
-
-msgid "Group calls happen on the phone"
-msgstr "Skupinové hovory probíhají v telefonu"
-
-msgid "Message info"
-msgstr "Informace o zprávě"
-
-msgid "Remove reaction"
-msgstr "Odebrat reakci"
-
-msgid "Reply privately"
-msgstr "Odpovědět soukromě"
-
-msgid "Star"
-msgstr "Označit"
-
-msgid "Unstar"
-msgstr "Zrušit označení"
-
-msgid "Pin message"
-msgstr "Připnout zprávu"
-
-msgid "Unpin message"
-msgstr "Odepnout zprávu"
-
-msgid "Open in the viewer"
-msgstr "Otevřít v prohlížeči"
-
-msgid "Select"
-msgstr "Vybrat"
-
-msgid "Copy text"
-msgstr "Kopírovat text"
-
-msgid "Edit"
-msgstr "Upravit"
-
-msgid "Delete for everyone"
-msgstr "Smazat všem"
-
-msgid "Delete for me"
-msgstr "Smazat pouze u mě"
-
-msgid "Open in system player"
-msgstr "Otevřít v systémovém přehrávači"
-
-msgid "Open file"
-msgstr "Otevřít soubor"
-
-msgid "Copy image"
-msgstr "Kopírovat obrázek"
-
-msgid "Save as…"
-msgstr "Uložit jako…"
-
-msgid "Show in folder"
-msgstr "Zobrazit ve složce"
-
-msgid "Downloading…"
-msgstr "Stahování…"
-
-msgid "Download"
-msgstr "Stáhnout"
-
-msgid "Reload earlier messages"
-msgstr "Znovu načíst starší zprávy"
-
-msgid "Copy message ID"
-msgstr "Kopírovat ID zprávy"
-
-msgid "React with any emoji"
-msgstr "Reagovat libovolným emoji"
-
-msgid "Settings"
-msgstr "Nastavení"
-
-msgid "Language"
-msgstr "Jazyk"
-
-msgid "Chats"
-msgstr "Chaty"
-
-msgid "Calls"
-msgstr "Hovory"
-
-msgid "Archived"
-msgstr "Archivované"
-
-msgid "{} member"
-msgid_plural "{} members"
-msgstr[0] "{} člen"
-msgstr[1] "{} členové"
-msgstr[2] "{} členů"
-
-msgid "Right-click a message and choose Star to keep it here."
-msgstr "Kliknutím pravým tlačítkem na zprávu a volbou Označit ji tu ponecháte."
-
-#, rust-format
-msgid "{name} is recording audio…"
-msgstr "{name} právě nahrává zvuk…"
-
-msgid "recording audio…"
-msgstr "nahrává zvuk…"
-
-#, rust-format
-msgid "Pinned message {index} of {count}: {text}"
-msgstr "Připnutá zpráva {index} z {count}: {text}"
-
-msgid "Ctrl+K to search · ? for keyboard shortcuts"
-msgstr "Hledat můžete pomocí Ctrl+K · klávesové zkratky zobrazíte pomocí ?"
-
-msgid "All shortcuts ({})"
-msgstr "Všechny klávesové zkratky ({})"
-
-msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
-msgstr "Skrýt nápovědu ke zkratkám (znovu ji zapnete v Klávesových zkratkách)"
-
-msgid "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Enter odešle zprávu · Shift+Enter vloží nový řádek · *tučně* _kurzíva_ ~přeškrtnutě~ · Ctrl+V vloží obrázek"
-
-msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr "Ctrl+Enter odešle zprávu · *tučně* _kurzíva_ ~přeškrtnutě~ · Ctrl+V vloží obrázek"
-
-#, rust-format
-msgid "Cancel sending {name}"
-msgstr "Zrušit odesílání: {name}"
-
-#, rust-format
-msgid "Sending {name}"
-msgstr "Odesílá se: {name}"
-
-msgid "Loading preview…"
-msgstr "Načítá se náhled…"
-
+#: src/ui/conversation.rs:3828
 #, rust-format
 msgid "Select message from {sender}, {time}: {summary}"
 msgstr "Vybrat zprávu od {sender} z {time}: {summary}"
 
+#: src/ui/conversation.rs:4750 src/ui/image_preview.rs:399
+msgid "React"
+msgstr "Reagovat"
+
+#: src/ui/conversation.rs:4777 src/ui/conversation.rs:7029
+#: src/ui/conversation.rs:7358 src/ui/image_preview.rs:386
+msgid "Reply"
+msgstr "Odpovědět"
+
+#: src/ui/conversation.rs:4801 src/ui/conversation.rs:7035
+#: src/ui/conversation.rs:7414 src/ui/dialogs.rs:791 src/ui/dialogs.rs:810
+#: src/ui/image_preview.rs:419
+msgid "Forward"
+msgstr "Přeposlat"
+
+#: src/ui/conversation.rs:5273
+msgid "Group calls happen on the phone"
+msgstr "Skupinové hovory probíhají v telefonu"
+
+#: src/ui/conversation.rs:6697 src/ui/conversation.rs:7050
+#: src/ui/conversation.rs:7651 src/ui/message_info.rs:17
+msgid "Message info"
+msgstr "Informace o zprávě"
+
+#: src/ui/conversation.rs:6965
+msgid "Remove reaction"
+msgstr "Odebrat reakci"
+
+#: src/ui/conversation.rs:7030 src/ui/conversation.rs:7375
+msgid "Reply privately"
+msgstr "Odpovědět soukromě"
+
+#: src/ui/conversation.rs:7031 src/ui/conversation.rs:7387
+msgid "Star"
+msgstr "Označit"
+
+#: src/ui/conversation.rs:7032 src/ui/conversation.rs:7385
+msgid "Unstar"
+msgstr "Zrušit označení"
+
+#: src/ui/conversation.rs:7033 src/ui/conversation.rs:7401
+msgid "Pin message"
+msgstr "Připnout zprávu"
+
+#: src/ui/conversation.rs:7034 src/ui/conversation.rs:7399
+msgid "Unpin message"
+msgstr "Odepnout zprávu"
+
+#: src/ui/conversation.rs:7036 src/ui/conversation.rs:7426
+msgid "Open in the viewer"
+msgstr "Otevřít v prohlížeči"
+
+#: src/ui/conversation.rs:7037 src/ui/conversation.rs:7440
+msgid "Select"
+msgstr "Vybrat"
+
+#: src/ui/conversation.rs:7038 src/ui/conversation.rs:7506
+msgid "Copy text"
+msgstr "Kopírovat text"
+
+#: src/ui/conversation.rs:7039 src/ui/conversation.rs:7522
+msgid "Edit"
+msgstr "Upravit"
+
+#: src/ui/conversation.rs:7040 src/ui/conversation.rs:7230
+#: src/ui/conversation.rs:7538 src/ui/conversation.rs:7881
+#: src/ui/conversation.rs:11733
+msgid "Delete for everyone"
+msgstr "Smazat všem"
+
+#: src/ui/conversation.rs:7041 src/ui/conversation.rs:7235
+#: src/ui/conversation.rs:7547 src/ui/conversation.rs:11734
+msgid "Delete for me"
+msgstr "Smazat pouze u mě"
+
+#: src/ui/conversation.rs:7043 src/ui/conversation.rs:7576
+msgid "Open in system player"
+msgstr "Otevřít v systémovém přehrávači"
+
+#: src/ui/conversation.rs:7044 src/ui/conversation.rs:7578
+#: src/ui/picker.rs:1609
+msgid "Open file"
+msgstr "Otevřít soubor"
+
+#: src/ui/conversation.rs:7045 src/ui/conversation.rs:7588
+#: src/ui/image_preview.rs:302 src/ui/image_preview.rs:628
+msgid "Copy image"
+msgstr "Kopírovat obrázek"
+
+#: src/ui/conversation.rs:7046 src/ui/conversation.rs:7597
+#: src/ui/image_preview.rs:444 src/ui/image_preview.rs:629
+msgid "Save as…"
+msgstr "Uložit jako…"
+
+#: src/ui/conversation.rs:7047 src/ui/conversation.rs:7609
+msgid "Show in folder"
+msgstr "Zobrazit ve složce"
+
+#: src/ui/conversation.rs:7048 src/ui/conversation.rs:7622
+msgid "Downloading…"
+msgstr "Stahování…"
+
+#: src/ui/conversation.rs:7049 src/ui/conversation.rs:7624
+#: src/ui/image_preview.rs:460 src/ui/image_preview.rs:815
+#: src/ui/image_preview.rs:823 src/ui/image_preview.rs:905
+msgid "Download"
+msgstr "Stáhnout"
+
+#: src/ui/conversation.rs:7051 src/ui/conversation.rs:7663
+msgid "Reload earlier messages"
+msgstr "Znovu načíst starší zprávy"
+
+#: src/ui/conversation.rs:7052 src/ui/conversation.rs:7676
+msgid "Copy message ID"
+msgstr "Kopírovat ID zprávy"
+
+#: src/ui/conversation.rs:7295
 msgid "Remove your reaction"
 msgstr "Odebrat svou reakci"
 
+#: src/ui/conversation.rs:7312
+msgid "React with any emoji"
+msgstr "Reagovat libovolným emoji"
+
+#: src/ui/conversation.rs:7471 src/ui/conversation.rs:7877
+#, rust-format
+msgid "{option}, unavailable: {reason}"
+msgstr "{option}, nedostupná možnost: {reason}"
+
+#: src/ui/conversation.rs:7719
+#, rust-format
+msgid "Card {number}: {button}"
+msgstr "Karta {number}: {button}"
+
+#: src/ui/conversation.rs:7761
 msgid "Go to replied message"
 msgstr "Přejít na zprávu, na kterou bylo odpovězeno"
 
+#: src/ui/conversation.rs:7772
 #, rust-format
 msgid "Info about {name}"
 msgstr "Informace o {name}"
 
+#: src/ui/conversation.rs:7850
 msgid "Only messages you sent"
 msgstr "Pouze zprávy, které jste odeslali"
 
+#: src/ui/conversation.rs:7852
 msgid "The time limit has passed"
 msgstr "Časový limit vypršel"
 
+#: src/ui/conversation.rs:8381
 #, rust-format
 msgid "Updated {time}"
 msgstr "Aktualizováno {time}"
 
+#: src/ui/conversation.rs:8396 src/ui/conversation.rs:8605
 msgid "Open WhatsApp on your phone to follow it."
 msgstr "Pokračujte v telefonu v aplikaci WhatsApp."
 
+#: src/ui/conversation.rs:8440
+msgid "Chat"
+msgstr "Chat"
+
+#: src/ui/conversation.rs:8455
 msgid "Add"
 msgstr "Přidat"
 
+#: src/ui/conversation.rs:8503
+#, rust-format
 msgid "{} sticker"
 msgid_plural "{} stickers"
 msgstr[0] "{} nálepka"
 msgstr[1] "{} nálepky"
 msgstr[2] "{} nálepek"
 
+#: src/ui/conversation.rs:8516
 msgid "View stickers"
 msgstr "Zobrazit nálepky"
 
+#: src/ui/conversation.rs:8623
 msgid "View once photo. For your privacy, it opens only on your phone."
-msgstr "Fotografii lze kvůli vašemu soukromí zobrazit pouze jednou a jen v telefonu."
+msgstr ""
+"Fotografii lze kvůli vašemu soukromí zobrazit pouze jednou a jen v telefonu."
 
+#: src/ui/conversation.rs:8627
 msgid "View once video. For your privacy, it opens only on your phone."
 msgstr "Video lze kvůli vašemu soukromí přehrát pouze jednou a jen v telefonu."
 
+#: src/ui/conversation.rs:8631
 msgid "View once voice message. For your privacy, it opens only on your phone."
-msgstr "Hlasovou zprávu lze kvůli vašemu soukromí přehrát pouze jednou a jen v telefonu."
+msgstr ""
+"Hlasovou zprávu lze kvůli vašemu soukromí přehrát pouze jednou a jen v "
+"telefonu."
 
+#: src/ui/conversation.rs:8635
 msgid "View once audio. For your privacy, it opens only on your phone."
 msgstr "Zvuk lze kvůli vašemu soukromí přehrát pouze jednou a jen v telefonu."
 
+#: src/ui/conversation.rs:8639
 msgid "View once message. For your privacy, it opens only on your phone."
-msgstr "Zprávu lze kvůli vašemu soukromí zobrazit pouze jednou a jen v telefonu."
+msgstr ""
+"Zprávu lze kvůli vašemu soukromí zobrazit pouze jednou a jen v telefonu."
 
+#: src/ui/conversation.rs:8641
 msgid "This message can only be seen on your phone."
 msgstr "Tuto zprávu lze zobrazit pouze v telefonu."
 
+#: src/ui/conversation.rs:8983
 msgid "Save all…"
 msgstr "Uložit vše…"
 
+#: src/ui/conversation.rs:9271 src/ui/conversation.rs:10339
 msgid "Download failed. Click to retry."
 msgstr "Stažení se nezdařilo. Kliknutím to zkusíte znovu."
 
+#: src/ui/conversation.rs:9414 src/ui/dialogs.rs:225
 msgid "Sending reply…"
 msgstr "Odesílá se odpověď…"
 
+#: src/ui/conversation.rs:9415 src/ui/dialogs.rs:227
 msgid "Connect to WhatsApp to reply"
 msgstr "Pro odpověď se připojte k WhatsAppu."
 
+#: src/ui/conversation.rs:9416
 msgid "This conversation is read-only"
 msgstr "Tato konverzace je pouze pro čtení."
 
+#: src/ui/conversation.rs:9417
 msgid "Reply options are for the recipient"
 msgstr "Možnosti odpovědi jsou určené příjemci."
 
+#: src/ui/conversation.rs:9418
 msgid "Open this option in WhatsApp Web or on your phone"
 msgstr "Tuto možnost otevřete ve WhatsApp Web nebo v telefonu."
 
+#: src/ui/conversation.rs:9597
 #, rust-format
 msgid "Send reply: {label}"
 msgstr "Odeslat odpověď: {label}"
 
+#: src/ui/conversation.rs:9601 src/ui/login.rs:307
 msgid "Copy code"
 msgstr "Kopírovat kód"
 
+#: src/ui/conversation.rs:9787 src/ui/dialogs.rs:2051
 msgid "Message"
 msgstr "Zpráva"
 
+#: src/ui/conversation.rs:10043 src/ui/locations.rs:52
 msgid "Open in a map"
 msgstr "Otevřít v mapě"
 
+#: src/ui/conversation.rs:10808
 msgid "Pause"
 msgstr "Pozastavit"
 
+#: src/ui/conversation.rs:10810 src/ui/settings.rs:1988
 msgid "Play"
 msgstr "Přehrát"
 
+#: src/ui/conversation.rs:10839
 msgid "Back to the message (Esc)"
 msgstr "Zpět ke zprávě (Esc)"
 
+#: src/ui/conversation.rs:10841
 msgid "Fill the window"
 msgstr "Vyplnit okno"
 
+#: src/ui/conversation.rs:11680
 msgid "Cancel selection"
 msgstr "Zrušit výběr"
 
+#: src/ui/conversation.rs:11689 src/ui/new_group.rs:146
+#, rust-format
 msgid "{count} selected"
 msgid_plural "{count} selected"
 msgstr[0] "Vybráno: {count}"
 msgstr[1] "Vybráno: {count}"
 msgstr[2] "Vybráno: {count}"
 
+#: src/ui/conversation.rs:11703
 msgid "Forward…"
 msgstr "Přeposlat…"
 
+#: src/ui/conversation.rs:11719
 msgid "Delete…"
 msgstr "Smazat…"
 
+#: src/ui/conversation.rs:13605
 msgid "View once"
 msgstr "Zobrazit jednou"
 
+#: src/ui/conversation.rs:13634
 msgid "The recipient can open this photo only once, on their phone."
 msgstr "Příjemce může tuto fotografii otevřít pouze jednou, a to v telefonu."
 
+#: src/ui/dialogs.rs:179
 msgid "Choose an option"
 msgstr "Vyberte možnost"
 
+#: src/ui/dialogs.rs:198 src/ui/dialogs.rs:899 src/ui/dialogs.rs:1231
+#: src/ui/dialogs.rs:1283 src/ui/locations.rs:27 src/ui/message_info.rs:28
+#: src/ui/labels.rs:234 src/ui/info.rs:309 src/ui/mod.rs:992
+#: src/ui/new_group.rs:57 src/ui/polls.rs:27 src/ui/polls.rs:468
 msgid "Close"
 msgstr "Zavřít"
 
+#: src/ui/dialogs.rs:209
 msgid "This list is no longer available."
 msgstr "Tento seznam už není dostupný."
 
+#: src/ui/dialogs.rs:223
 msgid "This list can no longer receive replies."
 msgstr "Na tento seznam už nelze odpovídat."
 
+#: src/ui/dialogs.rs:350
 msgid "Set up locked chats"
 msgstr "Nastavit uzamčené chaty"
 
-msgid "Choose a local code to open the Locked tab. It is separate from your phone's code. This hides chats in ZapFast, it does not add another encryption layer."
-msgstr "Zvolte místní kód pro otevření karty Uzamčené. Je nezávislý na kódu telefonu. Chaty skryje v ZapFastu, nepřidává však další vrstvu šifrování."
+#: src/ui/dialogs.rs:358
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's "
+"code. This hides chats in ZapFast, it does not add another encryption layer."
+msgstr ""
+"Zvolte místní kód pro otevření karty Uzamčené. Je nezávislý na kódu "
+"telefonu. Chaty skryje v ZapFastu, nepřidává však další vrstvu šifrování."
 
-msgid "Enter your local ZapFast code. Leaving the Locked tab or closing the window locks it again."
-msgstr "Zadejte svůj místní kód ZapFastu. Po opuštění karty Uzamčené nebo zavření okna se chaty znovu uzamknou."
+#: src/ui/dialogs.rs:363
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr ""
+"Zadejte svůj místní kód ZapFastu. Po opuštění karty Uzamčené nebo zavření "
+"okna se chaty znovu uzamknou."
 
+#: src/ui/dialogs.rs:374
 msgid "Local code"
 msgstr "Místní kód"
 
+#: src/ui/dialogs.rs:386
 msgid "Confirm code"
 msgstr "Potvrdit kód"
 
+#: src/ui/dialogs.rs:398
 msgid "That code did not match. Try again."
 msgstr "Kódy se neshodují. Zkuste to znovu."
 
+#: src/ui/dialogs.rs:407
 msgid "Set code and open"
 msgstr "Nastavit kód a otevřít"
 
+#: src/ui/dialogs.rs:409
 msgid "Open locked chats"
 msgstr "Otevřít uzamčené chaty"
 
+#: src/ui/dialogs.rs:420 src/ui/dialogs.rs:472 src/ui/dialogs.rs:1212
+#: src/ui/dialogs.rs:1428 src/ui/dialogs.rs:1631 src/ui/dialogs.rs:1720
+#: src/ui/dialogs.rs:1786 src/ui/dialogs.rs:1877 src/ui/dialogs.rs:2062
+#: src/ui/locations.rs:82 src/ui/settings.rs:1062 src/ui/settings.rs:1758
+#: src/ui/lock.rs:142 src/ui/accounts.rs:377 src/ui/info.rs:2154
+#: src/ui/polls.rs:154
 msgid "Cancel"
 msgstr "Zrušit"
 
+#: src/ui/dialogs.rs:443
 msgid "Lock this chat?"
 msgstr "Uzamknout tento chat?"
 
-msgid "This moves the chat to the Locked tab, hiding it from the normal chat list, search, unread badges, and notifications. The lock status also syncs to your phone. Open Locked with a separate local ZapFast code to read it."
-msgstr "Chat se přesune na kartu Uzamčené a skryje se z běžného seznamu, hledání, odznaků nepřečtených zpráv i oznámení. Stav uzamčení se synchronizuje i s telefonem. Pro otevření karty Uzamčené a čtení chatu použijte samostatný místní kód ZapFastu."
+#: src/ui/dialogs.rs:449
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your "
+"phone. Open Locked with a separate local ZapFast code to read it."
+msgstr ""
+"Chat se přesune na kartu Uzamčené a skryje se z běžného seznamu, hledání, "
+"odznaků nepřečtených zpráv i oznámení. Stav uzamčení se synchronizuje i s "
+"telefonem. Pro otevření karty Uzamčené a čtení chatu použijte samostatný "
+"místní kód ZapFastu."
 
+#: src/ui/dialogs.rs:489
 msgid "New chat"
 msgstr "Nový chat"
 
+#: src/ui/dialogs.rs:491 src/ui/new_group.rs:91
 msgid "Search contacts"
 msgstr "Hledat kontakty"
 
+#: src/ui/dialogs.rs:512 src/ui/new_group.rs:292
 msgid "New group"
 msgstr "Nová skupina"
 
+#: src/ui/dialogs.rs:516
 msgid "Add contact"
 msgstr "Přidat kontakt"
 
+#: src/ui/dialogs.rs:527 src/ui/calls.rs:566 src/ui/new_group.rs:125
 msgid "No matching contacts"
 msgstr "Žádné odpovídající kontakty"
 
+#: src/ui/dialogs.rs:587
 msgid "Forward message"
 msgstr "Přeposlat zprávu"
 
+#: src/ui/dialogs.rs:591
+#, rust-format
 msgid "Forward {count} message"
 msgid_plural "Forward {count} messages"
 msgstr[0] "Přeposlat {count} zprávu"
 msgstr[1] "Přeposlat {count} zprávy"
 msgstr[2] "Přeposlat {count} zpráv"
 
+#: src/ui/dialogs.rs:616
 msgid "Forward to these chats?"
 msgstr "Přeposlat do těchto chatů?"
 
+#: src/ui/dialogs.rs:781 src/ui/info.rs:307 src/ui/info.rs:1244
+#: src/ui/info.rs:1884 src/ui/new_group.rs:35 src/ui/new_group.rs:463
 msgid "Back"
 msgstr "Zpět"
 
+#: src/ui/dialogs.rs:805
 msgid "Review recipients"
 msgstr "Zkontrolovat příjemce"
 
+#: src/ui/dialogs.rs:828
+#, rust-format
 msgid "{count} recipient selected"
 msgid_plural "{count} recipients selected"
 msgstr[0] "Vybrán {count} příjemce"
 msgstr[1] "Vybráni {count} příjemci"
 msgstr[2] "Vybráno {count} příjemců"
 
+#: src/ui/dialogs.rs:852
 msgid "Messages forwarded many times can be sent to one chat at a time"
 msgstr "Zprávy mnohokrát přeposlané lze odesílat vždy jen do jednoho chatu."
 
+#: src/ui/dialogs.rs:860
+#, rust-format
 msgid "You can forward to up to {count} chat"
 msgid_plural "You can forward to up to {count} chats"
 msgstr[0] "Můžete přeposlat až do {count} chatu"
 msgstr[1] "Můžete přeposlat až do {count} chatů"
 msgstr[2] "Můžete přeposlat až do {count} chatů"
 
+#: src/ui/dialogs.rs:964 src/ui/settings.rs:888 src/ui/settings.rs:1836
 msgid "Keyboard shortcuts"
 msgstr "Klávesové zkratky"
 
+#: src/ui/dialogs.rs:1016
 msgid "Show shortcut hints under the message box"
 msgstr "Zobrazovat nápovědu ke zkratkám pod polem pro zprávu"
 
+#: src/ui/dialogs.rs:1026 src/ui/settings.rs:884 src/ui/settings.rs:1847
 msgid "About"
 msgstr "O aplikaci"
 
+#: src/ui/dialogs.rs:1032
 #, rust-format
 msgid "Version {version}"
 msgstr "Verze {version}"
 
-msgid "A native WhatsApp client written in Rust with egui. It connects through whatsapp-rust. Messages are end-to-end encrypted on this device."
-msgstr "Nativní klient WhatsAppu napsaný v Rustu s použitím egui. Připojuje se prostřednictvím knihovny whatsapp-rust. Zprávy jsou na tomto zařízení šifrovány od konce ke konci."
+#: src/ui/dialogs.rs:1042
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr ""
+"Nativní klient WhatsAppu napsaný v Rustu s použitím egui. Připojuje se "
+"prostřednictvím knihovny whatsapp-rust. Zprávy jsou na tomto zařízení "
+"šifrovány od konce ke konci."
 
-msgid "This is an unofficial client. Using it may be against WhatsApp's terms of service and could get an account suspended."
-msgstr "Jde o neoficiálního klienta. Jeho používání může být v rozporu s podmínkami služby WhatsApp a může vést k pozastavení účtu."
+#: src/ui/dialogs.rs:1051
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr ""
+"Jde o neoficiálního klienta. Jeho používání může být v rozporu s podmínkami "
+"služby WhatsApp a může vést k pozastavení účtu."
 
+#: src/ui/dialogs.rs:1060 src/ui/settings.rs:889 src/ui/settings.rs:1858
 msgid "Source code"
 msgstr "Zdrojový kód"
 
+#: src/ui/dialogs.rs:1087
+#, rust-format
 msgid "{count} selected message"
 msgid_plural "{count} selected messages"
 msgstr[0] "Vybrána {count} zpráva"
 msgstr[1] "Vybrány {count} zprávy"
 msgstr[2] "Vybráno {count} zpráv"
 
+#: src/ui/dialogs.rs:1097 src/ui/dialogs.rs:1118
 msgid "this chat"
 msgstr "tento chat"
 
+#: src/ui/dialogs.rs:1102
 #, rust-format
-msgid "This deletes your chat with {name}, including all messages, on this computer and on your phone. It cannot be undone."
-msgstr "Tímto smažete chat s kontaktem {name} včetně všech zpráv z tohoto počítače i telefonu. Tuto akci nelze vrátit zpět."
+msgid ""
+"This deletes your chat with {name}, including all messages, on this computer "
+"and on your phone. It cannot be undone."
+msgstr ""
+"Tímto smažete chat s kontaktem {name} včetně všech zpráv z tohoto počítače i "
+"telefonu. Tuto akci nelze vrátit zpět."
 
+#: src/ui/dialogs.rs:1108
 msgid "Delete chat?"
 msgstr "Smazat chat?"
 
+#: src/ui/dialogs.rs:1110 src/ui/dialogs.rs:1522
 msgid "Delete"
 msgstr "Smazat"
 
+#: src/ui/dialogs.rs:1123
 #, rust-format
-msgid "This clears every message in your chat with {name}, including downloaded media, on this computer and on your phone. The chat itself stays. It cannot be undone."
-msgstr "Tímto smažete všechny zprávy v chatu s kontaktem {name} včetně stažených médií z tohoto počítače i telefonu. Chat samotný zůstane. Tuto akci nelze vrátit zpět."
+msgid ""
+"This clears every message in your chat with {name}, including downloaded "
+"media, on this computer and on your phone. The chat itself stays. It cannot "
+"be undone."
+msgstr ""
+"Tímto smažete všechny zprávy v chatu s kontaktem {name} včetně stažených "
+"médií z tohoto počítače i telefonu. Chat samotný zůstane. Tuto akci nelze "
+"vrátit zpět."
 
+#: src/ui/dialogs.rs:1129
 msgid "Clear chat?"
 msgstr "Vymazat chat?"
 
+#: src/ui/dialogs.rs:1145 src/ui/dialogs.rs:1157
 msgid "Group invite"
 msgstr "Pozvánka do skupiny"
 
+#: src/ui/dialogs.rs:1149
 msgid "Looking up the group…"
 msgstr "Vyhledává se skupina…"
 
+#: src/ui/dialogs.rs:1166 src/ui/info.rs:527
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} člen"
+msgstr[1] "{} členové"
+msgstr[2] "{} členů"
+
+#: src/ui/dialogs.rs:1184
 msgid "An admin must approve your request before you join."
 msgstr "Vaši žádost musí před připojením schválit správce."
 
+#: src/ui/dialogs.rs:1194
 msgid "Open chat"
 msgstr "Otevřít chat"
 
+#: src/ui/dialogs.rs:1195
 msgid "Request to join"
 msgstr "Požádat o připojení"
 
+#: src/ui/dialogs.rs:1196
 msgid "Join group"
 msgstr "Připojit se ke skupině"
 
+#: src/ui/dialogs.rs:1199
 msgid "Joining…"
 msgstr "Připojování…"
 
+#: src/ui/dialogs.rs:1252
 msgid "Downloading the pack…"
 msgstr "Stahuje se balíček…"
 
+#: src/ui/dialogs.rs:1276
 msgid "Add to my stickers"
 msgstr "Přidat mezi moje nálepky"
 
+#: src/ui/dialogs.rs:1300
 msgid "Make a sticker"
 msgstr "Vytvořit nálepku"
 
+#: src/ui/dialogs.rs:1364
 msgid "Size"
 msgstr "Velikost"
 
+#: src/ui/dialogs.rs:1379
 msgid "Keep the transparent background"
 msgstr "Zachovat průhledné pozadí"
 
+#: src/ui/dialogs.rs:1396
 msgid "Emojis that describe it, like 😂 or ❤️"
 msgstr "Emoji, která ji vystihují, například 😂 nebo ❤️"
 
+#: src/ui/dialogs.rs:1413 src/ui/locations.rs:87
 msgid "Send"
 msgstr "Odeslat"
 
-msgid "WhatsApp did not answer in time. If the group does not appear shortly, try again."
-msgstr "WhatsApp včas neodpověděl. Pokud se skupina brzy neobjeví, zkuste to znovu."
-
-msgid "WhatsApp did not accept this group's name or members."
-msgstr "WhatsApp nepřijal název skupiny nebo její členy."
-
-#, rust-format
-msgid "{names} could not be added to the group. Their privacy settings may not allow it."
-msgstr "{names} se nepodařilo přidat do skupiny. Jejich nastavení soukromí to možná neumožňuje."
-
-#, rust-format
-msgid "{name} turned off disappearing messages"
-msgstr "{name} vypnul(a) mizející zprávy"
-
-#, rust-format
-msgid "{name} changed the disappearing messages setting to {duration}"
-msgstr "{name} změnil(a) dobu mizení zpráv na {duration}"
-
-#, rust-format
-msgid "last seen today at {time}"
-msgstr "naposledy dnes v {time}"
-
-#, rust-format
-msgid "last seen yesterday at {time}"
-msgstr "naposledy včera v {time}"
-
-#, rust-format
-msgid "last seen {weekday} at {time}"
-msgstr "naposledy {weekday} v {time}"
-
-#, rust-format
-msgid "last seen {date}"
-msgstr "naposledy {date}"
-
-#, rust-format
-msgid "{seconds} s"
-msgstr "{seconds} s"
-
-#, rust-format
-msgid "{minutes} min"
-msgstr "{minutes} min"
-
-#, rust-format
-msgid "{minutes} min {seconds} s"
-msgstr "{minutes} min {seconds} s"
-
-#, rust-format
-msgid "{hours} h"
-msgstr "{hours} h"
-
-#, rust-format
-msgid "{hours} h {minutes} min"
-msgstr "{hours} h {minutes} min"
-
-#, rust-format
-msgid "{names} and {last} are recording audio…"
-msgstr "{names} a {last} nahrávají zvuk…"
-
-#, rust-format
-msgid "{} pinned a message"
-msgstr "{} připnul(a) zprávu"
-
-#, rust-format
-msgid "{option}, unavailable: {reason}"
-msgstr "{option}, nedostupná možnost: {reason}"
-
-#, rust-format
-msgid "Card {number}: {button}"
-msgstr "Karta {number}: {button}"
-
-msgid "Chat"
-msgstr "Chat"
-
+#: src/ui/dialogs.rs:1442
 msgid "Start over?"
 msgstr "Začít znovu?"
 
-msgid "ZapFast keeps your unreadable archive as a separate file, creates a new one, and asks you to link again. Linking again brings back recent history from your phone. Afterwards, remove the old ZapFast entry under Linked devices on your phone."
-msgstr "ZapFast ponechá nečitelný archiv jako samostatný soubor, vytvoří nový a požádá vás o opětovné propojení. Po propojení se z telefonu obnoví nedávná historie. Poté v telefonu v části Propojená zařízení odeberte starý záznam ZapFastu."
+#: src/ui/dialogs.rs:1446
+msgid ""
+"ZapFast keeps your unreadable archive as a separate file, creates a new one, "
+"and asks you to link again. Linking again brings back recent history from "
+"your phone. Afterwards, remove the old ZapFast entry under Linked devices on "
+"your phone."
+msgstr ""
+"ZapFast ponechá nečitelný archiv jako samostatný soubor, vytvoří nový a "
+"požádá vás o opětovné propojení. Po propojení se z telefonu obnoví nedávná "
+"historie. Poté v telefonu v části Propojená zařízení odeberte starý záznam "
+"ZapFastu."
 
-msgid "If you can restore the original keyring instead, choose Cancel and Try again: nothing is lost that way."
-msgstr "Pokud můžete obnovit původní klíčenku, zvolte Zrušit a Zkusit znovu. Tím se nic neztratí."
+#: src/ui/dialogs.rs:1450
+msgid ""
+"If you can restore the original keyring instead, choose Cancel and Try "
+"again: nothing is lost that way."
+msgstr ""
+"Pokud můžete obnovit původní klíčenku, zvolte Zrušit a Zkusit znovu. Tím se "
+"nic neztratí."
 
+#: src/ui/dialogs.rs:1453
 msgid "Start over"
 msgstr "Začít znovu"
 
-msgid "This removes the message from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
-msgstr "Tím se zpráva odstraní z vašeho telefonu a propojených zařízení. Ostatním jejich kopie zůstanou. Pro smazání se připojte k WhatsAppu. Tuto akci nelze vrátit."
+#: src/ui/dialogs.rs:1461
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr ""
+"Tím se zpráva odstraní z vašeho telefonu a propojených zařízení. Ostatním "
+"jejich kopie zůstanou. Pro smazání se připojte k WhatsAppu. Tuto akci nelze "
+"vrátit."
 
-msgid "Everyone in this chat will see \"This message was deleted\" instead. It cannot be undone."
-msgstr "Všichni v tomto chatu místo toho uvidí „Tato zpráva byla smazána“. Tuto akci nelze vrátit."
+#: src/ui/dialogs.rs:1462
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr ""
+"Všichni v tomto chatu místo toho uvidí „Tato zpráva byla smazána“. Tuto akci "
+"nelze vrátit."
 
-msgid "This removes these messages from your phone and linked devices. Other people keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
-msgstr "Tím se tyto zprávy odstraní z vašeho telefonu a propojených zařízení. Ostatním jejich kopie zůstanou. Pro jejich smazání se připojte k WhatsAppu. Tuto akci nelze vrátit."
+#: src/ui/dialogs.rs:1463
+msgid ""
+"This removes these messages from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"Tím se tyto zprávy odstraní z vašeho telefonu a propojených zařízení. "
+"Ostatním jejich kopie zůstanou. Pro jejich smazání se připojte k WhatsAppu. "
+"Tuto akci nelze vrátit."
 
+#: src/ui/dialogs.rs:1464
 #, rust-format
-msgid "Everyone in this chat will see \"This message was deleted\" in place of the selected message. This cannot be undone."
-msgid_plural "Everyone in this chat will see \"This message was deleted\" in place of the selected messages. This cannot be undone."
-msgstr[0] "Všichni v tomto chatu místo vybrané zprávy uvidí „Tato zpráva byla smazána“. Tuto akci nelze vrátit."
-msgstr[1] "Všichni v tomto chatu místo vybraných zpráv uvidí „Tato zpráva byla smazána“. Tuto akci nelze vrátit."
-msgstr[2] "Všichni v tomto chatu místo vybraných zpráv uvidí „Tato zpráva byla smazána“. Tuto akci nelze vrátit."
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"Všichni v tomto chatu místo vybrané zprávy uvidí „Tato zpráva byla smazána“. "
+"Tuto akci nelze vrátit."
+msgstr[1] ""
+"Všichni v tomto chatu místo vybraných zpráv uvidí „Tato zpráva byla "
+"smazána“. Tuto akci nelze vrátit."
+msgstr[2] ""
+"Všichni v tomto chatu místo vybraných zpráv uvidí „Tato zpráva byla "
+"smazána“. Tuto akci nelze vrátit."
 
+#: src/ui/dialogs.rs:1492
 msgid "Delete for everyone?"
 msgstr "Smazat všem?"
 
+#: src/ui/dialogs.rs:1494
 msgid "Delete for me?"
 msgstr "Smazat pouze u mě?"
 
+#: src/ui/dialogs.rs:1536
 #, rust-format
-msgid "This deletes \"{name}\" and its stickers from this computer. To use it again, import it again."
-msgstr "Tím se z tohoto počítače smaže balíček „{name}“ i jeho nálepky. Chcete-li ho znovu používat, importujte ho znovu."
+msgid ""
+"This deletes \"{name}\" and its stickers from this computer. To use it "
+"again, import it again."
+msgstr ""
+"Tím se z tohoto počítače smaže balíček „{name}“ i jeho nálepky. Chcete-li ho "
+"znovu používat, importujte ho znovu."
 
+#: src/ui/dialogs.rs:1542
 msgid "Remove sticker pack?"
 msgstr "Odebrat balíček nálepek?"
 
-msgid "Unlink this computer?"
-msgstr "Odpojit tento počítač?"
-
-msgid "This removes the device from WhatsApp and deletes the chats stored here. You can link again with a new code."
-msgstr "Tím se zařízení odebere z WhatsAppu a smažou se zde uložené chaty. Znovu ho můžete propojit pomocí nového kódu."
-
-msgid "Unlink"
-msgstr "Odpojit"
-
-msgid "Clear the media cache?"
-msgstr "Vymazat mezipaměť médií?"
-
-#, rust-format
-msgid "This deletes the photos, videos, stickers and files {account} downloaded to this computer. Messages stay, and attachments download again when you open them, while WhatsApp still has them."
-msgstr "Tím se z tohoto počítače smažou fotografie, videa, nálepky a soubory stažené účtem {account}. Zprávy zůstanou a přílohy se při otevření znovu stáhnou, pokud je WhatsApp stále uchovává."
-
-msgid "Files in a download folder you chose are kept."
-msgstr "Soubory ve vámi zvolené složce pro stahování zůstanou zachovány."
-
-msgid "Remove this account?"
-msgstr "Odebrat tento účet?"
-
-msgid "This unlinks the number on this computer and deletes its local chats. Other accounts stay."
-msgstr "Tím se toto číslo odpojí od počítače a jeho místní chaty se smažou. Ostatní účty zůstanou zachovány."
-
-msgid "Reset the invite link?"
-msgstr "Obnovit odkaz s pozvánkou?"
-
-msgid "The current link will stop working, and nobody can join with it any more. A new link replaces it."
-msgstr "Současný odkaz přestane fungovat a nikdo se přes něj už nebude moci připojit. Nahradí ho nový odkaz."
-
-msgid "Reset link"
-msgstr "Obnovit odkaz"
-
-msgid "Remove from the group?"
-msgstr "Odebrat ze skupiny?"
-
-#, rust-format
-msgid "{name} will no longer receive messages from {group}. You can add them again later."
-msgstr "{name} už nebude dostávat zprávy ze skupiny {group}. Později ho můžete znovu přidat."
-
-msgid "Leave this channel?"
-msgstr "Opustit tento kanál?"
-
-msgid "Leave this group?"
-msgstr "Opustit tuto skupinu?"
-
-msgid "You will not receive new messages. The local history stays on this computer."
-msgstr "Nebudete dostávat nové zprávy. Místní historie zůstane v tomto počítači."
-
-msgid "Leave channel and archive"
-msgstr "Opustit kanál a archivovat"
-
-msgid "Leave group and archive"
-msgstr "Opustit skupinu a archivovat"
-
-msgid "Link with a phone number"
-msgstr "Propojit pomocí telefonního čísla"
-
-msgid "Enter the WhatsApp phone number with its country code. Do not include a plus sign or leading zero. You will get a code to enter on the phone."
-msgstr "Zadejte telefonní číslo WhatsAppu včetně předvolby země. Nezadávejte znaménko plus ani počáteční nulu. Obdržíte kód, který zadáte v telefonu."
-
-msgid "Enter the whole number, starting with the country code"
-msgstr "Zadejte celé číslo včetně předvolby země"
-
-msgid "Get a code"
-msgstr "Získat kód"
-
+#: src/ui/dialogs.rs:1544 src/ui/dialogs.rs:1602 src/ui/dialogs.rs:1708
 msgid "Remove"
 msgstr "Odebrat"
 
+#: src/ui/dialogs.rs:1554 src/ui/lock.rs:123
+msgid "Unlink this computer?"
+msgstr "Odpojit tento počítač?"
+
+#: src/ui/dialogs.rs:1557
+msgid ""
+"This removes the device from WhatsApp and deletes the chats stored here. You "
+"can link again with a new code."
+msgstr ""
+"Tím se zařízení odebere z WhatsAppu a smažou se zde uložené chaty. Znovu ho "
+"můžete propojit pomocí nového kódu."
+
+#: src/ui/dialogs.rs:1559 src/ui/lock.rs:139
+msgid "Unlink"
+msgstr "Odpojit"
+
+#: src/ui/dialogs.rs:1575
+msgid "Clear the media cache?"
+msgstr "Vymazat mezipaměť médií?"
+
+#: src/ui/dialogs.rs:1579
+#, rust-format
+msgid ""
+"This deletes the photos, videos, stickers and files {account} downloaded to "
+"this computer. Messages stay, and attachments download again when you open "
+"them, while WhatsApp still has them."
+msgstr ""
+"Tím se z tohoto počítače smažou fotografie, videa, nálepky a soubory stažené "
+"účtem {account}. Zprávy zůstanou a přílohy se při otevření znovu stáhnou, "
+"pokud je WhatsApp stále uchovává."
+
+#: src/ui/dialogs.rs:1584
+msgid "Files in a download folder you chose are kept."
+msgstr "Soubory ve vámi zvolené složce pro stahování zůstanou zachovány."
+
+#: src/ui/dialogs.rs:1587 src/ui/settings.rs:507
 msgid "Clear"
 msgstr "Vymazat"
 
+#: src/ui/dialogs.rs:1597
+msgid "Remove this account?"
+msgstr "Odebrat tento účet?"
+
+#: src/ui/dialogs.rs:1600
+msgid ""
+"This unlinks the number on this computer and deletes its local chats. Other "
+"accounts stay."
+msgstr ""
+"Tím se toto číslo odpojí od počítače a jeho místní chaty se smažou. Ostatní "
+"účty zůstanou zachovány."
+
+#: src/ui/dialogs.rs:1659
+msgid "Reset the invite link?"
+msgstr "Obnovit odkaz s pozvánkou?"
+
+#: src/ui/dialogs.rs:1665
+msgid ""
+"The current link will stop working, and nobody can join with it any more. A "
+"new link replaces it."
+msgstr ""
+"Současný odkaz přestane fungovat a nikdo se přes něj už nebude moci "
+"připojit. Nahradí ho nový odkaz."
+
+#: src/ui/dialogs.rs:1674 src/ui/info.rs:1802
+msgid "Reset link"
+msgstr "Obnovit odkaz"
+
+#: src/ui/dialogs.rs:1691
+msgid "Remove from the group?"
+msgstr "Odebrat ze skupiny?"
+
+#: src/ui/dialogs.rs:1697
+#, rust-format
+msgid ""
+"{name} will no longer receive messages from {group}. You can add them again "
+"later."
+msgstr ""
+"{name} už nebude dostávat zprávy ze skupiny {group}. Později ho můžete znovu "
+"přidat."
+
+#: src/ui/dialogs.rs:1740
+msgid "Leave this channel?"
+msgstr "Opustit tento kanál?"
+
+#: src/ui/dialogs.rs:1742
+msgid "Leave this group?"
+msgstr "Opustit tuto skupinu?"
+
+#: src/ui/dialogs.rs:1749
+msgid ""
+"You will not receive new messages. The local history stays on this computer."
+msgstr ""
+"Nebudete dostávat nové zprávy. Místní historie zůstane v tomto počítači."
+
+#: src/ui/dialogs.rs:1769
+msgid "Leave channel and archive"
+msgstr "Opustit kanál a archivovat"
+
+#: src/ui/dialogs.rs:1771
+msgid "Leave group and archive"
+msgstr "Opustit skupinu a archivovat"
+
+#: src/ui/dialogs.rs:1802
+msgid "Link with a phone number"
+msgstr "Propojit pomocí telefonního čísla"
+
+#: src/ui/dialogs.rs:1808
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus "
+"sign or leading zero. You will get a code to enter on the phone."
+msgstr ""
+"Zadejte telefonní číslo WhatsAppu včetně předvolby země. Nezadávejte "
+"znaménko plus ani počáteční nulu. Obdržíte kód, který zadáte v telefonu."
+
+#: src/ui/dialogs.rs:1857
+msgid "Enter the whole number, starting with the country code"
+msgstr "Zadejte celé číslo včetně předvolby země"
+
+#: src/ui/dialogs.rs:1864
+msgid "Get a code"
+msgstr "Získat kód"
+
+#: src/ui/dialogs.rs:1890
 msgid "New contact"
 msgstr "Nový kontakt"
 
-msgid "Enter a phone number with its country code. Add a name to save the contact, or leave it blank to message the number without saving it. WhatsApp uses the first name as the display name."
-msgstr "Zadejte telefonní číslo včetně předvolby země. Chcete-li kontakt uložit, přidejte jméno; chcete-li napsat na číslo bez uložení kontaktu, nechte pole prázdné. WhatsApp použije jako zobrazované jméno jméno."
+#: src/ui/dialogs.rs:1895
+msgid ""
+"Enter a phone number with its country code. Add a name to save the contact, "
+"or leave it blank to message the number without saving it. WhatsApp uses the "
+"first name as the display name."
+msgstr ""
+"Zadejte telefonní číslo včetně předvolby země. Chcete-li kontakt uložit, "
+"přidejte jméno; chcete-li napsat na číslo bez uložení kontaktu, nechte pole "
+"prázdné. WhatsApp použije jako zobrazované jméno jméno."
 
+#: src/ui/dialogs.rs:1954
 msgid "First name"
 msgstr "Jméno"
 
+#: src/ui/dialogs.rs:1955
 msgid "Surname"
 msgstr "Příjmení"
 
+#: src/ui/dialogs.rs:2014
 msgid "Also save to your phone's contacts"
 msgstr "Uložit také do kontaktů v telefonu"
 
+#: src/ui/dialogs.rs:2024 src/ui/dialogs.rs:2033
 msgid "Checking the number…"
 msgstr "Ověřuje se číslo…"
 
-msgid "Enter a phone number with its country code, using only digits, spaces, hyphens and brackets"
-msgstr "Zadejte telefonní číslo včetně předvolby země. Používejte pouze číslice, mezery, pomlčky a závorky."
+#: src/ui/dialogs.rs:2037
+msgid ""
+"Enter a phone number with its country code, using only digits, spaces, "
+"hyphens and brackets"
+msgstr ""
+"Zadejte telefonní číslo včetně předvolby země. Používejte pouze číslice, "
+"mezery, pomlčky a závorky."
 
+#: src/ui/dialogs.rs:2043
 msgid "Save contact"
 msgstr "Uložit kontakt"
 
+#: src/ui/locations.rs:36
 msgid "Paste a map link or coordinates"
 msgstr "Vložte odkaz na mapu nebo souřadnice"
 
-msgid "Short links only open online. Paste the full map link or the coordinates."
-msgstr "Krátké odkazy lze otevřít pouze online. Vložte celý odkaz na mapu nebo souřadnice."
+#: src/ui/locations.rs:65
+msgid ""
+"Short links only open online. Paste the full map link or the coordinates."
+msgstr ""
+"Krátké odkazy lze otevřít pouze online. Vložte celý odkaz na mapu nebo "
+"souřadnice."
 
+#: src/ui/locations.rs:74
 msgid "That is not a location."
 msgstr "Toto není poloha."
 
+#: src/ui/settings.rs:271
+msgid "Settings"
+msgstr "Nastavení"
+
+#: src/ui/settings.rs:288
 #, rust-format
 msgid "No settings match “{query}”."
 msgstr "Žádné nastavení neodpovídá hledání „{query}“."
 
+#: src/ui/settings.rs:324
 msgid "Search settings"
 msgstr "Hledat v nastavení"
 
+#: src/ui/settings.rs:342
 msgid "Appearance"
 msgstr "Vzhled"
 
+#: src/ui/settings.rs:349
 msgid "Follow system uses your Omarchy colours."
 msgstr "Volba „Podle systému“ používá barvy Omarchy."
 
+#: src/ui/settings.rs:353 src/ui/settings.rs:1140
 msgid "Theme"
 msgstr "Motiv"
 
+#: src/ui/settings.rs:355
 msgid "Font"
 msgstr "Písmo"
 
-msgid "System is your desktop's interface font. Inter looks the same on every computer."
-msgstr "Systémové písmo je písmo vašeho pracovního prostředí. Inter vypadá stejně na každém počítači."
+#: src/ui/settings.rs:358
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"Systémové písmo je písmo vašeho pracovního prostředí. Inter vypadá stejně na "
+"každém počítači."
 
+#: src/ui/settings.rs:363
 msgid "Wallpaper"
 msgstr "Tapeta"
 
+#: src/ui/settings.rs:367 src/app.rs:3607 src/ui/image_preview.rs:248
 msgid "Image"
 msgstr "Obrázek"
 
+#: src/ui/settings.rs:377
 msgid "Zoom"
 msgstr "Měřítko"
 
+#: src/ui/settings.rs:380
 msgid "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it."
 msgstr "Ctrl+Plus a Ctrl+Minus fungují všude, Ctrl+0 vrátí původní měřítko."
 
+#: src/ui/settings.rs:389
 msgid "Larger"
 msgstr "Větší"
 
+#: src/ui/settings.rs:407
 msgid "Smaller"
 msgstr "Menší"
 
+#: src/ui/settings.rs:415
+msgid "Language"
+msgstr "Jazyk"
+
+#: src/ui/settings.rs:419 src/ui/settings.rs:1878
 msgid "Custom title bar"
 msgstr "Vlastní titulní lišta"
 
-msgid "Draw ZapFast's own title bar and window buttons instead of the desktop's."
-msgstr "Místo systémových prvků vykreslit vlastní titulní lištu a tlačítka okna ZapFastu."
+#: src/ui/settings.rs:422
+msgid ""
+"Draw ZapFast's own title bar and window buttons instead of the desktop's."
+msgstr ""
+"Místo systémových prvků vykreslit vlastní titulní lištu a tlačítka okna "
+"ZapFastu."
 
+#: src/ui/settings.rs:428 src/ui/rail.rs:299
+msgid "Chats"
+msgstr "Chaty"
+
+#: src/ui/settings.rs:430
 msgid "Enter sends"
 msgstr "Enter odesílá"
 
+#: src/ui/settings.rs:431
 msgid "When off, Ctrl+Enter sends."
 msgstr "Je-li vypnuto, odesílá Ctrl+Enter."
 
+#: src/ui/settings.rs:435
 msgid "Download files automatically"
 msgstr "Stahovat soubory automaticky"
 
+#: src/ui/settings.rs:438
 msgid "Files up to 64 MiB download as they come into view."
 msgstr "Soubory do 64 MiB se stáhnou, jakmile se zobrazí v chatu."
 
+#: src/ui/settings.rs:443
 msgid "Fetch older history"
 msgstr "Načítat starší historii"
 
-msgid "Asks your phone in the background for older messages in the open, pinned and ten most recent chats."
-msgstr "Na pozadí požádá telefon o starší zprávy z otevřeného, připnutých a deseti nejnovějších chatů."
+#: src/ui/settings.rs:446
+msgid ""
+"Asks your phone in the background for older messages in the open, pinned and "
+"ten most recent chats."
+msgstr ""
+"Na pozadí požádá telefon o starší zprávy z otevřeného, připnutých a deseti "
+"nejnovějších chatů."
 
+#: src/ui/settings.rs:453
 msgid "Pause other media while recording or playing"
 msgstr "Pozastavit ostatní média při nahrávání nebo přehrávání"
 
+#: src/ui/settings.rs:454
 msgid "Music and videos in other apps resume afterwards."
 msgstr "Hudba a videa v ostatních aplikacích pak budou pokračovat."
 
+#: src/ui/settings.rs:459 src/ui/settings.rs:468
 msgid "Keep chats archived"
 msgstr "Ponechat chaty archivované"
 
+#: src/ui/settings.rs:462
 msgid "When off, a new message brings an archived chat back to the list."
 msgstr "Je-li vypnuto, nová zpráva vrátí archivovaný chat do seznamu."
 
+#: src/ui/settings.rs:483
 msgid "Locked chats code"
 msgstr "Kód uzamčených chatů"
 
-msgid "Opens the Locked tab on this computer. It hides chats, it does not encrypt them."
-msgstr "Otevírá kartu Uzamčené na tomto počítači. Chaty skryje, ale nezašifruje."
+#: src/ui/settings.rs:486
+msgid ""
+"Opens the Locked tab on this computer. It hides chats, it does not encrypt "
+"them."
+msgstr ""
+"Otevírá kartu Uzamčené na tomto počítači. Chaty skryje, ale nezašifruje."
 
+#: src/ui/settings.rs:498
 msgid "Secret code"
 msgstr "Tajný kód"
 
+#: src/ui/settings.rs:517 src/ui/settings.rs:2116
 msgid "Notifications"
 msgstr "Oznámení"
 
+#: src/ui/settings.rs:519
 msgid "Desktop notifications"
 msgstr "Oznámení na ploše"
 
+#: src/ui/settings.rs:522
 msgid "For chats you are not looking at. Muted chats stay quiet."
 msgstr "Pro chaty, které právě nesledujete. Ztlumené chaty zůstávají tiché."
 
+#: src/ui/settings.rs:529
 msgid "Show message content in notifications"
 msgstr "Zobrazovat obsah zpráv v oznámeních"
 
+#: src/ui/settings.rs:530
 msgid "When off, they say only “New message”."
 msgstr "Je-li vypnuto, zobrazí se pouze „Nová zpráva“."
 
+#: src/ui/settings.rs:535
 msgid "Limit repeat notifications"
 msgstr "Omezit opakovaná oznámení"
 
-msgid "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this. In groups, mentions and replies to you still notify."
-msgstr "Po oznámení zůstane chat 10 minut tichý. Otevřením chatu se interval vynuluje. Ve skupinách se vám oznámí zmínky a odpovědi."
+#: src/ui/settings.rs:538
+msgid ""
+"After one notification, a chat stays quiet for 10 minutes. Opening the chat "
+"resets this. In groups, mentions and replies to you still notify."
+msgstr ""
+"Po oznámení zůstane chat 10 minut tichý. Otevřením chatu se interval "
+"vynuluje. Ve skupinách se vám oznámí zmínky a odpovědi."
 
+#: src/ui/settings.rs:564 src/ui/settings.rs:2123
 msgid "Play sounds for group messages"
 msgstr "Přehrávat zvuky u skupinových zpráv"
 
+#: src/ui/settings.rs:567
 msgid "When off, only mentions and replies to you make a sound."
 msgstr "Je-li vypnuto, zvuk vydávají jen zmínky a odpovědi."
 
+#: src/ui/settings.rs:575
 msgid "Privacy"
 msgstr "Soukromí"
 
+#: src/ui/settings.rs:577
 msgid "Off for your account, so only groups get them."
 msgstr "Pro váš účet jsou vypnuté, dostávají je tedy pouze skupiny."
 
+#: src/ui/settings.rs:579
 msgid "Let people see when you read their messages."
 msgstr "Dovolit ostatním vidět, kdy čtete jejich zprávy."
 
+#: src/ui/settings.rs:582
 msgid "Send read receipts"
 msgstr "Odesílat potvrzení o přečtení"
 
+#: src/ui/settings.rs:587
 msgid "Show when you are typing"
 msgstr "Zobrazovat, když píšete"
 
+#: src/ui/settings.rs:593
 msgid "Blocked contacts"
 msgstr "Blokované kontakty"
 
+#: src/ui/settings.rs:599
 msgid "Manage"
 msgstr "Spravovat"
 
-msgid "Could not load your account privacy. Trying again when ZapFast reconnects."
-msgstr "Soukromí účtu se nepodařilo načíst. ZapFast to zkusí znovu po opětovném připojení."
+#: src/ui/settings.rs:615
+msgid ""
+"Could not load your account privacy. Trying again when ZapFast reconnects."
+msgstr ""
+"Soukromí účtu se nepodařilo načíst. ZapFast to zkusí znovu po opětovném "
+"připojení."
 
+#: src/ui/settings.rs:620
 msgid "Connect to WhatsApp to change your account privacy."
 msgstr "Pro změnu soukromí účtu se připojte k WhatsAppu."
 
+#: src/ui/settings.rs:625
 msgid "Loading your account privacy…"
 msgstr "Načítá se nastavení soukromí účtu…"
 
+#: src/ui/settings.rs:650
 msgid "Change who is excluded on your phone."
 msgstr "Výjimky můžete změnit v telefonu."
 
+#: src/ui/settings.rs:668
 msgid "System"
 msgstr "Systém"
 
+#: src/ui/settings.rs:670
 msgid "Keep running when the window closes"
 msgstr "Po zavření okna nechat aplikaci běžet"
 
+#: src/ui/settings.rs:671
 msgid "Quit from the tray or with Ctrl+Q."
 msgstr "Ukončete ji z oznamovací oblasti nebo stisknutím Ctrl+Q."
 
+#: src/ui/settings.rs:676 src/ui/settings.rs:684
 msgid "Start at login"
 msgstr "Spouštět při přihlášení"
 
+#: src/ui/settings.rs:677
 msgid "Starts in the tray, without a window."
 msgstr "Spustí se v oznamovací oblasti bez okna."
 
+#: src/ui/settings.rs:700
 msgid "Check for updates"
 msgstr "Kontrolovat aktualizace"
 
+#: src/ui/settings.rs:703
 msgid "Asks GitHub once a day, sending only the ZapFast version."
 msgstr "Jednou denně se zeptá GitHubu a odešle pouze verzi ZapFastu."
 
+#: src/ui/settings.rs:708
 msgid "Download updates automatically"
 msgstr "Stahovat aktualizace automaticky"
 
-msgid "You still choose when to restart. Package managers and Flatpak update ZapFast themselves."
-msgstr "O době restartu rozhodujete sami. Správci balíčků a Flatpak aktualizují ZapFast samostatně."
+#: src/ui/settings.rs:711
+msgid ""
+"You still choose when to restart. Package managers and Flatpak update "
+"ZapFast themselves."
+msgstr ""
+"O době restartu rozhodujete sami. Správci balíčků a Flatpak aktualizují "
+"ZapFast samostatně."
 
+#: src/ui/settings.rs:724
 #, rust-format
 msgid "Using {proxy} from the environment."
 msgstr "Používá se proxy {proxy} z prostředí."
 
+#: src/ui/settings.rs:732
 msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
-msgstr "Pro WhatsApp, média a aktualizace. Je-li pole prázdné, použije se ALL_PROXY nebo HTTPS_PROXY."
+msgstr ""
+"Pro WhatsApp, média a aktualizace. Je-li pole prázdné, použije se ALL_PROXY "
+"nebo HTTPS_PROXY."
 
+#: src/ui/settings.rs:735
 msgid "Proxy"
 msgstr "Proxy"
 
+#: src/ui/settings.rs:755
 msgid "GIPHY API key"
 msgstr "Klíč API GIPHY"
 
+#: src/ui/settings.rs:759
 msgid "For GIF search. Replaces the key this build includes."
 msgstr "Pro hledání GIFů. Nahrazuje klíč obsažený v tomto sestavení."
 
+#: src/ui/settings.rs:764
 msgid "For GIF search. Get a free key at developers.giphy.com."
 msgstr "Pro hledání GIFů. Bezplatný klíč získáte na developers.giphy.com."
 
+#: src/ui/settings.rs:780 src/ui/settings.rs:2170 src/ui/settings.rs:2176
 msgid "Account"
 msgstr "Účet"
 
+#: src/ui/settings.rs:783 src/ui/settings.rs:1657
 msgid "Your name"
 msgstr "Vaše jméno"
 
+#: src/ui/settings.rs:785 src/ui/settings.rs:1665
 msgctxt "profile"
 msgid "About"
 msgstr "O vás"
 
+#: src/ui/settings.rs:788 src/ui/settings.rs:1634
 msgid "Change profile picture"
 msgstr "Změnit profilový obrázek"
 
+#: src/ui/settings.rs:789 src/ui/settings.rs:1717 src/ui/settings.rs:2172
 msgid "Unlink this computer"
 msgstr "Odpojit tento počítač"
 
+#: src/ui/settings.rs:790 src/ui/settings.rs:1728 src/ui/accounts.rs:169
 msgid "Add account"
 msgstr "Přidat účet"
 
+#: src/ui/settings.rs:791 src/ui/settings.rs:1704 src/ui/accounts.rs:381
 msgid "Remove this account"
 msgstr "Odebrat tento účet"
 
+#: src/ui/settings.rs:796
 msgid "Files"
 msgstr "Soubory"
 
+#: src/ui/settings.rs:799
 msgid "Open folder"
 msgstr "Otevřít složku"
 
+#: src/ui/settings.rs:801
 msgid "Message archive"
 msgstr "Archiv zpráv"
 
+#: src/ui/settings.rs:819
 msgid "Downloads"
 msgstr "Stažené soubory"
 
+#: src/ui/settings.rs:832
 msgid "Change…"
 msgstr "Změnit…"
 
+#: src/ui/settings.rs:844
 msgid "Use default"
 msgstr "Použít výchozí"
 
+#: src/ui/settings.rs:855 src/ui/settings.rs:1470
 msgid "Storage used"
 msgstr "Využité úložiště"
 
+#: src/ui/settings.rs:856
 msgid "Media cache"
 msgstr "Mezipaměť médií"
 
+#: src/ui/settings.rs:857 src/ui/settings.rs:1524
 msgid "Images"
 msgstr "Obrázky"
 
+#: src/ui/settings.rs:858 src/ui/settings.rs:1530
 msgid "Videos and GIFs"
 msgstr "Videa a GIFy"
 
+#: src/ui/settings.rs:859 src/ui/settings.rs:1536 src/ui/picker.rs:142
 msgid "Stickers"
 msgstr "Nálepky"
 
+#: src/ui/settings.rs:860 src/ui/settings.rs:1542
 msgid "Other"
 msgstr "Ostatní"
 
+#: src/ui/settings.rs:861 src/ui/settings.rs:1476
 msgid "Clear…"
 msgstr "Vymazat…"
 
+#: src/ui/settings.rs:867
 msgid "Log"
 msgstr "Protokol"
 
+#: src/ui/settings.rs:874
 msgid "Open"
 msgstr "Otevřít"
 
+#: src/ui/settings.rs:914 src/ui/settings.rs:941
 msgid "App lock"
 msgstr "Zámek aplikace"
 
-msgid "Asks for a password at start and after a while unused. It keeps people using this computer out of your chats and encrypts nothing more. A forgotten password means unlinking."
-msgstr "Při spuštění a po době nečinnosti vyžaduje heslo. Zabrání ostatním uživatelům tohoto počítače v přístupu k vašim chatům, ale nic dalšího nešifruje. Zapomenuté heslo lze vyřešit odpojením zařízení."
+#: src/ui/settings.rs:917
+msgid ""
+"Asks for a password at start and after a while unused. It keeps people using "
+"this computer out of your chats and encrypts nothing more. A forgotten "
+"password means unlinking."
+msgstr ""
+"Při spuštění a po době nečinnosti vyžaduje heslo. Zabrání ostatním "
+"uživatelům tohoto počítače v přístupu k vašim chatům, ale nic dalšího "
+"nešifruje. Zapomenuté heslo lze vyřešit odpojením zařízení."
 
+#: src/ui/settings.rs:924
 msgid "Turn off…"
 msgstr "Vypnout…"
 
+#: src/ui/settings.rs:925
 msgid "Change password…"
 msgstr "Změnit heslo…"
 
+#: src/ui/settings.rs:928
 msgid "Set password…"
 msgstr "Nastavit heslo…"
 
+#: src/ui/settings.rs:942 src/ui/settings.rs:949
 msgid "Lock after"
 msgstr "Uzamknout po"
 
-msgid "Time without using ZapFast, also counted while it is in the tray. Ctrl+Shift+L locks it at once."
-msgstr "Doba, po kterou ZapFast nepoužíváte; počítá se i při běhu v oznamovací oblasti. Ctrl+Shift+L jej uzamkne okamžitě."
+#: src/ui/settings.rs:952
+msgid ""
+"Time without using ZapFast, also counted while it is in the tray. "
+"Ctrl+Shift+L locks it at once."
+msgstr ""
+"Doba, po kterou ZapFast nepoužíváte; počítá se i při běhu v oznamovací "
+"oblasti. Ctrl+Shift+L jej uzamkne okamžitě."
 
+#: src/ui/settings.rs:994
 msgid "Set an app lock password"
 msgstr "Nastavit heslo zámku aplikace"
 
+#: src/ui/settings.rs:995
 msgid "Change the app lock password"
 msgstr "Změnit heslo zámku aplikace"
 
+#: src/ui/settings.rs:996
 msgid "Turn off the app lock"
 msgstr "Vypnout zámek aplikace"
 
+#: src/ui/settings.rs:1006
 msgid "Current password"
 msgstr "Současné heslo"
 
+#: src/ui/settings.rs:1013
 #, rust-format
 msgid "New password, at least {count} characters"
 msgstr "Nové heslo, alespoň {count} znaků"
 
+#: src/ui/settings.rs:1018
 msgid "Type the new password again"
 msgstr "Zadejte nové heslo znovu"
 
+#: src/ui/settings.rs:1042
 #, rust-format
 msgid "The password needs at least {count} characters."
 msgstr "Heslo musí mít alespoň {count} znaků."
 
+#: src/ui/settings.rs:1044
 msgid "The two new passwords are different."
 msgstr "Nová hesla se liší."
 
+#: src/ui/settings.rs:1045 src/ui/lock.rs:85
 msgid "Wrong password. Try again."
 msgstr "Nesprávné heslo. Zkuste to znovu."
 
+#: src/ui/settings.rs:1052
 msgid "Turn on"
 msgstr "Zapnout"
 
+#: src/ui/settings.rs:1053
 msgid "Change password"
 msgstr "Změnit heslo"
 
+#: src/ui/settings.rs:1054
 msgid "Turn off"
 msgstr "Vypnout"
 
+#: src/ui/settings.rs:1149
 msgid "Open themes folder"
 msgstr "Otevřít složku s motivy"
 
+#: src/ui/settings.rs:1160
 msgid "How to make a theme"
 msgstr "Jak vytvořit motiv"
 
+#: src/ui/settings.rs:1201 src/ui/settings.rs:1210
 msgid "Auto"
 msgstr "Automaticky"
 
+#: src/ui/settings.rs:1295
 msgid "Add doodles"
 msgstr "Přidat kresby"
 
+#: src/ui/settings.rs:1299
 msgid "Show the default doodles over the selected colour."
 msgstr "Zobrazovat výchozí kresby přes vybranou barvu."
 
+#: src/ui/settings.rs:1383
 msgid "Choose image…"
 msgstr "Vybrat obrázek…"
 
+#: src/ui/settings.rs:1384
 msgid "Remove image"
 msgstr "Odebrat obrázek"
 
+#: src/ui/settings.rs:1412
 msgctxt "wallpaper colour"
 msgid "Theme"
 msgstr "Motiv"
 
+#: src/ui/settings.rs:1505
 #, rust-format
-msgid "Photos, videos, stickers and files {account} downloaded to this computer. Clearing them keeps your messages; attachments download again when you open them."
-msgstr "Fotografie, videa, nálepky a soubory stažené účtem {account} do tohoto počítače. Jejich vymazáním zprávy zůstanou; přílohy se při otevření stáhnou znovu."
+msgid ""
+"Photos, videos, stickers and files {account} downloaded to this computer. "
+"Clearing them keeps your messages; attachments download again when you open "
+"them."
+msgstr ""
+"Fotografie, videa, nálepky a soubory stažené účtem {account} do tohoto "
+"počítače. Jejich vymazáním zprávy zůstanou; přílohy se při otevření stáhnou "
+"znovu."
 
+#: src/ui/settings.rs:1673
 msgid "Linked device"
 msgstr "Propojené zařízení"
 
+#: src/ui/settings.rs:1684
 msgid "Edit your name and About"
 msgstr "Upravit jméno a informace o sobě"
 
+#: src/ui/settings.rs:1748
 msgid "Save"
 msgstr "Uložit"
 
+#: src/ui/settings.rs:1815
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
-msgstr "Nativní klient WhatsAppu vytvořený v Rustu s knihovnami egui a whatsapp-rust."
+msgstr ""
+"Nativní klient WhatsAppu vytvořený v Rustu s knihovnami egui a whatsapp-rust."
 
+#: src/ui/settings.rs:1826
 #, rust-format
 msgid "Update to {version}"
 msgstr "Aktualizovat na verzi {version}"
 
+#: src/ui/settings.rs:1944
 msgid "Mention sound"
 msgstr "Zvuk při zmínce"
 
+#: src/ui/settings.rs:1945
 msgid "When a group mentions you or replies to you."
 msgstr "Když vás někdo ve skupině zmíní nebo vám odpoví."
 
+#: src/ui/settings.rs:1948
 msgid "Message sound"
 msgstr "Zvuk zprávy"
 
+#: src/ui/settings.rs:1965
 msgid "Pidgin alert"
 msgstr "Upozornění Pidgin"
 
+#: src/ui/settings.rs:1966 src/ui/call.rs:597
 msgid "System default"
 msgstr "Výchozí systémový zvuk"
 
 #. Translators: no notification sound.
+#: src/ui/settings.rs:1968
 msgctxt "sound"
 msgid "None"
 msgstr "Žádný"
 
+#: src/ui/call.rs:142
 msgid "Return to the call"
 msgstr "Vrátit se k hovoru"
 
+#: src/ui/call.rs:218
 msgid "Wants to switch to video: turn on your camera to answer"
 msgstr "Chce přepnout na video. Zapněte kameru a přijměte hovor."
 
+#: src/ui/call.rs:228
 msgid "Their camera is off"
 msgstr "Kamera druhé strany je vypnutá"
 
+#: src/ui/call.rs:311
 msgid "Hide the call screen"
 msgstr "Skrýt obrazovku hovoru"
 
+#: src/ui/call.rs:320
 msgid "Exit full screen"
 msgstr "Ukončit režim celé obrazovky"
 
+#: src/ui/call.rs:322
 msgid "Full screen"
 msgstr "Celá obrazovka"
 
+#: src/ui/call.rs:377 src/ui/call.rs:383 src/ui/call.rs:388
 msgid "Connecting…"
 msgstr "Připojování…"
 
+#: src/ui/call.rs:379
 msgid "Calling…"
 msgstr "Volání…"
 
+#: src/ui/call.rs:381
 msgid "Ringing…"
 msgstr "Vyzvání…"
 
+#: src/ui/call.rs:392 src/ui/call.rs:400
 msgid "Call ended"
 msgstr "Hovor skončil"
 
+#: src/ui/call.rs:401
 msgid "Missed call"
 msgstr "Zmeškaný hovor"
 
+#: src/ui/call.rs:402 src/ui/calls.rs:121
 msgid "Declined"
 msgstr "Odmítnuto"
 
+#: src/ui/call.rs:403 src/ui/calls.rs:123
 msgid "Busy"
 msgstr "Obsazeno"
 
+#: src/ui/call.rs:404 src/ui/call.rs:409 src/ui/calls.rs:124
 msgid "Could not connect"
 msgstr "Nepodařilo se připojit"
 
+#: src/ui/call.rs:405 src/ui/calls.rs:125
 msgid "No answer"
 msgstr "Bez odpovědi"
 
+#: src/ui/call.rs:407 src/ui/calls.rs:126 src/app.rs:5058
 msgid "Connection lost"
 msgstr "Spojení přerušeno"
 
+#: src/ui/call.rs:411 src/ui/calls.rs:120
 msgid "Answered on another device"
 msgstr "Přijato na jiném zařízení"
 
+#: src/ui/call.rs:414 src/ui/calls.rs:122
 msgid "Declined on another device"
 msgstr "Odmítnuto na jiném zařízení"
 
+#: src/ui/call.rs:435
 #, rust-format
 msgid "Microphone “{name}” is not available; using the system default"
 msgstr "Mikrofon „{name}“ není dostupný; použije se výchozí systémový."
 
+#: src/ui/call.rs:439
 #, rust-format
 msgid "Speaker “{name}” is not available; using the system default"
 msgstr "Reproduktor „{name}“ není dostupný; použije se výchozí systémový."
 
+#: src/ui/call.rs:441
 #, rust-format
 msgid "Camera “{name}” is not available"
 msgstr "Kamera „{name}“ není dostupná."
 
+#: src/ui/call.rs:464
 msgid "No audio is arriving from this call"
 msgstr "Z tohoto hovoru nepřichází žádný zvuk"
 
+#: src/ui/call.rs:466
 msgid "This call's audio cannot be decoded"
 msgstr "Zvuk tohoto hovoru nelze dekódovat"
 
+#: src/ui/call.rs:474
 msgid "The other side's audio is not getting through"
 msgstr "Zvuk druhé strany se nepřenáší"
 
+#: src/ui/call.rs:543
 msgid "Start video"
 msgstr "Zapnout video"
 
+#: src/ui/call.rs:550
 msgid "Turn the camera off"
 msgstr "Vypnout kameru"
 
+#: src/ui/call.rs:557
 msgid "Turn the camera on"
 msgstr "Zapnout kameru"
 
+#: src/ui/call.rs:567
 msgid "Devices"
 msgstr "Zařízení"
 
+#: src/ui/call.rs:624
 msgid "Microphone"
 msgstr "Mikrofon"
 
+#: src/ui/call.rs:635
 msgid "Speaker"
 msgstr "Reproduktor"
 
+#: src/ui/call.rs:647
 msgid "Camera"
 msgstr "Kamera"
 
+#: src/ui/call.rs:648
 msgid "First camera"
 msgstr "První kamera"
 
+#: src/ui/call.rs:737
 msgid "Incoming voice call"
 msgstr "Příchozí hlasový hovor"
 
+#: src/ui/call.rs:738
 msgid "Incoming video call"
 msgstr "Příchozí videohovor"
 
+#: src/ui/call.rs:740
 #, rust-format
 msgid "Group voice call from {name}"
 msgstr "Příchozí skupinový hlasový hovor od {name}"
 
+#: src/ui/call.rs:743
 #, rust-format
 msgid "Group video call from {name}"
 msgstr "Příchozí skupinový videohovor od {name}"
 
+#: src/ui/call.rs:745
 msgid "Incoming group voice call"
 msgstr "Příchozí skupinový hlasový hovor"
 
+#: src/ui/call.rs:746
 msgid "Incoming group video call"
 msgstr "Příchozí skupinový videohovor"
 
+#: src/ui/call.rs:785
 msgid "Decline"
 msgstr "Odmítnout"
 
+#: src/ui/call.rs:798
 msgid "Accept"
 msgstr "Přijmout"
 
+#: src/ui/call.rs:1226
 msgid "Invited"
 msgstr "Pozván"
 
+#: src/ui/calls.rs:102
 msgid "Missed group voice call"
 msgstr "Zmeškaný skupinový hlasový hovor"
 
+#: src/ui/calls.rs:103
 msgid "Missed group video call"
 msgstr "Zmeškaný skupinový videohovor"
 
+#: src/ui/calls.rs:106
 msgid "Group voice call"
 msgstr "Skupinový hlasový hovor"
 
+#: src/ui/calls.rs:107
 msgid "Group video call"
 msgstr "Skupinový videohovor"
 
+#: src/ui/calls.rs:175 src/app/calls.rs:112
 msgid "Call link"
 msgstr "Odkaz na hovor"
 
+#: src/ui/calls.rs:205
 msgid "No calls yet"
 msgstr "Zatím žádné hovory"
 
-msgid "Calls from your phone's call log and the ones you make here appear here."
+#: src/ui/calls.rs:208
+msgid ""
+"Calls from your phone's call log and the ones you make here appear here."
 msgstr "Zde se zobrazí hovory z výpisu v telefonu i hovory uskutečněné odsud."
 
+#: src/ui/calls.rs:213 src/ui/message_info.rs:93
 msgid "Loading…"
 msgstr "Načítání…"
 
+#: src/ui/calls.rs:214
 msgid "Reading this account's calls."
 msgstr "Načítají se hovory tohoto účtu."
 
+#: src/ui/calls.rs:238
 msgid "No missed calls"
 msgstr "Žádné zmeškané hovory"
 
+#: src/ui/calls.rs:239
 msgid "Choose All to see every call."
 msgstr "Všechny hovory zobrazíte volbou Vše."
 
+#: src/ui/calls.rs:261
 msgid "No matching calls"
 msgstr "Žádné odpovídající hovory"
 
+#: src/ui/calls.rs:496
 #, rust-format
 msgid "{} participant"
 msgid_plural "{} participants"
@@ -1670,81 +2407,124 @@ msgstr[0] "{} účastník"
 msgstr[1] "{} účastníci"
 msgstr[2] "{} účastníků"
 
+#: src/ui/calls.rs:554
 msgid "Frequently contacted"
 msgstr "Často kontaktovaní"
 
+#: src/ui/calls.rs:572
 msgid "All contacts"
 msgstr "Všechny kontakty"
 
+#: src/ui/calls.rs:636
 #, rust-format
 msgid "Video call {name}"
 msgstr "Videohovor s {name}"
 
+#: src/ui/calls.rs:650
 #, rust-format
 msgid "Voice call {name}"
 msgstr "Hlasový hovor s {name}"
 
+#: src/ui/calls.rs:680
 msgid "Start call"
 msgstr "Zahájit hovor"
 
-msgid "Call one person by voice or video, or choose a call in the list to see it."
-msgstr "Zavolejte jedné osobě hlasem nebo videem, případně výběrem hovoru v seznamu zobrazte jeho podrobnosti."
+#: src/ui/calls.rs:701
+msgid ""
+"Call one person by voice or video, or choose a call in the list to see it."
+msgstr ""
+"Zavolejte jedné osobě hlasem nebo videem, případně výběrem hovoru v seznamu "
+"zobrazte jeho podrobnosti."
 
+#: src/app/calls.rs:116 src/app.rs:10953
 msgid "Locked chat"
 msgstr "Uzamčený chat"
 
+#: src/app/calls.rs:377
 msgid "Unblock this contact to call them."
 msgstr "Chcete-li tomuto kontaktu zavolat, odblokujte ho."
 
+#: src/app/calls.rs:405 src/app/calls.rs:686
 msgid "Hang up the current call first"
 msgstr "Nejprve ukončete aktuální hovor"
 
+#: src/app/calls.rs:510 src/app/calls.rs:579
 msgid "Incoming call"
 msgstr "Příchozí hovor"
 
+#: src/app/calls.rs:620
 #, rust-format
-msgid "{caller} is calling {group}. ZapFast can't join group calls yet: answer on your phone."
-msgstr "{caller} volá do skupiny {group}. ZapFast se zatím nemůže připojit ke skupinovým hovorům; přijměte hovor v telefonu."
+msgid ""
+"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"your phone."
+msgstr ""
+"{caller} volá do skupiny {group}. ZapFast se zatím nemůže připojit ke "
+"skupinovým hovorům; přijměte hovor v telefonu."
 
+#: src/app/calls.rs:628
 #, rust-format
-msgid "{caller} is calling you and others. ZapFast can't join group calls yet: answer on your phone."
-msgstr "{caller} volá vám a ostatním. ZapFast se zatím nemůže připojit ke skupinovým hovorům; přijměte hovor v telefonu."
+msgid ""
+"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"answer on your phone."
+msgstr ""
+"{caller} volá vám a ostatním. ZapFast se zatím nemůže připojit ke skupinovým "
+"hovorům; přijměte hovor v telefonu."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
+#: src/ui/widgets.rs:1178
 #, rust-format
 msgid "Built with love by {name}"
 msgstr "S láskou vytvořil(a) {name}"
 
+#: src/ui/message_info.rs:44
 msgid "This message is no longer available."
 msgstr "Tato zpráva už není dostupná."
 
+#: src/ui/message_info.rs:192
 msgid "Played"
 msgstr "Přehráno"
 
+#: src/ui/message_info.rs:194
 msgid "Read"
 msgstr "Přečteno"
 
+#: src/ui/message_info.rs:208
 msgid "Delivered"
 msgstr "Doručeno"
 
+#: src/ui/message_info.rs:224
 msgid "Time not recorded"
 msgstr "Čas nebyl zaznamenán"
 
-msgid "No receipts were recorded for this message. Details are available for messages sent from now on."
-msgstr "U této zprávy nebyla zaznamenána žádná potvrzení. Podrobnosti budou dostupné u zpráv odeslaných od této chvíle."
+#: src/ui/message_info.rs:246
+msgid ""
+"No receipts were recorded for this message. Details are available for "
+"messages sent from now on."
+msgstr ""
+"U této zprávy nebyla zaznamenána žádná potvrzení. Podrobnosti budou dostupné "
+"u zpráv odeslaných od této chvíle."
 
-msgid "Some receipts for this message were not recorded. Details are complete for messages sent from now on."
-msgstr "Některá potvrzení této zprávy nebyla zaznamenána. U zpráv odeslaných od této chvíle budou podrobnosti úplné."
+#: src/ui/message_info.rs:258
+msgid ""
+"Some receipts for this message were not recorded. Details are complete for "
+"messages sent from now on."
+msgstr ""
+"Některá potvrzení této zprávy nebyla zaznamenána. U zpráv odeslaných od této "
+"chvíle budou podrobnosti úplné."
 
+#: src/ui/message_info.rs:268
 msgid "Played by"
 msgstr "Přehráno uživatelem"
 
+#: src/ui/message_info.rs:277
 msgid "Read by"
 msgstr "Přečteno uživatelem"
 
+#: src/ui/message_info.rs:285
 msgid "Delivered to"
 msgstr "Doručeno uživateli"
 
+#: src/ui/message_info.rs:295
 #, rust-format
 msgid "{} remaining"
 msgid_plural "{} remaining"
@@ -1752,139 +2532,198 @@ msgstr[0] "Zbývá {}"
 msgstr[1] "Zbývají {}"
 msgstr[2] "Zbývá {}"
 
+#: src/ui/message_info.rs:322
 msgid "No one yet"
 msgstr "Zatím nikdo"
 
+#: src/app.rs:1038
 msgid "Could not check the number. Please try again."
 msgstr "Číslo se nepodařilo ověřit. Zkuste to prosím znovu."
 
+#: src/app.rs:1042
 msgid "This number is not on WhatsApp"
 msgstr "Toto číslo není na WhatsAppu"
 
+#: src/app.rs:1045
 msgid "Not connected to WhatsApp"
 msgstr "Není připojeno k WhatsAppu"
 
+#: src/app.rs:1048 src/app.rs:9159
 msgid "Enter a valid international phone number"
 msgstr "Zadejte platné mezinárodní telefonní číslo"
 
+#: src/app.rs:2157
 msgid "Could not delete the removed account's files"
 msgstr "Soubory odebraného účtu se nepodařilo smazat"
 
+#: src/app.rs:2970
 #, rust-format
 msgid "A label named “{name}” already exists."
 msgstr "Štítek s názvem „{name}“ už existuje."
 
+#: src/app.rs:3059
 #, rust-format
 msgid "{name} (You)"
 msgstr "{name} (vy)"
 
+#: src/app.rs:3676
 msgid "Media cache cleared"
 msgstr "Mezipaměť médií byla vymazána"
 
+#: src/app.rs:3811
 msgid "Star removed"
 msgstr "Označení bylo odebráno"
 
+#: src/app.rs:3847
 msgid "Pinned for 7 days"
 msgstr "Připnuto na 7 dní"
 
+#: src/app.rs:3849
 msgid "Pin removed"
 msgstr "Připnutí bylo zrušeno"
 
+#: src/app.rs:4130
 #, rust-format
-msgid "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: {missing}."
-msgstr "Uloženo: {path}. Zprávy: {messages}; přílohy: {files}; nedostupné: {missing}."
+msgid ""
+"Saved {path}. Messages: {messages}; attachments: {files}; unavailable: "
+"{missing}."
+msgstr ""
+"Uloženo: {path}. Zprávy: {messages}; přílohy: {files}; nedostupné: {missing}."
 
+#: src/app.rs:4499
 msgid "Loading chat history"
 msgstr "Načítá se historie chatu"
 
+#: src/app.rs:4593
 msgid "Could not use this image"
 msgstr "Tento obrázek nelze použít"
 
+#: src/app.rs:4651
 msgid "Could not use this picture."
 msgstr "Tento obrázek nelze použít."
 
+#: src/app.rs:4897 src/app.rs:9028
 msgid "This chat already has three pinned messages"
 msgstr "V tomto chatu jsou už připnuté tři zprávy"
 
-msgid "WhatsApp hasn't turned on group calls from a computer for your account yet. Ask someone in the group to call it, and answer here."
-msgstr "WhatsApp zatím vašemu účtu nepovolil skupinové hovory z počítače. Požádejte někoho ve skupině, aby zavolal, a hovor přijměte zde."
+#: src/app.rs:4902
+msgid ""
+"WhatsApp hasn't turned on group calls from a computer for your account yet. "
+"Ask someone in the group to call it, and answer here."
+msgstr ""
+"WhatsApp zatím vašemu účtu nepovolil skupinové hovory z počítače. Požádejte "
+"někoho ve skupině, aby zavolal, a hovor přijměte zde."
 
+#: src/app.rs:4907 src/app.rs:8029
 msgid "ZapFast can't join group calls yet: open the link on your phone."
-msgstr "ZapFast se zatím nemůže připojit ke skupinovým hovorům. Otevřete odkaz v telefonu."
+msgstr ""
+"ZapFast se zatím nemůže připojit ke skupinovým hovorům. Otevřete odkaz v "
+"telefonu."
 
+#: src/app.rs:4913
 msgid "Connect to WhatsApp to change disappearing messages."
 msgstr "Pro změnu mizejících zpráv se připojte k WhatsAppu."
 
+#: src/app.rs:4919
 msgid "Could not change disappearing messages."
 msgstr "Mizející zprávy se nepodařilo změnit."
 
+#: src/app.rs:4924
 msgid "Only admins can change disappearing messages."
 msgstr "Mizející zprávy mohou měnit pouze správci."
 
+#: src/app.rs:4961
 msgid "Connect to WhatsApp to archive this chat"
 msgstr "Pro archivaci tohoto chatu se připojte k WhatsAppu"
 
+#: src/app.rs:4965
 msgid "Connect to WhatsApp to unarchive this chat"
 msgstr "Pro obnovení tohoto chatu z archivu se připojte k WhatsAppu"
 
+#: src/app.rs:4968
 msgid "Could not read this chat. Try again"
 msgstr "Chat se nepodařilo načíst. Zkuste to znovu"
 
+#: src/app.rs:4972
 msgid "Could not confirm archiving on WhatsApp. Try again"
 msgstr "Archivaci se ve WhatsAppu nepodařilo potvrdit. Zkuste to znovu"
 
+#: src/app.rs:4976
 msgid "Could not confirm unarchiving on WhatsApp. Try again"
-msgstr "Obnovení z archivu se ve WhatsAppu nepodařilo potvrdit. Zkuste to znovu"
+msgstr ""
+"Obnovení z archivu se ve WhatsAppu nepodařilo potvrdit. Zkuste to znovu"
 
+#: src/app.rs:4980
 msgid "WhatsApp updated this chat, but ZapFast could not save the change"
 msgstr "WhatsApp tento chat aktualizoval, ale ZapFast změnu nemohl uložit"
 
+#: src/app.rs:5068
 msgid "Connecting"
 msgstr "Připojování"
 
+#: src/app.rs:5736 src/app.rs:7363
 msgid "Unblock this contact to send messages."
 msgstr "Chcete-li odesílat zprávy, odblokujte tento kontakt."
 
+#: src/app.rs:5740
 msgid "Not sent: ZapFast is not connected to WhatsApp."
 msgstr "Neodesláno: ZapFast není připojen k WhatsAppu."
 
-msgid "Not sent: the message you’re replying to isn’t available on this computer. Cancel the reply to send without a quote."
-msgstr "Neodesláno: zpráva, na kterou odpovídáte, není v tomto počítači dostupná. Zrušte odpověď, chcete-li odeslat zprávu bez citace."
+#: src/app.rs:5744
+msgid ""
+"Not sent: the message you’re replying to isn’t available on this computer. "
+"Cancel the reply to send without a quote."
+msgstr ""
+"Neodesláno: zpráva, na kterou odpovídáte, není v tomto počítači dostupná. "
+"Zrušte odpověď, chcete-li odeslat zprávu bez citace."
 
+#: src/app.rs:5748 src/app.rs:6795
 msgid "Not sent: view-once mode is available for one photo at a time."
-msgstr "Neodesláno: režim jednorázového zobrazení lze použít vždy jen pro jednu fotografii."
+msgstr ""
+"Neodesláno: režim jednorázového zobrazení lze použít vždy jen pro jednu "
+"fotografii."
 
+#: src/app.rs:8204
 msgid "A selected chat is no longer writable"
 msgstr "Do vybraného chatu už nelze odesílat zprávy"
 
+#: src/app.rs:8776
 msgid "Added to favorites"
 msgstr "Přidáno k oblíbeným"
 
+#: src/app.rs:8853
 msgid "Sending the sticker pack…"
 msgstr "Odesílá se balíček nálepek…"
 
+#: src/app.rs:9279 src/ui/labels.rs:257
 #, rust-format
 msgid "You have {limit} labels, the most ZapFast keeps."
 msgstr "Máte {limit} štítků, což je maximum, které ZapFast uchovává."
 
+#: src/app.rs:9446
 msgid "No chat open"
 msgstr "Není otevřen žádný chat"
 
+#: src/app.rs:9474
 msgid "Loading the replied message"
 msgstr "Načítá se zpráva, na kterou bylo odpovězeno"
 
+#: src/app.rs:9784
 msgid "Invite link copied"
 msgstr "Odkaz s pozvánkou byl zkopírován"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
+#: src/app.rs:10064
 #, rust-format
 msgid "{}: {}"
 msgstr "{}: {}"
 
+#: src/app.rs:10174
 msgid "The old link no longer works. Here is a new one."
 msgstr "Starý odkaz už nefunguje. Tady je nový."
 
+#: src/app.rs:10216
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
@@ -1892,675 +2731,927 @@ msgstr[0] "Do skupiny byla přidána {count} osoba"
 msgstr[1] "Do skupiny byly přidány {count} osoby"
 msgstr[2] "Do skupiny bylo přidáno {count} osob"
 
+#: src/app.rs:10276
 msgid "This file is no longer on this computer. Download it again."
 msgstr "Tento soubor už v počítači není. Stáhněte jej znovu."
 
+#: src/app.rs:10652
 msgid "App lock password saved"
 msgstr "Heslo zámku aplikace bylo uloženo"
 
+#: src/app.rs:10660
 msgid "App lock turned off"
 msgstr "Zámek aplikace byl vypnut"
 
+#: src/app.rs:10794
 msgid "This video opens in your system player"
 msgstr "Toto video se otevře v systémovém přehrávači"
 
+#: src/app.rs:11146 src/app.rs:11206
 msgid "Replied message not found"
 msgstr "Odpovídaná zpráva nebyla nalezena"
 
+#: src/app.rs:11836
 msgid "Copied image"
 msgstr "Obrázek byl zkopírován"
 
+#: src/app.rs:11839 src/app.rs:11844
 msgid "Failed to copy image"
 msgstr "Obrázek se nepodařilo zkopírovat"
 
+#: src/ui/labels.rs:68
 msgctxt "label colour"
 msgid "Blue"
 msgstr "Modrá"
 
+#: src/ui/labels.rs:69
 msgctxt "label colour"
 msgid "Green"
 msgstr "Zelená"
 
+#: src/ui/labels.rs:70
 msgctxt "label colour"
 msgid "Yellow"
 msgstr "Žlutá"
 
+#: src/ui/labels.rs:71
 msgctxt "label colour"
 msgid "Orange"
 msgstr "Oranžová"
 
+#: src/ui/labels.rs:72
 msgctxt "label colour"
 msgid "Red"
 msgstr "Červená"
 
+#: src/ui/labels.rs:73
 msgctxt "label colour"
 msgid "Pink"
 msgstr "Růžová"
 
+#: src/ui/labels.rs:74
 msgctxt "label colour"
 msgid "Purple"
 msgstr "Fialová"
 
+#: src/ui/labels.rs:75
 msgctxt "label colour"
 msgid "Teal"
 msgstr "Modrozelená"
 
+#: src/ui/labels.rs:76
 msgctxt "label colour"
 msgid "Grey"
 msgstr "Šedá"
 
+#: src/ui/labels.rs:77
 msgctxt "label colour"
 msgid "Sky blue"
 msgstr "Nebeská modř"
 
+#: src/ui/labels.rs:78
 msgctxt "label colour"
 msgid "Colour"
 msgstr "Barva"
 
+#: src/ui/labels.rs:151
 msgid "Manage labels"
 msgstr "Spravovat štítky"
 
+#: src/ui/labels.rs:166
 msgid "Manage labels…"
 msgstr "Spravovat štítky…"
 
-msgid "Labels stay on this computer. They do not reach your phone or anyone you chat with."
-msgstr "Štítky zůstávají v tomto počítači. Nedostanou se do vašeho telefonu ani k lidem, se kterými chatujete."
+#: src/ui/labels.rs:246
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"Štítky zůstávají v tomto počítači. Nedostanou se do vašeho telefonu ani k "
+"lidem, se kterými chatujete."
 
+#: src/ui/labels.rs:267
 msgid "New label"
 msgstr "Nový štítek"
 
+#: src/ui/labels.rs:281 src/ui/new_group.rs:451
 msgid "Create"
 msgstr "Vytvořit"
 
-msgid "No labels yet. Create one above, then add chats to it from their right-click menu."
-msgstr "Zatím žádné štítky. Vytvořte nový výše a pak do něj přidejte chaty z jejich místní nabídky."
+#: src/ui/labels.rs:311
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click "
+"menu."
+msgstr ""
+"Zatím žádné štítky. Vytvořte nový výše a pak do něj přidejte chaty z jejich "
+"místní nabídky."
 
+#: src/ui/labels.rs:346
 msgid "Next colour"
 msgstr "Další barva"
 
+#: src/ui/labels.rs:395
+#, rust-format
 msgid "{} chat"
 msgid_plural "{} chats"
 msgstr[0] "{} chat"
 msgstr[1] "{} chaty"
 msgstr[2] "{} chatů"
 
+#: src/ui/labels.rs:416
 msgid "Rename or recolour"
 msgstr "Přejmenovat nebo změnit barvu"
 
+#: src/ui/labels.rs:441
 msgid "Delete this label. Its chats keep their messages."
 msgstr "Smazat tento štítek. Zprávy v jeho chatech zůstanou zachovány."
 
+#: src/ui/picker.rs:140
 msgid "Emoji"
 msgstr "Emoji"
 
+#: src/ui/picker.rs:477
 msgid "React to message"
 msgstr "Reagovat na zprávu"
 
+#: src/ui/picker.rs:488
 msgid "Close reactions"
 msgstr "Zavřít reakce"
 
+#: src/ui/picker.rs:667
 msgid "Search emoji"
 msgstr "Hledat emoji"
 
+#: src/ui/picker.rs:1053
 msgid "Search GIFs via GIPHY"
 msgstr "Hledat GIFy přes GIPHY"
 
+#: src/ui/picker.rs:1070
 msgid "Searching…"
 msgstr "Hledá se…"
 
+#: src/ui/picker.rs:1157 src/ui/mod.rs:659
 msgid "Retry"
 msgstr "Zkusit znovu"
 
+#: src/ui/picker.rs:1159
 msgid "Load more"
 msgstr "Načíst další"
 
+#: src/ui/picker.rs:1170
 msgid "Search for a GIF or browse trending results."
 msgstr "Vyhledejte GIF nebo procházejte populární výsledky."
 
+#: src/ui/picker.rs:1283
 msgid "Recent"
 msgstr "Nedávné"
 
+#: src/ui/picker.rs:1285
 msgid "Received"
 msgstr "Přijaté"
 
+#: src/ui/picker.rs:1286
 msgid "Add stickers"
 msgstr "Přidat nálepky"
 
+#: src/ui/picker.rs:1321
 msgid "Search by emoji, word, or pack"
 msgstr "Hledat podle emoji, slova nebo balíčku"
 
+#: src/ui/picker.rs:1360
 msgid "No stickers match your search."
 msgstr "Hledání neodpovídají žádné nálepky."
 
+#: src/ui/picker.rs:1374
 msgid "Loading your stickers…"
 msgstr "Načítají se vaše nálepky…"
 
+#: src/ui/picker.rs:1376
 msgid "Stickers you send appear here."
 msgstr "Zde se zobrazí nálepky, které odešlete."
 
-msgid "Right-click any sticker to add it to your favorites. They stay in sync with your phone."
-msgstr "Kliknutím pravým tlačítkem na nálepku ji přidáte k oblíbeným. Ty se synchronizují s telefonem."
+#: src/ui/picker.rs:1385
+msgid ""
+"Right-click any sticker to add it to your favorites. They stay in sync with "
+"your phone."
+msgstr ""
+"Kliknutím pravým tlačítkem na nálepku ji přidáte k oblíbeným. Ty se "
+"synchronizují s telefonem."
 
+#: src/ui/picker.rs:1391
 msgid "Stickers people send you appear here."
 msgstr "Zde se zobrazí nálepky, které vám ostatní pošlou."
 
+#: src/ui/picker.rs:1406
 msgid "Remove this pack"
 msgstr "Odebrat tento balíček"
 
+#: src/ui/picker.rs:1420
 msgid "Send this pack to the chat"
 msgstr "Odeslat tento balíček do chatu"
 
+#: src/ui/picker.rs:1434
 msgid "Nothing here yet. Right-click any sticker to add it to this pack."
-msgstr "Zatím tu nic není. Kliknutím pravým tlačítkem na nálepku ji přidáte do tohoto balíčku."
+msgstr ""
+"Zatím tu nic není. Kliknutím pravým tlačítkem na nálepku ji přidáte do "
+"tohoto balíčku."
 
+#: src/ui/picker.rs:1511
 msgid "Import a pack"
 msgstr "Importovat balíček"
 
-msgid "Paste a signal.art link from signalstickers.org, or open a .wastickers file."
-msgstr "Vložte odkaz signal.art z webu signalstickers.org nebo otevřete soubor .wastickers."
+#: src/ui/picker.rs:1519
+msgid ""
+"Paste a signal.art link from signalstickers.org, or open a .wastickers file."
+msgstr ""
+"Vložte odkaz signal.art z webu signalstickers.org nebo otevřete "
+"soubor .wastickers."
 
+#: src/ui/picker.rs:1529
 msgid "Make your own"
 msgstr "Vytvořit vlastní"
 
-msgid "Start a pack, then right-click any sticker to add it. Or turn a picture into a sticker."
-msgstr "Vytvořte balíček a pak do něj přidávejte nálepky kliknutím pravým tlačítkem. Nebo změňte obrázek na nálepku."
+#: src/ui/picker.rs:1537
+msgid ""
+"Start a pack, then right-click any sticker to add it. Or turn a picture into "
+"a sticker."
+msgstr ""
+"Vytvořte balíček a pak do něj přidávejte nálepky kliknutím pravým tlačítkem. "
+"Nebo změňte obrázek na nálepku."
 
+#: src/ui/picker.rs:1549
 msgid "Make a sticker from a picture…"
 msgstr "Vytvořit nálepku z obrázku…"
 
+#: src/ui/picker.rs:1564
 msgid "Create pack"
 msgstr "Vytvořit balíček"
 
+#: src/ui/picker.rs:1575
 msgid "New pack…"
 msgstr "Nový balíček…"
 
+#: src/ui/picker.rs:1608
 msgid "Find packs"
 msgstr "Najít balíčky"
 
+#: src/ui/picker.rs:1624
 msgid "Paste a signal.art link"
 msgstr "Vložit odkaz signal.art"
 
+#: src/ui/picker.rs:1652
 msgid "Browse signalstickers.org"
 msgstr "Procházet signalstickers.org"
 
+#: src/ui/picker.rs:1668
 msgid "Importing the pack…"
 msgstr "Importuje se balíček…"
 
+#: src/ui/picker.rs:1717
 msgid "Remove from recents"
 msgstr "Odebrat z nedávných"
 
+#: src/ui/pane.rs:214
 msgid "Close search"
 msgstr "Zavřít hledání"
 
+#: src/ui/pane.rs:242 src/ui/pane.rs:420
 msgid "Filter by date"
 msgstr "Filtrovat podle data"
 
+#: src/ui/pane.rs:295
+#, rust-format
 msgid "Search messages with {}"
 msgstr "Hledat zprávy s {}"
 
+#: src/ui/pane.rs:318
 msgid "No messages found"
 msgstr "Nebyly nalezeny žádné zprávy"
 
+#: src/ui/pane.rs:319
 msgid "Try another word or pick a different day."
 msgstr "Zkuste jiné slovo nebo vyberte jiný den."
 
+#: src/ui/pane.rs:346
+#, rust-format
 msgid "Only the newest {} matches are listed. Narrow the search or pick a day."
-msgstr "Zobrazeny jsou pouze nejnovější shody ({}). Zúžte hledání nebo vyberte den."
+msgstr ""
+"Zobrazeny jsou pouze nejnovější shody ({}). Zúžte hledání nebo vyberte den."
 
+#: src/ui/pane.rs:435
 msgid "Clear the day filter"
 msgstr "Zrušit filtr dne"
 
+#: src/ui/pane.rs:502
 msgid "Next month"
 msgstr "Další měsíc"
 
+#: src/ui/pane.rs:514
 msgid "Previous month"
 msgstr "Předchozí měsíc"
 
+#: src/privacy.rs:42
 msgctxt "privacy"
 msgid "Last seen"
 msgstr "Naposledy viděn(a)"
 
+#: src/privacy.rs:43
 msgctxt "privacy"
 msgid "Online"
 msgstr "Online"
 
+#: src/privacy.rs:44
 msgctxt "privacy"
 msgid "Profile photo"
 msgstr "Profilová fotografie"
 
+#: src/privacy.rs:45
 msgctxt "privacy"
 msgid "About"
 msgstr "Informace o vás"
 
+#: src/privacy.rs:46
 msgctxt "privacy"
 msgid "Groups"
 msgstr "Skupiny"
 
+#: src/privacy.rs:47
 msgctxt "privacy"
 msgid "Read receipts"
 msgstr "Potvrzení o přečtení"
 
+#: src/privacy.rs:48
 msgctxt "privacy"
 msgid "Calls"
 msgstr "Hovory"
 
+#: src/privacy.rs:58
 msgid "Who can add you to groups."
 msgstr "Kdo vás může přidávat do skupin."
 
+#: src/privacy.rs:60
 msgid "For your whole account. Groups always send them."
 msgstr "Platí pro celý váš účet. Skupiny je odesílají vždy."
 
+#: src/privacy.rs:139
 msgctxt "privacy"
 msgid "Everyone"
 msgstr "Všichni"
 
+#: src/privacy.rs:140
 msgctxt "privacy"
 msgid "My contacts"
 msgstr "Moje kontakty"
 
+#: src/privacy.rs:141
 msgctxt "privacy"
 msgid "My contacts except…"
 msgstr "Moje kontakty kromě…"
 
+#: src/privacy.rs:142
 msgctxt "privacy"
 msgid "Nobody"
 msgstr "Nikdo"
 
+#: src/privacy.rs:143
 msgctxt "privacy"
 msgid "Same as last seen"
 msgstr "Stejně jako naposledy viděn(a)"
 
+#: src/privacy.rs:144
 msgctxt "privacy"
 msgid "Silence unknown callers"
 msgstr "Ztlumit neznámé volající"
 
+#: src/ui/image_editor.rs:125
 msgid "Cancel (Esc)"
 msgstr "Zrušit (Esc)"
 
+#: src/ui/image_editor.rs:138
 msgid "Keep this crop"
 msgstr "Ponechat tento ořez"
 
+#: src/ui/image_editor.rs:160
 msgid "Reset"
 msgstr "Obnovit"
 
+#: src/ui/image_editor.rs:164
 msgid "Turn right"
 msgstr "Otočit doprava"
 
+#: src/ui/image_editor.rs:177
 msgid "Turn left"
 msgstr "Otočit doleva"
 
+#: src/ui/image_preview.rs:281
 msgid "Close preview (Esc)"
 msgstr "Zavřít náhled (Esc)"
 
+#: src/ui/image_preview.rs:294 src/ui/image_preview.rs:631
 msgid "Open in another app"
 msgstr "Otevřít v jiné aplikaci"
 
+#: src/ui/image_preview.rs:336
 msgid "Zoom in"
 msgstr "Přiblížit"
 
+#: src/ui/image_preview.rs:346
 msgid "Fit"
 msgstr "Přizpůsobit"
 
+#: src/ui/image_preview.rs:347
 msgid "Show at original size"
 msgstr "Zobrazit v původní velikosti"
 
+#: src/ui/image_preview.rs:353
 msgid "Fit to the window (0)"
 msgstr "Přizpůsobit oknu (0)"
 
+#: src/ui/image_preview.rs:369
 msgid "Zoom out"
 msgstr "Oddálit"
 
+#: src/ui/image_preview.rs:481
 msgid "Show in the chat"
 msgstr "Zobrazit v chatu"
 
+#: src/ui/image_preview.rs:536
 msgid "Show the photo"
 msgstr "Zobrazit fotografii"
 
+#: src/ui/image_preview.rs:540
 msgid "Play motion photo"
 msgstr "Přehrát pohyblivou fotografii"
 
+#: src/ui/image_preview.rs:738
 msgid "This image could not be displayed in ZapFast."
 msgstr "Tento obrázek se v ZapFastu nepodařilo zobrazit."
 
+#: src/ui/image_preview.rs:741
 msgid "Open externally"
 msgstr "Otevřít v jiné aplikaci"
 
+#: src/ui/image_preview.rs:903
 msgid "Play or pause the video"
 msgstr "Přehrát nebo pozastavit video"
 
+#: src/ui/lock.rs:17
 msgid "ZapFast is locked"
 msgstr "ZapFast je uzamčen"
 
+#: src/ui/lock.rs:23
 msgid "Unlinking this computer…"
 msgstr "Odpojuje se tento počítač…"
 
+#: src/ui/lock.rs:52
 msgid "Enter your password to unlock."
 msgstr "Pro odemknutí zadejte heslo."
 
+#: src/ui/lock.rs:66
 msgid "Password"
 msgstr "Heslo"
 
+#: src/ui/lock.rs:76
 #, rust-format
 msgid "Too many wrong passwords. Try again in {seconds} s."
 msgstr "Příliš mnoho chybných hesel. Zkuste to znovu za {seconds} s."
 
+#: src/ui/lock.rs:97
 msgid "Unlock"
 msgstr "Odemknout"
 
+#: src/ui/lock.rs:108
 msgid "Forgot password? Unlink this computer"
 msgstr "Zapomněli jste heslo? Odpojit tento počítač"
 
-msgid "Without the password, the only way back in is to unlink. This removes the device from WhatsApp, deletes the chats stored here, and turns the app lock off. You can link again with a new code."
-msgstr "Bez hesla se můžete vrátit pouze odpojením zařízení. Tím se zařízení odebere z WhatsAppu, smažou se zdejší chaty a vypne se zámek aplikace. Zařízení pak můžete znovu propojit novým kódem."
+#: src/ui/lock.rs:131
+msgid ""
+"Without the password, the only way back in is to unlink. This removes the "
+"device from WhatsApp, deletes the chats stored here, and turns the app lock "
+"off. You can link again with a new code."
+msgstr ""
+"Bez hesla se můžete vrátit pouze odpojením zařízení. Tím se zařízení odebere "
+"z WhatsAppu, smažou se zdejší chaty a vypne se zámek aplikace. Zařízení pak "
+"můžete znovu propojit novým kódem."
 
-#. Translators: the body of a notification that hides who wrote and what: a message has arrived.
+#. Translators: the body of a notification that hides who wrote and
+#. what: a message has arrived.
+#: src/notify.rs:400
 msgctxt "notification"
 msgid "New message"
 msgstr "Nová zpráva"
 
+#: src/settings.rs:347
 msgid "After 1 minute"
 msgstr "Po 1 minutě"
 
+#: src/settings.rs:348
 msgid "After 15 minutes"
 msgstr "Po 15 minutách"
 
+#: src/settings.rs:349
 msgid "After 1 hour"
 msgstr "Po 1 hodině"
 
+#: src/settings.rs:381
 msgid "Direct messages"
 msgstr "Soukromé zprávy"
 
+#: src/settings.rs:383
 msgid "Direct messages and groups"
 msgstr "Soukromé zprávy a skupiny"
 
+#: src/account.rs:342
 #, rust-format
 msgid "Account {id}"
 msgstr "Účet {id}"
 
+#: src/ui/accounts.rs:35
 msgid "Switch account"
 msgstr "Přepnout účet"
 
+#: src/ui/accounts.rs:117
 msgid "Not linked"
 msgstr "Nepřipojeno"
 
+#: src/ui/accounts.rs:207 src/ui/accounts.rs:325
 msgid "Mute notifications"
 msgstr "Ztlumit oznámení"
 
+#: src/ui/accounts.rs:323
 msgid "Unmute notifications"
 msgstr "Zapnout oznámení"
 
+#: src/ui/accounts.rs:339
 #, rust-format
 msgid "{count} unread chats"
 msgstr "Nepřečtené chaty: {count}"
 
+#: src/ui/accounts.rs:345
 msgid "notifications muted"
 msgstr "oznámení jsou ztlumena"
 
+#: src/ui/accounts.rs:379
 msgid "Use another account"
 msgstr "Použít jiný účet"
 
+#: src/ui/info.rs:47
 msgid "Media, links and docs"
 msgstr "Média, odkazy a dokumenty"
 
+#: src/ui/info.rs:299
 msgid "Group info"
 msgstr "Informace o skupině"
 
+#: src/ui/info.rs:301
 msgid "Channel info"
 msgstr "Informace o kanálu"
 
+#: src/ui/info.rs:303
 msgid "Contact info"
 msgstr "Informace o kontaktu"
 
+#: src/ui/info.rs:361
 msgid "View photo"
 msgstr "Zobrazit fotografii"
 
+#: src/ui/info.rs:392
 msgid "Edit group name"
 msgstr "Upravit název skupiny"
 
+#: src/ui/info.rs:519 src/ui/info.rs:676 src/ui/info.rs:1940
 msgid "Saving…"
 msgstr "Ukládání…"
 
+#: src/ui/info.rs:712
 msgid "Add group description"
 msgstr "Přidat popis skupiny"
 
+#: src/ui/info.rs:722
 msgid "Description"
 msgstr "Popis"
 
+#: src/ui/info.rs:733
 msgid "Edit group description"
 msgstr "Upravit popis skupiny"
 
+#: src/ui/info.rs:760 src/ui/info.rs:1885
 msgid "Group permissions"
 msgstr "Oprávnění skupiny"
 
+#: src/ui/info.rs:935 src/ui/new_group.rs:76
 msgid "Add members"
 msgstr "Přidat členy"
 
+#: src/ui/info.rs:989
 #, rust-format
 msgid "Options for {name}"
 msgstr "Možnosti pro {name}"
 
+#: src/ui/info.rs:1041
 msgid "Group admin"
 msgstr "Správce skupiny"
 
+#: src/ui/info.rs:1169
 #, rust-format
 msgid "{}+"
 msgstr "{}+"
 
+#: src/ui/info.rs:1222
 msgid "Could not list the media."
 msgstr "Média se nepodařilo načíst."
 
+#: src/ui/info.rs:1230 src/ui/info.rs:1777 src/ui/login.rs:136
 msgid "Try again"
 msgstr "Zkusit znovu"
 
+#: src/ui/info.rs:1342
 msgid "No media"
 msgstr "Žádná média"
 
+#: src/ui/info.rs:1345
 msgid "Photos and videos shared in this chat will show here."
 msgstr "Zde se zobrazí fotografie a videa sdílená v tomto chatu."
 
+#: src/ui/info.rs:1519
 msgid "No documents"
 msgstr "Žádné dokumenty"
 
+#: src/ui/info.rs:1520
 msgid "Files shared in this chat will show here."
 msgstr "Zde se zobrazí soubory sdílené v tomto chatu."
 
+#: src/ui/info.rs:1543
+#, rust-format
 msgid "{} page"
 msgid_plural "{} pages"
 msgstr[0] "{} stránka"
 msgstr[1] "{} stránky"
 msgstr[2] "{} stránek"
 
+#: src/ui/info.rs:1565
 msgid "No links"
 msgstr "Žádné odkazy"
 
+#: src/ui/info.rs:1566
 msgid "Links shared in this chat will show here."
 msgstr "Zde se zobrazí odkazy sdílené v tomto chatu."
 
+#: src/ui/info.rs:1639
 msgid "Only the newest items are listed."
 msgstr "Zobrazují se pouze nejnovější položky."
 
+#: src/ui/info.rs:1655
 msgctxt "info tab"
 msgid "Media"
 msgstr "Média"
 
+#: src/ui/info.rs:1656
 msgctxt "info tab"
 msgid "Docs"
 msgstr "Dokumenty"
 
+#: src/ui/info.rs:1657
 msgctxt "info tab"
 msgid "Links"
 msgstr "Odkazy"
 
+#: src/ui/info.rs:1740
 msgid "Invite via link"
 msgstr "Pozvat pomocí odkazu"
 
+#: src/ui/info.rs:1750
 msgid "Getting the link…"
 msgstr "Získává se odkaz…"
 
+#: src/ui/info.rs:1787
 msgid "Copy link"
 msgstr "Kopírovat odkaz"
 
+#: src/ui/info.rs:1851
 msgid "Make group admin"
 msgstr "Udělat správcem skupiny"
 
+#: src/ui/info.rs:1855
 msgid "Dismiss as admin"
 msgstr "Odebrat roli správce"
 
+#: src/ui/info.rs:1859
 msgid "Remove from group"
 msgstr "Odebrat ze skupiny"
 
+#: src/ui/info.rs:1924
 msgid "Admins can:"
 msgstr "Správci mohou:"
 
+#: src/ui/info.rs:1926
 msgid "Members can:"
 msgstr "Členové mohou:"
 
+#: src/ui/info.rs:2069
 msgid "Change group photo"
 msgstr "Změnit fotografii skupiny"
 
+#: src/ui/info.rs:2076 src/ui/new_group.rs:311
 msgid "Change photo"
 msgstr "Změnit fotografii"
 
+#: src/ui/info.rs:2077 src/ui/new_group.rs:312
 msgid "Remove photo"
 msgstr "Odebrat fotografii"
 
+#: src/ui/info.rs:2103
 msgid "Group description"
 msgstr "Popis skupiny"
 
+#: src/ui/info.rs:2142
 msgid "Save description"
 msgstr "Uložit popis"
 
+#: src/ui/info.rs:2184
 msgid "Group name"
 msgstr "Název skupiny"
 
+#: src/ui/info.rs:2227
 msgid "Save name (Enter)"
 msgstr "Uložit název (Enter)"
 
+#: src/ui/info.rs:2239
 msgid "Cancel (Escape)"
 msgstr "Zrušit (Escape)"
 
+#: src/ui/login.rs:16
 msgid "A native WhatsApp client."
 msgstr "Nativní klient WhatsAppu."
 
+#: src/ui/login.rs:92 src/ui/mod.rs:592
 msgid "Connecting to WhatsApp…"
 msgstr "Připojování k WhatsAppu…"
 
+#: src/ui/login.rs:99
 msgid "Linked. Waiting for your chats…"
 msgstr "Propojeno. Čeká se na vaše chaty…"
 
+#: src/ui/login.rs:108
 msgid "This computer was unlinked from your phone. Requesting a new code."
 msgstr "Tento počítač byl odpojen od telefonu. Žádá se o nový kód."
 
+#: src/ui/login.rs:117
 msgid "Requesting a new code…"
 msgstr "Žádá se o nový kód…"
 
+#: src/ui/login.rs:147
 msgid "Start over…"
 msgstr "Začít znovu…"
 
+#: src/ui/login.rs:165
 #, rust-format
 msgid "Requesting a code for +{phone}…"
 msgstr "Žádá se o kód pro +{phone}…"
 
+#: src/ui/login.rs:174
 msgid "Waiting for a code from WhatsApp…"
 msgstr "Čeká se na kód od WhatsAppu…"
 
+#: src/ui/login.rs:185
 msgid "Unofficial client. Using it may be against WhatsApp's terms of service."
-msgstr "Neoficiální klient. Jeho používání může být v rozporu s podmínkami služby WhatsApp."
+msgstr ""
+"Neoficiální klient. Jeho používání může být v rozporu s podmínkami služby "
+"WhatsApp."
 
+#: src/ui/login.rs:211
 msgid "Link this computer"
 msgstr "Propojit tento počítač"
 
+#: src/ui/login.rs:225 src/ui/login.rs:281
 msgid "Open WhatsApp on your phone"
 msgstr "Otevřete WhatsApp v telefonu"
 
+#: src/ui/login.rs:226 src/ui/login.rs:282
 msgid "Tap Menu or Settings, then Linked devices"
 msgstr "Klepněte na Nabídka nebo Nastavení a poté na Propojená zařízení"
 
+#: src/ui/login.rs:227
 msgid "Tap Link a device and point the phone at this code"
 msgstr "Klepněte na Propojit zařízení a namiřte telefon na tento kód"
 
+#: src/ui/login.rs:244
 msgid "Link with phone number instead"
 msgstr "Místo toho propojit pomocí telefonního čísla"
 
+#: src/ui/login.rs:259
 msgid "Enter this code on your phone"
 msgstr "Zadejte tento kód v telefonu"
 
+#: src/ui/login.rs:264
 #, rust-format
 msgid "for +{phone}"
 msgstr "pro +{phone}"
 
+#: src/ui/login.rs:285
 msgid "Tap Link a device, then Link with phone number instead"
-msgstr "Klepněte na Propojit zařízení a poté na Propojit pomocí telefonního čísla"
+msgstr ""
+"Klepněte na Propojit zařízení a poté na Propojit pomocí telefonního čísla"
 
+#: src/ui/rail.rs:308
+msgid "Calls"
+msgstr "Hovory"
+
+#: src/ui/rail.rs:315
 msgid "Starred messages"
 msgstr "Označené zprávy"
 
+#: src/ui/rail.rs:323
+msgid "Archived"
+msgstr "Archivované"
+
+#: src/ui/rail.rs:329
 msgid "Locked"
 msgstr "Uzamčené"
 
+#: src/ui/mod.rs:548
 #, rust-format
 msgid "Drop to send to {name}"
 msgstr "Přetažením odešlete uživateli {name}"
 
+#: src/ui/mod.rs:569
 #, rust-format
 msgid "Loading chat history… {percent}%"
 msgstr "Načítá se historie chatu… {percent} %"
 
+#: src/ui/mod.rs:572
 msgid "Loading chat history…"
 msgstr "Načítá se historie chatu…"
 
+#: src/ui/mod.rs:582
 #, rust-format
 msgid "ZapFast {version} is available"
 msgstr "Je dostupný ZapFast {version}"
 
+#: src/ui/mod.rs:599
 #, rust-format
 msgid "Offline ({reason}). Reconnecting…"
 msgstr "Offline ({reason}). Probíhá opětovné připojení…"
 
+#: src/ui/mod.rs:614
 msgid "Not linked to a phone"
 msgstr "Není propojeno s telefonem"
 
+#: src/ui/mod.rs:648
 msgid "Update"
 msgstr "Aktualizovat"
 
+#: src/ui/mod.rs:774
 msgid "Dismiss"
 msgstr "Zavřít"
 
+#: src/ui/mod.rs:789
 msgid "Copy this message"
 msgstr "Zkopírovat tuto zprávu"
 
+#: src/ui/mod.rs:989
 msgid "Minimize"
 msgstr "Minimalizovat"
 
+#: src/ui/mod.rs:990
 msgid "Maximize"
 msgstr "Maximalizovat"
 
+#: src/ui/mod.rs:991
 msgid "Restore"
 msgstr "Obnovit"
 
+#: src/ui/new_group.rs:78
 msgid "Add group members"
 msgstr "Přidat členy skupiny"
 
+#: src/ui/new_group.rs:156
 msgctxt "add group members"
 msgid "Add"
 msgstr "Přidat"
 
+#: src/ui/new_group.rs:158
 msgid "Next"
 msgstr "Další"
 
+#: src/ui/new_group.rs:160
 msgid "Choose at least one person"
 msgstr "Vyberte alespoň jednu osobu"
 
+#: src/ui/new_group.rs:186
 #, rust-format
 msgid "Remove {name}"
 msgstr "Odebrat {name}"
 
+#: src/ui/new_group.rs:310
 msgid "Add group photo"
 msgstr "Přidat fotografii skupiny"
 
+#: src/ui/new_group.rs:341
 msgid "Group name (required)"
 msgstr "Název skupiny (povinný)"
 
+#: src/ui/new_group.rs:416
 #, rust-format
 msgid "{count} member besides you"
 msgid_plural "{count} members besides you"
@@ -2568,130 +3659,175 @@ msgstr[0] "{count} člen kromě vás"
 msgstr[1] "{count} členové kromě vás"
 msgstr[2] "{count} členů kromě vás"
 
+#: src/ui/new_group.rs:445
 msgid "Creating the group…"
 msgstr "Vytváří se skupina…"
 
+#: src/group_admin.rs:60
 msgid "Edit group settings"
 msgstr "Upravit nastavení skupiny"
 
+#: src/group_admin.rs:61
 msgid "Send new messages"
 msgstr "Odesílat nové zprávy"
 
+#: src/group_admin.rs:62
 msgid "Add other members"
 msgstr "Přidávat další členy"
 
+#: src/group_admin.rs:63
 msgid "Approve new members"
 msgstr "Schvalovat nové členy"
 
+#: src/group_admin.rs:73
 msgid "Change the group's name, photo, description and disappearing messages."
 msgstr "Měnit název a fotografii skupiny, její popis a mizející zprávy."
 
+#: src/group_admin.rs:75
 msgid "Write in the group."
 msgstr "Psát do skupiny."
 
+#: src/group_admin.rs:76
 msgid "Add people to the group."
 msgstr "Přidávat lidi do skupiny."
 
+#: src/group_admin.rs:79
 msgid "When turned on, admins must approve anyone who wants to join."
 msgstr "Je-li zapnuto, správci musí schválit každého, kdo se chce připojit."
 
+#: src/group_admin.rs:216
 msgid "Connect to WhatsApp to change the group."
 msgstr "Pro změnu skupiny se připojte k WhatsAppu."
 
+#: src/group_admin.rs:217
 msgid "WhatsApp did not answer in time. Try again."
 msgstr "WhatsApp včas neodpověděl. Zkuste to znovu."
 
+#: src/group_admin.rs:218
 msgid "Only group admins can do that."
 msgstr "Tuto akci mohou provést pouze správci skupiny."
 
+#: src/group_admin.rs:219
 msgid "Too many changes at once. Try again later."
 msgstr "Příliš mnoho změn najednou. Zkuste to později."
 
+#: src/group_admin.rs:220
 msgid "Could not change the group. Try again."
 msgstr "Skupinu se nepodařilo změnit. Zkuste to znovu."
 
+#: src/group_admin.rs:228
 msgid "Connect to WhatsApp to see the invite link."
 msgstr "Pro zobrazení odkazu s pozvánkou se připojte k WhatsAppu."
 
+#: src/group_admin.rs:229
 msgid "Only group admins can see the invite link."
 msgstr "Odkaz s pozvánkou mohou zobrazit pouze správci skupiny."
 
+#: src/group_admin.rs:230
 msgid "Could not get the invite link."
 msgstr "Odkaz s pozvánkou se nepodařilo získat."
 
-msgid "{names} could not be added to the group. Their privacy settings may not allow it. You can send them the invite link."
-msgstr "{names} se nepodařilo přidat do skupiny. Jejich nastavení soukromí to možná neumožňuje. Můžete jim poslat odkaz s pozvánkou."
+#: src/group_admin.rs:291
+#, rust-format
+msgid ""
+"{names} could not be added to the group. Their privacy settings may not "
+"allow it. You can send them the invite link."
+msgstr ""
+"{names} se nepodařilo přidat do skupiny. Jejich nastavení soukromí to možná "
+"neumožňuje. Můžete jim poslat odkaz s pozvánkou."
 
+#: src/group_admin.rs:295
 #, rust-format
 msgid "{names} left the group recently and cannot be added back yet."
 msgstr "{names} nedávno skupinu opustil(a) a zatím jej nelze znovu přidat."
 
+#: src/group_admin.rs:297
 #, rust-format
 msgid "The group is full. {names} could not be added."
 msgstr "Skupina je plná. {names} se nepodařilo přidat."
 
+#: src/group_admin.rs:298
 #, rust-format
 msgid "{names} could not be added to the group."
 msgstr "{names} se nepodařilo přidat do skupiny."
 
+#: src/group_admin.rs:308
 #, rust-format
 msgid "{name} is now a group admin."
 msgstr "{name} je nyní správcem skupiny."
 
+#: src/group_admin.rs:309
 #, rust-format
 msgid "{name} is no longer a group admin."
 msgstr "{name} už není správcem skupiny."
 
+#: src/group_admin.rs:310
 #, rust-format
 msgid "{name} was removed from the group."
 msgstr "{name} byl(a) odebrán(a) ze skupiny."
 
+#: src/ui/polls.rs:39
 msgid "Question"
 msgstr "Otázka"
 
+#: src/ui/polls.rs:52
 msgid "Ask a question"
 msgstr "Položit otázku"
 
+#: src/ui/polls.rs:66
 msgid "Answers"
 msgstr "Odpovědi"
 
+#: src/ui/polls.rs:90
 #, rust-format
 msgid "Answer {index}"
 msgstr "Odpověď {index}"
 
+#: src/ui/polls.rs:109
 msgid "Remove answer"
 msgstr "Odebrat odpověď"
 
+#: src/ui/polls.rs:126
 msgid "Add answer"
 msgstr "Přidat odpověď"
 
+#: src/ui/polls.rs:138
 msgid "Allow multiple answers"
 msgstr "Povolit více odpovědí"
 
+#: src/ui/polls.rs:165
 msgid "Sending…"
 msgstr "Odesílání…"
 
+#: src/ui/polls.rs:167
 msgid "Send poll"
 msgstr "Odeslat anketu"
 
+#: src/ui/polls.rs:217
 msgid "Select one answer"
 msgstr "Vyberte jednu odpověď"
 
+#: src/ui/polls.rs:219
 msgid "Select answers"
 msgstr "Vyberte odpovědi"
 
+#: src/ui/polls.rs:321
 msgid "Sending vote…"
 msgstr "Odesílá se hlas…"
 
+#: src/ui/polls.rs:325
 msgid "Waiting for your phone · earlier votes may be missing"
 msgstr "Čeká se na telefon · starší hlasy mohou chybět"
 
+#: src/ui/polls.rs:328
 msgid "Loading earlier votes from your phone…"
 msgstr "Načítají se starší hlasy z telefonu…"
 
+#: src/ui/polls.rs:330
 msgid "Earlier votes have not been loaded yet"
 msgstr "Starší hlasy zatím nebyly načteny"
 
+#: src/ui/polls.rs:332
 #, rust-format
 msgid "{} voter"
 msgid_plural "{} voters"
@@ -2699,24 +3835,33 @@ msgstr[0] "{} hlasující"
 msgstr[1] "{} hlasující"
 msgstr[2] "{} hlasujících"
 
+#: src/ui/polls.rs:351
 msgid "Voting key unavailable · use your phone"
 msgstr "Hlasovací klíč není dostupný · použijte telefon"
 
+#: src/ui/polls.rs:358
 msgid "Reconnect to vote"
 msgstr "Pro hlasování se znovu připojte"
 
+#: src/ui/polls.rs:401 src/ui/polls.rs:430
 msgid "Show votes"
 msgstr "Zobrazit hlasy"
 
+#: src/ui/polls.rs:457
 msgid "Poll results"
 msgstr "Výsledky ankety"
 
+#: src/ui/polls.rs:484
 msgid "This poll is no longer available."
 msgstr "Tato anketa už není dostupná."
 
+#: src/ui/polls.rs:505
 msgid "Earlier votes may still be missing. Results update as they arrive."
-msgstr "Některé starší hlasy mohou stále chybět. Výsledky se aktualizují s jejich načítáním."
+msgstr ""
+"Některé starší hlasy mohou stále chybět. Výsledky se aktualizují s jejich "
+"načítáním."
 
+#: src/ui/polls.rs:537
 #, rust-format
 msgid "{} vote"
 msgid_plural "{} votes"
@@ -2724,77 +3869,104 @@ msgstr[0] "{} hlas"
 msgstr[1] "{} hlasy"
 msgstr[2] "{} hlasů"
 
+#: src/ui/polls.rs:581
 msgid "Participant details are not available yet"
 msgstr "Podrobnosti o účastnících zatím nejsou dostupné"
 
+#: src/ui/update.rs:25 src/ui/update.rs:38
 msgid "Update ZapFast"
 msgstr "Aktualizovat ZapFast"
 
+#: src/ui/update.rs:49
 msgid "Close update"
 msgstr "Zavřít aktualizaci"
 
+#: src/ui/update.rs:63
 msgid "Release notes"
 msgstr "Poznámky k vydání"
 
+#: src/ui/update.rs:70
 msgid "Checking download…"
 msgstr "Kontroluje se stahování…"
 
+#: src/ui/update.rs:72
 msgid "Downloading update…"
 msgstr "Stahuje se aktualizace…"
 
+#: src/ui/update.rs:85
 #, rust-format
 msgid "{received} of {total} MB"
 msgstr "{received} z {total} MB"
 
+#: src/ui/update.rs:104
 msgid "Ready to install"
 msgstr "Připraveno k instalaci"
 
-msgid "Finish any unsent messages or recordings before restarting. ZapFast will briefly disconnect, then reconnect automatically."
-msgstr "Před restartem dokončete odesílání zpráv a nahrávání. ZapFast se na chvíli odpojí a pak se automaticky znovu připojí."
+#: src/ui/update.rs:113
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr ""
+"Před restartem dokončete odesílání zpráv a nahrávání. ZapFast se na chvíli "
+"odpojí a pak se automaticky znovu připojí."
 
+#: src/ui/update.rs:121
 msgid "Restart to update"
 msgstr "Restartovat a aktualizovat"
 
+#: src/ui/update.rs:130
 msgid "Preparing to restart…"
 msgstr "Připravuje se restart…"
 
+#: src/ui/update.rs:147
 msgid "Download from GitHub"
 msgstr "Stáhnout z GitHubu"
 
+#: src/ui/update.rs:152
 msgid "Retry download"
 msgstr "Zkusit stahování znovu"
 
+#: src/ui/update.rs:154
 msgid "Download update"
 msgstr "Stáhnout aktualizaci"
 
+#: src/a11y.rs:97
 #, rust-format
 msgid "Messages in {name}"
 msgstr "Zprávy v chatu {name}"
 
+#: src/a11y.rs:99
 #, rust-format
 msgid "Messages with {name}"
 msgstr "Zprávy s kontaktem {name}"
 
+#: src/a11y.rs:122
 #, rust-format
 msgid "replying to {name}: {text}"
 msgstr "odpovídá uživateli {name}: {text}"
 
+#: src/a11y.rs:130
 msgid "forwarded"
 msgstr "přeposláno"
 
+#: src/a11y.rs:133
 msgid "edited"
 msgstr "upraveno"
 
+#: src/a11y.rs:136
 msgid "starred"
 msgstr "označeno"
 
+#: src/a11y.rs:139
 msgid "pinned"
 msgstr "připnuto"
 
+#: src/a11y.rs:149
 #, rust-format
 msgid "reactions: {reactions}"
 msgstr "reakce: {reactions}"
 
+#: src/a11y.rs:167
 #, rust-format
 msgid "{count} photo"
 msgid_plural "{count} photos"
@@ -2802,6 +3974,7 @@ msgstr[0] "{count} fotografie"
 msgstr[1] "{count} fotografie"
 msgstr[2] "{count} fotografií"
 
+#: src/a11y.rs:173
 #, rust-format
 msgid "{count} video"
 msgid_plural "{count} videos"
@@ -2809,6 +3982,7 @@ msgstr[0] "{count} video"
 msgstr[1] "{count} videa"
 msgstr[2] "{count} videí"
 
+#: src/a11y.rs:253
 #, rust-format
 msgid "Poll: {question}, {count} option"
 msgid_plural "Poll: {question}, {count} options"
@@ -2816,33 +3990,43 @@ msgstr[0] "Anketa: {question}, {count} možnost"
 msgstr[1] "Anketa: {question}, {count} možnosti"
 msgstr[2] "Anketa: {question}, {count} možností"
 
+#: src/a11y.rs:269
 #, rust-format
 msgid "Unsupported message ({what})"
 msgstr "Nepodporovaná zpráva ({what})"
 
+#: src/a11y.rs:339
 msgid "downloading"
 msgstr "stahuje se"
 
+#: src/a11y.rs:343
 msgid "download failed"
 msgstr "stahování se nezdařilo"
 
+#: src/a11y.rs:348
 msgid "not downloaded"
 msgstr "nestáhnuto"
 
+#: src/a11y.rs:357
 msgid "sending"
 msgstr "odesílá se"
 
+#: src/a11y.rs:358
 msgid "sent"
 msgstr "odesláno"
 
+#: src/a11y.rs:359
 msgid "delivered"
 msgstr "doručeno"
 
+#: src/a11y.rs:360
 msgid "read"
 msgstr "přečteno"
 
+#: src/a11y.rs:361
 msgid "played"
 msgstr "přehráno"
 
+#: src/a11y.rs:362
 msgid "not sent"
 msgstr "neodesláno"
