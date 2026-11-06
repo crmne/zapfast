@@ -2811,7 +2811,7 @@ impl App {
         if self.info.as_ref().is_some_and(|info| info.chat == id) {
             self.close_info();
         }
-        if self.image_preview.as_ref().map(PreviewState::chat) == Some(id) {
+        if self.image_preview.as_ref().map(PreviewState::source_chat) == Some(id) {
             self.image_preview = None;
         }
         if matches!(
@@ -3868,7 +3868,7 @@ impl App {
                     && self
                         .image_preview
                         .as_ref()
-                        .map(PreviewState::chat)
+                        .map(PreviewState::source_chat)
                         .filter(|id| !id.is_empty())
                         .is_some_and(|id| {
                             self.chat(id)
@@ -5262,6 +5262,12 @@ impl App {
         // A live call in a locked chat goes back behind the bar.
         self.hide_private_call();
         self.drop_locked_panel();
+        if self.image_preview.as_ref().is_some_and(|preview| {
+            self.chat(preview.source_chat())
+                .is_some_and(|chat| chat.locked)
+        }) {
+            self.image_preview = None;
+        }
     }
 
     /// Takes a locked chat's info panel away once it may no longer be shown:
@@ -17119,16 +17125,19 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_picture_viewer_does_not_request_a_chat_album() {
+    fn a_profile_picture_has_no_album_and_closes_with_locked_access() {
         let ctx = egui::Context::default();
         let mut app = app_with_album(3);
+        app.chat_mut("1@s.whatsapp.net").unwrap().locked = true;
+        app.settings.set_chat_lock_code(Some("fixture-code"));
+        app.enter_locked_folder();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
         let file = tempfile::NamedTempFile::with_suffix(".jpg").unwrap();
         app.apply(
             Action::PreviewImage {
                 path: file.path().to_owned(),
-                chat: String::new(),
+                chat: "1@s.whatsapp.net".into(),
                 message: String::new(),
                 card: None,
             },
@@ -17141,6 +17150,9 @@ mod tests {
             commands.try_recv().is_err(),
             "there is no chat album to request"
         );
+        app.window_gone();
+        assert!(!app.locked_folder_open());
+        assert!(app.image_preview.is_none());
     }
 
     #[test]

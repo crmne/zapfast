@@ -324,10 +324,10 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
 
 /// Opens a profile picture in the image viewer. It belongs to no message, so
 /// the viewer has no album of a chat to browse from it.
-fn view_photo(picture: &std::path::Path) -> Action {
+fn view_photo(picture: &std::path::Path, source_chat: Option<&str>) -> Action {
     Action::PreviewImage {
         path: picture.to_path_buf(),
-        chat: String::new(),
+        chat: source_chat.unwrap_or_default().to_owned(),
         message: String::new(),
         card: None,
     }
@@ -365,7 +365,8 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                 .on_hover_text(label.as_ref())
                 .clicked()
             {
-                app.actions.push(view_photo(picture));
+                let action = view_photo(picture, app.chat(id).map(|chat| chat.id.as_str()));
+                app.actions.push(action);
             }
         } else {
             widgets::avatar(ui, &palette, name, id, photo, None);
@@ -2088,7 +2089,7 @@ fn group_photo(
                     item.request_focus();
                 }
                 if item.clicked() {
-                    chosen = Some(view_photo(picture));
+                    chosen = Some(view_photo(picture, Some(id)));
                     ui.close();
                 }
             }
@@ -2278,12 +2279,13 @@ mod tests {
             chat,
             message,
             card,
-        } = super::view_photo(path)
+        } = super::view_photo(path, Some("1@s.whatsapp.net"))
         else {
             panic!("the viewer");
         };
         assert_eq!(shown, path);
-        assert!(chat.is_empty() && message.is_empty() && card.is_none());
+        assert_eq!(chat, "1@s.whatsapp.net");
+        assert!(message.is_empty() && card.is_none());
     }
 
     use super::domain;
