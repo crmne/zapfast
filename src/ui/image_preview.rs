@@ -17,7 +17,7 @@ use crate::theme::{self, Icon};
 use super::conversation::thumbnail_uri;
 
 /// Height of the header across the top.
-const HEADER: f32 = 56.0;
+pub(crate) const HEADER: f32 = 56.0;
 /// Height of the album strip along the bottom.
 const STRIP: f32 = 78.0;
 const THUMB: f32 = 56.0;
@@ -267,7 +267,9 @@ fn header(
             } => Some(motion.clone()),
             _ => None,
         });
-    ui.horizontal(|ui| {
+    // The header's full height, so its controls are centred in it instead of
+    // sitting along the window's top edge.
+    ui.horizontal_centered(|ui| {
         // The actions are laid out from the right edge first, and the title
         // takes what is left of the row, truncated: a long chat name used to
         // run under the icons.

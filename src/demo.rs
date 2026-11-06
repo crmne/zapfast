@@ -14196,6 +14196,37 @@ mod tests {
         assert_eq!(highlight.chat, crate::demo::SAMPLES[0].id);
     }
 
+    /// The viewer's header controls sit centred in the header, instead of
+    /// along the window's top edge where they were out of line with the
+    /// caption buttons the title bar draws.
+    #[test]
+    fn the_viewer_header_controls_are_centred_in_the_header() {
+        use egui::accesskit::Role;
+        let mut app = app();
+        apply_flags(&mut app, Some("preview"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let centre = crate::ui::image_preview::HEADER / 2.0;
+        for wanted in [
+            "Close preview (Esc)",
+            "Zoom in",
+            "Zoom out",
+            "Show in the chat",
+        ] {
+            let (_, _, at) = nodes
+                .iter()
+                .find(|(label, role, _)| label == wanted && *role == Role::Button)
+                .unwrap_or_else(|| panic!("the viewer offers {wanted}"));
+            assert!(
+                (at.y - centre).abs() <= 0.5,
+                "{wanted} at {at:?}, off the header's centre line"
+            );
+        }
+    }
+
     /// Ctrl++ zooms the picture, not the whole interface, including when the
     /// layout needs Shift to type the plus.
     #[test]
