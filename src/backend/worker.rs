@@ -18933,16 +18933,11 @@ mod receipt_tests {
         let members = [PEER.to_owned(), ME.to_owned()];
         let member = |jid: &str, phone_number: Option<&str>, lid: Option<&str>| {
             let parse = |jid: &str| jid.parse().unwrap();
-            GroupParticipantInfo {
-                jid: parse(jid),
-                phone_number: phone_number.map(parse),
-                display_name: None,
-                r#type: None,
-                lid: lid.map(parse),
-                username: None,
-                join_time: None,
-                group_history_sent_state: None,
-            }
+            GroupParticipantInfo::builder()
+                .jid(parse(jid))
+                .maybe_phone_number(phone_number.map(parse))
+                .maybe_lid(lid.map(parse))
+                .build()
         };
         let removed = |group: &str, participant: GroupParticipantInfo, at: i64| {
             wa_events::Event::GroupUpdate(
@@ -18950,10 +18945,11 @@ mod receipt_tests {
                     .group_jid(group.parse().unwrap())
                     .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
                     .is_lid_addressing_mode(false)
-                    .action(Box::new(GroupNotificationAction::Remove {
-                        participants: vec![participant],
-                        reason: None,
-                    }))
+                    .action(Box::new(
+                        GroupNotificationAction::remove()
+                            .participants(vec![participant])
+                            .build(),
+                    ))
                     .build(),
             )
         };
