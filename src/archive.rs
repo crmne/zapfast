@@ -2991,6 +2991,60 @@ pub(crate) mod tests {
         }).unwrap();
     }
 
+    /// Makes the commit of any transaction that files a message fail: each
+    /// new message leaves a deferred foreign key unmet, which SQLite checks
+    /// only when the outermost transaction commits.
+    pub(crate) fn set_commit_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "PRAGMA foreign_keys = ON;
+             CREATE TEMP TABLE IF NOT EXISTS commit_gate (id INTEGER PRIMARY KEY);
+             CREATE TEMP TABLE IF NOT EXISTS commit_blocker (gate INTEGER REFERENCES commit_gate (id) DEFERRABLE INITIALLY DEFERRED);
+             CREATE TEMP TRIGGER block_commit AFTER INSERT ON main.messages BEGIN INSERT INTO commit_blocker VALUES (1); END;"
+        } else {
+            "DROP TRIGGER temp.block_commit"
+        }).unwrap();
+    }
+
+    #[test]
+    fn a_scope_whose_commit_fails_rolls_back_and_later_writes_commit() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        let scope = Scope::begin(&archive.connection).unwrap();
+        scope
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('inside', 'undone')",
+                [],
+            )
+            .unwrap();
+        scope
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(scope.commit().is_err());
+        assert!(archive.connection.is_autocommit(), "the scope rolled back");
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(archive.connection.is_autocommit(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_batch_whose_commit_fails_rolls_back_and_later_writes_commit() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "undone").unwrap();
+        archive
+            .connection
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(archive.end_batch().is_err());
+        assert!(archive.connection.is_autocommit(), "the batch rolled back");
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(archive.connection.is_autocommit(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
     #[test]
     fn a_scope_that_fails_inside_a_batch_undoes_only_its_own_writes() {
         let archive = Archive::in_memory().unwrap();
