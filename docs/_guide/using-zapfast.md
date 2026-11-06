@@ -1003,6 +1003,8 @@ mutes all of that number's notifications while it stays connected, and leaves
 its unread chats out of the app icon's badge, as a muted chat's are.
 To keep messages off the screen, turn off **Show message content in
 notifications** in Settings: notifications then say only "New message".
+When someone reacts to one of your messages, ZapFast notifies you too, unless
+**Reaction notifications** is off in Settings.
 To hear less from busy chats, set **Limit repeat notifications** in
 **Settings > Notifications** to direct messages, groups, or both: a chat then
 sends one notification, then stays quiet for 10 minutes or until you read it,
