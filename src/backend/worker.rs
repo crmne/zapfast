@@ -6255,9 +6255,16 @@ impl Worker {
         } else {
             // What filing changes in memory beside the archive, put back if
             // the chunk rolls back: learn_lid would skip a mapping the
-            // archive lost, an early read or reaction it took would be gone,
-            // and a poll whose votes were lost would count as recovered.
+            // archive lost, a name the archive lost would match memory and
+            // never be saved again, a group whose row was lost would never
+            // be asked about again, an early read or reaction it took would
+            // be gone, and a poll whose votes were lost would count as
+            // recovered.
             let lid_to_pn = self.lid_to_pn.clone();
+            let contacts = self.contacts.clone();
+            let blocklist = self.blocklist.clone();
+            let group_info_requested = self.group_info_requested.clone();
+            let group_info_queue = self.group_info_queue.clone();
             let early = self.early.clone();
             let poll_history = self.poll_history.clone();
             let filed = self.file_history(parsed, metadata);
@@ -6265,15 +6272,26 @@ impl Worker {
                 Ok(()) => filed,
                 Err(error) => {
                     log::warn!("could not commit a history chunk: {error}");
+                    self.emit(Event::Error(format!(
+                        "Could not save part of the chat history: {error}"
+                    )));
                     self.lid_to_pn = lid_to_pn;
+                    self.contacts = contacts;
+                    self.blocklist = blocklist;
+                    self.group_info_requested = group_info_requested;
+                    self.group_info_queue = group_info_queue;
                     self.early = early;
                     self.poll_history = poll_history;
+                    self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
+                    self.publish_blocklist(None);
+                    self.emit_chats();
                     Vec::new()
                 }
             }
         };
-        // After the chunk settles, so a request they send is never one a
-        // rollback forgets.
+        // The phone-history request goes out after the chunk settles, so it
+        // is never one a rollback forgets. Filing a vote can run the vote
+        // pump inside the chunk; after a rollback it decrypts that vote again.
         self.pump_poll_votes();
         self.pump_poll_history();
         filed
@@ -22428,7 +22446,7 @@ mod receipt_tests {
     #[test]
     fn a_history_chunk_that_cannot_commit_answers_nothing_and_is_learned_again() {
         let group = "123-456@g.us";
-        let (mut worker, _events, _inbox, _wa) = worker();
+        let (mut worker, events, _inbox, _wa) = worker();
         let chunk = || ParsedHistory {
             chats: vec![parse_conversation({
                 let mut proto = wa::Conversation::default();
@@ -22448,10 +22466,19 @@ mod receipt_tests {
                 )];
                 proto
             })],
-            push_names: Vec::new(),
+            push_names: vec![("15550009999@s.whatsapp.net".into(), "Ada".into())],
             lids: vec![("4242@lid".into(), "15550004242@s.whatsapp.net".into())],
             stickers: Vec::new(),
         };
+        let named = |worker: &Worker| {
+            worker
+                .archive
+                .contacts()
+                .unwrap()
+                .iter()
+                .any(|contact| contact.push_name.as_deref() == Some("Ada"))
+        };
+        worker.blocklist.ids = Some(["4242@lid".to_owned()].into());
         worker.early.wait_read(group, "m0", false);
         crate::archive::tests::set_commit_failure(&worker.archive, true);
         assert!(
@@ -22460,9 +22487,49 @@ mod receipt_tests {
         );
         assert!(worker.archive.message(group, "m0").unwrap().is_none());
         assert!(worker.archive.lids().unwrap().is_empty());
+        let sent: Vec<Event> = events.try_iter().collect();
+        assert!(sent.iter().any(|event| matches!(
+            event,
+            Event::Error(text) if text.starts_with("Could not save part of the chat history")
+        )));
+        assert!(
+            matches!(
+                sent.iter().rev().find(|event| matches!(event, Event::Chats(_))),
+                Some(Event::Chats(chats)) if chats.iter().all(|chat| chat.id != group)
+            ),
+            "the window's chat list loses the group the archive lost"
+        );
+        assert!(
+            matches!(
+                sent.iter().rev().find(|event| matches!(event, Event::Contacts(_))),
+                Some(Event::Contacts(contacts)) if contacts.iter().all(|contact| contact.push_name.as_deref() != Some("Ada"))
+            ),
+            "the window's contacts are the restored ones"
+        );
+        assert!(
+            matches!(
+                sent.iter().rev().find(|event| matches!(event, Event::Blocklist { .. })),
+                Some(Event::Blocklist { state, .. }) if state.ids == Some(["4242@lid".to_owned()].into())
+            ),
+            "the window's blocked chat keeps its privacy id"
+        );
+        assert!(
+            !worker.group_info_requested.contains(group) && worker.group_info_queue.is_empty(),
+            "a group the archive lost is asked about when it comes again"
+        );
         assert!(
             !worker.lid_to_pn.contains_key("4242"),
             "the cache forgets the mapping the archive lost"
+        );
+        assert!(!named(&worker));
+        assert!(
+            !worker.contacts.contains_key("15550009999@s.whatsapp.net"),
+            "a name the archive lost is saved when it comes again"
+        );
+        assert_eq!(
+            worker.blocklist.ids,
+            Some(["4242@lid".to_owned()].into()),
+            "the blocked chat keeps the id the archive still knows it by"
         );
         assert_eq!(
             worker.early.take_read(group, "m0"),
@@ -22473,6 +22540,12 @@ mod receipt_tests {
         crate::archive::tests::set_commit_failure(&worker.archive, false);
         assert_eq!(worker.apply_history(chunk(), true).len(), 1);
         assert!(worker.lid_to_pn.contains_key("4242"));
+        assert!(named(&worker));
+        assert_eq!(
+            worker.blocklist.ids,
+            Some(["15550004242@s.whatsapp.net".to_owned()].into())
+        );
+        assert!(worker.group_info_queue.iter().any(|chat| chat == group));
         assert_eq!(
             worker.early.take_read(group, "m0"),
             None,

@@ -537,11 +537,18 @@ impl Archive {
     /// [`Archive::end_batch`]. Without it each statement commits on its own,
     /// and a history chunk rewrites the same log pages for every message.
     pub fn begin_batch(&self) -> Result<()> {
+        if !self.connection.is_autocommit() {
+            // Only a rollback that failed leaves a transaction open here.
+            // Nothing would ever commit it, since every later release is
+            // nested inside it, so the batch would save nothing.
+            log::warn!("rolling back a transaction left open");
+            self.connection.execute_batch("ROLLBACK")?;
+        }
         self.connection.execute_batch("SAVEPOINT batch")
     }
 
     /// Commits the batch. One that cannot commit is rolled back rather than
-    /// left open, where every later write would wait on it.
+    /// left open, where every later write would join it and never commit.
     pub fn end_batch(&self) -> Result<()> {
         let committed = self.connection.execute_batch("RELEASE batch");
         if committed.is_err() && !self.connection.is_autocommit() {
@@ -3044,6 +3051,19 @@ pub(crate) mod tests {
         archive.set_meta("after", "kept").unwrap();
         assert!(archive.connection.is_autocommit(), "a later write commits");
         assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_batch_rolls_back_a_transaction_left_open_and_commits() {
+        let archive = Archive::in_memory().unwrap();
+        archive.connection.execute_batch("BEGIN").unwrap();
+        archive.set_meta("stuck", "undone").unwrap();
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "kept").unwrap();
+        archive.end_batch().unwrap();
+        assert!(archive.connection.is_autocommit(), "the batch committed");
+        assert_eq!(archive.meta("stuck").unwrap(), None);
+        assert_eq!(archive.meta("inside").unwrap().as_deref(), Some("kept"));
     }
 
     #[test]

@@ -986,14 +986,24 @@ mod tests {
             lids: Vec::new(),
             stickers: Vec::new(),
         };
+        let voted = |worker: &Worker| {
+            worker
+                .archive
+                .poll_votes(chat, &row.id)
+                .unwrap()
+                .iter()
+                .any(|vote| vote.update_id == "vote")
+        };
         crate::archive::tests::set_commit_failure(&worker.archive, true);
         assert!(worker.apply_history(chunk(), false).is_empty());
+        assert!(!voted(&worker));
         assert!(
             worker.poll_history.state(chat, &row.id).0,
             "the request stays open for the votes the rollback lost"
         );
         crate::archive::tests::set_commit_failure(&worker.archive, false);
         assert_eq!(worker.apply_history(chunk(), false).len(), 1);
+        assert!(voted(&worker));
         assert!(
             !worker.poll_history.state(chat, &row.id).0,
             "a saved snapshot ends recovery"
