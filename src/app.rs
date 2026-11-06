@@ -3950,8 +3950,11 @@ impl App {
                 }
             }
             Event::Chats(chats) => {
+                // Only chats read since: an already read chat may hold a
+                // reaction's notification.
                 for chat in &chats {
-                    if chat.unread == 0 {
+                    if chat.unread == 0 && self.chat(&chat.id).is_some_and(|known| known.unread > 0)
+                    {
                         self.clear_chat_notifications(&chat.id);
                     }
                 }
@@ -5280,12 +5283,13 @@ impl App {
         let remembered = self.open_chat.as_deref() == Some(chat.id.as_str());
         let is_open = live && remembered && self.chat_view();
         let mut chat = chat;
-        if chat.unread == 0 {
+        // Read on another device: its notifications go, and the chat's next
+        // message may notify at once. An update to a chat that was already
+        // read leaves them alone, or a reaction to one of our messages there
+        // would vanish before it is seen.
+        if chat.unread == 0 && self.chat(&chat.id).is_some_and(|known| known.unread > 0) {
             self.clear_chat_notifications(&chat.id);
-            // Read on another device: the chat's next message may notify at once.
-            if self.chat(&chat.id).is_some_and(|known| known.unread > 0) {
-                self.reset_notification_throttle(&chat.id);
-            }
+            self.reset_notification_throttle(&chat.id);
         }
         if is_open
             && (!chat.locked || self.locked_folder_open())
@@ -26990,6 +26994,26 @@ mod app_lock_tests {
         app.open_chat = Some(CHAT.into());
         app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", now);
         assert!(app.notifications.shown.is_empty(), "the chat on screen");
+    }
+
+    /// The worker updates the chat around a reaction, and the chat was
+    /// already read: that is no reason to take the reaction's notification
+    /// back. Reading the chat on another device still does.
+    #[test]
+    fn an_update_to_a_read_chat_keeps_its_reaction_notification() {
+        let mut app = unlocked_app();
+        let message = reacted(&mut app);
+        app.maybe_notify_reaction(CHAT, &message, CHAT, "👍", crate::util::now());
+        let account = app.account().id.clone();
+        assert_eq!(app.notifications.waiting(&account, CHAT), 1);
+
+        let chat = app.chats[0].clone();
+        app.handle_chat_updated(chat.clone(), true);
+        assert_eq!(app.notifications.waiting(&account, CHAT), 1);
+
+        app.chats[0].unread = 1;
+        app.handle_chat_updated(chat, true);
+        assert_eq!(app.notifications.waiting(&account, CHAT), 0);
     }
 
     #[test]

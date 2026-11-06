@@ -5555,13 +5555,14 @@ impl Worker {
     /// reaction's target may only come with history.
     fn file_reaction(
         &mut self,
-        reaction: WaitingReaction,
+        mut reaction: WaitingReaction,
         secrets: Option<&HashMap<String, Vec<u8>>>,
     ) {
         if matches!(
             self.archive.message(&reaction.chat, &reaction.target),
             Ok(None)
         ) {
+            reaction.live = secrets.is_none() && !self.syncing;
             self.early.wait_reaction(reaction);
             return;
         }
@@ -5579,15 +5580,11 @@ impl Worker {
             // As on WhatsApp, someone reacting to one of our messages brings
             // the chat up the list; history (which passes its secrets) and a
             // removed reaction do not.
-            let added = (secrets.is_none() && !from_me && updated.from_me)
-                .then(|| {
-                    updated
-                        .reactions
-                        .iter()
-                        .find(|reaction| reaction.sender == sender && !reaction.emoji.is_empty())
-                        .map(|reaction| reaction.emoji.clone())
-                })
-                .flatten();
+            let added = if secrets.is_none() {
+                added_reaction(&updated, &sender, from_me)
+            } else {
+                None
+            };
             // Only a live reaction notifies: one replayed while catching up
             // with the phone is old news.
             let notify = (added.is_some() && !self.syncing).then(|| updated.clone());
@@ -5654,7 +5651,25 @@ impl Worker {
         for waiting in self.early.take_reactions(chat, id) {
             // The sender's privacy id may have been mapped since.
             let sender = self.canonical_str(&waiting.sender);
-            self.apply_reaction(chat, id, &sender, waiting.from_me, waiting.body, None);
+            let Some(updated) =
+                self.apply_reaction(chat, id, &sender, waiting.from_me, waiting.body, None)
+            else {
+                continue;
+            };
+            // A live reaction that came before our message still notifies
+            // once the message is filed.
+            if waiting.live
+                && !self.syncing
+                && let Some(emoji) = added_reaction(&updated, &sender, waiting.from_me)
+            {
+                self.emit(Event::Reacted {
+                    chat: chat.to_owned(),
+                    message: Box::new(updated),
+                    sender,
+                    emoji,
+                    sent_at: (waiting.sent_at / 1000).min(crate::util::now()),
+                });
+            }
         }
         read.is_some()
     }
@@ -12208,6 +12223,19 @@ fn message_target(message: &wa::Message) -> Option<String> {
 }
 
 /// The message a reaction names, plain or encrypted.
+/// The emoji `sender` has just put on one of our messages, if they reacted
+/// rather than took a reaction back. Our own reactions are not news.
+fn added_reaction(updated: &Message, sender: &str, from_me: bool) -> Option<String> {
+    if from_me || !updated.from_me {
+        return None;
+    }
+    updated
+        .reactions
+        .iter()
+        .find(|reaction| reaction.sender == sender && !reaction.emoji.is_empty())
+        .map(|reaction| reaction.emoji.clone())
+}
+
 fn reaction_target(message: &wa::Message) -> Option<String> {
     if let Some(reaction) = message.reaction_message.as_option() {
         return reaction.key.as_option().and_then(|key| key.id.clone());
@@ -21896,6 +21924,49 @@ mod receipt_tests {
         assert!(
             reacted(&events).is_empty(),
             "nor one replayed while syncing"
+        );
+    }
+
+    /// A reaction can come before our message is filed (sent from the
+    /// phone, say): it waits, then notifies once the message is here.
+    #[test]
+    fn a_live_reaction_that_came_before_our_message_notifies_once_it_is_filed() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.archive.ensure_chat(PEER, "Ada").unwrap();
+        let now = crate::util::now();
+        let reaction = |target: &str| {
+            let mut proto = wa::message::ReactionMessage::default();
+            proto.key = MessageField::some({
+                let mut proto = wa::MessageKey::default();
+                proto.remote_jid = Some(PEER.into());
+                proto.id = Some(target.into());
+                proto
+            });
+            proto.text = Some("❤️".into());
+            proto
+        };
+        let reacted = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .filter_map(|event| match event {
+                    Event::Reacted { message, emoji, .. } => Some((message.id, emoji)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        worker.store_plain_reaction(PEER, PEER, false, &reaction("early"), now * 1000);
+        assert!(reacted(&events).is_empty(), "its message is not here yet");
+        worker.store_message(own_message("early", now), None, None);
+        assert_eq!(reacted(&events), [("early".to_owned(), "❤️".to_owned())]);
+
+        worker.syncing = true;
+        worker.store_plain_reaction(PEER, PEER, false, &reaction("synced"), now * 1000);
+        worker.syncing = false;
+        worker.store_message(own_message("synced", now), None, None);
+        assert!(
+            reacted(&events).is_empty(),
+            "one replayed while syncing stays quiet"
         );
     }
 

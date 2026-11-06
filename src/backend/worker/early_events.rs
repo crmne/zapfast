@@ -32,6 +32,9 @@ pub(super) struct WaitingReaction {
     pub(super) body: HistoryReactionBody,
     /// When the reactor sent it, in milliseconds; the newest per sender wins.
     pub(super) sent_at: i64,
+    /// Whether it arrived live, so it may notify once its target is filed.
+    /// History and reactions replayed while syncing do not.
+    pub(super) live: bool,
     queued: Instant,
 }
 
@@ -51,6 +54,7 @@ impl WaitingReaction {
             from_me,
             body,
             sent_at,
+            live: false,
             queued: Instant::now(),
         }
     }
