@@ -15,6 +15,7 @@ const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// How many events of a kind may wait; the oldest go first.
 const MAX_WAITING: usize = 512;
 
+#[derive(Clone)]
 struct WaitingRead {
     chat: String,
     id: String,
@@ -24,6 +25,7 @@ struct WaitingRead {
 }
 
 /// A reaction, or its removal, whose target has not been filed yet.
+#[derive(Clone)]
 pub(super) struct WaitingReaction {
     pub(super) chat: String,
     pub(super) target: String,
@@ -56,7 +58,7 @@ impl WaitingReaction {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct EarlyEvents {
     reads: VecDeque<WaitingRead>,
     reactions: VecDeque<WaitingReaction>,
