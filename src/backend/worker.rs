@@ -1105,6 +1105,7 @@ pub async fn run(
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(link_watch::CHECK_INTERVAL);
     'commands: loop {
+        worker.end_leftover_transaction();
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
         // thing that gives either of these a receiver.
@@ -6245,47 +6246,72 @@ impl Worker {
     /// chat-state updates. Returns each chat's message count and whether the
     /// phone has more, or nothing for a chunk that could not be saved, so it
     /// completes no request.
+    /// Ends a transaction a failed rollback left open before anything else
+    /// writes. No transaction outlives a turn of the loop or a command, and
+    /// every write made in this one would join it and be lost.
+    fn end_leftover_transaction(&self) {
+        if let Err(error) = self.archive.roll_back_leftover() {
+            log::warn!("could not roll back a transaction left open: {error}");
+        }
+    }
+
     fn apply_history(
         &mut self,
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
-        let filed = if self.archive.begin_batch().is_err() {
-            self.file_history(parsed, metadata)
-        } else {
-            // What filing changes in memory beside the archive, put back if
-            // the chunk rolls back: learn_lid would skip a mapping the
-            // archive lost, a name the archive lost would match memory and
-            // never be saved again, a group whose row was lost would never
-            // be asked about again, an early read or reaction it took would
-            // be gone, and a poll whose votes were lost would count as
-            // recovered.
-            let lid_to_pn = self.lid_to_pn.clone();
-            let contacts = self.contacts.clone();
-            let blocklist = self.blocklist.clone();
-            let group_info_requested = self.group_info_requested.clone();
-            let group_info_queue = self.group_info_queue.clone();
-            let early = self.early.clone();
-            let poll_history = self.poll_history.clone();
-            let filed = self.file_history(parsed, metadata);
-            match self.archive.end_batch() {
-                Ok(()) => filed,
-                Err(error) => {
-                    log::warn!("could not commit a history chunk: {error}");
-                    self.emit(Event::Error(format!(
-                        "Could not save part of the chat history: {error}"
-                    )));
-                    self.lid_to_pn = lid_to_pn;
-                    self.contacts = contacts;
-                    self.blocklist = blocklist;
-                    self.group_info_requested = group_info_requested;
-                    self.group_info_queue = group_info_queue;
-                    self.early = early;
-                    self.poll_history = poll_history;
-                    self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
-                    self.publish_blocklist(None);
-                    self.emit_chats();
-                    Vec::new()
+        let filed = match self.archive.begin_batch() {
+            // begin_batch could not end a transaction a failed rollback left
+            // open: the chunk's writes would join it, and nothing would ever
+            // save them.
+            Err(error) if self.archive.in_transaction() => {
+                log::warn!("could not start a history batch: {error}");
+                self.emit(Event::Error(format!(
+                    "Could not save part of the chat history: {error}"
+                )));
+                Vec::new()
+            }
+            // Each write commits on its own: slower, but the phone never
+            // sends a first-sync chunk again.
+            Err(error) => {
+                log::warn!("could not start a history batch: {error}");
+                self.file_history(parsed, metadata)
+            }
+            Ok(()) => {
+                // What filing changes in memory beside the archive, put back if
+                // the chunk rolls back: learn_lid would skip a mapping the
+                // archive lost, a name the archive lost would match memory and
+                // never be saved again, a group whose row was lost would never
+                // be asked about again, an early read or reaction it took would
+                // be gone, and a poll whose votes were lost would count as
+                // recovered.
+                let lid_to_pn = self.lid_to_pn.clone();
+                let contacts = self.contacts.clone();
+                let blocklist = self.blocklist.clone();
+                let group_info_requested = self.group_info_requested.clone();
+                let group_info_queue = self.group_info_queue.clone();
+                let early = self.early.clone();
+                let poll_history = self.poll_history.clone();
+                let filed = self.file_history(parsed, metadata);
+                match self.archive.end_batch() {
+                    Ok(()) => filed,
+                    Err(error) => {
+                        log::warn!("could not commit a history chunk: {error}");
+                        self.emit(Event::Error(format!(
+                            "Could not save part of the chat history: {error}"
+                        )));
+                        self.lid_to_pn = lid_to_pn;
+                        self.contacts = contacts;
+                        self.blocklist = blocklist;
+                        self.group_info_requested = group_info_requested;
+                        self.group_info_queue = group_info_queue;
+                        self.early = early;
+                        self.poll_history = poll_history;
+                        self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
+                        self.publish_blocklist(None);
+                        self.emit_chats();
+                        Vec::new()
+                    }
                 }
             }
         };
@@ -7201,6 +7227,8 @@ impl Worker {
 
     /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
+        // Commands drained behind a search share one turn of the loop.
+        self.end_leftover_transaction();
         let destination = match &command {
             Command::SendText { chat, .. }
             | Command::ReplyInteractive { chat, .. }
@@ -22556,6 +22584,68 @@ mod receipt_tests {
             worker.archive.lids().unwrap(),
             vec![("4242".to_owned(), "15550004242".to_owned())]
         );
+    }
+
+    #[tokio::test]
+    async fn a_history_chunk_is_never_filed_into_a_transaction_a_failed_rollback_left() {
+        let group = "123-456@g.us";
+        let (mut worker, events, _inbox, _wa) = worker();
+        let chunk = || ParsedHistory {
+            chats: vec![parse_conversation({
+                let mut proto = wa::Conversation::default();
+                proto.id = group.into();
+                proto.messages = vec![history_entry(
+                    group,
+                    "m0",
+                    true,
+                    None,
+                    {
+                        let mut proto = wa::Message::default();
+                        proto.conversation = Some("hello".into());
+                        proto
+                    },
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            })],
+            push_names: Vec::new(),
+            lids: Vec::new(),
+            stickers: Vec::new(),
+        };
+        crate::archive::tests::set_commit_failure(&worker.archive, true);
+        crate::archive::tests::set_rollback_failure(&worker.archive, true);
+        assert!(worker.apply_history(chunk(), true).is_empty());
+        assert!(worker.archive.in_transaction(), "the rollback failed");
+        while events.try_recv().is_ok() {}
+        assert!(
+            worker.apply_history(chunk(), true).is_empty(),
+            "a chunk filed into that transaction would never be saved"
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::Error(text) if text.starts_with("Could not save part of the chat history")
+        )));
+        crate::archive::tests::set_rollback_failure(&worker.archive, false);
+        worker
+            .handle_command(Command::SaveDraft {
+                chat: group.into(),
+                text: "unsent".into(),
+            })
+            .await;
+        assert!(
+            !worker.archive.in_transaction(),
+            "a command ends the transaction before it writes"
+        );
+        assert_eq!(
+            worker.archive.drafts().unwrap(),
+            vec![(group.to_owned(), "unsent".to_owned())]
+        );
+        assert!(worker.archive.message(group, "m0").unwrap().is_none());
+        crate::archive::tests::set_commit_failure(&worker.archive, false);
+        assert_eq!(worker.apply_history(chunk(), true).len(), 1);
+        assert!(!worker.archive.in_transaction(), "the chunk committed");
+        assert!(worker.archive.message(group, "m0").unwrap().is_some());
     }
 
     #[test]

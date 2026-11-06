@@ -997,6 +997,7 @@ mod tests {
         crate::archive::tests::set_commit_failure(&worker.archive, true);
         assert!(worker.apply_history(chunk(), false).is_empty());
         assert!(!voted(&worker));
+        assert!(!worker.archive.has_poll_history(chat, &row.id).unwrap());
         assert!(
             worker.poll_history.state(chat, &row.id).0,
             "the request stays open for the votes the rollback lost"
@@ -1004,6 +1005,7 @@ mod tests {
         crate::archive::tests::set_commit_failure(&worker.archive, false);
         assert_eq!(worker.apply_history(chunk(), false).len(), 1);
         assert!(voted(&worker));
+        assert!(worker.archive.has_poll_history(chat, &row.id).unwrap());
         assert!(
             !worker.poll_history.state(chat, &row.id).0,
             "a saved snapshot ends recovery"
