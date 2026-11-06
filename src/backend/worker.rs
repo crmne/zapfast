@@ -1858,6 +1858,7 @@ struct HistoryReaction {
     sent_at: i64,
 }
 
+#[derive(Clone)]
 enum HistoryReactionBody {
     Plain(String),
     Encrypted { payload: Vec<u8>, iv: Vec<u8> },
@@ -2528,7 +2529,9 @@ impl Worker {
             .ok()
             .flatten()
             .filter(|about| !about.is_empty());
-        self.load_lids();
+        if let Ok(lids) = self.archive.lids() {
+            self.lid_to_pn = lids.into_iter().collect();
+        }
         if let Ok(contacts) = self.archive.contacts() {
             self.contacts = contacts
                 .into_iter()
@@ -2542,13 +2545,6 @@ impl Worker {
         self.emit(Event::LinkPreviewsDisabled(self.link_previews_disabled));
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
         self.emit_chats();
-    }
-
-    /// Reads the privacy-id mappings from the archive.
-    fn load_lids(&mut self) {
-        if let Ok(lids) = self.archive.lids() {
-            self.lid_to_pn = lids.into_iter().collect();
-        }
     }
 
     /// Measures the media cache off the runtime, emptying it first when
@@ -6254,13 +6250,19 @@ impl Worker {
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
-        let batched = self.archive.begin_batch().is_ok();
+        if self.archive.begin_batch().is_err() {
+            return self.file_history(parsed, metadata);
+        }
+        // What filing changes in memory beside the archive, put back if the
+        // chunk rolls back: learn_lid would skip a mapping the archive lost,
+        // and an early read or reaction it took would be gone.
+        let lid_to_pn = self.lid_to_pn.clone();
+        let early = self.early.clone();
         let filed = self.file_history(parsed, metadata);
-        if batched && let Err(error) = self.archive.end_batch() {
+        if let Err(error) = self.archive.end_batch() {
             log::warn!("could not commit a history chunk: {error}");
-            // Mappings learned from the chunk were rolled back with it;
-            // learn_lid must not skip them when they arrive again.
-            self.load_lids();
+            self.lid_to_pn = lid_to_pn;
+            self.early = early;
             return Vec::new();
         }
         filed
@@ -22441,6 +22443,7 @@ mod receipt_tests {
             lids: vec![("4242@lid".into(), "15550004242@s.whatsapp.net".into())],
             stickers: Vec::new(),
         };
+        worker.early.wait_read(group, "m0", false);
         crate::archive::tests::set_commit_failure(&worker.archive, true);
         assert!(
             worker.apply_history(chunk(), true).is_empty(),
@@ -22452,9 +22455,20 @@ mod receipt_tests {
             !worker.lid_to_pn.contains_key("4242"),
             "the cache forgets the mapping the archive lost"
         );
+        assert_eq!(
+            worker.early.take_read(group, "m0"),
+            Some(false),
+            "the read filing took waits again"
+        );
+        worker.early.wait_read(group, "m0", false);
         crate::archive::tests::set_commit_failure(&worker.archive, false);
         assert_eq!(worker.apply_history(chunk(), true).len(), 1);
         assert!(worker.lid_to_pn.contains_key("4242"));
+        assert_eq!(
+            worker.early.take_read(group, "m0"),
+            None,
+            "filed, it is settled"
+        );
         assert!(worker.archive.message(group, "m0").unwrap().is_some());
         assert_eq!(
             worker.archive.lids().unwrap(),
