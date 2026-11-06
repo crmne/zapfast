@@ -930,6 +930,77 @@ mod tests {
     }
 
     #[test]
+    fn a_vote_snapshot_whose_chunk_cannot_commit_keeps_recovery_going() {
+        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "poll", 1_789_551_600, false);
+        row.sender = "100@s.whatsapp.net".into();
+        row.content = content();
+        let raw = creation_archive(&row.content, &[7; 32]);
+        worker.store_message(row.clone(), Some(raw.encode_to_vec()), None);
+        worker.refresh_poll(chat.into(), row.id.clone());
+        assert!(worker.poll_history.next(Instant::now()).is_some());
+        let chunk = || ParsedHistory {
+            chats: vec![parse_conversation({
+                let mut proto = wa::Conversation::default();
+                proto.id = chat.into();
+                proto.messages = vec![{
+                    let mut proto = wa::HistorySyncMsg::default();
+                    proto.message = MessageField::some({
+                        let mut proto = wa::WebMessageInfo::default();
+                        proto.key = MessageField::some({
+                            let mut proto = wa::MessageKey::default();
+                            proto.id = Some(row.id.clone());
+                            proto.remote_jid = Some(chat.into());
+                            proto.participant = Some(row.sender.clone());
+                            proto.from_me = Some(false);
+                            proto
+                        });
+                        proto.message = MessageField::some(raw.clone());
+                        proto.message_timestamp = Some(row.timestamp as u64);
+                        proto.poll_updates = vec![{
+                            let mut proto = wa::PollUpdate::default();
+                            proto.poll_update_message_key = MessageField::some({
+                                let mut proto = wa::MessageKey::default();
+                                proto.id = Some("vote".into());
+                                proto.participant = Some("200@s.whatsapp.net".into());
+                                proto
+                            });
+                            proto.vote = MessageField::some({
+                                let mut proto = wa::message::PollVoteMessage::default();
+                                proto.selected_options = vec![
+                                    whatsapp_rust::wacore::poll::compute_option_hash("Pizza")
+                                        .to_vec(),
+                                ];
+                                proto
+                            });
+                            proto
+                        }];
+                        proto
+                    });
+                    proto
+                }];
+                proto
+            })],
+            push_names: Vec::new(),
+            lids: Vec::new(),
+            stickers: Vec::new(),
+        };
+        crate::archive::tests::set_commit_failure(&worker.archive, true);
+        assert!(worker.apply_history(chunk(), false).is_empty());
+        assert!(
+            worker.poll_history.state(chat, &row.id).0,
+            "the request stays open for the votes the rollback lost"
+        );
+        crate::archive::tests::set_commit_failure(&worker.archive, false);
+        assert_eq!(worker.apply_history(chunk(), false).len(), 1);
+        assert!(
+            !worker.poll_history.state(chat, &row.id).0,
+            "a saved snapshot ends recovery"
+        );
+    }
+
+    #[test]
     fn old_polls_recover_all_eleven_phone_votes_without_overwriting_a_newer_own_vote() {
         let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
         let chat = "123@g.us";
