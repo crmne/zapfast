@@ -9,7 +9,10 @@
 
 use std::time::Instant;
 
-use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2, vec2};
+use egui::{
+    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2,
+    ViewportBuilder, ViewportId, vec2,
+};
 
 use crate::app::{App, CallPerson};
 use crate::calls::{CallOutcome, CallPhase, CallUpdate, PeerAudio, SilenceReason};
@@ -19,7 +22,12 @@ use crate::theme::{self, Icon, Palette};
 use crate::ui::widgets;
 
 /// The area's id, so the surface keeps its place in the layer order.
-const SURFACE: &str = "zapfast-call-surface";
+pub const SURFACE: &str = "zapfast-call-surface";
+
+/// The viewport id of the detached call window.
+pub fn viewport_id() -> ViewportId {
+    ViewportId::from_hash_of(SURFACE)
+}
 /// Padding between the window edge and everything the surface draws.
 const PADDING: f32 = 24.0;
 /// The round controls along the bottom.
@@ -32,7 +40,7 @@ const PREVIEW_SHARE: f32 = 0.24;
 /// because the picture is not themed.
 const VIDEO_SCRIM: Color32 = Color32::from_black_alpha(150);
 
-/// Draws the call surface over the window, when a call wants the screen.
+/// Draws the call surface in a separate compact window, when a call wants the screen.
 /// A call the reader stepped away from is drawn by [`strip`] instead.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(call) = app.call.clone() else {
@@ -47,53 +55,73 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let people = app.call_people();
     let me = app.call_self();
     let caller = app.call_caller_name();
-    // The whole window, minus the strip macOS keeps for the traffic lights.
-    let screen = ctx.content_rect();
-    let screen = screen.with_min_y(screen.top() + theme::titlebar_inset(ctx));
-    egui::Area::new(egui::Id::new(SURFACE))
-        .order(egui::Order::Foreground)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            ui.set_min_size(screen.size());
-            // A peer's picture is letterboxed in black, as any video is.
-            let backdrop = if call.video && call.remote_video && app.call_remote_frame.is_some() {
-                Color32::BLACK
+
+    let initial_size = if call.video {
+        vec2(640.0, 480.0)
+    } else {
+        vec2(360.0, 520.0)
+    };
+    let min_size = if call.video {
+        vec2(360.0, 280.0)
+    } else {
+        vec2(300.0, 420.0)
+    };
+
+    let title = format!("{peer} - ZapFast");
+    let builder = ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size(initial_size)
+        .with_min_inner_size(min_size)
+        .with_transparent(false)
+        .with_decorations(true)
+        .with_resizable(true)
+        .with_app_id("zapfast-call".to_owned());
+
+    ctx.set_embed_viewports(false);
+    ctx.show_viewport_immediate(viewport_id(), builder, |ui, class| {
+        if class == egui::ViewportClass::EmbeddedWindow {
+            return;
+        }
+
+        if ui.input(|i| i.viewport().close_requested()) {
+            if call.phase == CallPhase::Incoming {
+                app.actions.push(Action::DeclineCall);
             } else {
-                palette.window
-            };
-            ui.painter().rect_filled(screen, 0.0, backdrop);
-            // Clicks and scrolling stop here rather than reaching the chat
-            // drawn underneath.
-            ui.interact(
-                screen,
-                egui::Id::new(SURFACE).with("backdrop"),
-                egui::Sense::click_and_drag(),
-            );
-            // Where ZapFast draws the title bar, the screen's top drags the
-            // window, beneath the corner's buttons.
-            super::caption_drag(
-                ui,
-                Rect::from_min_size(screen.min, vec2(screen.width(), theme::TOP_BAR_HEIGHT)),
-            );
-            let inner = screen.shrink(PADDING);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                let picture = picture.as_deref();
-                let who = Who {
-                    peer: &peer,
-                    picture,
-                    caller: caller.as_deref(),
-                    people: &people,
-                    me: me.as_ref(),
-                };
-                if call.phase == CallPhase::Incoming {
-                    ringing(ui, app, &call, &who, &palette, inner);
-                } else if call.group.is_some() && !people.is_empty() {
-                    group_live(ui, app, &call, &who, &palette, inner);
-                } else {
-                    live(ui, app, &call, &peer, picture, &palette, inner);
-                }
+                app.actions.push(Action::HangupCall);
+            }
+        }
+
+        // A peer's picture is letterboxed in black, as any video is.
+        let backdrop = if call.video && call.remote_video && app.call_remote_frame.is_some() {
+            Color32::BLACK
+        } else {
+            palette.window
+        };
+
+        egui::CentralPanel::default()
+            .frame(Frame::NONE.fill(backdrop))
+            .show(ui, |ui| {
+                let screen = ui.max_rect();
+                let inner = screen.shrink(PADDING);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    let picture = picture.as_deref();
+                    let who = Who {
+                        peer: &peer,
+                        picture,
+                        caller: caller.as_deref(),
+                        people: &people,
+                        me: me.as_ref(),
+                    };
+                    if call.phase == CallPhase::Incoming {
+                        ringing(ui, app, &call, &who, &palette, inner);
+                    } else if call.group.is_some() && !people.is_empty() {
+                        group_live(ui, app, &call, &who, &palette, inner);
+                    } else {
+                        live(ui, app, &call, &peer, picture, &palette, inner);
+                    }
+                });
             });
-        });
+    });
 }
 
 /// The strip a call keeps at the bottom of the window while the reader is
@@ -300,7 +328,11 @@ fn corner_buttons(
     };
     let corner = Rect::from_min_size(area.min, vec2(area.width(), 40.0));
     // Clear of the caption buttons ZapFast draws over the window's corners.
-    let room = super::caption_room(ui.ctx(), corner, 120.0);
+    let room = if ui.ctx().viewport_id() == egui::ViewportId::ROOT {
+        super::caption_room(ui.ctx(), corner, 120.0)
+    } else {
+        super::CaptionRoom::default()
+    };
     let corner = Rect::from_min_max(
         egui::pos2(corner.left() + room.left, corner.top() + room.top),
         egui::pos2(corner.right() - room.right, corner.bottom() + room.top),

@@ -75,8 +75,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.selection.is_none()
         // The day filter keeps egui's own order among its days.
         && !app.chat_search_calendar
-        // The call screen covers the chats.
-        && (app.call.is_none() || app.call_surface_hidden)
         // A name typed in the info panel keeps Tab between its fields.
         && !(app.info_visible()
             && (app.contact_edit.is_some()

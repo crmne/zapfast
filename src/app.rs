@@ -2646,6 +2646,7 @@ impl App {
 
     /// Initializes a newly created window.
     pub fn attach(&mut self, ctx: &egui::Context) {
+        ctx.set_embed_viewports(false);
         // Texture handles belong to the window's egui context. Keep the
         // underlying pictures and recreate handles for the new window.
         self.call_local_texture = None;

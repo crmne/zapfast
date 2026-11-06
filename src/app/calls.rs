@@ -205,7 +205,8 @@ impl App {
     fn set_call_fullscreen(&mut self, ctx: &egui::Context, fullscreen: bool) {
         if self.call_fullscreen != fullscreen {
             self.call_fullscreen = fullscreen;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
+            let viewport_id = crate::ui::call::viewport_id();
+            ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Fullscreen(fullscreen));
         }
     }
 
