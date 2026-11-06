@@ -963,8 +963,9 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
         app,
         &crate::i18n::gettext(app.locale, "Keyboard shortcuts"),
     );
+    let rows = super::keys::shortcuts(app.settings.keyboard_hints);
     // Reserve enough width for the longest shortcut before laying out the rows.
-    let keys_width = super::keys::SHORTCUTS
+    let keys_width = rows
         .iter()
         .map(|(keys, _)| {
             ui.painter()
@@ -983,7 +984,7 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
     let width = ui.available_width();
     let columns = if width >= SHORTCUTS_WIDE { 2 } else { 1 };
     let column = (width - SHORTCUTS_GUTTER * (columns - 1) as f32) / columns as f32;
-    let per_column = super::keys::SHORTCUTS.len().div_ceil(columns);
+    let per_column = rows.len().div_ceil(columns);
     let height = (ui.ctx().content_rect().height() - 190.0).max(120.0);
     egui::ScrollArea::vertical()
         .id_salt("shortcuts")
@@ -992,14 +993,14 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = SHORTCUTS_GUTTER;
-                for rows in super::keys::SHORTCUTS.chunks(per_column) {
+                for chunk in rows.chunks(per_column) {
                     ui.allocate_ui_with_layout(
                         vec2(column, 0.0),
                         Layout::top_down(Align::Min),
                         |ui| {
                             ui.set_width(column);
                             ui.spacing_mut().item_spacing = vec2(18.0, 8.0);
-                            for (keys, what) in rows {
+                            for (keys, what) in chunk {
                                 shortcut_row(ui, &palette, keys_width, keys, what);
                             }
                         },

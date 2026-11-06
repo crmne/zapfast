@@ -30,8 +30,6 @@ const INSET: f32 = 3.0;
 struct Target {
     id: Id,
     label: String,
-    /// Where the click lands, in window coordinates.
-    point: Pos2,
     /// Where the label is drawn, and how it hangs from there.
     anchor: Pos2,
     align: Align2,
@@ -77,7 +75,6 @@ pub fn start(ctx: &Context) -> bool {
         .map(|(found, label)| Target {
             id: found.id,
             label,
-            point: found.point,
             anchor: found.anchor,
             align: found.align,
         })
@@ -119,6 +116,7 @@ pub fn handle(ctx: &Context) -> bool {
         cancel(ctx);
         return false;
     }
+    let typed = session.typed.clone();
     let mut done = false;
     let mut left = false;
     ctx.input_mut(|input| {
@@ -129,7 +127,12 @@ pub fn handle(ctx: &Context) -> bool {
                 modifiers,
                 ..
             } => {
-                if !pressed || done || left {
+                // What follows the key that took the labels away is the
+                // shortcuts', and so are releases.
+                if left || !pressed {
+                    return true;
+                }
+                if done {
                     return false;
                 }
                 if *key == Key::Escape {
@@ -173,20 +176,25 @@ pub fn handle(ctx: &Context) -> bool {
         .iter()
         .find(|target| target.label == session.typed)
     {
-        // The widget may have moved since it was labelled.
-        let point = targets(ctx)
-            .into_iter()
-            .find(|found| found.id == target.id)
-            .map_or(target.point, |found| found.point);
+        // The widget may have moved since it was labelled. One that is gone
+        // is not clicked: whatever took its place was never labelled.
+        let found = targets(ctx).into_iter().find(|found| found.id == target.id);
+        let Some(found) = found else {
+            cancel(ctx);
+            return true;
+        };
         ctx.data_mut(|data| {
             data.remove_temp::<Session>(session_id());
-            data.insert_temp(click_id(), point);
+            data.insert_temp(click_id(), found.point);
         });
         ctx.request_repaint();
         return true;
     }
-    ctx.data_mut(|data| data.insert_temp(session_id(), session));
-    ctx.request_repaint();
+    // A pass that typed nothing changes nothing, and asks for no other.
+    if session.typed != typed {
+        ctx.data_mut(|data| data.insert_temp(session_id(), session));
+        ctx.request_repaint();
+    }
     true
 }
 
@@ -251,11 +259,15 @@ impl egui::plugin::Plugin for Clicker {
     }
 
     fn input_hook(&mut self, ctx: &Context, input: &mut egui::RawInput) {
+        // First, so a real move in the same pass has the last word.
         if let Some(previous) = self.restore.take() {
-            input.events.push(match previous {
-                Some(pos) => egui::Event::PointerMoved(pos),
-                None => egui::Event::PointerGone,
-            });
+            input.events.insert(
+                0,
+                match previous {
+                    Some(pos) => egui::Event::PointerMoved(pos),
+                    None => egui::Event::PointerGone,
+                },
+            );
         }
         let Some(point) = ctx.data_mut(|data| data.remove_temp::<Pos2>(click_id())) else {
             return;
@@ -425,86 +437,147 @@ mod tests {
         }
     }
 
-    /// Two buttons side by side, the clicks each received so far, and a
-    /// pass of `events` over them. `keys` says whether the labels took the
-    /// pass's keys, or with `labels` set, whether they came up.
-    fn pass(
-        ctx: &Context,
-        events: Vec<egui::Event>,
-        labels: bool,
-        clicks: &mut [u32; 2],
-        keys: &mut bool,
-    ) {
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
-                events,
-                ..Default::default()
-            },
-            |ui| {
-                *keys = if labels {
-                    start(ui.ctx())
-                } else {
-                    handle(ui.ctx())
-                };
-                ui.horizontal(|ui| {
-                    for (index, clicks) in clicks.iter_mut().enumerate() {
-                        if ui.button(format!("Button {index}")).clicked() {
-                            *clicks += 1;
+    /// Up to two buttons side by side over a window, and the clicks each
+    /// has received.
+    struct Bench {
+        ctx: Context,
+        clicks: [u32; 2],
+        /// How many of the buttons the next pass draws.
+        shown: usize,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let ctx = Context::default();
+            ctx.add_plugin(Clicker::default());
+            Self {
+                ctx,
+                clicks: [0, 0],
+                shown: 2,
+            }
+        }
+
+        /// A pass of `events`. Returns whether the labels took its keys, or
+        /// with `labels` set, whether they came up, and the events left for
+        /// the shortcuts after them.
+        fn pass(&mut self, events: Vec<egui::Event>, labels: bool) -> (bool, Vec<egui::Event>) {
+            let mut taken = false;
+            let mut left = Vec::new();
+            let (clicks, shown) = (&mut self.clicks, self.shown);
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    taken = if labels {
+                        start(ui.ctx())
+                    } else {
+                        handle(ui.ctx())
+                    };
+                    left = ui.input(|input| input.events.clone());
+                    ui.horizontal(|ui| {
+                        for (index, clicks) in clicks.iter_mut().enumerate().take(shown) {
+                            if ui.button(format!("Button {index}")).clicked() {
+                                *clicks += 1;
+                            }
                         }
-                    }
-                });
-                // Text that can be selected is not labelled.
-                ui.add(egui::Label::new("Selectable").selectable(true));
-            },
-        );
-        output.textures_delta.clear();
+                    });
+                    // Text that can be selected is not labelled.
+                    ui.add(egui::Label::new("Selectable").selectable(true));
+                },
+            );
+            output.textures_delta.clear();
+            (taken, left)
+        }
+
+        fn labels(&self) -> Vec<String> {
+            self.ctx
+                .data(|data| data.get_temp::<Session>(session_id()))
+                .map(|session| session.targets.into_iter().map(|t| t.label).collect())
+                .unwrap_or_default()
+        }
     }
 
     #[test]
-    fn typing_a_label_clicks_its_widget() {
-        let ctx = Context::default();
-        ctx.add_plugin(Clicker::default());
-        let mut clicks = [0, 0];
-        let mut taken = false;
-        pass(&ctx, Vec::new(), false, &mut clicks, &mut taken);
+    fn typing_a_label_clicks_its_widget_and_puts_the_pointer_back() {
+        let mut bench = Bench::new();
+        // The real pointer rests where nothing is.
+        let resting = Pos2::new(350.0, 250.0);
+        let (taken, _) = bench.pass(vec![egui::Event::PointerMoved(resting)], false);
         assert!(!taken, "nothing is taken before the labels are up");
-        pass(&ctx, Vec::new(), true, &mut clicks, &mut taken);
-        assert!(taken && active(&ctx));
-        let session = ctx
-            .data(|data| data.get_temp::<Session>(session_id()))
-            .unwrap();
-        let labels: Vec<&str> = session.targets.iter().map(|t| t.label.as_str()).collect();
-        assert_eq!(labels, ["s", "a"], "the two buttons, left to right");
+        assert!(bench.pass(Vec::new(), true).0 && active(&bench.ctx));
+        assert_eq!(bench.labels(), ["s", "a"], "the two buttons, left to right");
         // A letter no label has is a slip, and changes nothing.
-        pass(&ctx, vec![key(Key::Z)], false, &mut clicks, &mut taken);
-        assert!(taken && active(&ctx));
+        assert!(bench.pass(vec![key(Key::Z)], false).0 && active(&bench.ctx));
         // The second button's label: the click is made before the next pass.
-        pass(&ctx, vec![key(Key::A)], false, &mut clicks, &mut taken);
-        assert!(!active(&ctx), "a full label takes the labels away");
-        pass(&ctx, Vec::new(), false, &mut clicks, &mut taken);
-        assert_eq!(clicks, [0, 1]);
+        bench.pass(vec![key(Key::A)], false);
+        assert!(!active(&bench.ctx), "a full label takes the labels away");
+        bench.pass(Vec::new(), false);
+        assert_eq!(bench.clicks, [0, 1]);
         // The pointer goes back, and nothing else is clicked.
-        pass(&ctx, Vec::new(), false, &mut clicks, &mut taken);
-        assert_eq!(clicks, [0, 1]);
+        bench.pass(Vec::new(), false);
+        assert_eq!(bench.clicks, [0, 1]);
+        assert_eq!(
+            bench.ctx.input(|input| input.pointer.latest_pos()),
+            Some(resting)
+        );
+    }
+
+    #[test]
+    fn a_label_whose_widget_is_gone_clicks_nothing() {
+        let mut bench = Bench::new();
+        bench.pass(Vec::new(), false);
+        bench.pass(Vec::new(), true);
+        assert_eq!(bench.labels(), ["s", "a"]);
+        // The second button goes before its label is typed.
+        bench.shown = 1;
+        bench.pass(Vec::new(), false);
+        bench.pass(vec![key(Key::A)], false);
+        assert!(!active(&bench.ctx));
+        bench.shown = 2;
+        bench.pass(Vec::new(), false);
+        bench.pass(Vec::new(), false);
+        assert_eq!(bench.clicks, [0, 0]);
     }
 
     #[test]
     fn escape_and_other_keys_take_the_labels_away() {
-        let ctx = Context::default();
-        ctx.add_plugin(Clicker::default());
-        let mut clicks = [0, 0];
-        let mut taken = false;
-        pass(&ctx, Vec::new(), false, &mut clicks, &mut taken);
-        pass(&ctx, Vec::new(), true, &mut clicks, &mut taken);
-        pass(&ctx, vec![key(Key::Escape)], false, &mut clicks, &mut taken);
-        assert!(taken, "Escape goes no further");
-        assert!(!active(&ctx));
-        pass(&ctx, Vec::new(), true, &mut clicks, &mut taken);
-        pass(&ctx, vec![key(Key::Enter)], false, &mut clicks, &mut taken);
-        assert!(!taken, "another key is left for the shortcuts");
-        assert!(!active(&ctx));
-        pass(&ctx, Vec::new(), false, &mut clicks, &mut taken);
-        assert_eq!(clicks, [0, 0]);
+        let mut bench = Bench::new();
+        bench.pass(Vec::new(), false);
+        bench.pass(Vec::new(), true);
+        assert!(
+            bench.pass(vec![key(Key::Escape)], false).0,
+            "Escape goes no further"
+        );
+        assert!(!active(&bench.ctx));
+        bench.pass(Vec::new(), true);
+        // Another key, and every key after it, is left for the shortcuts.
+        let (taken, left) = bench.pass(vec![key(Key::Enter), key(Key::K)], false);
+        assert!(!taken);
+        assert!(!active(&bench.ctx));
+        assert_eq!(left, [key(Key::Enter), key(Key::K)]);
+        bench.pass(Vec::new(), false);
+        assert_eq!(bench.clicks, [0, 0]);
+    }
+
+    /// While the labels wait for a key, a pass without one asks for no
+    /// other: the window stays idle.
+    #[test]
+    fn waiting_labels_ask_for_no_repaint() {
+        let mut bench = Bench::new();
+        bench.pass(Vec::new(), false);
+        bench.pass(Vec::new(), true);
+        bench.pass(Vec::new(), false);
+        let mut repaint = false;
+        let mut output = bench.ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert!(handle(ui.ctx()));
+        });
+        output.textures_delta.clear();
+        if let Some(viewport) = output.viewport_output.values().next() {
+            repaint = viewport.repaint_delay.is_zero();
+        }
+        assert!(!repaint, "an idle pass asked for another");
     }
 }

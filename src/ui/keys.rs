@@ -11,6 +11,19 @@ fn jump_keys_reach_chat(editing_text: bool, composer_focused: bool, composer_emp
     !editing_text || (composer_focused && composer_empty)
 }
 
+/// The text fields Escape leaves with keyboard hints on: the message field
+/// and the search boxes, which take focus only when asked. Fields that take
+/// focus whenever nothing has it (dialogs, the info panel's edits, New
+/// call's search, the app lock form) would take it straight back, so Escape
+/// keeps its own meaning there.
+const LEFT_BY_ESCAPE: &[&str] = &[
+    "composer-text",
+    "chat-search",
+    "chat-message-search",
+    super::settings::SEARCH_ID,
+    "calls-search",
+];
+
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     // Keyboard hints on screen take the letters typed for a label.
@@ -25,6 +38,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && ctx.input_mut(|input| take_plain(input, Key::F))
         && super::hints::start(ctx)
     {
+        // A label typed in the same pass as F goes to the new labels.
+        super::hints::handle(ctx);
         return;
     }
     // A focused menu takes what is typed before any shortcut sees it.
@@ -262,11 +277,12 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         });
     }
-    // With keyboard hints, Escape from a text field only leaves it, and
-    // the next Escape does what it otherwise would. egui has let go of the
-    // field already, for an Escape it does not filter.
+    // With keyboard hints, Escape from one of the main view's text fields
+    // only leaves it, and the next Escape does what it otherwise would. egui
+    // has let go of the field already, for an Escape it does not filter.
     let field_before_escape = app.settings.keyboard_hints
-        && focus_before_escape(ctx).is_some_and(|id| egui::TextEdit::load_state(ctx, id).is_some());
+        && focus_before_escape(ctx)
+            .is_some_and(|id| LEFT_BY_ESCAPE.iter().any(|name| egui::Id::new(name) == id));
     let escape = (!menu_open || app.reaction_target.is_some())
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     let mut left_field = false;
@@ -283,6 +299,16 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             // Taken here, the key never reaches the selection bar, and
             // would otherwise fall through to closing the chat.
             actions.push(Action::CancelSelection);
+        } else if field_before_escape && app.emoji_start.is_none() && app.mention_start.is_none() {
+            // Ahead of what the field is in the middle of (a reply, an edit,
+            // staged files) and of the panes it sits in: those wait for the
+            // next Escape. Suggestions under the cursor still close first.
+            left_field = true;
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
         } else if app.show_starred {
             actions.push(Action::ToggleStarred);
         } else if app.chat_search_visible() && app.chat_search_calendar {
@@ -300,13 +326,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelEdit);
         } else if app.reply_to.is_some() {
             actions.push(Action::CancelReply);
-        } else if field_before_escape {
-            left_field = true;
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
         } else if app.call_fullscreen {
             // The window shrinks back first, and only then does the next Escape put the surface
             // aside. Neither one ends the call; only the hang-up button does that.
@@ -1100,6 +1119,19 @@ const DELETE_FOR_EVERYONE_KEYS: &str = if cfg!(target_os = "macos") {
     "Shift+Delete"
 };
 
+/// The message list's Forward, which keyboard hints take F from.
+const FORWARD_SHORTCUT: (&str, &str) = ("F", "Forward the message (in the message list)");
+
+/// The shortcuts the help dialog lists: with keyboard hints on, F labels
+/// what can be clicked, so the message list's Forward is left out.
+pub fn shortcuts(keyboard_hints: bool) -> Vec<(&'static str, &'static str)> {
+    SHORTCUTS
+        .iter()
+        .copied()
+        .filter(|row| !keyboard_hints || *row != FORWARD_SHORTCUT)
+        .collect()
+}
+
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+K / Ctrl+Shift+F", "Search chats"),
@@ -1142,7 +1174,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("R", "Reply to the message (in the message list)"),
     ("E", "React to the message (in the message list)"),
     ("C", "Copy the message (in the message list)"),
-    ("F", "Forward the message (in the message list)"),
+    FORWARD_SHORTCUT,
     (
         "Escape, then F",
         "Leave the text field, then label what can be clicked; type a label to click it (with Keyboard hints on)",
@@ -2020,6 +2052,13 @@ mod tests {
     /// A pass of `events`: the shortcuts first, as the window takes them,
     /// then a message field and a button, as an open chat draws them.
     fn pass_over_a_field(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) {
+        pass_over(app, ctx, "composer-text", events);
+    }
+
+    /// [`pass_over_a_field`] with the field `field`, which takes focus
+    /// whenever nothing has it unless it is the message field, as a dialog's
+    /// or the info panel's fields do.
+    fn pass_over(app: &mut App, ctx: &egui::Context, field: &str, events: Vec<egui::Event>) {
         let mut output = ctx.run_ui(
             egui::RawInput {
                 events,
@@ -2028,7 +2067,11 @@ mod tests {
             |ui| {
                 handle(app, ui.ctx());
                 let mut text = String::new();
-                ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new("composer-text")));
+                let response =
+                    ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new(field)));
+                if field != "composer-text" && ui.memory(|memory| memory.focused().is_none()) {
+                    response.request_focus();
+                }
                 let _ = ui.button("Send");
             },
         );
@@ -2080,6 +2123,42 @@ mod tests {
         let (_root, mut app, ctx) = typing(false);
         pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
         assert!(matches!(app.actions.as_slice(), [Action::CloseChat]));
+    }
+
+    /// Leaving the field comes before what it is in the middle of: a reply
+    /// waits for the next Escape.
+    #[test]
+    fn keyboard_hints_escape_leaves_the_field_before_cancelling_a_reply() {
+        let (_root, mut app, ctx) = typing(true);
+        app.reply_to = Some("reply".into());
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        assert!(!ctx.text_edit_focused());
+        pass_over_a_field(&mut app, &ctx, vec![key_event(Key::Escape)]);
+        assert!(matches!(app.actions.as_slice(), [Action::CancelReply]));
+    }
+
+    /// A field that takes focus back whenever nothing has it would take it
+    /// back from Escape too, every time: Escape keeps its meaning there, so
+    /// it never holds the reader in place.
+    #[test]
+    fn keyboard_hints_escape_passes_by_a_field_that_focuses_itself() {
+        let (_root, mut app, ctx) = typing(true);
+        let field = "contact-first";
+        pass_over(&mut app, &ctx, field, Vec::new());
+        pass_over(&mut app, &ctx, field, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(field))));
+        pass_over(&mut app, &ctx, field, vec![key_event(Key::Escape)]);
+        assert!(matches!(app.actions.as_slice(), [Action::CloseChat]));
+    }
+
+    /// With keyboard hints on, F is theirs, and the shortcuts dialog no
+    /// longer offers it as Forward.
+    #[test]
+    fn the_shortcuts_list_leaves_out_forward_with_keyboard_hints() {
+        assert!(shortcuts(false).contains(&FORWARD_SHORTCUT));
+        assert!(!shortcuts(true).contains(&FORWARD_SHORTCUT));
+        assert_eq!(shortcuts(true).len(), SHORTCUTS.len() - 1);
     }
 
     /// F labels what can be clicked only with keyboard hints on, and only
