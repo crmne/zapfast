@@ -16,6 +16,8 @@ pub enum Locale {
     #[default]
     #[serde(rename = "en")]
     English,
+    #[serde(rename = "ar")]
+    Arabic,
     #[serde(rename = "pt-BR")]
     PortugueseBrazil,
     #[serde(rename = "de")]
@@ -44,6 +46,7 @@ impl Locale {
     /// Every locale shown in the language picker, in a stable order.
     pub const ALL: [Locale; 12] = [
         Self::English,
+        Self::Arabic,
         Self::PortugueseBrazil,
         Self::German,
         Self::Spanish,
@@ -61,6 +64,7 @@ impl Locale {
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
+            Self::Arabic => "العربية",
             Self::PortugueseBrazil => "Português (Brasil)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
@@ -89,6 +93,7 @@ impl Locale {
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
+            "ar" => Self::Arabic,
             "pt" => Self::PortugueseBrazil,
             "de" => Self::German,
             "es" => Self::Spanish,
@@ -120,6 +125,7 @@ impl fastframe_i18n::Locale for Locale {
     /// source strings are already English.
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
+            Self::Arabic => Some(&ar::Translator),
             Self::PortugueseBrazil => Some(&pt_br::Translator),
             Self::German => Some(&de::Translator),
             Self::Spanish => Some(&es::Translator),
@@ -200,6 +206,9 @@ mod tests {
     fn system_locales_map_to_the_right_catalog() {
         assert_eq!(Locale::from_system("pt-BR"), Some(Locale::PortugueseBrazil));
         assert_eq!(Locale::from_system("pt_PT"), Some(Locale::PortugueseBrazil));
+        assert_eq!(Locale::from_system("ar-EG"), Some(Locale::Arabic));
+        assert_eq!(Locale::from_system("ar"), Some(Locale::Arabic));
+        assert_eq!(Locale::from_system("ar_SA.UTF-8"), Some(Locale::Arabic));
         assert_eq!(Locale::from_system("de-DE"), Some(Locale::German));
         assert_eq!(Locale::from_system("es"), Some(Locale::Spanish));
         assert_eq!(Locale::from_system("it-IT"), Some(Locale::Italian));
@@ -279,6 +288,7 @@ mod tests {
             Some(Locale::PortugueseBrazil)
         );
         assert_eq!(Locale::from_system("tr_TR.UTF-8"), Some(Locale::Turkish));
+        assert_eq!(Locale::from_system("ar_EG.UTF-8"), Some(Locale::Arabic));
     }
 
     /// The suite asserts the English source strings, so the language of the
@@ -291,6 +301,7 @@ mod tests {
             resolve(Some(Locale::PortugueseBrazil)),
             Locale::PortugueseBrazil
         );
+        assert_eq!(resolve(Some(Locale::Arabic)), Locale::Arabic);
         assert_eq!(resolve(None), Locale::English);
     }
 
@@ -301,6 +312,7 @@ mod tests {
         let missing = "A string nobody has translated";
         assert_eq!(gettext(Locale::PortugueseBrazil, missing), missing);
         assert_eq!(gettext(Locale::German, missing), missing);
+        assert_eq!(gettext(Locale::Arabic, missing), missing);
     }
 
     /// Checks that private reply controls use dedicated translated catalog entries.
@@ -311,6 +323,11 @@ mod tests {
                 Locale::German,
                 "Privat antworten",
                 "Die ursprüngliche Gruppennachricht ist nicht verfügbar",
+            ),
+            (
+                Locale::Arabic,
+                "الرد بشكل خاص",
+                "الرسالة الأصلية للمجموعة غير متاحة",
             ),
             (
                 Locale::Spanish,
@@ -416,6 +433,7 @@ mod tests {
     #[test]
     fn remaining_pilot_catalogs_translate() {
         assert_eq!(gettext(Locale::Spanish, "Search"), "Buscar");
+        assert_eq!(gettext(Locale::Arabic, "Search"), "بحث");
         assert_eq!(gettext(Locale::French, "Search"), "Rechercher");
         assert_eq!(gettext(Locale::Italian, "Search"), "Cerca");
         assert_eq!(gettext(Locale::Russian, "Search"), "Поиск");
@@ -426,6 +444,7 @@ mod tests {
             "Scrivi un messaggio"
         );
         assert_eq!(gettext(Locale::Russian, "Today"), "Сегодня");
+        assert_eq!(gettext(Locale::Arabic, "Settings"), "الإعدادات");
     }
 
     #[test]
@@ -556,6 +575,47 @@ mod tests {
         assert_eq!(
             ngettext(Locale::English, "{} member", "{} members", 2),
             "{} members"
+        );
+    }
+
+    /// Arabic has six plural forms: zero, one, two, 3–10, 11–99, and 100+.
+    #[test]
+    fn arabic_plural_rules_select_six_forms() {
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 0),
+            "لا يوجد أعضاء"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 1),
+            "عضو واحد"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 2),
+            "عضوان"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 3),
+            "{} أعضاء"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 10),
+            "{} أعضاء"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 11),
+            "{} عضوًا"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 99),
+            "{} عضوًا"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 100),
+            "{} عضو"
+        );
+        assert_eq!(
+            ngettext(Locale::Arabic, "{} member", "{} members", 101),
+            "{} عضو"
         );
     }
 

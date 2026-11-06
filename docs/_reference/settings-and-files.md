@@ -138,7 +138,7 @@ name or description, in the interface language or in English.
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
 - **Language**: the interface language, or **Auto** to follow the system.
-  Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
+  Arabic, Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
   Chinese, Traditional Chinese, Turkish, Indonesian, and Dutch are available; otherwise English.
   Message contents, names, and logs are never translated.
 - **Custom title bar** (Windows and Linux, off by default): ZapFast draws
