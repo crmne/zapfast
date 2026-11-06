@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           sparse-checkout: .github/scripts
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: indexnow
       - name: Submit changed URLs to IndexNow
