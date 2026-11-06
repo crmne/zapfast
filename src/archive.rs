@@ -2991,17 +2991,18 @@ pub(crate) mod tests {
         }).unwrap();
     }
 
-    /// Makes the commit of any transaction that files a message fail: each
-    /// new message leaves a deferred foreign key unmet, which SQLite checks
-    /// only when the outermost transaction commits.
+    /// Makes the commit of any transaction that files a new message or poll
+    /// vote fail: each leaves a deferred foreign key unmet, which SQLite
+    /// checks only when the outermost transaction commits.
     pub(crate) fn set_commit_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "PRAGMA foreign_keys = ON;
              CREATE TEMP TABLE IF NOT EXISTS commit_gate (id INTEGER PRIMARY KEY);
              CREATE TEMP TABLE IF NOT EXISTS commit_blocker (gate INTEGER REFERENCES commit_gate (id) DEFERRABLE INITIALLY DEFERRED);
-             CREATE TEMP TRIGGER block_commit AFTER INSERT ON main.messages BEGIN INSERT INTO commit_blocker VALUES (1); END;"
+             CREATE TEMP TRIGGER block_message_commit AFTER INSERT ON main.messages BEGIN INSERT INTO commit_blocker VALUES (1); END;
+             CREATE TEMP TRIGGER block_vote_commit AFTER INSERT ON main.poll_votes BEGIN INSERT INTO commit_blocker VALUES (1); END;"
         } else {
-            "DROP TRIGGER temp.block_commit"
+            "DROP TRIGGER temp.block_message_commit; DROP TRIGGER temp.block_vote_commit;"
         }).unwrap();
     }
 

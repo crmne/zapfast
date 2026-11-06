@@ -6250,21 +6250,32 @@ impl Worker {
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
-        if self.archive.begin_batch().is_err() {
-            return self.file_history(parsed, metadata);
-        }
-        // What filing changes in memory beside the archive, put back if the
-        // chunk rolls back: learn_lid would skip a mapping the archive lost,
-        // and an early read or reaction it took would be gone.
-        let lid_to_pn = self.lid_to_pn.clone();
-        let early = self.early.clone();
-        let filed = self.file_history(parsed, metadata);
-        if let Err(error) = self.archive.end_batch() {
-            log::warn!("could not commit a history chunk: {error}");
-            self.lid_to_pn = lid_to_pn;
-            self.early = early;
-            return Vec::new();
-        }
+        let filed = if self.archive.begin_batch().is_err() {
+            self.file_history(parsed, metadata)
+        } else {
+            // What filing changes in memory beside the archive, put back if
+            // the chunk rolls back: learn_lid would skip a mapping the
+            // archive lost, an early read or reaction it took would be gone,
+            // and a poll whose votes were lost would count as recovered.
+            let lid_to_pn = self.lid_to_pn.clone();
+            let early = self.early.clone();
+            let poll_history = self.poll_history.clone();
+            let filed = self.file_history(parsed, metadata);
+            match self.archive.end_batch() {
+                Ok(()) => filed,
+                Err(error) => {
+                    log::warn!("could not commit a history chunk: {error}");
+                    self.lid_to_pn = lid_to_pn;
+                    self.early = early;
+                    self.poll_history = poll_history;
+                    Vec::new()
+                }
+            }
+        };
+        // After the chunk settles, so a request they send is never one a
+        // rollback forgets.
+        self.pump_poll_votes();
+        self.pump_poll_history();
         filed
     }
 
@@ -6732,8 +6743,6 @@ impl Worker {
             }
             filed.push((id, count, chat.more_on_phone));
         }
-        self.pump_poll_votes();
-        self.pump_poll_history();
         for (id, _, _) in &filed {
             self.emit_chat(id);
         }
