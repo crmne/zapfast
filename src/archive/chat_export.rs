@@ -39,7 +39,7 @@ impl Archive {
         cancelled: &AtomicBool,
         progress: impl Fn(Counts),
     ) -> Result<Counts> {
-        let _snapshot = self.connection.unchecked_transaction()?;
+        let _snapshot = super::Scope::begin(&self.connection)?;
         let known = self
             .chat(chat)?
             .context("This chat is no longer available")?;
