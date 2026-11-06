@@ -2528,9 +2528,7 @@ impl Worker {
             .ok()
             .flatten()
             .filter(|about| !about.is_empty());
-        if let Ok(lids) = self.archive.lids() {
-            self.lid_to_pn = lids.into_iter().collect();
-        }
+        self.load_lids();
         if let Ok(contacts) = self.archive.contacts() {
             self.contacts = contacts
                 .into_iter()
@@ -2544,6 +2542,13 @@ impl Worker {
         self.emit(Event::LinkPreviewsDisabled(self.link_previews_disabled));
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
         self.emit_chats();
+    }
+
+    /// Reads the privacy-id mappings from the archive.
+    fn load_lids(&mut self) {
+        if let Ok(lids) = self.archive.lids() {
+            self.lid_to_pn = lids.into_iter().collect();
+        }
     }
 
     /// Measures the media cache off the runtime, emptying it first when
@@ -6242,7 +6247,8 @@ impl Worker {
 
     /// Archives a history chunk in one transaction. `metadata` controls
     /// chat-state updates. Returns each chat's message count and whether the
-    /// phone has more.
+    /// phone has more, or nothing for a chunk that could not be saved, so it
+    /// completes no request.
     fn apply_history(
         &mut self,
         parsed: ParsedHistory,
@@ -6252,6 +6258,10 @@ impl Worker {
         let filed = self.file_history(parsed, metadata);
         if batched && let Err(error) = self.archive.end_batch() {
             log::warn!("could not commit a history chunk: {error}");
+            // Mappings learned from the chunk were rolled back with it;
+            // learn_lid must not skip them when they arrive again.
+            self.load_lids();
+            return Vec::new();
         }
         filed
     }
@@ -22392,7 +22402,7 @@ mod receipt_tests {
             worker.archive.lids().unwrap(),
             vec![("4242".to_owned(), "15550004242".to_owned())]
         );
-        for n in [0, MESSAGES - 1] {
+        for n in 0..MESSAGES {
             let id = format!("m{n}");
             assert!(worker.archive.message(group, &id).unwrap().is_some());
             assert_eq!(worker.archive.receipts(group, &id).unwrap().len(), 1);
@@ -22401,6 +22411,54 @@ mod receipt_tests {
         assert!(
             frames < MESSAGES as i64,
             "{frames} WAL frames for {MESSAGES} messages: each message committed on its own"
+        );
+    }
+
+    #[test]
+    fn a_history_chunk_that_cannot_commit_answers_nothing_and_is_learned_again() {
+        let group = "123-456@g.us";
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let chunk = || ParsedHistory {
+            chats: vec![parse_conversation({
+                let mut proto = wa::Conversation::default();
+                proto.id = group.into();
+                proto.messages = vec![history_entry(
+                    group,
+                    "m0",
+                    true,
+                    None,
+                    {
+                        let mut proto = wa::Message::default();
+                        proto.conversation = Some("hello".into());
+                        proto
+                    },
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            })],
+            push_names: Vec::new(),
+            lids: vec![("4242@lid".into(), "15550004242@s.whatsapp.net".into())],
+            stickers: Vec::new(),
+        };
+        crate::archive::tests::set_commit_failure(&worker.archive, true);
+        assert!(
+            worker.apply_history(chunk(), true).is_empty(),
+            "a chunk that was not saved answers no request"
+        );
+        assert!(worker.archive.message(group, "m0").unwrap().is_none());
+        assert!(worker.archive.lids().unwrap().is_empty());
+        assert!(
+            !worker.lid_to_pn.contains_key("4242"),
+            "the cache forgets the mapping the archive lost"
+        );
+        crate::archive::tests::set_commit_failure(&worker.archive, false);
+        assert_eq!(worker.apply_history(chunk(), true).len(), 1);
+        assert!(worker.lid_to_pn.contains_key("4242"));
+        assert!(worker.archive.message(group, "m0").unwrap().is_some());
+        assert_eq!(
+            worker.archive.lids().unwrap(),
+            vec![("4242".to_owned(), "15550004242".to_owned())]
         );
     }
 
