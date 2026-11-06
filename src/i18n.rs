@@ -38,11 +38,13 @@ pub enum Locale {
     Indonesian,
     #[serde(rename = "nl")]
     Dutch,
+    #[serde(rename = "cs")]
+    Czech,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -55,6 +57,7 @@ impl Locale {
         Self::Turkish,
         Self::Indonesian,
         Self::Dutch,
+        Self::Czech,
     ];
 
     /// The language's own name, for the picker.
@@ -72,6 +75,7 @@ impl Locale {
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
             Self::Dutch => "Nederlands",
+            Self::Czech => "Čeština",
         }
     }
 
@@ -98,6 +102,7 @@ impl Locale {
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
             "nl" => Self::Dutch,
+            "cs" => Self::Czech,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
                 // Simplified and names a region where Traditional is the
@@ -131,6 +136,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
             Self::Dutch => Some(&nl::Translator),
+            Self::Czech => Some(&cs::Translator),
             Self::English => None,
         }
     }
@@ -261,6 +267,9 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("id-ID"), Some(Locale::Indonesian));
         assert_eq!(Locale::from_system("id"), Some(Locale::Indonesian));
+        assert_eq!(Locale::from_system("cs-CZ"), Some(Locale::Czech));
+        assert_eq!(Locale::from_system("cs_CZ.UTF-8"), Some(Locale::Czech));
+        assert_eq!(Locale::from_system("cs"), Some(Locale::Czech));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
@@ -349,6 +358,11 @@ mod tests {
                 "Pesan grup asli tidak tersedia",
             ),
             (
+                Locale::Czech,
+                "Odpovědět soukromě",
+                "Původní zpráva ze skupiny není k dispozici",
+            ),
+            (
                 Locale::Turkish,
                 "Özel olarak yanıtla",
                 "Orijinal grup mesajı kullanılamıyor",
@@ -380,6 +394,27 @@ mod tests {
                 "Select message from {sender}, {time}: {summary}"
             ),
             "Selecionar mensagem de {sender} ({time}): {summary}"
+        );
+    }
+
+    #[test]
+    fn czech_catalog_translates_common_interface_text_and_plural_forms() {
+        assert_eq!(gettext(Locale::Czech, "Chats"), "Chaty");
+        assert_eq!(gettext(Locale::Czech, "Search"), "Hledat");
+        assert_eq!(gettext(Locale::Czech, "Settings"), "Nastavení");
+        assert_eq!(gettext(Locale::Czech, "Type a message"), "Napište zprávu");
+        assert_eq!(gettext(Locale::Czech, "Today"), "Dnes");
+        assert_eq!(
+            ngettext(Locale::Czech, "{} member", "{} members", 1),
+            "{} člen"
+        );
+        assert_eq!(
+            ngettext(Locale::Czech, "{} member", "{} members", 3),
+            "{} členové"
+        );
+        assert_eq!(
+            ngettext(Locale::Czech, "{} member", "{} members", 5),
+            "{} členů"
         );
     }
 
