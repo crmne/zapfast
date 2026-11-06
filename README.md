@@ -30,7 +30,7 @@ idle RAM, against 1.13 GB for WhatsApp Web.
 
 The interface is available in English, Chinese (Simplified and Traditional),
 French, German, Indonesian, Italian, Portuguese (Brazil), Russian, Spanish,
-and Turkish.
+Turkish, and Czech.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
@@ -115,7 +115,6 @@ Native notifications use Fastframe on Linux, macOS and Windows. ZapFast keeps
 its account/chat routing, privacy settings, notification limits and sound
 previews. Clicks open the announced message; reading a chat withdraws its
 tracked notifications. OS permissions and notification presentation still apply.
-
 
 ## More native apps
 
