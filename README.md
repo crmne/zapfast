@@ -30,7 +30,7 @@ idle RAM, against 1.13 GB for WhatsApp Web.
 
 The interface is available in English, Chinese (Simplified and Traditional),
 French, German, Indonesian, Italian, Portuguese (Brazil), Russian, Spanish,
-and Turkish.
+Turkish, and Czech.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
@@ -40,7 +40,7 @@ and Turkish.
 <details>
 <summary><strong>Watch ZapFast in action</strong></summary>
 
-https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
+<https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b>
 
 </details>
 
@@ -49,7 +49,7 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 ## Your chats, on your desktop
 
 | Feature | What you can do |
-|---|---|
+| --- | --- |
 | **Messages** | Send formatted text, replies, edits, reactions, forwards, pictures, files, stickers, GIFs, polls, and voice messages. |
 | **Media in the chat** | Play voice messages, videos, round video messages, GIFs, and animated stickers in place. |
 | **Your history** | Keep your chats in an encrypted archive on this computer, fetch older messages from your phone as you scroll, and export locally saved chat history as text or a ZIP with downloaded attachments. |
@@ -61,7 +61,7 @@ https://github.com/user-attachments/assets/2bf86b54-45fc-4add-8de7-c426c3cdad9b
 ## Install
 
 | Platform | Installation |
-|---|---|
+| --- | --- |
 | **macOS** | `brew install --cask crmne/tap/zapfast`, or [download the Mac app](https://zapfast.rocks/download/#macos). |
 | **Arch Linux** | `yay -S zapfast-bin` |
 | **Windows** | Choose your build on the [Download page](https://zapfast.rocks/download/#windows). |
@@ -88,7 +88,7 @@ details.
 The complete guide lives at **[zapfast.rocks](https://zapfast.rocks/)**.
 
 | You want to… | Read |
-|---|---|
+| --- | --- |
 | Know what ZapFast does and does not do yet | [What is ZapFast?](https://zapfast.rocks/what-is-zapfast/) |
 | Link your phone or build from source | [Getting started](https://zapfast.rocks/getting-started/) |
 | Learn messages, stickers, polls, and shortcuts | [Using ZapFast](https://zapfast.rocks/using-zapfast/) |
@@ -115,7 +115,6 @@ Native notifications use Fastframe on Linux, macOS and Windows. ZapFast keeps
 its account/chat routing, privacy settings, notification limits and sound
 previews. Clicks open the announced message; reading a chat withdraws its
 tracked notifications. OS permissions and notification presentation still apply.
-
 
 ## More native apps
 
