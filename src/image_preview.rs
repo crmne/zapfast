@@ -146,7 +146,8 @@ pub struct PreviewState {
     /// Scale the fitted image is drawn at, so zooming starts from what is
     /// on screen rather than from the original pixels.
     fit_scale: f32,
-    /// The chat whose album the viewer browses.
+    /// The originating chat, retained for access checks even for a profile
+    /// picture, which has no message or album.
     chat: ChatId,
     /// The message this picture came from.
     message: String,
@@ -215,8 +216,16 @@ impl PreviewState {
         self.card
     }
 
-    /// The chat whose album the viewer browses.
+    /// The chat whose album the viewer browses, or empty for a profile picture.
     pub fn chat(&self) -> &str {
+        if self.message.is_empty() {
+            return "";
+        }
+        &self.chat
+    }
+
+    /// The originating chat whose access also controls this preview.
+    pub fn source_chat(&self) -> &str {
         &self.chat
     }
 

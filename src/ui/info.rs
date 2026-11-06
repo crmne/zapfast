@@ -324,10 +324,10 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
 
 /// Opens a profile picture in the image viewer. It belongs to no message, so
 /// the viewer has no album of a chat to browse from it.
-fn view_photo(picture: &std::path::Path) -> Action {
+fn view_photo(picture: &std::path::Path, source_chat: Option<&str>) -> Action {
     Action::PreviewImage {
         path: picture.to_path_buf(),
-        chat: String::new(),
+        chat: source_chat.unwrap_or_default().to_owned(),
         message: String::new(),
         card: None,
     }
@@ -365,7 +365,8 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                 .on_hover_text(label.as_ref())
                 .clicked()
             {
-                app.actions.push(view_photo(picture));
+                let action = view_photo(picture, app.chat(id).map(|chat| chat.id.as_str()));
+                app.actions.push(action);
             }
         } else {
             widgets::avatar(ui, &palette, name, id, photo, None);
@@ -2056,7 +2057,7 @@ pub fn group_photo_id() -> egui::Id {
     egui::Id::new("group-photo")
 }
 
-/// The group's big photo, which opens a menu to change or remove it.
+/// The group's big photo, which opens a menu to view, change or remove it.
 fn group_photo(
     app: &App,
     ui: &mut egui::Ui,
@@ -2073,15 +2074,30 @@ fn group_photo(
         .on_hover_text(label.as_ref());
     ui.ctx()
         .data_mut(|data| data.insert_temp(group_photo_id(), response.rect));
+    let view = crate::i18n::gettext(app.locale, "View photo");
     let change = crate::i18n::gettext(app.locale, "Change photo");
     let remove = crate::i18n::gettext(app.locale, "Remove photo");
-    let width = widgets::menu_width(ui, &[change.as_ref(), remove.as_ref()], true);
+    let width = widgets::menu_width(ui, &[view.as_ref(), change.as_ref(), remove.as_ref()], true);
     let mut chosen = None;
     egui::Popup::menu(&response)
         .width(width)
         .frame(widgets::menu_frame(&palette))
         .show(|ui| {
-            if widgets::menu_item(ui, &palette, Some(Icon::Image), &change) {
+            if let Some(picture) = picture {
+                let item = widgets::menu_item_response(ui, &palette, Some(Icon::Eye), &view, true);
+                if response.has_focus() && !ui.is_sizing_pass() {
+                    item.request_focus();
+                }
+                if item.clicked() {
+                    chosen = Some(view_photo(picture, Some(id)));
+                    ui.close();
+                }
+            }
+            let item = widgets::menu_item_response(ui, &palette, Some(Icon::Image), &change, true);
+            if picture.is_none() && response.has_focus() && !ui.is_sizing_pass() {
+                item.request_focus();
+            }
+            if item.clicked() {
                 chosen = Some(Action::PickGroupPicture(id.to_owned()));
                 ui.close();
             }
@@ -2263,12 +2279,13 @@ mod tests {
             chat,
             message,
             card,
-        } = super::view_photo(path)
+        } = super::view_photo(path, Some("1@s.whatsapp.net"))
         else {
             panic!("the viewer");
         };
         assert_eq!(shown, path);
-        assert!(chat.is_empty() && message.is_empty() && card.is_none());
+        assert_eq!(chat, "1@s.whatsapp.net");
+        assert!(message.is_empty() && card.is_none());
     }
 
     use super::domain;

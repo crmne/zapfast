@@ -506,6 +506,11 @@ when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose.
 
+Click a profile picture in the info panel to open it in the same viewer.
+When a group's photo opens its editing menu, choose **View photo** to open it.
+Profile pictures have no chat album to browse. A locked chat's picture closes
+with the locked folder or window.
+
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click
 again to return to the photo. In the viewer, the play button in the header
