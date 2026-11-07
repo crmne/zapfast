@@ -10,6 +10,7 @@ pub(super) struct State {
     due: Option<Instant>,
     sequence: u64,
     job: Option<Job>,
+    compaction: Option<tokio::task::JoinHandle<()>>,
 }
 struct Job {
     generation: u64,
@@ -18,6 +19,7 @@ struct Job {
     raw_done: bool,
     videos: VecDeque<PathBuf>,
     in_flight: bool,
+    compacting: bool,
     report: Report,
     cancel: Arc<AtomicBool>,
 }
@@ -27,6 +29,50 @@ impl Drop for Job {
     }
 }
 impl Worker {
+    pub(super) fn storage_compacting(&self) -> bool {
+        self.smart_storage
+            .job
+            .as_ref()
+            .is_some_and(|job| job.compacting)
+    }
+    /// Idle compaction yields to foreground commands and incoming events.
+    pub(super) fn storage_foreground_work(&mut self) {
+        if let Some(job) = self.smart_storage.job.as_ref().filter(|job| job.compacting) {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    pub(super) async fn wait_storage_compaction(&mut self) {
+        if let Some(task) = self.smart_storage.compaction.take() {
+            let _ = task.await;
+        }
+    }
+    pub(super) fn storage_compacted(
+        &mut self,
+        session: u64,
+        generation: u64,
+        saved: Result<u64, ()>,
+    ) {
+        if !self
+            .smart_storage
+            .job
+            .as_ref()
+            .is_some_and(|job| session == self.account_session && job.generation == generation)
+        {
+            return;
+        }
+        let job = self.smart_storage.job.take().unwrap();
+        let mut report = job.report;
+        match saved {
+            Ok(bytes) => report.saved_bytes += bytes,
+            Err(()) if !job.cancel.load(Ordering::Relaxed) => report.failed += 1,
+            Err(()) => {}
+        }
+        self.smart_storage.due = Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
+        self.emit(Event::StorageOptimization {
+            running: false,
+            report,
+        });
+    }
     pub(super) fn configure_storage(&mut self, enabled: bool) {
         if self.smart_storage.enabled != enabled {
             self.smart_storage.enabled = enabled;
@@ -95,6 +141,7 @@ impl Worker {
             raw_done: false,
             videos,
             in_flight: false,
+            compacting: false,
             report: Report::default(),
             cancel: Arc::new(AtomicBool::new(false)),
         });
@@ -104,6 +151,16 @@ impl Worker {
         });
     }
     pub(super) fn pump_storage(&mut self) {
+        // Stop can detach a canceled job before its blocking task has exited.
+        // Retain its handle until it is finished; logout/shutdown must join it.
+        if self
+            .smart_storage
+            .compaction
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+        {
+            return;
+        }
         if !self.privacy_ready || self.syncing || self.call.is_some() {
             return;
         }
@@ -166,16 +223,48 @@ impl Worker {
         // Skip unavailable or already-optimized files without encoding again.
         for _ in 0..32 {
             let Some(path) = job.videos.pop_front() else {
-                let job = self.smart_storage.job.take().unwrap();
-                let mut report = job.report;
-                if report.messages > 0 && self.archive.reclaim_storage().is_err() {
-                    report.failed += 1;
+                if self.archive.compaction_due().unwrap_or(false) {
+                    job.in_flight = true;
+                    job.compacting = true;
+                    let generation = job.generation;
+                    let session = self.account_session;
+                    let cancel = job.cancel.clone();
+                    let path = self.dirs.archive_db();
+                    let commands = self.commands.clone();
+                    self.smart_storage.compaction = Some(tokio::task::spawn_blocking(move || {
+                        let size = || {
+                            [&path, &path.with_extension("db-wal")]
+                                .into_iter()
+                                .filter_map(|path| std::fs::metadata(path).ok())
+                                .map(|meta| meta.len())
+                                .sum::<u64>()
+                        };
+                        let before = size();
+                        let saved = (|| {
+                            if cancel.load(Ordering::Relaxed) {
+                                return Err(());
+                            }
+                            let archive = crate::archive::Archive::open(&path).map_err(|_| ())?;
+                            archive
+                                .reclaim_storage_cancelable(cancel.clone())
+                                .map_err(|_| ())?;
+                            Ok(before.saturating_sub(size()))
+                        })();
+                        let _ = commands.send(Command::StorageCompacted {
+                            session,
+                            generation,
+                            saved,
+                        });
+                    }));
+                } else {
+                    let job = self.smart_storage.job.take().unwrap();
+                    self.smart_storage.due =
+                        Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
+                    self.emit(Event::StorageOptimization {
+                        running: false,
+                        report: job.report,
+                    });
                 }
-                self.smart_storage.due = Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
-                self.emit(Event::StorageOptimization {
-                    running: false,
-                    report,
-                });
                 return;
             };
             let Ok(stamp) = Stamp::of(&path) else {
@@ -221,21 +310,19 @@ impl Worker {
         };
         job.in_flight = false;
         job.report.failed += failed;
-        for (row, packed) in packed {
-            match self.archive.store_packed_raw(&row, &packed) {
-                Ok(true) => {
-                    job.report.messages += 1;
-                    job.report.saved_bytes += (row.raw.len() - packed.len()) as u64;
-                }
-                Ok(false) => {}
-                Err(_) => job.report.failed += 1,
+        match self.archive.store_packed_batch(&packed) {
+            Ok((messages, bytes)) => {
+                job.report.messages += messages;
+                job.report.packed_bytes += bytes;
             }
+            Err(_) => job.report.failed += packed.len() as u64,
         }
         let report = job.report;
         self.emit(Event::StorageOptimization {
             running: true,
             report,
         });
+        self.pump_storage();
     }
     pub(super) fn storage_video_done(
         &mut self,
@@ -294,5 +381,69 @@ impl Worker {
             running: true,
             report,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn restarting_after_stop_keeps_the_previous_compaction_handle() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let previous = tokio::spawn(std::future::pending::<()>());
+        let previous_id = previous.id();
+        worker.smart_storage.compaction = Some(previous);
+        worker
+            .archive
+            .set_meta("storage_compaction_due", "1")
+            .unwrap();
+        worker.start_storage();
+        worker.smart_storage.job.as_mut().unwrap().raw_done = true;
+        worker.pump_storage();
+        assert_eq!(
+            worker.smart_storage.compaction.as_ref().unwrap().id(),
+            previous_id
+        );
+        assert!(!worker.smart_storage.job.as_ref().unwrap().in_flight);
+        worker.smart_storage.compaction.as_ref().unwrap().abort();
+        worker.stop_storage();
+        worker.wait_storage_compaction().await;
+        assert!(worker.smart_storage.compaction.is_none());
+    }
+
+    #[test]
+    fn foreground_work_cancels_idle_compaction_and_stale_results_are_ignored() {
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        worker.start_storage();
+        let job = worker.smart_storage.job.as_mut().unwrap();
+        job.compacting = true;
+        job.in_flight = true;
+        job.report.messages = 2;
+        job.report.packed_bytes = 1000;
+        let generation = job.generation;
+        let cancel = job.cancel.clone();
+        worker.storage_compacted(worker.account_session + 1, generation, Ok(999));
+        assert!(worker.smart_storage.job.is_some());
+        worker.storage_foreground_work();
+        assert!(cancel.load(Ordering::Relaxed));
+        worker.storage_compacted(worker.account_session, generation, Err(()));
+        assert!(worker.smart_storage.job.is_none());
+        let reports = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::StorageOptimization {
+                    running: false,
+                    report,
+                } => Some(report),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].messages, 2);
+        assert_eq!(reports[0].packed_bytes, 1000);
+        assert_eq!(reports[0].saved_bytes, 0);
+        assert_eq!(reports[0].failed, 0);
+        worker.storage_compacted(worker.account_session, generation, Ok(999));
+        assert!(events.try_iter().next().is_none());
     }
 }

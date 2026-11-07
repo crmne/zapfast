@@ -20,6 +20,7 @@ pub struct Report {
     pub messages: u64,
     pub videos: u64,
     pub saved_bytes: u64,
+    pub packed_bytes: u64,
     pub failed: u64,
     pub video_unavailable: bool,
 }

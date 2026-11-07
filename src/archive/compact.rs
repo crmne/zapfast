@@ -58,6 +58,48 @@ impl Archive {
             )
             .map(|count| count > 0)
     }
+    /// Publish one bounded batch in one transaction; concurrent edits win.
+    pub fn store_packed_batch(&self, packed: &[(RawRow, Vec<u8>)]) -> Result<(u64, u64)> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let mut messages = 0;
+        let mut bytes = 0;
+        for (row, packed) in packed {
+            if self.store_packed_raw(row, packed)? {
+                messages += 1;
+                bytes += row.raw.len().saturating_sub(packed.len()) as u64;
+            }
+        }
+        if messages > 0 {
+            self.set_meta("storage_compaction_due", "1")?;
+        }
+        transaction.commit()?;
+        Ok((messages, bytes))
+    }
+    pub fn compaction_due(&self) -> Result<bool> {
+        Ok(self.meta("storage_compaction_due")?.as_deref() == Some("1"))
+    }
+    /// The progress hook lets foreground work abort an idle rewrite before
+    /// attempting its own writes. SQLite rolls an interrupted VACUUM back.
+    pub fn reclaim_storage_cancelable(
+        &self,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_INTERRUPT),
+                None,
+            ));
+        }
+        self.connection
+            .progress_handler(100, Some(move || cancel.load(Ordering::Relaxed)))?;
+        let result = self.reclaim_storage();
+        let reset = self.connection.progress_handler(0, None::<fn() -> bool>);
+        result?;
+        reset?;
+        self.set_meta("storage_compaction_due", "0")?;
+        Ok(())
+    }
     pub fn old_cached_videos(&self, before: i64) -> Result<Vec<PathBuf>> {
         // MAX spans every reference to a path: a video shared again recently
         // must not be reduced just because an older message references it too.
@@ -107,6 +149,49 @@ impl Archive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn batch_packing_is_resumable_and_canceled_compaction_preserves_rows() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let archive = Archive::in_memory().unwrap();
+        let chat = "synthetic@s.whatsapp.net";
+        archive.ensure_chat(chat, "Synthetic").unwrap();
+        let raw = b"original protocol data ".repeat(100);
+        for id in ["one", "two"] {
+            archive
+                .insert_message(
+                    &super::super::tests::message(chat, id, 10, false),
+                    Some(&raw),
+                )
+                .unwrap();
+        }
+        let packed = archive
+            .storage_raw_batch(20, 0)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                let bytes = smart_storage::pack(&row.raw).unwrap().unwrap();
+                (row, bytes)
+            })
+            .collect::<Vec<_>>();
+        let (messages, bytes) = archive.store_packed_batch(&packed).unwrap();
+        assert_eq!(messages, 2);
+        assert!(bytes > 0);
+        assert!(archive.compaction_due().unwrap());
+        assert!(archive.storage_raw_batch(20, 0).unwrap().is_empty());
+        assert!(
+            archive
+                .reclaim_storage_cancelable(Arc::new(AtomicBool::new(true)))
+                .is_err()
+        );
+        assert!(archive.compaction_due().unwrap());
+        assert_eq!(archive.raw(chat, "one").unwrap().unwrap(), raw);
+        archive
+            .reclaim_storage_cancelable(Arc::new(AtomicBool::new(false)))
+            .unwrap();
+        assert!(!archive.compaction_due().unwrap());
+        assert_eq!(archive.raw(chat, "two").unwrap().unwrap(), raw);
+    }
+
     #[test]
     fn age_cutoff_and_newer_shared_video_references_are_respected() {
         let archive = Archive::in_memory().unwrap();

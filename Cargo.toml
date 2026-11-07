@@ -90,7 +90,7 @@ http = "1"
 base64 = "0.23"
 # SQLCipher encrypts the archive; the device store shares the same library.
 # Bundle OpenSSL so all release platforms use the same encryption provider.
-rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "hooks"] }
 keyring-core = "1"
 getrandom = "0.4"
 zeroize = "1"

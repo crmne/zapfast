@@ -379,7 +379,7 @@ processed independently. Only messages older than 90 days qualify.
 Searchable message text, captions, identifiers and attachment keys are retained.
 Duplicate protocol payloads are compressed losslessly using gzip's strongest
 level, only when this saves at least 15%. Reads restore the exact bytes. The
-archive remains encrypted with SQLCipher; a completed run reclaims free pages.
+archive remains encrypted with SQLCipher; idle background compaction reclaims free pages. Compaction is canceled when foreground work arrives, and on Stop, unlink or shutdown. Interrupted compaction is retried on a later run. Message-data reduction and disk space actually freed are reported separately.
 Older app versions cannot interpret packed raw payloads, so keep this build
 until support is included in an official update.
 
@@ -389,7 +389,7 @@ works without them. Videos with less than 15% savings stay unchanged. Each
 replacement must pass duration, audio-stream and full decode checks, then is
 published atomically only if the source has not changed. Already processed
 files are not encoded again unless replaced. A path shared with a newer
-message is not optimized. Downloads saved outside the account's cache are
+message is not optimized. Manually downloaded videos kept inside the app cache also qualify. Downloads saved outside the account's cache are
 never modified. The reduced cached video has lower quality; recovery of an
 original from WhatsApp's servers is not guaranteed.
 

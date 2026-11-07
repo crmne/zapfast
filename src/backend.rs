@@ -1042,6 +1042,11 @@ pub enum Command {
         id: String,
         path: Option<PathBuf>,
     },
+    StorageCompacted {
+        session: u64,
+        generation: u64,
+        saved: Result<u64, ()>,
+    },
     SetSmartStorage(bool),
     OptimizeStorage,
     CancelStorageOptimization,

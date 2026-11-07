@@ -1490,7 +1490,7 @@ fn smart_storage_controls(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::gettext(locale,"After 90 days, compress older message data while keeping all text searchable. Moderately reduce cached video quality. Saved downloads stay unchanged. Runs in small daily batches.")).font(theme::regular(12.5)).color(palette.secondary)).wrap());
+    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::gettext(locale,"After 90 days, compress older message data while keeping all text searchable. Moderately reduce cached video quality. This includes videos manually downloaded into the app cache. Files saved outside the app cache stay unchanged. Runs in small daily batches.")).font(theme::regular(12.5)).color(palette.secondary)).wrap());
     ui.add_space(8.0);
     let running = app.storage_optimizing;
     let label = if running {
@@ -1516,7 +1516,7 @@ fn smart_storage_controls(ui: &mut egui::Ui, app: &mut App) {
     if let Some(report) = app.storage_report {
         let text = crate::i18n::gettext(
             locale,
-            "{messages} messages, {videos} videos, {bytes} saved",
+            "{messages} messages, {videos} videos, {bytes} disk space freed",
         )
         .replace("{messages}", &report.messages.to_string())
         .replace("{videos}", &report.videos.to_string())
@@ -1529,6 +1529,9 @@ fn smart_storage_controls(ui: &mut egui::Ui, app: &mut App) {
             )
             .wrap(),
         );
+        if report.packed_bytes > 0 {
+            ui.label(crate::i18n::gettext(locale, "{bytes} less message data; unused database space is reusable until idle compaction finishes.").replace("{bytes}", &crate::util::bytes(report.packed_bytes)));
+        }
         if report.video_unavailable {
             ui.label(crate::i18n::gettext(
                 locale,
