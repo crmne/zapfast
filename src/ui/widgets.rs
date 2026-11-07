@@ -750,7 +750,7 @@ fn menu_rows_id() -> egui::Id {
 }
 
 /// Notes a menu row that takes focus, for [`menu_letters`].
-fn note_menu_row(ui: &Ui, id: egui::Id, label: &str) {
+pub(crate) fn note_menu_row(ui: &Ui, id: egui::Id, label: &str) {
     // A popup's first pass only measures it: nothing in it takes focus yet.
     if ui.is_sizing_pass() || !ui.is_enabled() {
         return;

@@ -883,7 +883,7 @@ fn starred_row(
             &app.settings.reaction_emoji,
             message,
         ))
-        .frame(widgets::menu_frame(palette));
+        .frame(egui::Frame::NONE);
     let popup = if force_menu {
         popup.at_position(bubble.left_top() + vec2(12.0, 8.0))
     } else {

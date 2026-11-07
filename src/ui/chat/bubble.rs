@@ -619,10 +619,26 @@ pub(crate) fn bubble_frame(
 
     let at_chevron_id = bubble_id.with("menu-at-chevron");
     if chevron_clicked && !was_open {
+        let raw_x = if own {
+            chevron_rect.right() - width
+        } else {
+            chevron_rect.left()
+        };
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                at_chevron_id,
+                (raw_x, chevron_rect.bottom() + 4.0, chevron_rect.top() - 4.0),
+            );
+        });
+    } else if right_clicked {
+        let p = pointer.unwrap_or_else(|| bubble.rect.center());
+        let raw_x = if own { p.x - width * 0.5 } else { p.x };
         ui.ctx()
-            .data_mut(|data| data.insert_temp(at_chevron_id, chevron_rect.left_bottom()));
+            .data_mut(|data| data.insert_temp(at_chevron_id, (raw_x, p.y, p.y)));
     }
-    let chevron_pos = ui.ctx().data(|data| data.get_temp::<egui::Pos2>(at_chevron_id));
+    let anchor_coords = ui
+        .ctx()
+        .data(|data| data.get_temp::<(f32, f32, f32)>(at_chevron_id));
 
     if anim_progress > 0.001 {
         let is_chevron_hovered = chevron_resp.as_ref().is_some_and(|r| r.hovered());
@@ -630,7 +646,6 @@ pub(crate) fn bubble_frame(
         let corner_dark = Color32::from_black_alpha((peak_alpha * ease) as u8);
         let clear = Color32::from_rgba_premultiplied(0, 0, 0, 0);
 
-        // If the bubble has an outgoing tail (el piquito), shade the tail seamlessly with the corner.
         if tail == Some(widgets::Side::Right) {
             let edge = bubble_rect.right();
             let top = bubble_rect.top();
@@ -646,7 +661,6 @@ pub(crate) fn bubble_frame(
 
         let painter = ui.painter().with_clip_rect(bubble_rect);
 
-        // Radial corner gradient (difuminado natural desde el contorno de la esquina).
         let origin = pos2(bubble_rect.right(), bubble_rect.top());
         let radius: f32 = 42.0;
         let segments = 8;
@@ -663,7 +677,6 @@ pub(crate) fn bubble_frame(
         }
         painter.add(egui::Shape::mesh(mesh));
 
-        // Circular/rounded hover button background only when cursor directly hovers the chevron.
         if is_chevron_hovered || was_open {
             let button_fill = if palette.dark {
                 Color32::from_black_alpha((40.0 * ease) as u8)
@@ -673,7 +686,6 @@ pub(crate) fn bubble_frame(
             painter.rect_filled(chevron_rect.shrink(1.0), CornerRadius::same(5), button_fill);
         }
 
-        // Clean white chevron matching WhatsApp Web official.
         let alpha = if is_chevron_hovered || was_open { 255.0 } else { 220.0 } * ease;
         let chevron_color = Color32::from_rgba_unmultiplied(255, 255, 255, alpha as u8);
         let stroke_width = 1.8;
@@ -760,6 +772,34 @@ pub(crate) fn bubble_frame(
     } else {
         None
     };
+    let est_h = estimated_menu_height(view, menu_target, keys_menu);
+    let menu_h = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(bubble_id.with("menu-rect")))
+        .map_or(est_h, |rect| rect.height().max(120.0));
+
+    let (raw_x, down_y, up_y) = anchor_coords.unwrap_or_else(|| {
+        let p = bubble.rect.left_top() + vec2(12.0, 8.0);
+        (p.x, p.y, bubble.rect.top())
+    });
+
+    let pad = 8.0;
+    let min_x = viewport.left() + pad;
+    let max_x = if reacting {
+        (viewport.right() - width - 340.0).max(min_x)
+    } else {
+        (viewport.right() - width - pad).max(min_x)
+    };
+    let clamped_x = raw_x.clamp(min_x, max_x);
+
+    let min_y = viewport.top() + pad;
+    let max_y = (viewport.bottom() - menu_h - pad).max(min_y);
+    let (base_y, opens_down) = if down_y + menu_h <= viewport.bottom() - pad {
+        (down_y.clamp(min_y, max_y), true)
+    } else {
+        ((up_y - menu_h).clamp(min_y, max_y), false)
+    };
+
     let popup = egui::Popup::menu(&bubble)
         .sense(Sense::CLICK)
         .open_memory(open)
@@ -769,27 +809,17 @@ pub(crate) fn bubble_frame(
             egui::PopupCloseBehavior::CloseOnClickOutside
         })
         .width(width)
-        .frame(widgets::menu_frame(&palette));
-    let popup = if reacting {
-        let screen = ui.ctx().content_rect();
-        let menu = ui
-            .ctx()
-            .data(|data| data.get_temp::<Rect>(bubble_id.with("menu-rect")))
-            .unwrap_or(bubble.rect);
-        let x = menu.left().clamp(
-            screen.left() + 8.0,
-            (screen.right() - width - 468.0).max(screen.left() + 8.0),
-        );
-        popup.at_position(pos2(x, menu.top()))
-    } else if let Some(pos) = chevron_pos {
-        popup.at_position(pos)
-    } else if at_message {
-        popup.at_position(bubble.rect.left_top() + vec2(12.0, 8.0))
-    } else {
-        popup.at_pointer_fixed()
-    };
+        .frame(egui::Frame::NONE)
+        .at_position(pos2(clamped_x, base_y));
+
     let menu = popup.show(|ui| {
-        context_menu(ui, view, menu_target, MenuOrigin::Chat, actions);
+        context_menu(
+            ui,
+            view,
+            menu_target,
+            MenuOrigin::Chat { opens_down },
+            actions,
+        );
     });
     if let Some(menu) = &menu {
         ui.ctx()
@@ -797,7 +827,10 @@ pub(crate) fn bubble_frame(
     }
     let mut open_now = egui::Popup::is_id_open(ui.ctx(), popup_id);
     if !open_now {
-        ui.ctx().data_mut(|data| data.remove::<egui::Pos2>(at_chevron_id));
+        ui.ctx().data_mut(|data| {
+            data.remove::<(f32, f32, f32)>(at_chevron_id);
+            data.remove::<f64>(egui::Id::new(("msg-menu-open-time", &menu_target.id)));
+        });
     }
     if let Some(focus_pending) = from_keys {
         if open_now && !focus_pending && !reacting && focus_in_menu(ui.ctx()) == Some(false) {
