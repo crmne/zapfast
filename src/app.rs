@@ -3399,6 +3399,13 @@ impl App {
                 (self.locked_folder && !self.chat_lock_authenticated())
                     || needle.is_empty()
                     || self.text_matches(&self.chat_title(chat), &needle)
+                    || chat
+                        .community
+                        .as_ref()
+                        .and_then(|info| info.parent.as_deref())
+                        .and_then(|id| self.chat(id))
+                        .filter(|parent| !parent.locked)
+                        .is_some_and(|parent| self.text_matches(&self.chat_title(parent), &needle))
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat
                         .last
@@ -3424,7 +3431,16 @@ impl App {
                 }
             })
         });
-        chats
+        let grouped = self.sidebar_visible
+            && self.search.trim().is_empty()
+            && !locked
+            && !self.show_archived
+            && self.label_filter.is_none()
+            && matches!(
+                self.chat_filter,
+                crate::model::ChatFilter::All | crate::model::ChatFilter::Groups
+            );
+        crate::communities::visible(chats, &self.chats, &self.collapsed_communities, grouped)
     }
 
     /// Whether the chat list keeps the phone's favorites order instead of the
@@ -6200,6 +6216,16 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        if let Some(parent) = self
+            .chat(&id)
+            .and_then(|chat| chat.community.as_ref())
+            .and_then(|info| info.parent.clone())
+        {
+            self.collapsed_communities.remove(&parent);
+        }
+        if self.chat(&id).is_some_and(Chat::is_community) {
+            return;
+        }
         self.reset_notification_throttle(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
             self.invalidate_composer_undo();
@@ -7428,6 +7454,12 @@ impl App {
                     Page::Settings
                 };
                 self.apply(Action::Open(page), ctx);
+            }
+            Action::ToggleCommunity(id) => {
+                if !self.collapsed_communities.remove(&id) {
+                    self.collapsed_communities.insert(id);
+                }
+                self.backend.send(Command::LoadCommunities);
             }
             Action::OpenChat(id) => {
                 // A chat where someone mentioned us opens at the mention, as

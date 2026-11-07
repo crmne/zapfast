@@ -3831,6 +3831,7 @@ impl Worker {
                     && (chat.group_description.is_some() || chat.left)
                     // Nor its permissions and admins, before group management.
                     && (chat.group_settings.is_some() || chat.left)
+                    && (chat.community.is_some() || chat.left)
             });
             if known {
                 return;
@@ -3934,6 +3935,14 @@ impl Worker {
         tokio::spawn(async move {
             match client.groups().fetch_metadata(&jid).await {
                 Ok(metadata) => {
+                    let community_info = crate::model::GroupCommunity {
+                        is_parent: metadata.is_parent_group,
+                        parent: metadata
+                            .parent_group_jid
+                            .as_ref()
+                            .map(|jid| jid.to_non_ad_string()),
+                        is_announcement: metadata.is_default_sub_group,
+                    };
                     let (participants, admin) =
                         new_group::group_members(&metadata.participants, &me, &lids);
                     let settings = group_admin::settings_of(&metadata, &lids);
@@ -3942,6 +3951,7 @@ impl Worker {
                         let _ = commands.send(Command::LearnNumbers(numbers));
                     }
                     let _ = commands.send(Command::GroupInfo {
+                        community: community_info,
                         leave_generation,
                         chat,
                         // Empty subjects leave cached titles intact and retry.
@@ -4103,6 +4113,14 @@ impl Worker {
                 };
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
+                if let Ok(chats) = self.archive.chats() {
+                    for chat in chats
+                        .into_iter()
+                        .filter(|chat| chat.is_group() && !chat.left)
+                    {
+                        self.request_group_info(&chat.id, false);
+                    }
+                }
                 self.fetch_blocklist();
                 self.retry_message_removals();
                 // A new connection may reach a phone that was away before.
@@ -8978,7 +8996,18 @@ impl Worker {
                 let saved = self.save_group_recipients(&chat, &id, &recipients);
                 let _ = stored.send(saved);
             }
+            Command::LoadCommunities => {
+                if let Ok(chats) = self.archive.chats() {
+                    for chat in chats
+                        .into_iter()
+                        .filter(|chat| chat.is_group() && !chat.left)
+                    {
+                        self.request_group_info(&chat.id, false);
+                    }
+                }
+            }
             Command::GroupInfo {
+                community,
                 chat,
                 name,
                 description,
@@ -9051,6 +9080,17 @@ impl Worker {
                         expiration,
                         ephemeral_setting_timestamp.unwrap_or_default(),
                     );
+                }
+                if self.archive.set_group_community(&chat, &community).is_err() {
+                    log::warn!("could not save community metadata");
+                }
+                if let Some(parent) = &community.parent
+                    && parent != &chat
+                    && parent.ends_with("@g.us")
+                    && self.archive.removal_point(parent).ok().flatten().is_none()
+                {
+                    self.ensure_chat(parent, None);
+                    self.emit_chat(parent);
                 }
                 self.emit_chat(&chat);
             }
@@ -14647,6 +14687,44 @@ mod tests {
     use std::io::Cursor;
 
     #[tokio::test]
+    async fn community_metadata_is_persisted_and_unknown_parents_are_queued() {
+        let (mut worker, _events, _commands, _wa) = super::receipt_tests::worker();
+        let chat = "child@g.us";
+        worker.archive.ensure_chat(chat, "General").unwrap();
+        let info = crate::model::GroupCommunity {
+            is_parent: false,
+            parent: Some("parent@g.us".into()),
+            is_announcement: true,
+        };
+        worker
+            .handle_command(Command::GroupInfo {
+                community: info.clone(),
+                chat: chat.into(),
+                request_generation: 0,
+                name: Some("General".into()),
+                description: String::new(),
+                description_generation: 0,
+                participants: vec!["member@s.whatsapp.net".into()],
+                read_only: true,
+                ephemeral_expiration: None,
+                ephemeral_setting_timestamp: None,
+                leave_generation: 0,
+                info_locked: true,
+                admin: false,
+                subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
+            })
+            .await;
+        assert_eq!(
+            worker.archive.chat(chat).unwrap().unwrap().community,
+            Some(info)
+        );
+        assert!(worker.archive.chat("parent@g.us").unwrap().is_some());
+        assert!(worker.group_info_queue.iter().any(|id| id == "parent@g.us"));
+    }
+
+    #[tokio::test]
     async fn a_lost_socket_without_a_disconnect_event_starts_reconnecting() {
         let (mut worker, events, _commands, _wa) = super::receipt_tests::worker();
         let directory = tempfile::tempdir().unwrap();
@@ -18690,6 +18768,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(chat, "Weekend plans").unwrap();
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: chat.into(),
                 name: Some(String::new()),
                 description: String::new(),
@@ -18719,6 +18798,7 @@ mod receipt_tests {
         );
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: chat.into(),
                 name: Some("Current title".into()),
                 description: String::new(),
@@ -18755,6 +18835,7 @@ mod receipt_tests {
         worker.leave_generation.insert(chat.into(), 1);
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: chat.into(),
                 name: Some("Weekend plans".into()),
                 description: String::new(),
@@ -18780,6 +18861,7 @@ mod receipt_tests {
         // it clears the leave when it lists us again.
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: chat.into(),
                 name: Some("Weekend plans".into()),
                 description: String::new(),
@@ -18841,6 +18923,7 @@ mod receipt_tests {
         worker.group_info_requested.clear();
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: chat.into(),
                 name: Some("Weekend plans".into()),
                 description: String::new(),
@@ -19008,6 +19091,7 @@ mod receipt_tests {
         ] {
             worker
                 .handle_command(Command::GroupInfo {
+                    community: Default::default(),
                     chat: group.into(),
                     name: Some("Fixture".into()),
                     description: description.into(),
@@ -19103,6 +19187,7 @@ mod receipt_tests {
             .await;
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: group.into(),
                 name: Some("Fixture".into()),
                 description: "Old description".into(),
@@ -19176,6 +19261,7 @@ mod receipt_tests {
                 .set_group_description(group, "Cached description")
                 .unwrap();
             let snapshot = |request_generation, description: &str| Command::GroupInfo {
+                community: Default::default(),
                 chat: group.into(),
                 request_generation,
                 name: Some("Fixture".into()),
@@ -19423,6 +19509,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(chat, "Weekend plans").unwrap();
         worker.archive.set_group_rights(chat, false, false).unwrap();
         let snapshot = |name: &str, subject_generation| Command::GroupInfo {
+            community: Default::default(),
             chat: chat.into(),
             name: Some(name.into()),
             description: String::new(),
