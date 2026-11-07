@@ -186,5 +186,10 @@ newer. Install the driver from the maker of your graphics chip: the Microsoft
 Basic Display Adapter, some virtual machines, and some remote desktop sessions
 offer no usable OpenGL, and Windows then shows a message instead of starting.
 
+If an older Windows build reports that `VCRUNTIME140.dll` or `MSVCP140.dll`
+is missing, install Microsoft's
+[Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+for that build's architecture (x64 or ARM64), then start {{ app }} again.
+
 SmartScreen may warn about an unknown publisher on first run. Choose **More
 info**, then **Run anyway**.
