@@ -9,6 +9,7 @@ pub fn visible<'a>(
     all: &'a [Chat],
     collapsed: &HashSet<ChatId>,
     grouped: bool,
+    selected: Option<&str>,
 ) -> Vec<&'a Chat> {
     if !grouped {
         return chats
@@ -86,9 +87,10 @@ pub fn visible<'a>(
             continue;
         }
         result.push(parent);
-        if !collapsed.contains(&parent.id) {
-            result.extend(members);
-        }
+        let expanded = !collapsed.contains(&parent.id);
+        result.extend(members.into_iter().filter(|member| {
+            expanded || member.looks_unread() || selected == Some(member.id.as_str())
+        }));
     }
     result
 }
@@ -116,7 +118,7 @@ mod tests {
         ];
         chats[2].community.as_mut().unwrap().is_announcement = true;
         let ids = |collapsed: HashSet<ChatId>| {
-            visible(chats.iter().collect(), &chats, &collapsed, true)
+            visible(chats.iter().collect(), &chats, &collapsed, true, None)
                 .iter()
                 .map(|chat| chat.id.as_str())
                 .collect::<Vec<_>>()
@@ -136,9 +138,38 @@ mod tests {
         );
         chats[0].pinned = true;
         assert_eq!(
-            visible(chats.iter().collect(), &chats, &Default::default(), true)[0].id,
+            visible(
+                chats.iter().collect(),
+                &chats,
+                &Default::default(),
+                true,
+                None
+            )[0]
+            .id,
             "general@g.us"
         );
+    }
+    #[test]
+    fn collapsed_communities_reveal_only_unread_or_selected_members() {
+        let mut chats = vec![
+            chat("parent@g.us", None, true),
+            chat("active@g.us", Some("parent@g.us"), false),
+            chat("quiet@g.us", Some("parent@g.us"), false),
+        ];
+        let collapsed = ["parent@g.us".into()].into();
+        chats[1].unread = 1;
+        let ids = |selected| {
+            visible(chats.iter().collect(), &chats, &collapsed, true, selected)
+                .into_iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(None), ["parent@g.us", "active@g.us"]);
+        assert_eq!(
+            ids(Some("quiet@g.us")),
+            ["parent@g.us", "active@g.us", "quiet@g.us"]
+        );
+        assert!(collapsed.contains("parent@g.us"));
     }
     #[test]
     fn filtered_or_unknown_or_private_parents_never_hide_member_chats() {
@@ -147,17 +178,24 @@ mod tests {
             chat("parent@g.us", None, true),
         ];
         assert_eq!(
-            visible(chats.iter().collect(), &chats, &Default::default(), false).len(),
+            visible(
+                chats.iter().collect(),
+                &chats,
+                &Default::default(),
+                false,
+                None
+            )
+            .len(),
             1
         );
         chats[1].locked = true;
         assert_eq!(
-            visible(vec![&chats[0]], &chats, &Default::default(), true).len(),
+            visible(vec![&chats[0]], &chats, &Default::default(), true, None).len(),
             1
         );
         chats[1].left = true;
         assert_eq!(
-            visible(vec![&chats[0]], &chats, &Default::default(), true)[0].id,
+            visible(vec![&chats[0]], &chats, &Default::default(), true, None)[0].id,
             "group@g.us"
         );
     }
