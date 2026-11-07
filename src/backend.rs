@@ -1085,6 +1085,25 @@ pub enum Command {
         lids: Vec<(String, String)>,
         stored: tokio::sync::mpsc::UnboundedSender<bool>,
     },
+    /// Internal protocol fallback, scoped to the connection that requested it.
+    ResolveMessageSecret {
+        session: u64,
+        chat: ChatId,
+        sender: String,
+        message: String,
+        reply: tokio::sync::oneshot::Sender<
+            Option<whatsapp_rust::wacore::msg_secret::ResolvedMessageSecret>,
+        >,
+    },
+    /// Result of an explicit reaction send; no optimistic success is filed.
+    ReactionSent {
+        session: u64,
+        generation: u64,
+        chat: ChatId,
+        message: String,
+        emoji: String,
+        succeeded: bool,
+    },
     /// Internal group metadata result.
     GroupInfo {
         chat: ChatId,
