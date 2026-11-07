@@ -9580,9 +9580,7 @@ impl App {
                     // Decorations are fixed when a window is made. Replace
                     // the window, keeping the chat, the link and any call:
                     // the shell opens the next one at once.
-                    if cfg!(any(windows, target_os = "linux", target_os = "freebsd"))
-                        && !self.window_hidden
-                    {
+                    if cfg!(any(windows, target_os = "linux")) && !self.window_hidden {
                         self.reopen = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -18097,7 +18095,7 @@ mod tests {
         assert!(!app.settings.custom_titlebar, "off by default");
         app.apply(Action::SetCustomTitlebar(true), &ctx);
         assert!(app.settings.custom_titlebar);
-        let replaced = cfg!(any(windows, target_os = "linux", target_os = "freebsd"));
+        let replaced = cfg!(any(windows, target_os = "linux"));
         assert_eq!(app.reopen, replaced);
         assert_eq!(app.closed() == Closed::Reopen, replaced);
 
