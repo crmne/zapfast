@@ -35,6 +35,7 @@ pub struct Account {
     /// The phone's "Disable link previews", for this account.
     pub link_previews_disabled: bool,
     pub chats: Vec<Chat>,
+    pub collapsed_communities: HashSet<ChatId>,
     pub contacts: HashMap<String, Contact>,
     pub conversations: HashMap<ChatId, Conversation>,
     pub open_chat: Option<ChatId>,
@@ -187,6 +188,7 @@ impl Account {
             me_about: None,
             link_previews_disabled: false,
             chats: Vec::new(),
+            collapsed_communities: HashSet::new(),
             contacts: HashMap::new(),
             conversations: HashMap::new(),
             open_chat,
