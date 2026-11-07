@@ -862,6 +862,13 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         storage_usage,
     );
+    files.block(
+        vec![
+            translated(locale, "Smart storage"),
+            translated(locale, "Compress older messages and videos"),
+        ],
+        smart_storage_controls,
+    );
     let log = app.dirs.log_file();
     files.row(
         translated(locale, "Log"),
@@ -1454,6 +1461,87 @@ fn wallpaper_color_button(
         )
     });
     response.clicked()
+}
+
+/// Storage policy, with explicit progress and a way to stop a running job.
+fn smart_storage_controls(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Smart storage"),
+            theme::medium(14.0),
+            palette.text,
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let mut enabled = app.settings.smart_storage;
+            let response = widgets::switch(ui, &palette, &mut enabled);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    enabled,
+                    crate::i18n::gettext(locale, "Smart storage").as_ref(),
+                )
+            });
+            if response.changed() {
+                app.actions.push(Action::SetSmartStorage(enabled));
+            }
+        });
+    });
+    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::gettext(locale,"After 90 days, compress older message data while keeping all text searchable. Moderately reduce cached video quality. Saved downloads stay unchanged. Runs in small daily batches.")).font(theme::regular(12.5)).color(palette.secondary)).wrap());
+    ui.add_space(8.0);
+    let running = app.storage_optimizing;
+    let label = if running {
+        crate::i18n::gettext(locale, "Stop optimization")
+    } else {
+        crate::i18n::gettext(locale, "Optimize now")
+    };
+    if theme::soft_button(ui, &palette, None, &label, false).clicked() {
+        app.actions.push(if running {
+            Action::CancelStorageOptimization
+        } else {
+            Action::OptimizeStorage
+        });
+    }
+    if running {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Optimizing in the background…"),
+            theme::regular(12.5),
+            palette.secondary,
+        );
+    }
+    if let Some(report) = app.storage_report {
+        let text = crate::i18n::gettext(
+            locale,
+            "{messages} messages, {videos} videos, {bytes} saved",
+        )
+        .replace("{messages}", &report.messages.to_string())
+        .replace("{videos}", &report.videos.to_string())
+        .replace("{bytes}", &crate::util::bytes(report.saved_bytes));
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .font(theme::regular(12.5))
+                    .color(palette.secondary),
+            )
+            .wrap(),
+        );
+        if report.video_unavailable {
+            ui.label(crate::i18n::gettext(
+                locale,
+                "Video optimization needs FFmpeg and FFprobe. Message compression still works.",
+            ));
+        }
+        if report.failed > 0 {
+            ui.label(crate::i18n::gettext(
+                locale,
+                "Some items could not be optimized; their originals were kept.",
+            ));
+        }
+    }
 }
 
 /// The space this account's media cache takes, split by kind, with the

@@ -1042,6 +1042,22 @@ pub enum Command {
         id: String,
         path: Option<PathBuf>,
     },
+    SetSmartStorage(bool),
+    OptimizeStorage,
+    CancelStorageOptimization,
+    StorageRawDone {
+        session: u64,
+        generation: u64,
+        packed: Vec<(crate::archive::RawRow, Vec<u8>)>,
+        failed: u64,
+    },
+    StorageVideoDone {
+        session: u64,
+        generation: u64,
+        path: PathBuf,
+        stamp: crate::smart_storage::Stamp,
+        result: crate::smart_storage::VideoResult,
+    },
     /// Measures this account's media cache for Settings, answered by
     /// `Event::StorageStats` with the same `token`.
     LoadStorageStats {
@@ -1178,6 +1194,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    StorageOptimization {
+        running: bool,
+        report: crate::smart_storage::Report,
+    },
+
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,
