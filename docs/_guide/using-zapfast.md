@@ -1066,3 +1066,23 @@ reactions and chat rows are not stops. The React, Reply and Forward buttons
 that appear beside a hovered message are for the pointer only; keyboard and
 screen-reader users reach them from the message menu. Alt+Up/Down switches
 conversations.
+
+## Communities
+
+Communities appear directly in the Chats list as expandable headings. Click a
+community to collapse or expand its announcement and member-group chats. Open
+any member chat normally; a notification or keyboard navigation to a member
+expands its community so the selected chat stays visible.
+
+Globally pinned member chats stay at the top. Search, Favorites, Unread,
+labels, archived chats and the locked folder retain their existing flat lists
+of matching conversations. A community container is never a message destination.
+
+The first connection after upgrading refreshes missing community metadata
+through the normal paced group queue; accounts do not need to link again.
+Known relationships are saved locally. Locked or left communities do not
+reveal headings; eligible member chats remain accessible normally.
+
+This groups chats already known to this device. Discovering or joining other
+community groups, creating communities, and announcement reply threads are
+not implemented here.

@@ -2010,6 +2010,32 @@ fn starred_sample(app: &mut App, menu: Option<&str>) {
     app.open_list_menu = menu.map(|id| (chat, id.to_owned()));
 }
 
+fn community_sample(app: &mut App, flat: bool) {
+    use crate::model::GroupCommunity;
+    let now = crate::util::now();
+    let parent = "community@g.us";
+    for (id, name, is_parent, announcement) in [
+        (parent, "Cedar neighborhood", true, false),
+        ("community-news@g.us", "Announcements", false, true),
+        ("community-general@g.us", "General", false, false),
+        ("community-garden@g.us", "Community garden", false, false),
+    ] {
+        let mut chat = Chat::new(id.into(), name.into());
+        chat.group_subject_known = true;
+        chat.last_activity = now - 60;
+        chat.community = (!flat).then(|| GroupCommunity {
+            is_parent,
+            parent: (!is_parent).then(|| parent.to_owned()),
+            is_announcement: announcement,
+        });
+        chat.read_only = announcement;
+        app.chats.push(chat);
+    }
+    app.page = Page::Chats;
+    app.open_chat = None;
+    app.sidebar_visible = true;
+}
+
 /// Configures synthetic offline demo states and appearance for tests and screenshots.
 /// Audio fixtures vary voice-note and forwarding metadata independently without playback.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
@@ -2018,6 +2044,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     };
     for part in page.split(',').map(str::trim) {
         match part {
+            "communities" => community_sample(app, false),
+            "communities-flat" => community_sample(app, true),
             "history-date" => history_date_sample(app),
             "chat" | "" => {}
             "blocked" | "blocked-contacts" | "block-confirm" => {
@@ -4495,6 +4523,33 @@ mod tests {
         ROOTS.with(|roots| roots.borrow_mut().push(root));
         populate(&mut app);
         app
+    }
+
+    #[test]
+    fn communities_expand_in_the_chat_list_and_reveal_a_member_opened_elsewhere() {
+        let mut app = app();
+        community_sample(&mut app, false);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.actions.push(crate::model::Action::ToggleCommunity(
+            "community@g.us".into(),
+        ));
+        render(&mut app, &ctx);
+        assert!(
+            app.visible_chats()
+                .iter()
+                .all(|chat| chat.id != "community-general@g.us")
+        );
+        app.actions.push(crate::model::Action::OpenChat(
+            "community-general@g.us".into(),
+        ));
+        render(&mut app, &ctx);
+        assert_eq!(app.page, Page::Chats);
+        assert!(
+            app.visible_chats()
+                .iter()
+                .any(|chat| chat.id == "community-general@g.us")
+        );
     }
 
     /// Lays out several frames without a display to catch view panics.
@@ -9616,6 +9671,8 @@ mod tests {
             render(&mut app, &ctx);
         }
         for page in [
+            "communities",
+            "communities,light",
             "export-chat",
             "export-chat,light",
             "export-chat-progress",
@@ -10013,6 +10070,8 @@ mod tests {
             ("call-group-on-phone", wide),
             ("call-group-on-phone", narrow),
             ("calls-link", wide),
+            ("communities", wide),
+            ("communities", narrow),
             ("settings", wide),
             ("settings", narrow),
             ("calls", wide),
@@ -17947,12 +18006,14 @@ mod tests {
                 .map(|(_, node)| node)
                 .collect();
         }
-        let bells: Vec<_> = nodes
+        let mut bells: Vec<_> = nodes
             .iter()
             .filter(|node| node.label() == Some("Mute notifications"))
             .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
             .collect();
-        assert_eq!(bells, [false, true], "one bell per account, the second on");
+        // Accessibility updates contain a set of changed nodes, not display order.
+        bells.sort_unstable();
+        assert_eq!(bells, [false, true], "one muted bell and one unmuted bell");
         // Only the muted account's row says so, not the one on screen.
         let said: Vec<_> = nodes
             .iter()

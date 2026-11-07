@@ -382,7 +382,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         // is: a chat without a message field then hands its focus to the
         // message list rather than to nothing.
         ctx.data_mut(|data| data.insert_temp(crate::theme::keyboard_focus_id(), true));
-        let visible = app.visible_chats();
+        let visible: Vec<_> = app
+            .visible_chats()
+            .into_iter()
+            .filter(|chat| !chat.is_community())
+            .collect();
         if !visible.is_empty() {
             let current = app
                 .open_chat
