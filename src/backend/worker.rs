@@ -1181,30 +1181,37 @@ pub async fn run(
                     Some(command) => worker.handle_command(command).await,
                 }
             }
-            Some(event) = wa_events.recv() => worker.runtime_events(event, &mut wa_events).await,
+            Some(event) = wa_events.recv() => {
+                worker.storage_foreground_work();
+                worker.runtime_events(event, &mut wa_events).await;
+            }
             Some(event) = async {
                 match call_events.as_mut() {
                     Some(events) => events.recv().await.ok(),
                     None => std::future::pending().await,
                 }
-            } => worker.call_runtime(event),
+            } => { worker.storage_foreground_work(); worker.call_runtime(event); },
             Some(tick) = async {
                 match call_frames.as_mut() {
                     Some(frames) => frames.recv().await.ok(),
                     None => std::future::pending().await,
                 }
-            } => worker.call_frame(tick),
+            } => { worker.storage_foreground_work(); worker.call_frame(tick); },
             _ = async {
                 match deadline {
                     Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
                     None => std::future::pending::<()>().await,
                 }
             } => {
+                worker.storage_foreground_work();
                 worker.sync_deadline = None;
                 worker.set_syncing(false);
                 worker.emit_chats();
             }
             _ = tick.tick() => {
+                // Idle VACUUM holds SQLite's writer lock. Incoming events and
+                // commands cancel it; postpone periodic archive maintenance.
+                if worker.storage_compacting() { continue; }
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -1227,6 +1234,7 @@ pub async fn run(
         }
     }
     worker.stop_storage();
+    worker.wait_storage_compaction().await;
     worker.stop_chat_export().await;
     worker.shutdown_call().await;
     worker.stop_bot().await;
@@ -4745,6 +4753,8 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.stop_storage();
+        self.wait_storage_compaction().await;
         self.stop_chat_export().await;
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
@@ -4795,7 +4805,6 @@ impl Worker {
         // with the rest of the account's state on logout.
         self.awaiting_ack.clear();
         self.early_acks.clear();
-        self.stop_storage();
         self.account_session = self.account_session.wrapping_add(1);
         self.group_pictures_sent.clear();
         self.me_pn = None;
@@ -7281,6 +7290,9 @@ impl Worker {
 
     /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
+        if !matches!(&command, Command::StorageCompacted { .. }) {
+            self.storage_foreground_work();
+        }
         let destination = match &command {
             Command::SendText { chat, .. }
             | Command::ReplyInteractive { chat, .. }
@@ -7328,6 +7340,11 @@ impl Worker {
             return;
         }
         match command {
+            Command::StorageCompacted {
+                session,
+                generation,
+                saved,
+            } => self.storage_compacted(session, generation, saved),
             Command::SetSmartStorage(enabled) => self.configure_storage(enabled),
             Command::OptimizeStorage => self.start_storage(),
             Command::CancelStorageOptimization => self.stop_storage(),
