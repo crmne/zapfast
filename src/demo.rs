@@ -12335,6 +12335,34 @@ mod tests {
     }
 
     #[test]
+    fn typed_lists_continue_without_sending_and_empty_items_exit() {
+        for (marker, prefix, next) in [("*", "• ", "• "), ("-", "• ", "• "), ("1", "1. ", "2. ")]
+        {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(marker.into())]);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(" ".into())]);
+            assert_eq!(app.composer, prefix);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text("milk".into())]);
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(app.composer, format!("{prefix}milk\n{next}"));
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(app.composer, format!("{prefix}milk\n"));
+        }
+    }
+
+    #[test]
     fn shift_insert_pastes_the_clipboard_text() {
         let mut app = app();
         let ctx = egui::Context::default();

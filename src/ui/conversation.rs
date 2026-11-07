@@ -1641,6 +1641,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             let id = composer_id();
             let has_focus = ui.memory(|memory| memory.has_focus(id));
             let enter_sends = app.settings.enter_sends;
+            let list_active = has_focus && egui::TextEdit::load_state(ui.ctx(), id)
+                .and_then(|state| state.cursor.char_range())
+                .is_some_and(|range| range.is_empty() && crate::composer_lists::active(&app.composer, range.primary.index.into()));
+            let typed_space = has_focus && ui.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Text(text) if text == " ")));
+            let typed_newline = has_focus && ui.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if !modifiers.command && !modifiers.ctrl && !modifiers.alt)));
             let (typed_colon, typed_at) = ui.input(|input| {
                 let typed = |needle: &str| {
                     input
@@ -1676,7 +1681,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                 modifiers,
                                 ..
                             } if !modifiers.shift && !modifiers.alt
-                                && (if enter_sends { !modifiers.command && !modifiers.ctrl } else { modifiers.command })
+                                && (if list_active { modifiers.command || modifiers.ctrl } else if enter_sends { !modifiers.command && !modifiers.ctrl } else { modifiers.command })
                         );
                         sent |= is_send;
                         !is_send
@@ -1857,13 +1862,23 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     } else {
                                         Align::LEFT
                                     })
-                                    .return_key(if enter_sends {
+                                    .return_key(if enter_sends && !list_active {
                                         Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                                     } else {
                                         Some(KeyboardShortcut::new(Modifiers::NONE, Key::Enter))
                                     })
                                     .layouter(&mut layouter)
                                     .show(ui);
+                                if output.response.response.changed()
+                                    && let Some(range) = output.cursor_range.filter(|range| range.is_empty())
+                                    && let Some(cursor) = crate::composer_lists::edit(&mut app.composer, range.primary.index.into(), typed_space, typed_newline)
+                                {
+                                    let range = egui::text::CCursorRange::one(egui::text::CCursor::new(cursor));
+                                    output.state.cursor.set_char_range(Some(range));
+                                    output.cursor_range = Some(range);
+                                    egui::TextEdit::store_state(ui.ctx(), id, output.state.clone());
+                                    ui.ctx().request_discard("list prefix changed");
+                                }
                                 // egui moves the caret on any pointer press, including a
                                 // secondary click. A modal menu also disables the field.
                                 // Keep the selection the menu acts on until it closes.
