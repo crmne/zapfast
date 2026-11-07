@@ -83,6 +83,9 @@ impl Locale {
         fastframe_i18n::LanguageTag::parse(identifier).and_then(|tag| Self::from_tag(&tag))
     }
 
+    /// Maps a parsed language tag to a supported locale, or `None` when the
+    /// language has no catalog. For Chinese, the script subtag decides first
+    /// and the region only for tags that name no script.
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
@@ -113,6 +116,8 @@ impl Locale {
 }
 
 impl fastframe_i18n::Locale for Locale {
+    /// The compiled message catalog for this locale. English has none: the
+    /// source strings are already English.
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
             Self::PortugueseBrazil => Some(&pt_br::Translator),
