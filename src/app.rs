@@ -3053,13 +3053,21 @@ impl App {
 
     /// Resolves the chat-list title.
     pub fn chat_title(&self, chat: &Chat) -> String {
-        if chat
+        if let Some(info) = chat
             .community
             .as_ref()
-            .is_some_and(|info| info.is_announcement && !info.is_parent)
+            .filter(|info| info.is_announcement && !info.is_parent)
+            && let Some(parent) = info.parent.as_deref().and_then(|id| self.chat(id))
+            && !parent.locked
+            && !parent.name.trim().is_empty()
         {
-            return crate::i18n::gettext(self.locale, "Announcements").into_owned();
+            return format!(
+                "{} · {}",
+                parent.name,
+                crate::i18n::gettext(self.locale, "Announcements")
+            );
         }
+        // Preserve the real subject when its parent is unknown or private.
         if chat.is_group()
             && (chat.name.trim().is_empty() || (chat.name == "Group" && !chat.group_subject_known))
         {
@@ -12751,6 +12759,35 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn announcement_titles_keep_their_community_context() {
+        let mut app = app();
+        for (parent_id, name, child_id) in [
+            ("one@g.us", "Neighborhood", "news-one@g.us"),
+            ("two@g.us", "School", "news-two@g.us"),
+        ] {
+            let mut parent = Chat::new(parent_id.into(), name.into());
+            parent.community = Some(crate::model::GroupCommunity {
+                is_parent: true,
+                parent: None,
+                is_announcement: false,
+            });
+            app.chats.push(parent);
+            let mut child = Chat::new(child_id.into(), name.into());
+            child.community = Some(crate::model::GroupCommunity {
+                is_parent: false,
+                parent: Some(parent_id.into()),
+                is_announcement: true,
+            });
+            app.chats.push(child);
+        }
+        assert_eq!(
+            app.chat_title_of("news-one@g.us"),
+            "Neighborhood · Announcements"
+        );
+        assert_eq!(app.chat_title_of("news-two@g.us"), "School · Announcements");
     }
 
     #[test]

@@ -1546,6 +1546,16 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     chat.id == parent && chat.is_community() && !chat.locked && !chat.left
                 })
             });
+    let title = if nested
+        && chat
+            .community
+            .as_ref()
+            .is_some_and(|info| info.is_announcement)
+    {
+        crate::i18n::gettext(app.locale, "Announcements").into_owned()
+    } else {
+        title
+    };
     let indent = if nested { 18.0 } else { 0.0 };
     // While searching, the result reached with the arrows is the selection;
     // before any arrow press it stays the open chat, as a click leaves it.
