@@ -988,6 +988,8 @@ pub async fn run(
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
         reaction_generation: HashMap::new(),
+        reaction_inflight: HashSet::new(),
+        reaction_pending: HashMap::new(),
         withheld_pages: Vec::new(),
         dirs,
         events,
@@ -1461,6 +1463,8 @@ struct Worker {
     /// generation is older than this is dropped.
     pin_generation: HashMap<(String, String), u64>,
     reaction_generation: HashMap<(String, String), u64>,
+    reaction_inflight: HashSet<(String, String)>,
+    reaction_pending: HashMap<(String, String), String>,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
     /// they are read again once content is shown (#180).
@@ -4704,6 +4708,8 @@ impl Worker {
         self.archive_requests.clear();
         self.pin_generation.clear();
         self.reaction_generation.clear();
+        self.reaction_inflight.clear();
+        self.reaction_pending.clear();
         // Pin answers carry the same session as star answers.
         self.star_session = self.star_session.wrapping_add(1);
         // A change or ack sent under the old account belongs to that account:
@@ -7230,6 +7236,10 @@ impl Worker {
                 {
                     return;
                 }
+                let key = (chat.clone(), message.clone());
+                if !self.reaction_inflight.remove(&key) {
+                    return;
+                }
                 if succeeded {
                     let me = self.me();
                     if let Ok(Some(updated)) = self
@@ -7240,6 +7250,9 @@ impl Worker {
                     }
                 } else {
                     self.emit(Event::Error("Could not send the reaction. If this is an old announcement, reload its history and try again.".into()));
+                }
+                if let Some(next) = self.reaction_pending.remove(&key) {
+                    self.react(chat, message, next);
                 }
             }
             Command::FetchBlocklist => self.fetch_blocklist(),
@@ -11940,6 +11953,13 @@ impl Worker {
                 .flatten()
                 .is_some_and(|chat| chat.can_react())
         {
+            return;
+        }
+        // Only one send per message may be in flight. Rapid changes replace
+        // the queued intent, while every completed success is retained.
+        let key = (chat.clone(), id.clone());
+        if !self.reaction_inflight.insert(key.clone()) {
+            self.reaction_pending.insert(key, emoji);
             return;
         }
         let generation = self
@@ -20117,6 +20137,8 @@ mod receipt_tests {
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
             reaction_generation: HashMap::new(),
+            reaction_inflight: HashSet::new(),
+            reaction_pending: HashMap::new(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
             events,
