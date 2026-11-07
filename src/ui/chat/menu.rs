@@ -2,20 +2,6 @@
 
 use super::*;
 
-pub struct MessageContextMenu;
-
-impl MessageContextMenu {
-    pub(crate) fn show(
-        ui: &mut egui::Ui,
-        view: &View<'_>,
-        message: &Message,
-        origin: MenuOrigin,
-        actions: &mut Vec<Action>,
-    ) {
-        context_menu(ui, view, message, origin, actions);
-    }
-}
-
 /// Emoji to send for a reaction choice: empty string removes our current one.
 pub(crate) fn reaction_choice(current: Option<&str>, emoji: &str) -> String {
     if current == Some(emoji) {

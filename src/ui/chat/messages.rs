@@ -1057,9 +1057,6 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
                                     actions.push(Action::SelectMessage(message.id.clone()));
                                 }
                                 if current && let Some(response) = &response {
-                                    if list_focused {
-                                        theme::focus_outline(ui, list_id, response.rect, 10.0);
-                                    }
                                     if reveal {
                                         let mut target = response.clone();
                                         target.rect = target.rect.expand(4.0);
@@ -1512,6 +1509,7 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn floating_circle(ui: &egui::Ui, palette: &Palette, rect: Rect, hovered: bool) {
     let radius = CornerRadius::from(rect.width() / 2.0);
     ui.painter()
@@ -1706,6 +1704,7 @@ pub(crate) fn open_reaction_picker_action(chat: &str, message: &str, from_list: 
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn reaction_affordance(
     ui: &mut egui::Ui,
     view: &View<'_>,

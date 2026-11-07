@@ -2,21 +2,6 @@
 
 use super::*;
 
-pub struct MessageContent;
-
-impl MessageContent {
-    pub(crate) fn show(
-        ui: &mut egui::Ui,
-        view: &View<'_>,
-        message: &Message,
-        width: f32,
-        reserve: f32,
-        actions: &mut Vec<Action>,
-    ) -> Option<Rect> {
-        content(ui, view, message, width, reserve, actions)
-    }
-}
-
 /// Draws a message body and returns optional footer space on its last line.
 pub(crate) fn content(
     ui: &mut egui::Ui,

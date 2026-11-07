@@ -2,21 +2,6 @@
 
 use super::*;
 
-pub struct MessageBubble;
-
-impl MessageBubble {
-    pub(crate) fn show(
-        ui: &mut egui::Ui,
-        view: &View<'_>,
-        message: &Message,
-        album: Option<&[Message]>,
-        place: RunPlace,
-        actions: &mut Vec<Action>,
-    ) -> Option<egui::Response> {
-        bubble(ui, view, message, album, place, actions)
-    }
-}
-
 /// Draws a message row and returns its bubble response for scrolling.
 pub(crate) fn bubble(
     ui: &mut egui::Ui,
@@ -511,7 +496,6 @@ pub(crate) fn bubble_frame(
         return bubble;
     }
     theme::reveal_focus(&bubble);
-    theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
     if ui.ctx().data(|data| {
         data.get_temp::<bool>(theme::keyboard_focus_id())
             .unwrap_or(false)
@@ -532,7 +516,6 @@ pub(crate) fn bubble_frame(
     let reacting = view.reaction_menu && view.reaction == Some(message.id.as_str());
     reply_on_double_click(&bubble, message, actions);
 
-    reaction_affordance(ui, view, message, &bubble, &tiles, actions);
     let viewport = ui.clip_rect();
     let shown =
         Rect::from_x_y_ranges(viewport.x_range(), bubble.rect.y_range()).intersect(viewport);
@@ -590,8 +573,125 @@ pub(crate) fn bubble_frame(
     let width = menu_width(ui, view.locale, view.reaction_emoji, menu_target);
     let keyboard_clicked =
         bubble.clicked() && bubble.has_focus() && !ui.input(|input| input.pointer.any_click());
+    let bubble_rect = inner.response.rect;
+    let pointer = ui.input(|input| input.pointer.interact_pos());
+    let hover_rect = if tail == Some(widgets::Side::Right) {
+        bubble_rect.with_max_x(bubble_rect.right() + widgets::TAIL_WIDTH)
+    } else {
+        bubble_rect
+    };
+    let bubble_hovered = pointer.is_some_and(|pos| hover_rect.contains(pos));
+
     let popup_id = bubble_id.with("popup");
     let was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+
+    // Smooth hover animation only on entrance; instant pop on exit.
+    let anim_id = bubble_id.with("chevron-slide-anim");
+    let target_open = (bubble_hovered || was_open) && !view.selecting;
+    let anim_progress = if target_open {
+        ui.ctx().animate_bool_with_time(anim_id, true, 0.14)
+    } else {
+        ui.ctx().animate_bool_with_time(anim_id, false, 0.0);
+        0.0
+    };
+    let ease = egui::emath::easing::cubic_out(anim_progress);
+
+    let target_x = bubble_rect.right() - 14.0;
+    let target_y = if bubble_rect.height() <= 28.0 {
+        bubble_rect.center().y
+    } else {
+        bubble_rect.top() + 12.0
+    };
+    let slide_offset = (1.0 - ease) * 10.0;
+    let c = pos2(target_x + slide_offset, target_y);
+    let chevron_rect = Rect::from_center_size(c, vec2(20.0, 20.0));
+
+    let chevron_id = bubble_id.with("chevron");
+    let (chevron_resp, chevron_clicked) = if anim_progress > 0.08 {
+        let resp = ui
+            .interact(chevron_rect, chevron_id, Sense::CLICK)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let clicked = resp.clicked();
+        (Some(resp), clicked)
+    } else {
+        (None, false)
+    };
+
+    let at_chevron_id = bubble_id.with("menu-at-chevron");
+    if chevron_clicked && !was_open {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(at_chevron_id, chevron_rect.left_bottom()));
+    }
+    let chevron_pos = ui.ctx().data(|data| data.get_temp::<egui::Pos2>(at_chevron_id));
+
+    if anim_progress > 0.001 {
+        let is_chevron_hovered = chevron_resp.as_ref().is_some_and(|r| r.hovered());
+        let peak_alpha = if palette.dark { 85.0 } else { 45.0 };
+        let corner_dark = Color32::from_black_alpha((peak_alpha * ease) as u8);
+        let clear = Color32::from_rgba_premultiplied(0, 0, 0, 0);
+
+        // If the bubble has an outgoing tail (el piquito), shade the tail seamlessly with the corner.
+        if tail == Some(widgets::Side::Right) {
+            let edge = bubble_rect.right();
+            let top = bubble_rect.top();
+            let tip_dark = Color32::from_black_alpha((peak_alpha * ease * 0.81) as u8);
+            let bottom_dark = Color32::from_black_alpha((peak_alpha * ease * 0.74) as u8);
+            let mut tail_mesh = egui::Mesh::default();
+            tail_mesh.colored_vertex(pos2(edge - 0.5, top), corner_dark);
+            tail_mesh.colored_vertex(pos2(edge + widgets::TAIL_WIDTH, top), tip_dark);
+            tail_mesh.colored_vertex(pos2(edge - 0.5, top + 11.0), bottom_dark);
+            tail_mesh.add_triangle(0, 1, 2);
+            ui.painter().add(egui::Shape::mesh(tail_mesh));
+        }
+
+        let painter = ui.painter().with_clip_rect(bubble_rect);
+
+        // Radial corner gradient (difuminado natural desde el contorno de la esquina).
+        let origin = pos2(bubble_rect.right(), bubble_rect.top());
+        let radius: f32 = 42.0;
+        let segments = 8;
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(origin, corner_dark);
+        for i in 0..=segments {
+            let t = i as f32 / segments as f32;
+            let angle = std::f32::consts::PI - t * std::f32::consts::FRAC_PI_2;
+            let p = pos2(origin.x + radius * angle.cos(), origin.y + radius * angle.sin());
+            mesh.colored_vertex(p, clear);
+        }
+        for i in 1..=segments as u32 {
+            mesh.add_triangle(0, i, i + 1);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+
+        // Circular/rounded hover button background only when cursor directly hovers the chevron.
+        if is_chevron_hovered || was_open {
+            let button_fill = if palette.dark {
+                Color32::from_black_alpha((40.0 * ease) as u8)
+            } else {
+                Color32::from_black_alpha((20.0 * ease) as u8)
+            };
+            painter.rect_filled(chevron_rect.shrink(1.0), CornerRadius::same(5), button_fill);
+        }
+
+        // Clean white chevron matching WhatsApp Web official.
+        let alpha = if is_chevron_hovered || was_open { 255.0 } else { 220.0 } * ease;
+        let chevron_color = Color32::from_rgba_unmultiplied(255, 255, 255, alpha as u8);
+        let stroke_width = 1.8;
+        let stroke = Stroke::new(stroke_width, chevron_color);
+
+        let half_w = 4.8;
+        let half_h = 2.4;
+        let left_pt = pos2(c.x - half_w, c.y - half_h);
+        let tip_pt = pos2(c.x, c.y + half_h);
+        let right_pt = pos2(c.x + half_w, c.y - half_h);
+
+        painter.line_segment([left_pt, tip_pt], stroke);
+        painter.line_segment([tip_pt, right_pt], stroke);
+        painter.circle_filled(left_pt, stroke_width * 0.5, chevron_color);
+        painter.circle_filled(tip_pt, stroke_width * 0.5, chevron_color);
+        painter.circle_filled(right_pt, stroke_width * 0.5, chevron_color);
+    }
+
     let at_message_id = bubble_id.with("menu-at-message");
     let at_message = force_menu
         || keyboard_clicked
@@ -647,7 +747,13 @@ pub(crate) fn bubble_frame(
     } else {
         width
     };
-    let open = if right_clicked || force_menu || reacting || keyboard_clicked {
+    let open = if chevron_clicked {
+        if was_open {
+            Some(egui::SetOpenCommand::Bool(false))
+        } else {
+            Some(egui::SetOpenCommand::Bool(true))
+        }
+    } else if right_clicked || force_menu || reacting || keyboard_clicked {
         Some(egui::SetOpenCommand::Bool(true))
     } else if bubble.clicked() {
         Some(egui::SetOpenCommand::Bool(false))
@@ -675,6 +781,8 @@ pub(crate) fn bubble_frame(
             (screen.right() - width - 468.0).max(screen.left() + 8.0),
         );
         popup.at_position(pos2(x, menu.top()))
+    } else if let Some(pos) = chevron_pos {
+        popup.at_position(pos)
     } else if at_message {
         popup.at_position(bubble.rect.left_top() + vec2(12.0, 8.0))
     } else {
@@ -688,6 +796,9 @@ pub(crate) fn bubble_frame(
             .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
     }
     let mut open_now = egui::Popup::is_id_open(ui.ctx(), popup_id);
+    if !open_now {
+        ui.ctx().data_mut(|data| data.remove::<egui::Pos2>(at_chevron_id));
+    }
     if let Some(focus_pending) = from_keys {
         if open_now && !focus_pending && !reacting && focus_in_menu(ui.ctx()) == Some(false) {
             egui::Popup::close_id(ui.ctx(), popup_id);
@@ -731,14 +842,6 @@ pub(crate) fn bubble_frame(
                 data.remove::<bool>(at_message_id);
             }
         });
-    }
-    if open_now {
-        ui.painter().rect_stroke(
-            inner.response.rect.expand(2.0),
-            12.0,
-            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
-            egui::StrokeKind::Outside,
-        );
     }
     if reacting && !egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
         actions.push(Action::ClosePicker);

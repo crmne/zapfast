@@ -14,10 +14,10 @@ mod tests;
 
 pub use self::bubble::*;
 pub use self::composer::*;
-pub use self::content::*;
+pub(crate) use self::content::*;
 pub use self::header::*;
-pub use self::media::*;
-pub use self::menu::*;
+pub(crate) use self::media::*;
+pub(crate) use self::menu::*;
 pub use self::messages::*;
 pub use self::strips::*;
 pub use self::suggestions::*;

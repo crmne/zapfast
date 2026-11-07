@@ -6,9 +6,6 @@ pub(crate) const COMPOSER_RADIUS: u8 = 20;
 pub(crate) const COMPOSER_PADDING: f32 = 8.0;
 pub(crate) const COMPOSER_CONTROL: f32 = 36.0;
 pub(crate) const COMPOSER_INSET: i8 = 2;
-pub(crate) const COMPOSER_PAIR_GAP: f32 = -4.0;
-pub(crate) const COMPOSER_TEXT_GAP: f32 = 6.0;
-pub(crate) const PLUS_EDGE: f32 = 30.0;
 
 pub(crate) fn composer_id() -> egui::Id {
     egui::Id::new("composer-text")
@@ -30,12 +27,6 @@ pub(crate) fn recording_wave_id() -> egui::Id {
     egui::Id::new("recording-wave")
 }
 
-pub(crate) fn ink_middle(ui: &egui::Ui, line_height: f32) -> f32 {
-    let format = egui::TextFormat::simple(theme::regular(BODY_SIZE), Color32::WHITE);
-    let (galley, _) = crate::bidi::layout_editor(ui, "Hy", &format, f32::INFINITY, true);
-    widgets::ink_middle(&galley).unwrap_or(line_height * 0.5)
-}
-
 pub(crate) fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.allocate_ui_with_layout(vec2(0.0, line), Layout::left_to_right(Align::Center), add)
         .inner
@@ -51,30 +42,6 @@ pub(crate) fn reviewing_attachments(app: &App, chat: &Chat) -> bool {
 
 pub(crate) fn attachment_review(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Option<bool> {
     reviewing_attachments(app, chat).then(|| super::attachment_preview::bar(app, ui))
-}
-
-pub(crate) fn composer_pill(palette: &Palette) -> Frame {
-    ComposerPill::frame(palette)
-}
-
-pub(crate) fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<bool>) {
-    Composer::show(app, ui, chat, review_send);
-}
-
-pub(crate) fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
-    VoiceRecorderBar::show(app, ui);
-}
-
-pub(crate) fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[String]) {
-    SelectionBar::show(app, ui, chat, selected);
-}
-
-pub(crate) fn view_once_button(app: &App, ui: &mut egui::Ui) -> egui::Response {
-    ComposerInputRow::view_once_button(app, ui)
-}
-
-pub(crate) fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
-    ComposerInputRow::tools_menu(app, chat, plus);
 }
 
 /// Top-level bottom panel for composing messages, handling read-only states, strips, and send dispatch.
@@ -377,10 +344,9 @@ impl ReplyDrawer {
             return;
         }
 
-        // Slide content from bottom to top (`slide_up` smoothly decreases as it opens).
-        let slide_up = (1.0 - self.progress) * 8.0;
+        // Anchor content to the bottom of the animated section to reveal cleanly upward without top clipping.
         let content_rect = Rect::from_min_size(
-            pos2(section_rect.left(), section_rect.top() + slide_up),
+            pos2(section_rect.left(), section_rect.bottom() - Self::TARGET_HEIGHT),
             vec2(width, Self::TARGET_HEIGHT),
         );
 
@@ -393,20 +359,29 @@ impl ReplyDrawer {
         let opacity = egui::emath::easing::cubic_out(self.progress);
         child.multiply_opacity(opacity);
 
-        let card_margin = 6.0;
+        let card_margin_x = 4.0;
         let card_rect = Rect::from_min_max(
-            pos2(content_rect.left() + card_margin, content_rect.top() + 3.0),
-            pos2(content_rect.right() - card_margin, content_rect.bottom() - 3.0),
+            pos2(content_rect.left() + card_margin_x, content_rect.top() + 3.0),
+            pos2(content_rect.right() - card_margin_x, content_rect.bottom() - 3.0),
         );
-        let card_fill = palette.window.gamma_multiply(0.40);
+        let card_fill = if palette.dark {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 80)
+        } else {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 18)
+        };
         child.painter().rect_filled(
             card_rect,
             CornerRadius::same(crate::ui::chat::QUOTE_RADIUS),
             card_fill,
         );
 
-        let bar_width = 3.5;
-        let bar_rect = Rect::from_min_size(card_rect.min, vec2(bar_width, card_rect.height()));
+        let bar_width = 4.0;
+        let bar_inset_x = 6.0;
+        let bar_inset_y = 5.0;
+        let bar_rect = Rect::from_min_max(
+            pos2(card_rect.left() + bar_inset_x, card_rect.top() + bar_inset_y),
+            pos2(card_rect.left() + bar_inset_x + bar_width, card_rect.bottom() - bar_inset_y),
+        );
         let sender_color = if quoted.from_me {
             palette.accent
         } else {
@@ -414,12 +389,7 @@ impl ReplyDrawer {
         };
         child.painter().rect_filled(
             bar_rect,
-            CornerRadius {
-                nw: crate::ui::chat::QUOTE_RADIUS,
-                sw: crate::ui::chat::QUOTE_RADIUS,
-                ne: 0,
-                se: 0,
-            },
+            CornerRadius::same(2),
             sender_color,
         );
 
@@ -428,7 +398,7 @@ impl ReplyDrawer {
                 .max_rect(card_rect)
                 .layout(Layout::left_to_right(Align::Center)),
         );
-        card_ui.add_space(bar_width + 8.0);
+        card_ui.add_space(bar_inset_x + bar_width + 8.0);
         card_ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.set_max_width((ui.available_width() - 36.0).max(0.0));

@@ -2,37 +2,6 @@
 
 use super::*;
 
-pub struct MediaView;
-
-impl MediaView {
-    pub(crate) fn picture(
-        ui: &mut egui::Ui,
-        view: &View<'_>,
-        message: &Message,
-        media: &Media,
-        width: f32,
-        sticker: Option<bool>,
-        actions: &mut Vec<Action>,
-    ) -> Rect {
-        picture(ui, view, message, media, width, sticker, actions)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn voice(
-        ui: &mut egui::Ui,
-        view: &View<'_>,
-        message: &Message,
-        media: &Media,
-        seconds: Option<u32>,
-        waveform: &[u8],
-        width: f32,
-        reserve: f32,
-        actions: &mut Vec<Action>,
-    ) -> Option<Rect> {
-        voice_player(ui, view, message, media, seconds, waveform, width, reserve, actions)
-    }
-}
-
 pub(crate) fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[u8]) -> String {
     let uri = format!(
         "bytes://thumb-{}-{}",

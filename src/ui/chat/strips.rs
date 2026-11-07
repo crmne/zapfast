@@ -185,51 +185,6 @@ pub(crate) fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
     strip_gap(ui);
 }
 
-pub(crate) fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
-    let palette = app.palette;
-    let who = if quoted.from_me {
-        "You".to_owned()
-    } else {
-        app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
-    };
-    let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
-    let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
-        ui.set_width(ui.available_width().max(0.0));
-        ui.horizontal(|ui| {
-            let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
-            ui.painter().rect_filled(bar, 2.0, palette.accent);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.set_max_width((ui.available_width() - 40.0).max(0.0));
-                widgets::rich_text(
-                    ui,
-                    &format!("Replying to {who}"),
-                    theme::semibold(12.5),
-                    palette.accent,
-                );
-                widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
-            });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if theme::icon_button(
-                    ui,
-                    Icon::X,
-                    16.0,
-                    palette.secondary,
-                    palette.text,
-                    "Cancel reply (Esc)",
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::CancelReply);
-                }
-            });
-        });
-    });
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
-    strip_gap(ui);
-}
-
 pub(crate) fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let Some(shown) = app.shown_preview() else {
