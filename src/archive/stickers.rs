@@ -144,7 +144,9 @@ impl Archive {
              WHERE json_extract(content, '$.kind') = 'sticker' AND raw IS NOT NULL
              ORDER BY timestamp DESC LIMIT ?1",
         )?;
-        let rows = statement.query_map(params![limit as i64], |row| row.get(0))?;
+        let rows = statement.query_map(params![limit as i64], |row| {
+            super::compact::unpack_row(row, 0)
+        })?;
         rows.collect()
     }
 

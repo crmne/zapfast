@@ -20,6 +20,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Lossless packing of older duplicate protocol payloads; already in the dependency tree.
+flate2 = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
 # Already in the tree through rustls; verifies lock codes.
