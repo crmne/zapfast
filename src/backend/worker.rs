@@ -63,6 +63,7 @@ mod prefetch;
 mod star_recovery;
 mod sticker_pace;
 mod stickers;
+mod storage;
 
 use super::{
     Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
@@ -986,6 +987,7 @@ pub async fn run(
         account_session: 0,
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
+        smart_storage: Default::default(),
         withheld_pages: Vec::new(),
         dirs,
         events,
@@ -1225,12 +1227,14 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.pump_storage();
                 worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
             }
         }
     }
+    worker.stop_storage();
     worker.stop_chat_export().await;
     worker.shutdown_call().await;
     worker.stop_bot().await;
@@ -1458,6 +1462,7 @@ struct Worker {
     /// Latest pin or unpin attempt per message. A finished request whose
     /// generation is older than this is dropped.
     pin_generation: HashMap<(String, String), u64>,
+    smart_storage: storage::State,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
     /// they are read again once content is shown (#180).
@@ -4702,6 +4707,7 @@ impl Worker {
         // with the rest of the account's state on logout.
         self.awaiting_ack.clear();
         self.early_acks.clear();
+        self.stop_storage();
         self.account_session = self.account_session.wrapping_add(1);
         self.group_pictures_sent.clear();
         self.me_pn = None;
@@ -7195,6 +7201,22 @@ impl Worker {
             return;
         }
         match command {
+            Command::SetSmartStorage(enabled) => self.configure_storage(enabled),
+            Command::OptimizeStorage => self.start_storage(),
+            Command::CancelStorageOptimization => self.stop_storage(),
+            Command::StorageRawDone {
+                session,
+                generation,
+                packed,
+                failed,
+            } => self.storage_raw_done(session, generation, packed, failed),
+            Command::StorageVideoDone {
+                session,
+                generation,
+                path,
+                stamp,
+                result,
+            } => self.storage_video_done(session, generation, path, stamp, result),
             Command::FetchBlocklist => self.fetch_blocklist(),
             Command::SetBlocked { chat, blocked } => self.set_blocked(chat, blocked),
             Command::BlocklistFetched { generation, result } => {
@@ -20049,6 +20071,7 @@ mod receipt_tests {
             account_session: 0,
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
+            smart_storage: Default::default(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
             events,

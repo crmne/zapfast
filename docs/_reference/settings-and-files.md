@@ -369,3 +369,30 @@ Exports are unencrypted. Locked chats cannot be exported. Cancel stops the job;
 locking the app, clearing/deleting the chat or unlinking the account also cancels
 it. A cancelled or failed export removes its partial files and preserves an
 existing destination. Completed exports remain where you chose to save them.
+
+## Smart storage
+
+Smart storage is optional and off by default. Settings > Files > Smart storage
+can enable daily background work, run it now, or stop it. Each account is
+processed independently. Only messages older than 90 days qualify.
+
+Searchable message text, captions, identifiers and attachment keys are retained.
+Duplicate protocol payloads are compressed losslessly using gzip's strongest
+level, only when this saves at least 15%. Reads restore the exact bytes. The
+archive remains encrypted with SQLCipher; a completed run reclaims free pages.
+Older app versions cannot interpret packed raw payloads, so keep this build
+until support is included in an official update.
+
+Cached videos are reduced to H.264 at CRF 25, at most 1280 pixels on the longer
+edge, with AAC audio. FFmpeg and FFprobe must be installed; text compression
+works without them. Videos with less than 15% savings stay unchanged. Each
+replacement must pass duration, audio-stream and full decode checks, then is
+published atomically only if the source has not changed. Already processed
+files are not encoded again unless replaced. A path shared with a newer
+message is not optimized. Downloads saved outside the account's cache are
+never modified. The reduced cached video has lower quality; recovery of an
+original from WhatsApp's servers is not guaranteed.
+
+Work uses small message batches and one video encoder at a time, at low process
+priority and with two encoder threads. New work waits during synchronization
+or a call. Closing or unlinking the account cancels pending replacements.
