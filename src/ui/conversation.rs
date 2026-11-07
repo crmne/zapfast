@@ -11817,6 +11817,11 @@ mod tests {
         assert!(super::controls_width(4.0, true) > super::controls_width(4.0, false));
         assert!(super::header_fits(500.0, 4.0, 0.0, true));
         assert!(!super::header_fits(360.0, 4.0, 0.0, true));
+        // Four buttons fit at 380 without the name glass's right padding;
+        // with it, they need 393.
+        assert!(!super::header_fits(380.0, 4.0, 0.0, true));
+        assert!(super::header_fits(393.0, 4.0, 0.0, true));
+        assert!(!super::header_fits(392.0, 4.0, 0.0, true));
         // Folded, More alone leaves the name room.
         assert!(super::header_fits(280.0, 1.0, 0.0, true));
         assert!(!super::header_fits(460.0, 4.0, 120.0, true));
@@ -11829,6 +11834,9 @@ mod tests {
         assert!(!super::header_fits(353.0, 4.0, 0.0, false));
         assert!(super::header_fits(353.0, 1.0, 0.0, false));
         assert!(super::header_fits(500.0, 4.0, 0.0, false));
+        // A plain header has no name glass padding: four buttons fit at 370.
+        assert!(super::header_fits(370.0, 4.0, 0.0, false));
+        assert!(!super::header_fits(369.0, 4.0, 0.0, false));
     }
 
     #[test]

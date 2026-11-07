@@ -10103,12 +10103,12 @@ mod tests {
         let pill = ctx
             .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::name_pill_id()))
             .expect("the name glass");
-        // The button is 30 points wide around its centre.
+        // The glass around the 30-point button reaches three points further.
         assert!(
-            pill.right() < search.x - 15.0,
+            pill.right() < search.x - 18.0,
             "the name glass ends at {} and runs under Search at {}",
             pill.right(),
-            search.x - 15.0
+            search.x - 18.0
         );
     }
 
