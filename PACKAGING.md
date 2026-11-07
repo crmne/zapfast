@@ -111,6 +111,14 @@ recipe generation to the Linux packaging job after release assets exist.
 
 ## Windows installer
 
+Windows releases statically link the Visual C++ runtime for x64 and ARM64,
+so neither the ZIP nor the per-user MSI needs a separate Redistributable.
+The release build uses `-C target-feature=+crt-static` with an explicit
+`--target` to keep the flag off host proc macros. Before packaging, the
+runtime check rejects normal or delay-loaded Visual C++ runtime DLL imports.
+Validate startup on clean Windows too; the import check does not exercise
+the interface or dynamically loaded libraries.
+
 Windows releases ship the portable zip and a per-user Windows Installer
 package, `zapfast-vX.Y.Z-<target>.msi`, built by native-packages from
 `packaging/windows/zapfast.wxs` (`packaging/windows/msi.rb`). Releases up to
