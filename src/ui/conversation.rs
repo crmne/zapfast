@@ -1643,7 +1643,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             let enter_sends = app.settings.enter_sends;
             let list_active = has_focus && egui::TextEdit::load_state(ui.ctx(), id)
                 .and_then(|state| state.cursor.char_range())
-                .is_some_and(|range| range.is_empty() && crate::composer_lists::active(&app.composer, range.primary.index.into()));
+                .is_some_and(|range| crate::composer_lists::active(&app.composer, range.primary.index.into()));
             let typed_space = has_focus && ui.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Text(text) if text == " ")));
             let typed_newline = has_focus && ui.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if !modifiers.command && !modifiers.ctrl && !modifiers.alt)));
             let (typed_colon, typed_at) = ui.input(|input| {

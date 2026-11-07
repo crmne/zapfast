@@ -18,8 +18,12 @@ fn byte_at(text: &str, cursor: usize) -> usize {
         .map_or(text.len(), |(byte, _)| byte)
 }
 pub fn active(text: &str, cursor: usize) -> bool {
-    let before = &text[..byte_at(text, cursor)];
-    prefix(before.rsplit('\n').next().unwrap_or("")).is_some()
+    let position = byte_at(text, cursor);
+    let start = text[..position].rfind('\n').map_or(0, |index| index + 1);
+    let end = text[position..]
+        .find('\n')
+        .map_or(text.len(), |index| position + index);
+    prefix(&text[start..end]).is_some()
 }
 /// Called only for a typed space or an inserted newline, never for pasted text.
 pub fn edit(text: &mut String, cursor: usize, space: bool, newline: bool) -> Option<usize> {
@@ -30,11 +34,6 @@ pub fn edit(text: &mut String, cursor: usize, space: bool, newline: bool) -> Opt
         let line = &before[start..];
         let replacement = if matches!(line, "* " | "- ") {
             Some("• ".to_owned())
-        } else if let Some(number) = line.strip_suffix(' ') {
-            (!number.is_empty()
-                && number.bytes().all(|b| b.is_ascii_digit())
-                && number.parse::<u32>().is_ok())
-            .then(|| format!("{number}. "))
         } else {
             None
         };
@@ -48,7 +47,8 @@ pub fn edit(text: &mut String, cursor: usize, space: bool, newline: bool) -> Opt
         let previous_end = end - 1;
         let start = text[..previous_end].rfind('\n').map_or(0, |i| i + 1);
         let (marker, body) = prefix(&text[start..previous_end])?;
-        if body.trim().is_empty() {
+        let suffix = text[end..].split('\n').next().unwrap_or("");
+        if body.trim().is_empty() && suffix.trim().is_empty() {
             let position = text[..start].chars().count();
             text.replace_range(start..end, "");
             return Some(position);
@@ -74,8 +74,10 @@ mod tests {
             assert_eq!(text, "• ");
         }
         let mut text = "1 ".to_owned();
-        assert_eq!(edit(&mut text, 2, true, false), Some(3));
-        assert_eq!(text, "1. ");
+        assert_eq!(edit(&mut text, 2, true, false), None);
+        assert_eq!(text, "1 ");
+        assert!(!active("2 tickets please", 2));
+        assert!(!active("2024 was a good year", 5));
         let mut text = "9. hello\n".to_owned();
         let cursor = text.chars().count();
         edit(&mut text, cursor, false, true);
@@ -85,6 +87,19 @@ mod tests {
         edit(&mut text, cursor, false, true);
         assert_eq!(text, "9. hello\n");
     }
+    #[test]
+    fn list_membership_and_splitting_consider_text_after_the_cursor() {
+        for cursor in 0..="• milk".chars().count() {
+            assert!(active("• milk", cursor));
+        }
+        let mut text = "• \nmilk".to_owned();
+        assert_eq!(edit(&mut text, 3, false, true), Some(5));
+        assert_eq!(text, "• \n• milk");
+        let mut text = "1. \nmilk".to_owned();
+        assert_eq!(edit(&mut text, 4, false, true), Some(7));
+        assert_eq!(text, "1. \n2. milk");
+    }
+
     #[test]
     fn unicode_offsets_mid_document_and_ordinary_prose_are_preserved() {
         let mut text = "你好\n- \nlast".to_owned();
