@@ -139,7 +139,7 @@ fn identity_for(parent: &Path) -> Result<String> {
 }
 
 fn platform_store() -> Result<std::sync::Arc<dyn CredentialStoreApi>> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let store = zbus_secret_service_keyring_store::Store::new();
     #[cfg(target_os = "macos")]
     let store = apple_native_keyring_store::keychain::Store::new();

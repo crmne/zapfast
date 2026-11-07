@@ -977,7 +977,7 @@ fn window_chrome(app: &App, ui: &mut egui::Ui) {
     let style = fastframe_titlebar::Style {
         // GNOME's round buttons carry the text colour on the hover surface;
         // Windows' glyphs are quieter, in the secondary colour.
-        icon: if cfg!(target_os = "linux") {
+        icon: if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             palette.text
         } else {
             palette.secondary

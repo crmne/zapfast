@@ -24335,7 +24335,7 @@ mod long_chat_tests {
         frame(&mut app, &ctx, swipe(over_list, &[]));
         settle(&mut app);
         assert_eq!(list(&ctx), list_before, "the glide leaves the list alone");
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             assert!(messages(&ctx) < lifted, "the glide scrolls the messages");
         }
 

@@ -89,7 +89,7 @@ fn pattern_is_twelve_hour(pattern: &str) -> bool {
     false
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod clock_preference {
     pub fn twelve_hour() -> bool {
         gnome().unwrap_or_else(locale)
@@ -177,7 +177,7 @@ mod clock_preference {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos", windows)))]
 mod clock_preference {
     pub fn twelve_hour() -> bool {
         false
@@ -1061,7 +1061,7 @@ mod tests {
 
     /// GNOME's clock format comes from the portal as the bare value, not
     /// the quoted text `gsettings` printed.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn gnome_clock_formats_are_recognized() {
         use super::clock_preference::clock_format;

@@ -414,7 +414,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     appearance.row(translated(locale, "Language"), "", language_picker);
     // macOS keeps its own traffic lights over ZapFast's headers.
-    if cfg!(any(windows, target_os = "linux")) {
+    if cfg!(any(windows, target_os = "linux", target_os = "freebsd")) {
         appearance.row(
             translated(locale, "Custom title bar"),
             translated(

@@ -925,7 +925,7 @@ pub struct App {
     power: fastframe_power::Power,
     /// The desktop portal's light or dark preference, which winit does not
     /// report on Linux. Tests and demo runs read none.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     system_appearance: Option<crate::appearance::SystemAppearance>,
     /// Stands in for whether a panel shows the tray item, which tests cannot
     /// spawn.
@@ -1197,7 +1197,7 @@ impl Pending {
 /// app's request to focus or unminimize one of its own windows: winit's
 /// Wayland `focus_window` is a no-op and `set_minimized(false)` only warns.
 /// Mirrors winit's own choice: Wayland when either variable is non-empty.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn wayland_session() -> bool {
     ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
         .into_iter()
@@ -1205,7 +1205,7 @@ fn wayland_session() -> bool {
 }
 
 /// Wayland is Linux-only; elsewhere a window focuses and restores normally.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn wayland_session() -> bool {
     false
 }
@@ -1429,7 +1429,7 @@ impl App {
             .ok();
         let power_waker = waker.clone();
         app.power = fastframe_power::Power::spawn(move || power_waker.wake());
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             let appearance_waker = waker.clone();
             app.system_appearance = Some(crate::appearance::SystemAppearance::spawn(move || {
@@ -1764,7 +1764,7 @@ impl App {
             account_wheeled: None,
             tray_colour_checked: None,
             power: fastframe_power::Power::fixed(Default::default()),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             system_appearance: None,
             #[cfg(test)]
             test_tray_shown: None,
@@ -2383,7 +2383,7 @@ impl App {
     /// Whether the desktop's panel is dark, where that can be known. GNOME's
     /// top bar is dark in light mode too; other Linux panels follow the
     /// desktop's colour scheme.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn panel_is_dark(&self) -> Option<bool> {
         if fastframe_desktop::is_gnome() {
             return Some(true);
@@ -2399,7 +2399,7 @@ impl App {
     }
 
     /// The macOS menu bar recolours its template icon by itself.
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", windows)))]
     fn panel_is_dark(&self) -> Option<bool> {
         None
     }
@@ -2634,7 +2634,7 @@ impl App {
     }
 
     /// Binds attachment paste to the new window's existing Wayland data device.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn attach_clipboard(&mut self, display: Option<raw_window_handle::RawDisplayHandle>) {
         self.clipboard_reader.wayland = match display {
             Some(raw_window_handle::RawDisplayHandle::Wayland(display)) => {
@@ -7169,7 +7169,7 @@ impl App {
         // winit reports no system theme on Linux, so "Follow system" falls
         // back to what the desktop portal says, for our palette and egui's
         // own controls alike.
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(dark) = self
             .system_appearance
             .as_ref()
@@ -9580,7 +9580,7 @@ impl App {
                     // Decorations are fixed when a window is made. Replace
                     // the window, keeping the chat, the link and any call:
                     // the shell opens the next one at once.
-                    if cfg!(any(windows, target_os = "linux")) && !self.window_hidden {
+                    if cfg!(any(windows, target_os = "linux", target_os = "freebsd")) && !self.window_hidden {
                         self.reopen = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -10472,7 +10472,7 @@ impl App {
     /// `misc:focus_on_activate` is on (#530).
     fn request_attention_on(&mut self, ctx: &egui::Context, skip: bool) {
         if std::mem::take(&mut self.wants_attention)
-            && cfg!(target_os = "linux")
+            && cfg!(any(target_os = "linux", target_os = "freebsd"))
             && !skip
             && !self.window_hidden
             && !self.window_focused
@@ -12037,13 +12037,13 @@ enum ClipboardPaste {
 
 #[derive(Clone, Default)]
 struct ClipboardReader {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     wayland: Option<winit::platform::wayland::Clipboard>,
 }
 
 impl ClipboardReader {
     fn files(&self) -> Result<Vec<PathBuf>, String> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(clipboard) = &self.wayland {
             let bytes = clipboard
                 .load_bytes("text/uri-list")
@@ -12054,7 +12054,7 @@ impl ClipboardReader {
     }
 
     fn image(&self) -> Result<(usize, usize, Vec<u8>), String> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(clipboard) = &self.wayland {
             let bytes = clipboard
                 .load_bytes("image/png")
@@ -12065,7 +12065,7 @@ impl ClipboardReader {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
 fn native_clipboard_files(bytes: &[u8]) -> Result<Vec<PathBuf>, String> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "the clipboard's file list is not UTF-8".to_owned())?;
@@ -12082,7 +12082,7 @@ fn native_clipboard_files(bytes: &[u8]) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", test))]
 fn native_clipboard_image(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
     let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map_err(|error| error.to_string())?
@@ -15243,7 +15243,7 @@ mod tests {
     /// A trackpad gesture keeps its pane while fastframe-scroll says it goes
     /// on: a frame that is slow to draw is no pause, and the gesture's glide
     /// stays with the pane too. A pause in the input itself ends the gesture.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn a_trackpad_gesture_keeps_its_pane_through_a_slow_frame_and_its_glide() {
         let mut app = app();
@@ -18095,7 +18095,7 @@ mod tests {
         assert!(!app.settings.custom_titlebar, "off by default");
         app.apply(Action::SetCustomTitlebar(true), &ctx);
         assert!(app.settings.custom_titlebar);
-        let replaced = cfg!(any(windows, target_os = "linux"));
+        let replaced = cfg!(any(windows, target_os = "linux", target_os = "freebsd"));
         assert_eq!(app.reopen, replaced);
         assert_eq!(app.closed() == Closed::Reopen, replaced);
 
@@ -18820,7 +18820,7 @@ mod tests {
 
     /// winit reports no system theme on Linux, so "Follow system" takes the
     /// desktop portal's preference, and a fixed choice ignores it.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn follow_system_uses_the_desktops_preference_on_linux() {
         let mut app = app();
@@ -26662,7 +26662,7 @@ mod app_lock_tests {
 
     /// A notification highlights the taskbar entry of an open, unfocused
     /// window, once; a hidden window has no entry to highlight.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn a_notification_highlights_an_unfocused_window_in_the_taskbar() {
         let ctx = egui::Context::default();
@@ -26686,7 +26686,7 @@ mod app_lock_tests {
 
     /// GNOME shows its own "is ready" notice for a window that asks for
     /// attention, on top of the message's notification (#466).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn gnome_gets_no_attention_request() {
         let ctx = egui::Context::default();
@@ -26718,7 +26718,7 @@ mod app_lock_tests {
 
     /// Behind the app lock `window_focused` stays false, but a lock screen
     /// that has the focus is no window to point at.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn a_focused_lock_screen_is_not_highlighted() {
         let ctx = egui::Context::default();

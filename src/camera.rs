@@ -646,8 +646,41 @@ mod backend {
     }
 }
 
+/// FreeBSD has no camera backend yet.
+#[cfg(target_os = "freebsd")]
+mod backend {
+    use super::{Mode, Pixel};
+
+    pub fn list() -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    pub struct Camera {
+        mode: Mode,
+    }
+
+    impl Camera {
+        pub fn open(_id: &str, _budget: (usize, usize), _fps: u32) -> Result<Self, String> {
+            Err("cameras are not supported on FreeBSD yet".to_owned())
+        }
+
+        pub fn mode(&self) -> Mode {
+            self.mode
+        }
+
+        pub fn read<R>(
+            &mut self,
+            _convert: impl FnOnce(Pixel, &[u8], usize, usize, usize) -> R,
+        ) -> Result<R, String> {
+            Err("cameras are not supported on FreeBSD yet".to_owned())
+        }
+
+        pub fn stop(&mut self) {}
+    }
+}
+
 /// AVFoundation on macOS and Media Foundation on Windows, through nokhwa.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod backend {
     use super::{Mode, Pixel};
     use nokhwa::utils::{
