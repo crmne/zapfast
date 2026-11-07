@@ -26,6 +26,9 @@ fn preserve_legacy_column(path: &Path) -> Result<()> {
     }
     let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
+
+    verify_or_set_node_lock(&connection)?;
+
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let columns = transaction
@@ -38,6 +41,36 @@ fn preserve_legacy_column(path: &Path) -> Result<()> {
         )?;
     }
     transaction.commit()?;
+    Ok(())
+}
+
+fn verify_or_set_node_lock(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS zapfast_node_lock (node_id BLOB PRIMARY KEY);",
+    )?;
+
+    let fp = crate::platform::machine_id::hardware_fingerprint();
+    let existing: rusqlite::Result<Vec<u8>> = connection.query_row(
+        "SELECT node_id FROM zapfast_node_lock LIMIT 1",
+        [],
+        |row| row.get(0),
+    );
+
+    match existing {
+        Ok(stored) => {
+            anyhow::ensure!(
+                stored.as_slice() == fp.as_slice(),
+                "Session database is locked to a different computer"
+            );
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            connection.execute(
+                "INSERT INTO zapfast_node_lock (node_id) VALUES (?1)",
+                rusqlite::params![fp.as_slice()],
+            )?;
+        }
+        Err(err) => return Err(err.into()),
+    }
     Ok(())
 }
 

@@ -1945,10 +1945,7 @@ impl Worker {
         apply_ephemeral_expiration(message, self.ephemeral_expiration(chat))
     }
 
-    fn emit(&self, mut event: Event) {
-        if let Event::Syncing(syncing) = &mut event {
-            *syncing |= !self.privacy_ready;
-        }
+    fn emit(&self, event: Event) {
         // An upgraded archive has no reliable lock state until the library's
         // authenticated replay has completed. Keep private content off the UI
         // and out of notifications during recovery, including failed retries.
@@ -3304,9 +3301,6 @@ impl Worker {
         } else {
             whatsapp_rust::AppStateResyncMode::Incremental
         };
-        if !self.privacy_ready {
-            self.emit(Event::Syncing(true));
-        }
         // An upgraded archive also recovers mute settings and pin order from
         // RegularHigh once, but only the lock collection holds content back.
         let mut collections = vec![whatsapp_rust::WAPatchName::RegularLow];
@@ -7113,6 +7107,17 @@ impl Worker {
         }
     }
 
+    fn trigger_manual_sync(&mut self) {
+        if !self.status.is_connected() {
+            return;
+        }
+        self.refresh_prefetch_queue();
+        self.set_syncing(true);
+        if let Some(chat) = self.prefetch.next_history(Instant::now(), false) {
+            let _ = self.fetch_older(chat, false, true);
+        }
+    }
+
     // --- commands --------------------------------------------------------
 
     /// Saves a validated contact through the current account and tags its asynchronous completion.
@@ -7401,6 +7406,7 @@ impl Worker {
             Command::SetHistoryPrefetch { on, focused } => {
                 self.prefetch.configure(on, focused);
             }
+            Command::ManualSync => self.trigger_manual_sync(),
             Command::LoadUntil { chat, id, before } => self.load_until(chat, id, before),
             Command::SearchMessages { query } => self.search_messages(query),
             Command::SearchChatMessages {

@@ -3,6 +3,7 @@
 use std::{fs, io::Read, path::Path};
 
 use anyhow::{Context, Result, ensure};
+use hkdf::Hkdf;
 use keyring_core::api::CredentialStoreApi;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
@@ -65,15 +66,13 @@ fn copy_archive_key_in(
         .build("rocks.zapfast.ZapFast", &identity_for(old_parent)?, None)
         .map_err(keyring_error)
         .context("The OS keyring could not open ZapFast's archive key")?;
-    let key = match old_entry.get_secret() {
+    let secret = match old_entry.get_secret() {
         Ok(secret) => {
             ensure!(
-                secret.len() == 32,
+                !secret.is_empty(),
                 "The archive key in the OS keyring is invalid"
             );
-            let mut key = Zeroizing::new([0; 32]);
-            key.copy_from_slice(&secret);
-            key
+            secret
         }
         Err(keyring_core::Error::NoEntry) => {
             ensure!(
@@ -91,7 +90,7 @@ fn copy_archive_key_in(
         .map_err(keyring_error)
         .context("The OS keyring could not open ZapFast's archive key")?;
     new_entry
-        .set_secret(key.as_ref())
+        .set_secret(&secret)
         .map_err(keyring_error)
         .context("Could not save the archive key in the OS keyring")?;
     // Read back before the only copy of the history moves under this key.
@@ -102,7 +101,7 @@ fn copy_archive_key_in(
             .context("Could not verify the copied archive key")?,
     );
     ensure!(
-        saved.as_slice() == key.as_ref(),
+        saved.as_slice() == secret.as_slice(),
         "The OS keyring did not retain the copied archive key"
     );
     Ok(())
@@ -152,22 +151,51 @@ fn platform_store() -> Result<std::sync::Arc<dyn CredentialStoreApi>> {
 }
 
 fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<[u8; 32]>> {
+    let (derived, raw) = resolve_entry_keys(path, entry)?;
+
+    if path.exists() && fs::metadata(path)?.len() > 0 && !plaintext(path)? {
+        ensure_migrated_to_machine_bound(path, &derived, &raw)?;
+    }
+
+    Ok(derived)
+}
+
+fn resolve_entry_keys(
+    path: &Path,
+    entry: &keyring_core::Entry,
+) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<[u8; 32]>)> {
     match entry.get_secret() {
         Ok(secret) => {
-            let secret = Zeroizing::new(secret);
-            // Start over moves the unreadable archive aside but leaves its
-            // credential behind. Replace an invalid credential only when no
-            // archive remains at this path, never while protecting an archive.
-            if secret.len() != 32 && !path.try_exists()? {
+            if secret.is_empty() && !path.try_exists()? {
                 return create_key(entry);
             }
-            ensure!(
-                secret.len() == 32,
-                "The archive key in the OS keyring is invalid"
-            );
-            let mut key = Zeroizing::new([0; 32]);
-            key.copy_from_slice(&secret);
-            Ok(key)
+            let fp = crate::platform::machine_id::hardware_fingerprint();
+            let raw_key = if secret.len() == 32 {
+                let mut raw = Zeroizing::new([0u8; 32]);
+                raw.copy_from_slice(&secret);
+                #[cfg(windows)]
+                if let Ok(protected) = dpapi::protect(&secret, &fp) {
+                    let _ = entry.set_secret(&protected);
+                }
+                raw
+            } else {
+                #[cfg(windows)]
+                {
+                    dpapi::unprotect(&secret, &fp).context("The archive key in the OS keyring is invalid")?
+                }
+                #[cfg(not(windows))]
+                {
+                    ensure!(
+                        secret.len() == 32,
+                        "The archive key in the OS keyring is invalid"
+                    );
+                    let mut raw = Zeroizing::new([0u8; 32]);
+                    raw.copy_from_slice(&secret);
+                    raw
+                }
+            };
+            let derived = derive_machine_bound_key(&raw_key);
+            Ok((derived, raw_key))
         }
         Err(keyring_core::Error::NoEntry) => {
             ensure!(
@@ -182,17 +210,41 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
     }
 }
 
+pub(super) fn derive_machine_bound_key(raw_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+    let fp = crate::platform::machine_id::hardware_fingerprint();
+    let hk = Hkdf::<Sha256>::new(Some(&fp), raw_key);
+    let mut derived = Zeroizing::new([0u8; 32]);
+    hk.expand(b"zapfast-machine-bound-key-v1", derived.as_mut())
+        .expect("32 bytes is valid length for HKDF-SHA256");
+    derived
+}
+
+fn ensure_migrated_to_machine_bound(
+    path: &Path,
+    derived: &[u8; 32],
+    raw: &[u8; 32],
+) -> Result<()> {
+    if keyed(path, derived).is_ok() {
+        return Ok(());
+    }
+
+    if let Ok(connection) = keyed(path, raw) {
+        connection.pragma_update(None, "rekey", &*key_literal(derived))?;
+        connection.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        return Ok(());
+    }
+
+    anyhow::bail!("The archive could not be unlocked with its machine-bound key");
+}
+
 /// How the Windows store names `ERROR_NOT_ENOUGH_MEMORY`, which `CredWriteW`
 /// returns when Credential Manager holds as many credentials as it can take.
 /// The store keeps its error type private, so its text is what can be matched.
 const WINDOWS_CREDENTIALS_FULL: &str = "Windows error code 8";
 
 /// A keyring error as one message.
-///
-/// keyring-core's text already includes the error underneath and also reports
-/// it as the source, so a chain printed with `{:#}` repeated it ("Platform
-/// failure: Windows error code 8: Windows error code 8"). A full Credential
-/// Manager is also named for what it is, with what to do about it.
 fn keyring_error(error: keyring_core::Error) -> anyhow::Error {
     match &error {
         keyring_core::Error::PlatformFailure(inner)
@@ -206,25 +258,153 @@ fn keyring_error(error: keyring_core::Error) -> anyhow::Error {
     }
 }
 
-fn create_key(entry: &keyring_core::Entry) -> Result<Zeroizing<[u8; 32]>> {
-    let mut key = Zeroizing::new([0; 32]);
-    getrandom::fill(key.as_mut()).context("Could not generate an archive key")?;
+fn create_key(entry: &keyring_core::Entry) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<[u8; 32]>)> {
+    let mut raw_key = Zeroizing::new([0; 32]);
+    getrandom::fill(raw_key.as_mut()).context("Could not generate an archive key")?;
+
+    let fp = crate::platform::machine_id::hardware_fingerprint();
+    #[cfg(windows)]
+    let stored_bytes = dpapi::protect(raw_key.as_ref(), &fp).unwrap_or_else(|_| raw_key.as_ref().to_vec());
+    #[cfg(not(windows))]
+    let stored_bytes = raw_key.as_ref().to_vec();
+
     entry
-        .set_secret(key.as_ref())
+        .set_secret(&stored_bytes)
         .map_err(keyring_error)
         .context("Could not save the archive key in the OS keyring")?;
-    // Read back before touching the only copy of the message history.
-    let saved = Zeroizing::new(
-        entry
-            .get_secret()
-            .map_err(keyring_error)
-            .context("Could not verify the saved archive key")?,
-    );
+
+    let saved = entry
+        .get_secret()
+        .map_err(keyring_error)
+        .context("Could not verify the saved archive key")?;
     ensure!(
-        saved.as_slice() == key.as_ref(),
+        saved == stored_bytes,
         "The OS keyring did not retain the archive key"
     );
-    Ok(key)
+
+    let derived = derive_machine_bound_key(&raw_key);
+    Ok((derived, raw_key))
+}
+
+#[cfg(windows)]
+mod dpapi {
+    use super::*;
+
+    #[repr(C)]
+    struct DATA_BLOB {
+        cbData: u32,
+        pbData: *mut u8,
+    }
+
+    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
+    const CRYPTPROTECT_LOCAL_MACHINE: u32 = 0x4;
+
+    #[link(name = "crypt32")]
+    unsafe extern "system" {
+        fn CryptProtectData(
+            pDataIn: *const DATA_BLOB,
+            szDataDescr: *const u16,
+            pOptionalEntropy: *const DATA_BLOB,
+            pvReserved: *mut std::ffi::c_void,
+            pPromptStruct: *mut std::ffi::c_void,
+            dwFlags: u32,
+            pDataOut: *mut DATA_BLOB,
+        ) -> i32;
+
+        fn CryptUnprotectData(
+            pDataIn: *const DATA_BLOB,
+            ppszDataDescr: *mut *mut u16,
+            pOptionalEntropy: *const DATA_BLOB,
+            pvReserved: *mut std::ffi::c_void,
+            pPromptStruct: *mut std::ffi::c_void,
+            dwFlags: u32,
+            pDataOut: *mut DATA_BLOB,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LocalFree(hMem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+
+    pub fn protect(data: &[u8], entropy: &[u8]) -> Result<Vec<u8>> {
+        let in_blob = DATA_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let entropy_blob = DATA_BLOB {
+            cbData: entropy.len() as u32,
+            pbData: entropy.as_ptr() as *mut u8,
+        };
+        let mut out_blob = DATA_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
+
+        let status = unsafe {
+            CryptProtectData(
+                &in_blob,
+                std::ptr::null(),
+                &entropy_blob,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            )
+        };
+
+        if status == 0 || out_blob.pbData.is_null() {
+            anyhow::bail!("Windows DPAPI CryptProtectData failed");
+        }
+
+        let slice = unsafe {
+            std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize)
+        };
+        let result = slice.to_vec();
+        unsafe { LocalFree(out_blob.pbData.cast()) };
+        Ok(result)
+    }
+
+    pub fn unprotect(data: &[u8], entropy: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+        let in_blob = DATA_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let entropy_blob = DATA_BLOB {
+            cbData: entropy.len() as u32,
+            pbData: entropy.as_ptr() as *mut u8,
+        };
+        let mut out_blob = DATA_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
+
+        let status = unsafe {
+            CryptUnprotectData(
+                &in_blob,
+                std::ptr::null_mut(),
+                &entropy_blob,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            )
+        };
+
+        if status == 0 || out_blob.pbData.is_null() {
+            anyhow::bail!("Windows DPAPI unprotect failed: archive is locked to another machine or user");
+        }
+
+        let slice = unsafe {
+            std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize)
+        };
+        ensure!(slice.len() == 32, "The archive key in the OS keyring is invalid");
+
+        let mut key = Zeroizing::new([0u8; 32]);
+        key.copy_from_slice(slice);
+        unsafe { LocalFree(out_blob.pbData.cast()) };
+        Ok(key)
+    }
 }
 
 fn key_literal(key: &[u8; 32]) -> Zeroizing<String> {

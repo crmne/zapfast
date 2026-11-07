@@ -3455,6 +3455,8 @@ pub enum Action {
     CancelPictureEdit,
     /// Removes all pending attachments.
     ClearPending,
+    /// Manually triggers a quiet history reconciliation with WhatsApp servers.
+    ManualSync,
 }
 
 #[cfg(test)]

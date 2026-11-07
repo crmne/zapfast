@@ -341,6 +341,7 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
 enum HeaderButton {
     NewChat,
     NewCall,
+    Sync,
     HideList,
 }
 
@@ -362,7 +363,7 @@ fn header_buttons(ctx: &egui::Context, calls: bool) -> Vec<HeaderButton> {
     if calls {
         return vec![HeaderButton::NewCall];
     }
-    let mut buttons = vec![HeaderButton::NewChat];
+    let mut buttons = vec![HeaderButton::NewChat, HeaderButton::Sync];
     if !super::narrow(ctx) {
         buttons.push(HeaderButton::HideList);
     }
@@ -413,6 +414,26 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
                 .clicked()
                 {
                     app.actions.push(Action::ShowNewCall(true));
+                }
+            }
+            HeaderButton::Sync => {
+                let spinning = app.syncing;
+                let tooltip = if spinning {
+                    "Sincronizando..."
+                } else {
+                    "Sincronizar ahora"
+                };
+                if theme::icon_button(
+                    ui,
+                    Icon::Refresh,
+                    HEADER_ICON,
+                    if spinning { palette.accent } else { palette.secondary },
+                    if spinning { palette.accent } else { palette.text },
+                    tooltip,
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::ManualSync);
                 }
             }
             HeaderButton::HideList => {
@@ -948,7 +969,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
                 _ => "No groups",
             };
             (title, "Choose All to see every chat.")
-        } else if app.syncing {
+        } else if app.syncing && app.sync_percent.is_some() {
             ("Loading your chats", "Receiving history from your phone.")
         } else {
             (

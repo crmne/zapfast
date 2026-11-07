@@ -311,6 +311,8 @@ pub enum Command {
         on: bool,
         focused: Option<ChatId>,
     },
+    /// Explicit request to reconcile history on user demand.
+    ManualSync,
     /// A page of the chat's photos and playable videos, answered by
     /// `Event::ChatMedia`. `None` asks for the newest page; `around` centres it
     /// on one message, so a viewer opened on a photo older than the newest

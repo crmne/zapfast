@@ -561,14 +561,12 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let update = app.update.clone();
     let (icon, text, color, retry, download) = match &app.link {
-        LinkStatus::Connected if app.syncing => (
+        LinkStatus::Connected if app.syncing && app.sync_percent.is_some() => (
             Icon::Refresh,
-            match app.sync_percent {
-                Some(percent) => {
-                    crate::i18n::gettext(app.locale, "Loading chat history… {percent}%")
-                        .replace("{percent}", &percent.to_string())
-                }
-                None => crate::i18n::gettext(app.locale, "Loading chat history…").into_owned(),
+            {
+                let percent = app.sync_percent.unwrap_or(0);
+                crate::i18n::gettext(app.locale, "Loading chat history… {percent}%")
+                    .replace("{percent}", &percent.to_string())
             },
             palette.accent,
             false,

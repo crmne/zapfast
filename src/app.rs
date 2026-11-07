@@ -4537,15 +4537,6 @@ impl App {
                 }
             }
             Event::Syncing(syncing) => {
-                if self.syncing && !syncing {
-                    self.toast("History loaded");
-                }
-                if live && !self.syncing && syncing {
-                    self.announcer.say(
-                        crate::announcer::Category::Status,
-                        crate::i18n::gettext(self.locale, "Loading chat history"),
-                    );
-                }
                 self.syncing = syncing;
                 if !syncing {
                     self.sync_percent = None;
@@ -8579,6 +8570,11 @@ impl App {
                 self.pending.clear();
                 self.pending_view_once = false;
                 self.forget_unstaged_pictures();
+            }
+            Action::ManualSync => {
+                if let Some(account) = self.accounts.get(self.active) {
+                    account.backend.send(crate::backend::Command::ManualSync);
+                }
             }
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
