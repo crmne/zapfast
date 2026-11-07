@@ -353,6 +353,14 @@ pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette, on: bool
     };
     // SAFETY: eframe supplies a live NSView, and this runs on its main thread.
     let content = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
+    // AppKit's automatic separator belongs to its original title-bar height.
+    // Our traffic lights are centered in the taller in-app header instead.
+    if let Some(window) = content.window() {
+        let none = objc2_app_kit::NSTitlebarSeparatorStyle::None;
+        if window.titlebarSeparatorStyle() != none {
+            window.setTitlebarSeparatorStyle(none);
+        }
+    }
     // SAFETY: as above; the content view's parent is the window's frame view.
     let Some(frame_view) = (unsafe { content.superview() }) else {
         return;

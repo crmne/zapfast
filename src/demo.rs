@@ -25672,11 +25672,15 @@ mod rail_tests {
             assert_eq!(me.size(), egui::vec2(32.0, 32.0));
             // A Mac lays out its own way whichever the preview says.
             if crate::theme::macos_chrome(&ctx) {
-                assert!(
-                    top[0].top() >= 36.0 && top[0].top() < 60.0,
-                    "just below the traffic lights: {:?}",
-                    top[0]
-                );
+                assert!(top[0].top() >= 60.0, "below the title row: {:?}", top[0]);
+                if let Some(search) = ctx.read_response(egui::Id::new("chat-search")) {
+                    assert!(
+                        (top[0].center().y - search.rect.center().y).abs() < 3.0,
+                        "Chats {:?} aligns with search {:?}",
+                        top[0],
+                        search.rect
+                    );
+                }
                 // The lights reach over the list header, whose title makes
                 // way for them.
                 assert!(header.left() + 14.0 + crate::ui::rail::lights_overhang(&ctx) >= 84.0);
