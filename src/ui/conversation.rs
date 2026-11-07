@@ -384,12 +384,18 @@ fn controls_width(buttons: f32, vibrant: bool) -> f32 {
     }
 }
 
+/// The room a vibrant header's name glass takes past its text, before the
+/// first button's glass. Without it a long name's pill slid under Search.
+fn name_glass_tail(vibrant: bool) -> f32 {
+    if vibrant { NAME_GLASS_PADDING.x } else { 0.0 }
+}
+
 /// Whether a header `width` wide holds the avatar, a readable name and
 /// `buttons` and `extra` more on their right.
 fn header_fits(width: f32, buttons: f32, extra: f32, vibrant: bool) -> bool {
     const AVATAR: f32 = 40.0 + 14.0;
     const NAME: f32 = 140.0;
-    width >= AVATAR + NAME + controls_width(buttons, vibrant) + extra
+    width >= AVATAR + NAME + controls_width(buttons, vibrant) + name_glass_tail(vibrant) + extra
 }
 
 /// Space between the header's last button and caption buttons `room` wide.
@@ -494,7 +500,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 } else {
                     (buttons, call_buttons)
                 };
-                let right_controls = controls_width(buttons, palette.vibrant()) + extra;
+                let right_controls = controls_width(buttons, palette.vibrant())
+                    + name_glass_tail(palette.vibrant())
+                    + extra;
                 // On a vibrant window the name and the buttons sit on glass
                 // pills, drawn beneath them once they are measured.
                 let name_pill = ui.painter().add(egui::Shape::Noop);
@@ -634,6 +642,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     );
                     ui.painter()
                         .set(name_pill, glass(&palette, glass_rect, NAME_GLASS_RADIUS));
+                    #[cfg(any(test, feature = "demo"))]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(name_pill_id(), glass_rect));
                 }
                 let block = ui
                     .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
@@ -998,6 +1009,12 @@ pub(crate) fn back_button_id() -> egui::Id {
 /// Where the conversation header's row was laid out, for layout tests.
 pub(crate) fn header_row_id() -> egui::Id {
     egui::Id::new("conversation-header-row")
+}
+
+/// Where the name glass was last laid out, for layout tests.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) fn name_pill_id() -> egui::Id {
+    egui::Id::new("conversation-name-pill")
 }
 
 /// Chat-header subtitle.

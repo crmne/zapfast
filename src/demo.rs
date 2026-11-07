@@ -10057,6 +10057,61 @@ mod tests {
         assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x)).is_empty());
     }
 
+    /// A long group member line stops at the name glass's right padding,
+    /// before Search, instead of sliding under the button.
+    #[test]
+    fn a_long_group_subtitle_keeps_the_name_glass_clear_of_search() {
+        use egui::accesskit::Role;
+        let mut app = app();
+        let group = SAMPLES[1].id.to_owned();
+        let mut participants = app
+            .chats
+            .iter()
+            .find(|chat| chat.id == group)
+            .map(|chat| chat.participants.clone())
+            .unwrap_or_default();
+        for index in 0..60 {
+            let id = format!("49175555{index:04}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some(format!("Member{index:02}")),
+                    first_name: None,
+                    push_name: None,
+                },
+            );
+            participants.push(id);
+        }
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == group)
+            .expect("the sample group")
+            .participants = participants;
+        app.typing.clear();
+        app.settings.theme = ThemeChoice::Messages;
+        app.open_chat = Some(group);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render_sized(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let (_, _, search) = nodes
+            .iter()
+            .find(|(label, role, _)| label.starts_with("Search messages") && *role == Role::Button)
+            .expect("the header offers Search");
+        let pill = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::name_pill_id()))
+            .expect("the name glass");
+        // The button is 30 points wide around its centre.
+        assert!(
+            pill.right() < search.x - 15.0,
+            "the name glass ends at {} and runs under Search at {}",
+            pill.right(),
+            search.x - 15.0
+        );
+    }
+
     /// A header shares the caption row only at a corner it reaches: beside
     /// the buttons when its content fits, under them otherwise, and not at
     /// all below the row or away from the edge.
