@@ -10756,8 +10756,15 @@ impl Worker {
     }
 
     fn fetch_avatar(&mut self, id: String, full: bool) {
+        let community = self
+            .archive
+            .chat(&id)
+            .ok()
+            .flatten()
+            .is_some_and(|chat| chat.is_community());
         let path = self.avatar_file(&id, full);
         if let Ok(metadata) = std::fs::metadata(&path)
+            && (!community || metadata.len() > 0)
             && metadata
                 .modified()
                 .ok()
@@ -10812,7 +10819,9 @@ impl Worker {
                 let mut failed = false;
                 'lookup: for jid in &candidates {
                     for preview in [!full, false] {
-                        let target = if jid.is_group() {
+                        let target = if community {
+                            whatsapp_rust::ProfilePictureTarget::Community(jid)
+                        } else if jid.is_group() {
                             whatsapp_rust::ProfilePictureTarget::Group(jid)
                         } else {
                             whatsapp_rust::ProfilePictureTarget::Contact(jid)

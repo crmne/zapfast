@@ -3053,6 +3053,13 @@ impl App {
 
     /// Resolves the chat-list title.
     pub fn chat_title(&self, chat: &Chat) -> String {
+        if chat
+            .community
+            .as_ref()
+            .is_some_and(|info| info.is_announcement && !info.is_parent)
+        {
+            return crate::i18n::gettext(self.locale, "Announcements").into_owned();
+        }
         if chat.is_group()
             && (chat.name.trim().is_empty() || (chat.name == "Group" && !chat.group_subject_known))
         {
@@ -3474,7 +3481,13 @@ impl App {
                 self.chat_filter,
                 crate::model::ChatFilter::All | crate::model::ChatFilter::Groups
             );
-        crate::communities::visible(chats, &self.chats, &self.collapsed_communities, grouped)
+        crate::communities::visible(
+            chats,
+            &self.chats,
+            &self.collapsed_communities,
+            grouped,
+            self.open_chat.as_deref(),
+        )
     }
 
     /// Whether the chat list keeps the phone's favorites order instead of the
@@ -6259,13 +6272,6 @@ impl App {
             self.close_locked_folder();
             self.search.clear();
             self.search_hits.clear();
-        }
-        if let Some(parent) = self
-            .chat(&id)
-            .and_then(|chat| chat.community.as_ref())
-            .and_then(|info| info.parent.clone())
-        {
-            self.collapsed_communities.remove(&parent);
         }
         if self.chat(&id).is_some_and(Chat::is_community) {
             return;

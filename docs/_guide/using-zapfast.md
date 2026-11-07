@@ -1071,8 +1071,10 @@ conversations.
 
 Communities appear directly in the Chats list as expandable headings. Click a
 community to collapse or expand its announcement and member-group chats. Open
-any member chat normally; a notification or keyboard navigation to a member
-expands its community so the selected chat stays visible.
+any member chat normally. A folded community keeps its right-pointing arrow:
+only unread groups and the currently open group appear beneath it. Other
+groups stay hidden until you expand the heading. Known announcement groups
+are labeled Announcements.
 
 Globally pinned member chats stay at the top. Search, Favorites, Unread,
 labels, archived chats and the locked folder retain their existing flat lists
