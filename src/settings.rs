@@ -573,7 +573,7 @@ impl Default for Settings {
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
             last_chat: None,
-            show_shortcut_hints: true,
+            show_shortcut_hints: false,
             recent_emoji: Vec::new(),
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),

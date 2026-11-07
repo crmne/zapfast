@@ -272,7 +272,12 @@ pub fn respond(app: &mut App) {
                 samples,
                 quoting,
             } => {
-                let path = app.dirs.media_cache_dir().join("tour-voice.ogg");
+                let cache_dir = app.dirs.media_cache_dir();
+                let _ = std::fs::create_dir_all(&cache_dir);
+                let now = crate::util::now();
+                let count = app.conversations.get(&chat).map_or(0, |c| c.messages.len());
+                let id = format!("tour-voice-{count}-{now}");
+                let path = cache_dir.join(format!("{id}.ogg"));
                 let Ok(bytes) = crate::voice::encode(&samples) else {
                     continue;
                 };
@@ -293,9 +298,11 @@ pub fn respond(app: &mut App) {
                         waveform: crate::voice::waveform(&samples),
                     },
                 );
-                row.id = "tour-voice".into();
+                row.id = id;
                 row.quoted = quoting.and_then(|id| quote(app, &chat, id));
                 append(app, row);
+                let due = std::time::Instant::now() + std::time::Duration::from_millis(900);
+                app.debug_replies.push((due, chat, "Voice note received! 👍".into()));
             }
             Command::React {
                 chat,
@@ -319,6 +326,13 @@ pub fn respond(app: &mut App) {
             }
             // The engine's answers to the call screen's own controls: the
             // call as it now is, as the worker reports it.
+            Command::StartCall { video, .. } => update_call(app, |call| {
+                call.phase = crate::calls::CallPhase::Active;
+                call.started = Some(std::time::Instant::now());
+                call.remote_video = video;
+                call.camera_on = video;
+            }),
+            Command::HangupCall | Command::DeclineCall => {}
             Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),
             Command::SetCallCamera(on) => update_call(app, |call| call.camera_on = on),
             Command::AnswerCall => update_call(app, |call| {

@@ -43,12 +43,24 @@ const VIDEO_SCRIM: Color32 = Color32::from_black_alpha(150);
 /// Draws the call surface in a separate compact window, when a call wants the screen.
 /// A call the reader stepped away from is drawn by [`strip`] instead.
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    let was_open = ctx
+        .data(|d| d.get_temp::<bool>(viewport_id().into()))
+        .unwrap_or(false);
     let Some(call) = app.call.clone() else {
+        if was_open {
+            ctx.data_mut(|d| d.insert_temp(viewport_id().into(), false));
+            ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Close);
+        }
         return;
     };
     if app.call_surface_hidden {
+        if was_open {
+            ctx.data_mut(|d| d.insert_temp(viewport_id().into(), false));
+            ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Close);
+        }
         return;
     }
+    ctx.data_mut(|d| d.insert_temp(viewport_id().into(), true));
     let palette = app.palette;
     let peer = app.call_name();
     let picture = app.call_avatar();
@@ -68,6 +80,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     };
 
     let title = format!("{peer} - ZapFast");
+    let app_id = if app.backend.is_offline() {
+        "zapfast-demo".to_owned()
+    } else {
+        fastframe_desktop::desktop_entry("zapfast")
+    };
     let builder = ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(initial_size)
@@ -75,7 +92,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .with_transparent(false)
         .with_decorations(true)
         .with_resizable(true)
-        .with_app_id("zapfast-call".to_owned());
+        .with_app_id(app_id);
 
     ctx.set_embed_viewports(false);
     ctx.show_viewport_immediate(viewport_id(), builder, |ui, class| {
@@ -84,6 +101,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         }
 
         if ui.input(|i| i.viewport().close_requested()) {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
             if call.phase == CallPhase::Incoming {
                 app.actions.push(Action::DeclineCall);
             } else {
@@ -165,6 +183,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                     )
                     .clicked()
                     {
+                        ui.send_viewport_cmd(egui::ViewportCommand::Close);
                         app.actions.push(Action::HangupCall);
                     }
                     let back = gettext(locale, "Return to the call").into_owned();
@@ -617,6 +636,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         )
         .clicked()
         {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
             app.actions.push(Action::HangupCall);
         }
     }
@@ -825,6 +845,7 @@ fn ringing(
         )
         .clicked()
         {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
             app.actions.push(Action::DeclineCall);
         }
         let accept = gettext(locale, "Accept");
