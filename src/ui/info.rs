@@ -532,7 +532,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         }
         if let Some(presence) = app.presence.get(id) {
             let status = if presence.online {
-                "online".to_owned()
+                crate::i18n::gettext(app.locale, "online").into_owned()
             } else if let Some(seen) = presence.last_seen {
                 crate::util::last_seen(app.locale, seen)
             } else {
@@ -546,9 +546,10 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             theme::text(
                 ui,
                 if until == 0 {
-                    "Muted".to_owned()
+                    crate::i18n::gettext(app.locale, "Muted").into_owned()
                 } else {
-                    format!("Muted until {}", crate::util::chat_stamp(app.locale, until))
+                    crate::i18n::gettext(app.locale, "Muted until {time}")
+                        .replace("{time}", &crate::util::chat_stamp(app.locale, until))
                 },
                 theme::regular(12.5),
                 palette.secondary,

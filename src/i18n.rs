@@ -270,6 +270,36 @@ mod tests {
         assert_eq!(gettext(Locale::Ukrainian, "Messages"), "Messages");
     }
 
+    #[test]
+    fn typing_activity_uses_the_ukrainian_catalog() {
+        assert_eq!(gettext(Locale::Ukrainian, "typing…"), "друкує…");
+        assert_eq!(
+            gettext(Locale::Ukrainian, "{name} is typing…"),
+            "{name} друкує…"
+        );
+        assert_eq!(
+            gettext(Locale::Ukrainian, "{names} and {last} are typing…"),
+            "{names} і {last} друкують…"
+        );
+    }
+
+    #[test]
+    fn presence_and_group_statuses_use_the_ukrainian_catalog() {
+        assert_eq!(gettext(Locale::Ukrainian, "online"), "у мережі");
+        assert_eq!(gettext(Locale::Ukrainian, "Group"), "Група");
+        assert_eq!(gettext(Locale::Ukrainian, "Muted"), "Без звуку");
+        assert_eq!(
+            gettext(Locale::Ukrainian, "Muted until {time}"),
+            "Без звуку до {time}"
+        );
+        assert_eq!(gettext(Locale::Ukrainian, "Only"), "Лише");
+        assert_eq!(gettext(Locale::Ukrainian, "admins"), "адміни");
+        assert_eq!(
+            gettext(Locale::Ukrainian, "can send messages"),
+            "можуть писати"
+        );
+    }
+
     /// Checks that private reply controls use dedicated translated catalog entries.
     #[test]
     fn private_reply_labels_use_their_own_catalog_entries() {
