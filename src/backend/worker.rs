@@ -56,6 +56,7 @@ mod interactive;
 mod link_preview;
 mod link_preview_setting;
 mod link_watch;
+mod message_secrets;
 mod new_group;
 mod poll_history;
 mod polls;
@@ -986,6 +987,7 @@ pub async fn run(
         account_session: 0,
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
+        reaction_generation: HashMap::new(),
         withheld_pages: Vec::new(),
         dirs,
         events,
@@ -1458,6 +1460,7 @@ struct Worker {
     /// Latest pin or unpin attempt per message. A finished request whose
     /// generation is older than this is dropped.
     pin_generation: HashMap<(String, String), u64>,
+    reaction_generation: HashMap<(String, String), u64>,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
     /// they are read again once content is shown (#180).
@@ -3120,7 +3123,13 @@ impl Worker {
             }
         };
         let sender = self.wa_sender.clone();
+        let mut cache_config = whatsapp_rust::CacheConfig::default();
+        cache_config.original_message_resolver = Some(Arc::new(message_secrets::Resolver {
+            commands: self.commands.clone(),
+            session: self.account_session,
+        }));
         let builder = host_owned_presence(Bot::builder().with_backend(store))
+            .with_cache_config(cache_config)
             .with_watched_ab_props([
                 abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE,
                 abprops::web::ENABLE_WEB_CALLING,
@@ -4694,6 +4703,7 @@ impl Worker {
         self.star_generation.clear();
         self.archive_requests.clear();
         self.pin_generation.clear();
+        self.reaction_generation.clear();
         // Pin answers carry the same session as star answers.
         self.star_session = self.star_session.wrapping_add(1);
         // A change or ack sent under the old account belongs to that account:
@@ -7195,6 +7205,43 @@ impl Worker {
             return;
         }
         match command {
+            Command::ResolveMessageSecret {
+                session,
+                chat,
+                sender,
+                message,
+                reply,
+            } => {
+                let _ = reply.send(self.resolve_message_secret(session, &chat, &sender, &message));
+            }
+            Command::ReactionSent {
+                session,
+                generation,
+                chat,
+                message,
+                emoji,
+                succeeded,
+            } => {
+                if session != self.account_session
+                    || self
+                        .reaction_generation
+                        .get(&(chat.clone(), message.clone()))
+                        != Some(&generation)
+                {
+                    return;
+                }
+                if succeeded {
+                    let me = self.me();
+                    if let Ok(Some(updated)) = self
+                        .archive
+                        .set_reaction(&chat, &message, &me, true, &emoji)
+                    {
+                        self.emit(Event::MessageUpdated(Box::new(updated)));
+                    }
+                } else {
+                    self.emit(Event::Error("Could not send the reaction. If this is an old announcement, reload its history and try again.".into()));
+                }
+            }
             Command::FetchBlocklist => self.fetch_blocklist(),
             Command::SetBlocked { chat, blocked } => self.set_blocked(chat, blocked),
             Command::BlocklistFetched { generation, result } => {
@@ -11885,22 +11932,42 @@ impl Worker {
         let Ok(Some(target)) = self.archive.message(&chat, &id) else {
             return;
         };
-        let me = self.me();
-        if let Ok(Some(updated)) = self.archive.set_reaction(&chat, &id, &me, true, &emoji) {
-            self.emit(Event::MessageUpdated(Box::new(updated)));
+        if !self.privacy_ready
+            || !self
+                .archive
+                .chat(&chat)
+                .ok()
+                .flatten()
+                .is_some_and(|chat| chat.can_react())
+        {
+            return;
         }
+        let generation = self
+            .reaction_generation
+            .entry((chat.clone(), id.clone()))
+            .or_default();
+        *generation += 1;
+        let generation = *generation;
+        let session = self.account_session;
+        let commands = self.commands.clone();
         let key = {
             let mut proto = wa::MessageKey::default();
             proto.remote_jid = Some(chat.clone());
             proto.from_me = Some(target.from_me);
-            proto.id = Some(id);
+            proto.id = Some(id.clone());
             proto.participant = (jid.is_group() && !target.from_me).then(|| target.sender.clone());
             proto
         };
         tokio::spawn(async move {
-            if client.send_reaction_raw(jid, key, &emoji).await.is_err() {
-                log::warn!("could not send a reaction");
-            }
+            let succeeded = client.send_reaction_raw(jid, key, &emoji).await.is_ok();
+            let _ = commands.send(Command::ReactionSent {
+                session,
+                generation,
+                chat,
+                message: id,
+                emoji,
+                succeeded,
+            });
         });
     }
 
@@ -20049,6 +20116,7 @@ mod receipt_tests {
             account_session: 0,
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
+            reaction_generation: HashMap::new(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
             events,
