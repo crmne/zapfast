@@ -9580,7 +9580,9 @@ impl App {
                     // Decorations are fixed when a window is made. Replace
                     // the window, keeping the chat, the link and any call:
                     // the shell opens the next one at once.
-                    if cfg!(any(windows, target_os = "linux", target_os = "freebsd")) && !self.window_hidden {
+                    if cfg!(any(windows, target_os = "linux", target_os = "freebsd"))
+                        && !self.window_hidden
+                    {
                         self.reopen = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }

@@ -177,7 +177,12 @@ mod clock_preference {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos", windows)))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    windows
+)))]
 mod clock_preference {
     pub fn twelve_hour() -> bool {
         false
