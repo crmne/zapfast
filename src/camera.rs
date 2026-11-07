@@ -59,6 +59,12 @@ pub fn cameras() -> Vec<(String, String)> {
     cameras
 }
 
+/// What asking for the default camera reports when there is none.
+#[cfg(target_os = "freebsd")]
+const NO_CAMERA: &str = "cameras are not supported on FreeBSD yet";
+#[cfg(not(target_os = "freebsd"))]
+const NO_CAMERA: &str = "no camera is connected";
+
 /// One open camera, delivering YUV 4:2:0 frames of [`Source::size`].
 pub struct Source {
     camera: backend::Camera,
@@ -76,7 +82,7 @@ impl Source {
                 cameras()
                     .into_iter()
                     .next()
-                    .ok_or_else(|| "no camera is connected".to_owned())?
+                    .ok_or_else(|| NO_CAMERA.to_owned())?
                     .0
             }
         };
@@ -649,7 +655,7 @@ mod backend {
 /// FreeBSD has no camera backend yet.
 #[cfg(target_os = "freebsd")]
 mod backend {
-    use super::{Mode, Pixel};
+    use super::{Mode, NO_CAMERA, Pixel};
 
     pub fn list() -> Vec<(String, String)> {
         Vec::new()
@@ -661,7 +667,7 @@ mod backend {
 
     impl Camera {
         pub fn open(_id: &str, _budget: (usize, usize), _fps: u32) -> Result<Self, String> {
-            Err("cameras are not supported on FreeBSD yet".to_owned())
+            Err(NO_CAMERA.to_owned())
         }
 
         pub fn mode(&self) -> Mode {
@@ -672,7 +678,7 @@ mod backend {
             &mut self,
             _convert: impl FnOnce(Pixel, &[u8], usize, usize, usize) -> R,
         ) -> Result<R, String> {
-            Err("cameras are not supported on FreeBSD yet".to_owned())
+            Err(NO_CAMERA.to_owned())
         }
 
         pub fn stop(&mut self) {}
