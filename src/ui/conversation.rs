@@ -6959,7 +6959,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
                                 );
                                 if reaction.from_me {
                                     if ui
-                                        .add_enabled(view.chat.can_send(), egui::Button::new(&who))
+                                        .add_enabled(view.chat.can_react(), egui::Button::new(&who))
                                         .on_hover_text(crate::i18n::gettext(
                                             view.locale,
                                             "Remove reaction",
