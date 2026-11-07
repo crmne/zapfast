@@ -3424,6 +3424,8 @@ pub enum Action {
     CycleAccount(i8),
     /// Starts linking another number beside the ones already here.
     AddAccount,
+    /// Populates or switches to a local mock account for testing and development.
+    EnableDebugAccount,
     /// Leaves an account being added before it was linked.
     CancelAddAccount,
     /// Unlinks an account and deletes what is stored here for it.

@@ -82,6 +82,8 @@ pub fn respond(app: &mut App) {
                 preview,
             } => {
                 let quoted = quoting.and_then(|id| quote(app, &chat, id));
+                let chat_clone = chat.clone();
+                let text_clone = text.clone();
                 let (content, thumbnail) = match preview {
                     Some(preview) => (
                         Content::Text {
@@ -103,6 +105,8 @@ pub fn respond(app: &mut App) {
                     })
                     .collect();
                 append(app, row);
+                let due = std::time::Instant::now() + std::time::Duration::from_millis(900);
+                app.debug_replies.push((due, chat_clone, text_clone));
             }
             Command::InspectPicture { target, path } => {
                 let size = std::fs::read(&path)
@@ -413,10 +417,34 @@ pub(super) fn append(app: &mut App, row: Message) {
             status: row.status,
         });
     }
-    app.conversations
-        .get_mut(&row.chat)
-        .expect("sample chat")
-        .messages
-        .push(row);
+    if let Some(conversation) = app.conversations.get_mut(&row.chat) {
+        conversation.arrivals.insert(row.id.clone(), std::time::Instant::now());
+        conversation.messages.push(row);
+    }
     app.scroll_to_bottom = true;
+}
+
+pub fn tick(app: &mut App, ctx: &egui::Context) {
+    respond(app);
+    let now = std::time::Instant::now();
+    let mut i = 0;
+    while i < app.debug_replies.len() {
+        if app.debug_replies[i].0 <= now {
+            let (_, chat, user_text) = app.debug_replies.remove(i);
+            let count = app.conversations.get(&chat).map_or(0, |c| c.messages.len());
+            let reply_text = format!("Reply to \"{user_text}\"");
+            let row = super::super::message(
+                &chat,
+                &format!("debug-reply-{count}"),
+                false,
+                crate::util::now(),
+                Content::text(reply_text),
+            );
+            append(app, row);
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            i += 1;
+        }
+    }
 }

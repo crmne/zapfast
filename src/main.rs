@@ -22,7 +22,7 @@ struct Cli {
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
-    #[arg(long)]
+    #[arg(long, alias = "debug-account")]
     demo: bool,
 
     /// Prepare an offline, scripted tour. Press Space to play or replay it.

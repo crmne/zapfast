@@ -206,6 +206,9 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
+    pub(crate) initial_loaded: bool,
+    /// adding a transcript row to the list triggers a scroll to it, but only once per
+    pub(crate) arrivals: HashMap<String, Instant>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -978,6 +981,8 @@ pub struct App {
     announced_offline: bool,
     /// "Connecting" is spoken once per offline episode, not on every retry.
     announced_connecting: bool,
+    /// Scheduled automated mock replies for local testing.
+    pub(crate) debug_replies: Vec<(std::time::Instant, ChatId, String)>,
 }
 
 /// A message that flashes after a jump to it, as WhatsApp does.
@@ -1788,6 +1793,7 @@ impl App {
             announcer: Default::default(),
             announced_offline: false,
             announced_connecting: false,
+            debug_replies: Vec::new(),
         };
         // A hand-edited speed snaps to a supported one, so a speed control
         // always shows the speed that plays.
@@ -2091,6 +2097,32 @@ impl App {
         self.report_presence();
         self.nav_history.clear();
     }
+
+    #[cfg(any(test, feature = "demo"))]
+    pub fn enable_debug_account(&mut self) {
+        if self.link.is_connected() && !self.backend.is_offline() {
+            self.add_account();
+        }
+        crate::demo::populate(self);
+        self.adding_account = false;
+        self.link = LinkStatus::Connected;
+        self.me_name = Some("Debug Account".into());
+        if let Some(chat) = self.chats.first().cloned() {
+            self.open_chat(chat.id);
+        }
+        self.toast("Local debug account activated");
+    }
+
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn tick_debug_account(&mut self, ctx: &egui::Context) {
+        if !self.backend.is_offline() {
+            return;
+        }
+        crate::demo::tour::tick(self, ctx);
+    }
+
+    #[cfg(not(any(test, feature = "demo")))]
+    pub(crate) fn tick_debug_account(&mut self, _ctx: &egui::Context) {}
 
     /// Unlinks an account and, once its backend has stopped, deletes its
     /// folders. The last account is only unlinked: the window always shows
@@ -3924,6 +3956,18 @@ impl App {
                 let messages_empty = messages.is_empty();
                 if older && !messages.is_empty() {
                     conversation.phone_delivered = true;
+                }
+                if !older {
+                    if conversation.initial_loaded || !was_empty {
+                        let now = Instant::now();
+                        for msg in &messages {
+                            if !conversation.messages.iter().any(|m| m.id == msg.id) {
+                                conversation.arrivals.insert(msg.id.clone(), now);
+                            }
+                        }
+                        conversation.arrivals.retain(|_, at| at.elapsed().as_secs() < 5);
+                    }
+                    conversation.initial_loaded = true;
                 }
                 conversation.merge(messages, older);
                 if older {
@@ -10018,6 +10062,12 @@ impl App {
             Action::SwitchAccount(id) => self.switch_account(&id),
             Action::CycleAccount(step) => self.cycle_account(step, Instant::now()),
             Action::AddAccount => self.add_account(),
+            #[cfg(any(test, feature = "demo"))]
+            Action::EnableDebugAccount => self.enable_debug_account(),
+            #[cfg(not(any(test, feature = "demo")))]
+            Action::EnableDebugAccount => {
+                self.toast_error("Debug account requires the demo feature");
+            }
             Action::CancelAddAccount => {
                 // Back to the account the window showed before; leaving an
                 // unlinked new account removes it.
@@ -10419,6 +10469,7 @@ impl App {
         self.tick(ctx);
         self.tick_audio(ctx);
         self.tick_video(ctx);
+        self.tick_debug_account(ctx);
         self.apply_actions(ctx);
         self.sync_chat_export_permission();
         self.sync_prefetch();

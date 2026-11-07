@@ -9,7 +9,7 @@ mod whats_new;
 mod whats_new_21;
 
 pub use capture::Capture;
-pub use session::respond;
+pub use session::{respond, tick};
 
 use crate::{
     app::App,

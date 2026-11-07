@@ -170,6 +170,15 @@ fn menu(app: &mut App, button: &egui::Response) {
             ) {
                 app.actions.push(Action::AddAccount);
             }
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::MessageCircle),
+                "Add test account (Debug)",
+            ) {
+                app.actions.push(Action::EnableDebugAccount);
+                ui.close();
+            }
         });
 }
 

@@ -249,6 +249,17 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     {
         app.actions.push(Action::ShowDialog(Dialog::PairWithPhone));
     }
+    ui.add_space(8.0);
+    if theme::link(
+        ui,
+        "Create local debug account (Testing)",
+        theme::medium(13.0),
+        palette.accent,
+    )
+    .clicked()
+    {
+        app.actions.push(Action::EnableDebugAccount);
+    }
 }
 
 fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&str>) {

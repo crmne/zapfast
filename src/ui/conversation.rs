@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers,
@@ -2678,6 +2678,7 @@ struct View<'a> {
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// How far this chat's downloading attachments have got, by message.
     download_progress: Option<&'a HashMap<String, u8>>,
+    arrivals: &'a HashMap<String, Instant>,
 }
 
 /// How far `message`'s attachment download has got, once the worker has said.
@@ -3142,6 +3143,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
         download_progress: app.download_progress.get(&chat.id),
+        arrivals: &conversation.arrivals,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -4917,95 +4919,124 @@ fn bubble(
         reply_on_double_click(&strip, message, actions);
     }
     let mut response = None;
-    ui.with_layout(
-        Layout::top_down(if own { Align::Max } else { Align::Min }),
-        |ui| {
-            if with_avatar {
-                ui.horizontal_top(|ui| {
-                    let (space, _) =
-                        ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::hover());
-                    // Keep bubble content vertically laid out inside the row.
-                    ui.vertical(|ui| {
-                        response = Some(bubble_frame(
-                            ui,
-                            view,
-                            message,
-                            album,
-                            show_sender,
-                            tailed,
-                            max_width,
-                            actions,
-                        ));
-                    });
-                    if !show_avatar {
-                        return;
-                    }
-                    // Messages puts the avatar beside the run's last message,
-                    // level with its bottom; WhatsApp beside the first, at
-                    // its top.
-                    let rect = match &response {
-                        Some(bubble) if view.palette.bubbles == theme::BubbleStyle::Messages => {
-                            Rect::from_min_size(
-                                pos2(
-                                    space.left(),
-                                    (bubble.rect.bottom() - SENDER_AVATAR).max(space.top()),
-                                ),
-                                Vec2::splat(SENDER_AVATAR),
-                            )
-                        }
-                        _ => space,
-                    };
-                    let avatar = ui.interact(rect, id.with("avatar"), Sense::CLICK);
-                    theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
-                    if avatar
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        actions.push(sender_info_action(message));
-                    }
-                    if ui.is_rect_visible(rect) {
-                        let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
-                        widgets::paint_avatar(
-                            ui,
-                            &view.palette,
-                            rect,
-                            name.trim_start_matches('~'),
-                            &message.sender,
-                            view.avatars
-                                .get(&message.sender)
-                                .and_then(|picture| picture.as_deref()),
-                        );
-                    }
+    const ENTRANCE_DURATION: f32 = 0.28;
+    let progress = if view.animate
+        && let Some(&arrival) = view.arrivals.get(&message.id).or_else(|| {
+            album.and_then(|members| members.iter().find_map(|m| view.arrivals.get(&m.id)))
+        }) {
+        let elapsed = arrival.elapsed().as_secs_f32();
+        if elapsed < ENTRANCE_DURATION {
+            ui.ctx().request_repaint();
+            let t = (elapsed / ENTRANCE_DURATION).clamp(0.0, 1.0);
+            egui::emath::easing::cubic_out(t)
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+    let mut render_bubble = |ui: &mut egui::Ui, response: &mut Option<egui::Response>, actions: &mut Vec<Action>| {
+        if with_avatar {
+            ui.horizontal_top(|ui| {
+                let (space, _) =
+                    ui.allocate_exact_size(Vec2::splat(SENDER_AVATAR), Sense::hover());
+                // Keep bubble content vertically laid out inside the row.
+                ui.vertical(|ui| {
+                    *response = Some(bubble_frame(
+                        ui,
+                        view,
+                        message,
+                        album,
+                        show_sender,
+                        tailed,
+                        max_width,
+                        actions,
+                    ));
                 });
-            } else {
-                response = Some(bubble_frame(
-                    ui,
-                    view,
-                    message,
-                    album,
-                    show_sender,
-                    tailed,
-                    max_width,
-                    actions,
-                ));
-            }
-            // An album row carries every member's reactions, each set
-            // reacting to its own item.
-            let members = album.unwrap_or(std::slice::from_ref(message));
-            if members.iter().any(|member| !member.reactions.is_empty()) {
-                ui.add_space(-7.0);
-                ui.horizontal(|ui| {
-                    if with_avatar {
-                        ui.add_space(SENDER_AVATAR + 8.0);
+                if !show_avatar {
+                    return;
+                }
+                // Messages puts the avatar beside the run's last message,
+                // level with its bottom; WhatsApp beside the first, at
+                // its top.
+                let rect = match response.as_ref() {
+                    Some(bubble) if view.palette.bubbles == theme::BubbleStyle::Messages => {
+                        Rect::from_min_size(
+                            pos2(
+                                space.left(),
+                                (bubble.rect.bottom() - SENDER_AVATAR).max(space.top()),
+                            ),
+                            Vec2::splat(SENDER_AVATAR),
+                        )
                     }
-                    for member in members.iter().filter(|member| !member.reactions.is_empty()) {
-                        reactions(ui, view, member, actions);
-                    }
-                });
-                ui.add_space(2.0);
-            }
-        },
-    );
+                    _ => space,
+                };
+                let avatar = ui.interact(rect, id.with("avatar"), Sense::CLICK);
+                theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
+                if avatar
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    actions.push(sender_info_action(message));
+                }
+                if ui.is_rect_visible(rect) {
+                    let name = (view.names_or)(&message.sender, message.sender_name.as_deref());
+                    widgets::paint_avatar(
+                        ui,
+                        &view.palette,
+                        rect,
+                        name.trim_start_matches('~'),
+                        &message.sender,
+                        view.avatars
+                            .get(&message.sender)
+                            .and_then(|picture| picture.as_deref()),
+                    );
+                }
+            });
+        } else {
+            *response = Some(bubble_frame(
+                ui,
+                view,
+                message,
+                album,
+                show_sender,
+                tailed,
+                max_width,
+                actions,
+            ));
+        }
+        // An album row carries every member's reactions, each set
+        // reacting to its own item.
+        let members = album.unwrap_or(std::slice::from_ref(message));
+        if members.iter().any(|member| !member.reactions.is_empty()) {
+            ui.add_space(-7.0);
+            ui.horizontal(|ui| {
+                if with_avatar {
+                    ui.add_space(SENDER_AVATAR + 8.0);
+                }
+                for member in members.iter().filter(|member| !member.reactions.is_empty()) {
+                    reactions(ui, view, member, actions);
+                }
+            });
+            ui.add_space(2.0);
+        }
+    };
+    let layout = Layout::top_down(if own { Align::Max } else { Align::Min });
+    if progress < 1.0 {
+        let dy = (1.0 - progress) * 16.0;
+        let transform = egui::emath::TSTransform::from_translation(vec2(0.0, dy));
+        let opacity = (progress * 1.6).min(1.0);
+        ui.with_visual_transform(transform, |ui| {
+            ui.multiply_opacity(opacity);
+            ui.with_layout(layout, |ui| {
+                render_bubble(ui, &mut response, actions);
+            });
+        });
+    } else {
+        ui.with_layout(layout, |ui| {
+            render_bubble(ui, &mut response, actions);
+        });
+    }
     response
 }
 
@@ -7090,6 +7121,7 @@ pub(crate) fn list_menu(
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);
     let avatars = HashMap::new();
+    let arrivals = HashMap::new();
     let keyboard_navigation = std::cell::Cell::new(false);
     let view = View {
         palette: app.palette,
@@ -7125,6 +7157,7 @@ pub(crate) fn list_menu(
         starred: marks.starred.then_some(&stars),
         pins: app.pins.get(&message.chat),
         pin_notices: &[],
+        arrivals: &arrivals,
     };
     context_menu(ui, &view, message, MenuOrigin::List, actions);
 }
@@ -12812,6 +12845,7 @@ mod tests {
         let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
         let mention_names = |id: &str| app.mention_name(id);
         let avatars = HashMap::new();
+        let arrivals = HashMap::new();
         let keyboard_navigation = std::cell::Cell::new(false);
         let view = View {
             palette: Palette::dark(),
@@ -12845,6 +12879,7 @@ mod tests {
             starred: None,
             pins: None,
             pin_notices: &[],
+            arrivals: &arrivals,
         };
         check(&view);
     }
