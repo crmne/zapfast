@@ -23,7 +23,7 @@ function Check($name, $output, $exitCode, $expectedError) {
 Check 'Windows system libraries' @('    KERNEL32.dll', '    msvcrt.dll', '    ucrtbase.dll',
   '    api-ms-win-crt-runtime-l1-1-0.dll') 0 $null
 foreach ($runtime in @('VCRUNTIME140.dll', 'vcruntime140_1.dll', 'MSVCP140.dll',
-    'msvcp140_atomic_wait.dll', 'CONCRT140.dll', 'VCCORLIB140.dll', 'MSVCR120.dll')) {
+    'msvcp140_atomic_wait.dll', 'CONCRT140.dll', 'VCCORLIB140.dll', 'MSVCR120.dll', 'vcomp140.dll')) {
   Check $runtime @('    KERNEL32.dll', "    $runtime") 0 'requires Visual C++ runtime DLLs'
 }
 Check 'Delay-loaded runtime' @('  Image has the following dependencies:', '    KERNEL32.dll',

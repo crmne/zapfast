@@ -34,7 +34,7 @@ if ($imports.Count -eq 0) { throw "No DLL imports found in dumpbin output for $B
 # The Universal CRT and legacy msvcrt.dll are Windows components. Versioned
 # Visual C++ runtimes are not: neither the ZIP nor the per-user MSI supplies them.
 $runtime = @($imports | Where-Object {
-  $_ -match '^(vcruntime|msvcp|msvcr|concrt|vccorlib)\d[^\s]*\.dll$'
+  $_ -match '^(vcruntime|msvcp|msvcr|concrt|vccorlib|vcomp)\d[^\s]*\.dll$'
 })
 if ($runtime.Count) {
   throw "${Binary} requires Visual C++ runtime DLLs: $($runtime -join ', '). Build with -C target-feature=+crt-static."
