@@ -173,7 +173,6 @@ pub(crate) fn picture(
                 rect
             }
             Ok(egui::load::TexturePoll::Pending { .. }) => {
-                // A picture released while away loads again at its old size.
                 let size = match drawn {
                     Some(pixels) => fit(pixels),
                     None if sticker.is_some() => Vec2::splat(STICKER_SIDE),
@@ -368,7 +367,6 @@ pub(crate) fn motion_clip(
             Some(Icon::Pause)
         }
         (Some((path, animation::Frame::Unavailable)), _) => {
-            // No decoder here plays it: the system player gets the clip.
             actions.push(toggle());
             actions.push(Action::OpenFile((*path).clone()));
             Some(Icon::Play)
@@ -493,7 +491,6 @@ pub(crate) fn video(
             }
             None => match (thumbnail, &media.path) {
                 (Some(thumbnail), _) => {
-                    // Registering the poster decodes it, so it waits for the row to show.
                     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
                     egui::Image::new(uri)
                         .fit_to_exact_size(size)
@@ -776,7 +773,6 @@ pub(crate) fn video_controls(
     {
         actions.push(Action::ToggleVideoSound);
     }
-    // The playback speed, cycled by a click as the voice message chip is.
     let speed_label = crate::audio::speed_label(controls.player.speed());
     let speed_galley = ui.painter().layout_no_wrap(
         speed_label,
@@ -829,7 +825,6 @@ pub(crate) fn video_controls(
     let pointed = response
         .interact_pointer_pos()
         .map(|pointer| ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0));
-    // Seeking restarts the decoder, so a drag seeks once, where it ends.
     let fraction = match pointed {
         Some(fraction) if response.dragged() => fraction,
         _ => status.fraction(),
@@ -877,7 +872,6 @@ pub(crate) fn video_note(
             view.video.saw(&message.id);
         }
         let center = rect.center();
-        // Leave room around the picture for the progress ring.
         let picture = rect.shrink(5.0);
         let frame = status
             .as_ref()
@@ -925,7 +919,6 @@ pub(crate) fn video_note(
         );
         let icon = match (&media.path, &media.state, state) {
             _ if waiting => None,
-            // Only a pause sign under the pointer covers a playing video.
             (Some(_), _, Some(State::Playing)) => hovered.then_some(Icon::Pause),
             (None, MediaState::Failed(_), _) => Some(Icon::CircleAlert),
             _ => Some(Icon::Play),
@@ -942,7 +935,6 @@ pub(crate) fn video_note(
                 .circle_filled(center, 24.0, Color32::from_black_alpha(140));
         }
         if waiting {
-            // A clip still loading into the player has no amount to show.
             let fraction = media
                 .path
                 .is_none()
@@ -957,7 +949,6 @@ pub(crate) fn video_note(
             };
             theme::paint_icon(ui, icon, disc, 22.0, color);
         }
-        // The time while it plays, otherwise its length.
         let label = match &status {
             Some(status) => Some(crate::util::duration(status.position.as_secs() as u32)),
             None => seconds
@@ -1040,7 +1031,6 @@ pub(crate) fn attachment(
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            // Include margins in the settled row width.
             let card = (width - 20.0).max(0.0);
             ui.set_width(card);
 
@@ -1067,7 +1057,6 @@ pub(crate) fn attachment(
             let column = |ui: &mut egui::Ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    // Reserve 70 points for the icon, action, and gaps.
                     ui.set_width((card - 70.0).max(0.0));
                     widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
                     let detail = match &media.state {
@@ -1077,7 +1066,6 @@ pub(crate) fn attachment(
                     theme::text(ui, detail, theme::regular(12.0), palette.secondary);
                 });
             };
-            // Fix the row left-to-right at the card width in own bubbles.
             ui.allocate_ui_with_layout(
                 vec2(card, 52.0),
                 Layout::left_to_right(egui::Align::Center),
@@ -1185,7 +1173,6 @@ pub(crate) fn voice_player(
             });
         });
     };
-    // Force left-to-right layout at the player's width inside own bubbles.
     let mut duration = None;
     let row = ui.allocate_ui_with_layout(
         vec2(width.max(0.0), button),
@@ -1321,7 +1308,6 @@ pub(crate) fn voice_player(
                         });
                     }
                 }
-                // Show playback position while active, otherwise total duration.
                 let shown = match status.state {
                     State::Playing | State::Paused => {
                         crate::util::duration(status.position.as_secs() as u32)
@@ -1355,7 +1341,6 @@ pub(crate) fn voice_player(
                     );
                     ui.painter()
                         .circle_filled(dot.center(), 3.0, palette.accent);
-                    // The time beside it keeps clear of the dot too.
                     duration = Some(shown.union(dot));
                     ui.ctx().data_mut(|data| {
                         data.insert_temp(

@@ -1,5 +1,6 @@
 //! Modular chat view: header, pinned banner, message transcript, bubbles, media, context menus, and composer.
 
+pub mod actions;
 pub mod bubble;
 pub mod composer;
 pub mod content;
@@ -12,6 +13,7 @@ pub mod suggestions;
 #[cfg(test)]
 mod tests;
 
+pub use self::actions::*;
 pub use self::bubble::*;
 pub use self::composer::*;
 pub(crate) use self::content::*;

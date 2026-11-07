@@ -1,5 +1,3 @@
-//! Message bubble frame, quoted blocks, delivery footers, and reactions bar.
-
 use super::*;
 
 /// Draws a message row and returns its bubble response for scrolling.
@@ -108,7 +106,7 @@ pub(crate) fn bubble(
                     _ => space,
                 };
                 let avatar = ui.interact(rect, id.with("avatar"), Sense::CLICK);
-                theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR / 2.0);
+                theme::focus_outline(ui, avatar.id, rect, SENDER_AVATAR * 0.5);
                 if avatar
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -195,7 +193,7 @@ pub(crate) fn speed_pill(
         )
     });
     theme::reveal_focus(&response);
-    theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+    theme::focus_outline(ui, response.id, rect, rect.height() * 0.5);
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered();
         let fill = if active {
@@ -207,7 +205,7 @@ pub(crate) fn speed_pill(
         } else {
             palette.surface_hover
         };
-        ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+        ui.painter().rect_filled(rect, rect.height() * 0.5, fill);
         let colour = if active {
             palette.accent
         } else {
@@ -222,7 +220,7 @@ pub(crate) fn speed_pill(
             .painter()
             .layout_no_wrap(label, theme::medium(11.0), colour);
         ui.painter()
-            .galley(rect.center() - galley.size() / 2.0, galley, colour);
+            .galley(rect.center() - galley.size() * 0.5, galley, colour);
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -312,7 +310,7 @@ pub(crate) fn same_run(message: &Message, next: &Message) -> bool {
         && (message.from_me || message.sender == next.sender)
 }
 
-pub(crate) fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Margin {
+pub(crate) fn bubble_margin(palette: &Palette, message: &Message, _over_picture: bool) -> Margin {
     if bare_picture(palette, message) {
         Margin::ZERO
     } else if palette.bubbles == theme::BubbleStyle::Messages {
@@ -322,7 +320,7 @@ pub(crate) fn bubble_margin(palette: &Palette, message: &Message, over_picture: 
             left: 10,
             right: 10,
             top: 6,
-            bottom: if over_picture { 6 } else { 5 },
+            bottom: 6,
         }
     }
 }
@@ -829,8 +827,8 @@ pub(crate) fn bubble_frame(
     if !open_now {
         ui.ctx().data_mut(|data| {
             data.remove::<(f32, f32, f32)>(at_chevron_id);
-            data.remove::<f64>(egui::Id::new(("msg-menu-open-time", &menu_target.id)));
         });
+        widgets::cleanup_menu_anim(ui.ctx(), egui::Id::new(("msg-menu-open-time", &menu_target.id)));
     }
     if let Some(focus_pending) = from_keys {
         if open_now && !focus_pending && !reacting && focus_in_menu(ui.ctx()) == Some(false) {
@@ -1160,16 +1158,16 @@ pub(crate) fn call_entry(
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label)
     });
     let badge = Rect::from_center_size(
-        pos2(rect.left() + CALL_BADGE / 2.0, rect.center().y),
+        pos2(rect.left() + CALL_BADGE * 0.5, rect.center().y),
         Vec2::splat(CALL_BADGE),
     );
     let text_left = badge.right() + CALL_BADGE_GAP;
-    let top = rect.center().y - block_height / 2.0;
+    let top = rect.center().y - block_height * 0.5;
     let second_top = top + title_galley.size().y + CALL_LINE_GAP;
-    let second_middle = second_top + second_height / 2.0;
+    let second_middle = second_top + second_height * 0.5;
     if ui.is_rect_visible(rect) {
         ui.painter()
-            .circle_filled(badge.center(), CALL_BADGE / 2.0, tint.gamma_multiply(0.16));
+            .circle_filled(badge.center(), CALL_BADGE * 0.5, tint.gamma_multiply(0.16));
         theme::paint_icon(
             ui,
             entry.icon(),
@@ -1180,13 +1178,13 @@ pub(crate) fn call_entry(
         ui.painter()
             .galley(pos2(text_left, top), title_galley, palette.text);
         if let Some(galley) = detail_galley {
-            let at = pos2(text_left, second_middle - galley.size().y / 2.0);
+            let at = pos2(text_left, second_middle - galley.size().y * 0.5);
             ui.painter().galley(at, galley, palette.secondary);
         }
     }
     inline.then(|| {
         Rect::from_min_size(
-            pos2(rect.right() - reserve, second_middle - FOOTER_HEIGHT / 2.0),
+            pos2(rect.right() - reserve, second_middle - FOOTER_HEIGHT * 0.5),
             vec2(reserve, FOOTER_HEIGHT),
         )
     })
@@ -1250,14 +1248,14 @@ pub(crate) fn paint_forwarded_label(
         ),
     );
     let icon = Rect::from_min_size(
-        pos2(rect.left(), rect.center().y - FORWARDED_ICON / 2.0),
+        pos2(rect.left(), rect.center().y - FORWARDED_ICON * 0.5),
         Vec2::splat(FORWARDED_ICON),
     );
     theme::paint_icon(ui, Icon::Forward, icon, FORWARDED_ICON, palette.dim);
     ui.painter().galley(
         pos2(
             icon.right() + FORWARDED_GAP,
-            rect.center().y - galley.size().y / 2.0,
+            rect.center().y - galley.size().y * 0.5,
         ),
         galley,
         palette.dim,
@@ -1392,7 +1390,7 @@ pub(crate) fn footer_over_picture(
     if ui.is_rect_visible(picture) {
         let scrim = row.expand2(vec2(6.0, 2.0)).intersect(picture);
         ui.painter()
-            .rect_filled(scrim, scrim.height() / 2.0, Color32::from_black_alpha(110));
+            .rect_filled(scrim, scrim.height() * 0.5, Color32::from_black_alpha(110));
     }
     let mut x = row.right();
     if message.from_me {
@@ -1408,7 +1406,7 @@ pub(crate) fn footer_over_picture(
     }
     x -= time.size().x;
     ui.painter().galley(
-        pos2(x, row.center().y - time.size().y / 2.0),
+        pos2(x, row.center().y - time.size().y * 0.5),
         time,
         Color32::WHITE,
     );
@@ -1418,7 +1416,7 @@ pub(crate) fn footer_over_picture(
     if let Some(failed) = failed {
         x -= failed.size().x + 6.0;
         let label = Rect::from_min_size(
-            pos2(x, row.center().y - failed.size().y / 2.0),
+            pos2(x, row.center().y - failed.size().y * 0.5),
             failed.size(),
         );
         ui.painter().galley(label.min, failed, Color32::WHITE);
@@ -1439,7 +1437,7 @@ pub(crate) fn footer_over_picture(
             ui,
             Icon::Pin,
             Rect::from_center_size(
-                pos2(x + FOOTER_MARK / 2.0, row.center().y),
+                pos2(x + FOOTER_MARK * 0.5, row.center().y),
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
@@ -1452,7 +1450,7 @@ pub(crate) fn footer_over_picture(
             ui,
             Icon::StarFill,
             Rect::from_center_size(
-                pos2(x + FOOTER_MARK / 2.0, row.center().y),
+                pos2(x + FOOTER_MARK * 0.5, row.center().y),
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
@@ -1564,7 +1562,7 @@ pub(crate) fn footer(
     }
     x -= time.size().x;
     ui.painter().galley(
-        pos2(x, rect.center().y - time.size().y / 2.0),
+        pos2(x, rect.center().y - time.size().y * 0.5),
         time,
         palette.secondary,
     );
@@ -1580,7 +1578,7 @@ pub(crate) fn footer(
             ui,
             Icon::Pin,
             Rect::from_center_size(
-                pos2(x + FOOTER_MARK / 2.0, rect.center().y),
+                pos2(x + FOOTER_MARK * 0.5, rect.center().y),
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
@@ -1590,7 +1588,7 @@ pub(crate) fn footer(
     if let Some(edited) = edited {
         x -= edited.size().x + 4.0;
         ui.painter().galley(
-            pos2(x, rect.center().y - edited.size().y / 2.0),
+            pos2(x, rect.center().y - edited.size().y * 0.5),
             edited,
             palette.dim,
         );
@@ -1598,7 +1596,7 @@ pub(crate) fn footer(
     if let Some(failed) = failed {
         x -= failed.size().x + 6.0;
         let label = Rect::from_min_size(
-            pos2(x, rect.center().y - failed.size().y / 2.0),
+            pos2(x, rect.center().y - failed.size().y * 0.5),
             failed.size(),
         );
         ui.painter().galley(label.min, failed, palette.text);
@@ -1619,7 +1617,7 @@ pub(crate) fn footer(
             ui,
             Icon::StarFill,
             Rect::from_center_size(
-                pos2(x + FOOTER_MARK / 2.0, rect.center().y),
+                pos2(x + FOOTER_MARK * 0.5, rect.center().y),
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
@@ -1670,16 +1668,16 @@ pub(crate) fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, a
         let mut shadow = palette.bubble_shadow();
         shadow.color = shadow.color.gamma_multiply(0.6);
         ui.painter()
-            .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
+            .add(shadow.as_shape(rect, CornerRadius::from(rect.height() * 0.5)));
         ui.painter()
-            .rect_filled(rect, rect.height() / 2.0, palette.overlay);
+            .rect_filled(rect, rect.height() * 0.5, palette.overlay);
         ui.painter().rect_stroke(
             rect,
-            rect.height() / 2.0,
+            rect.height() * 0.5,
             Stroke::new(1.0, if mine { palette.accent } else { palette.chat }),
             egui::StrokeKind::Inside,
         );
-        line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+        line.paint(ui, rect.center() - line.size() * 0.5, palette.text);
     }
     let name = |reaction: &crate::model::Reaction| {
         if reaction.from_me {

@@ -970,6 +970,118 @@ pub fn menu_frame(palette: &Palette) -> egui::Frame {
     menu_card_frame(palette)
 }
 
+pub fn show_animated_menu<R>(
+    ui: &mut Ui,
+    anim_id: egui::Id,
+    opens_down: bool,
+    add_contents: impl FnOnce(&mut Ui, f32) -> R,
+) -> R {
+    let current_time = ui.input(|i| i.time);
+    let start_time = ui
+        .ctx()
+        .data_mut(|data| *data.get_temp_mut_or_insert_with(anim_id, || current_time));
+
+    let elapsed = (current_time - start_time) as f32;
+    let inv_duration = 0.14_f32.recip();
+    let t = (elapsed * inv_duration).clamp(0.0, 1.0);
+    if t < 1.0 {
+        ui.ctx().request_repaint();
+    }
+
+    let spring = if t >= 1.0 {
+        1.0
+    } else {
+        let s = 0.8;
+        let u = t - 1.0;
+        (1.0 + u * u * ((s + 1.0) * u + s)).max(0.0)
+    };
+
+    let stretch = if t >= 1.0 {
+        1.0
+    } else {
+        (0.88 + 0.12 * spring).clamp(0.85, 1.03)
+    };
+
+    let bounce_dy = if t >= 1.0 {
+        0.0
+    } else if opens_down {
+        (1.0 - spring) * -6.0
+    } else {
+        (1.0 - spring) * 6.0
+    };
+
+    let transform = egui::emath::TSTransform::from_translation(vec2(0.0, bounce_dy));
+    ui.with_visual_transform(transform, |ui| {
+        if t < 1.0 {
+            ui.multiply_opacity((t * 3.0).clamp(0.0, 1.0));
+        }
+        add_contents(ui, stretch)
+    })
+    .inner
+}
+
+pub fn cleanup_menu_anim(ctx: &egui::Context, anim_id: egui::Id) {
+    ctx.data_mut(|data| {
+        data.remove::<f64>(anim_id);
+    });
+}
+
+pub fn menu_item_icon_colored(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Icon,
+    color: Color32,
+    label: &str,
+    height: f32,
+) -> bool {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            label,
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered() || response.has_focus();
+        if hovered {
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(8),
+                palette.surface_hover,
+            );
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(8),
+                Stroke::new(1.5, palette.accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let icon_rect = Rect::from_center_size(
+            pos2(rect.left() + 20.0, rect.center().y),
+            Vec2::splat(20.0),
+        );
+        icon.image(color, 20.0).paint_at(ui, icon_rect);
+
+        let text_pos = pos2(rect.left() + 42.0, rect.center().y);
+        ui.painter().text(
+            text_pos,
+            egui::Align2::LEFT_CENTER,
+            label,
+            theme::medium(14.0),
+            palette.text,
+        );
+    }
+    let clicked = response.clicked();
+    if clicked {
+        ui.close();
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    clicked
+}
+
 pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body: &str) {
     ui.add_space(48.0);
     ui.vertical_centered(|ui| {
@@ -1038,7 +1150,19 @@ pub fn search_field(
         (false, true) => palette.surface_hover,
         (false, false) => palette.surface,
     };
-    ui.painter().rect_filled(rect, height / 2.0, fill);
+    let stroke = if has_focus {
+        Stroke::new(1.0, palette.accent)
+    } else {
+        Stroke::new(
+            1.0,
+            if palette.dark {
+                Color32::from_rgb(0x2d, 0x3d, 0x47)
+            } else {
+                palette.outline
+            },
+        )
+    };
+    ui.painter().rect(rect, height * 0.5, fill, stroke, egui::StrokeKind::Inside);
     let icon_rect =
         Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
     Icon::Search
@@ -1153,7 +1277,7 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
             egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent),
             t,
         );
-        let radius = rect.height() / 2.0;
+        let radius = rect.height() * 0.5;
         ui.painter().rect_filled(rect, radius, Color32::from(fill));
         // The outline keeps the off track visible on a light panel.
         if t < 1.0 {
@@ -1187,23 +1311,21 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
 /// The author's website, linked from the credit line.
 pub const AUTHOR_URL: &str = "https://paolino.me";
 
-/// "Built with love by Carmine Paolino", with the name linking to
-/// [`AUTHOR_URL`]. Returns whether the name was clicked.
-pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> bool {
-    // Translators: {name} is replaced by the author's name, shown as a link.
-    let sentence = crate::i18n::gettext(locale, "Built with love by {name}");
-    let (before, after) = sentence.split_once("{name}").unwrap_or((&sentence, ""));
+/// Credit line. Returns whether the name was clicked.
+pub fn credit(ui: &mut Ui, palette: &Palette, _locale: crate::i18n::Locale) -> bool {
     let mut clicked = false;
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        theme::text(ui, "\u{2665}  ", theme::regular(13.0), palette.danger);
-        theme::text(ui, before, theme::regular(13.0), palette.secondary);
+        ui.spacing_mut().item_spacing.x = 4.0;
+        theme::text(ui, "Original hecho por", theme::regular(13.0), palette.secondary);
         clicked = theme::link(ui, "Carmine Paolino", theme::medium(13.0), palette.link)
             .on_hover_text(AUTHOR_URL)
             .clicked();
-        if !after.is_empty() {
-            theme::text(ui, after, theme::regular(13.0), palette.secondary);
-        }
+        theme::text(
+            ui,
+            "(Claude Code)  ·  Rework: Mikassette",
+            theme::regular(13.0),
+            palette.secondary,
+        );
     });
     clicked
 }
@@ -1224,7 +1346,7 @@ pub fn setting_row(
                 let description = line(
                     ui,
                     description,
-                    theme::regular(12.5),
+                    theme::regular(12.0),
                     palette.secondary,
                     ui.available_width(),
                     usize::MAX,
@@ -1237,7 +1359,7 @@ pub fn setting_row(
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
-    ui.add_space(10.0);
+    ui.add_space(8.0);
 }
 
 pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {

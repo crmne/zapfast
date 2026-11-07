@@ -17,6 +17,7 @@ use crate::model::{
 };
 use crate::paths::{AccountDirs, AppDirs};
 use crate::settings::AccountSettings;
+use super::wallpaper::resolve_wallpaper_path;
 
 /// One WhatsApp account's runtime state.
 pub struct Account {
@@ -372,29 +373,5 @@ impl Account {
         if let Err(error) = self.settings.save_to(files, &self.dirs.settings_file()) {
             log::warn!("could not save account settings: {error}");
         }
-    }
-}
-
-fn resolve_wallpaper_path(dirs: &AccountDirs, settings: &mut AccountSettings) {
-    if settings
-        .wallpaper_image
-        .as_ref()
-        .is_some_and(|path| path.exists())
-    {
-        return;
-    }
-    for extension in ["jpg", "png", "webp", "gif"] {
-        let path = dirs.wallpaper_file(extension);
-        if path.exists() {
-            settings.wallpaper_image = Some(path);
-            return;
-        }
-    }
-    if settings
-        .wallpaper_image
-        .as_ref()
-        .is_some_and(|path| !path.exists())
-    {
-        settings.wallpaper_image = None;
     }
 }

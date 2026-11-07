@@ -1,5 +1,3 @@
-//! Message body content, carousels, album grids, interactive buttons, and location cards.
-
 use super::*;
 
 /// Draws a message body and returns optional footer space on its last line.
@@ -1390,7 +1388,7 @@ pub(crate) fn interactive_buttons(
             }
             let inset = if icon.is_some() { 22.0 } else { 0.0 };
             let content_width = line.size().x + inset;
-            let left = rect.center().x - content_width / 2.0;
+            let left = rect.center().x - content_width * 0.5;
             if let Some(icon) = icon {
                 theme::paint_icon(
                     ui,
@@ -1405,7 +1403,7 @@ pub(crate) fn interactive_buttons(
             }
             line.paint(
                 ui,
-                egui::pos2(left + inset, rect.center().y - line.size().y / 2.0),
+                egui::pos2(left + inset, rect.center().y - line.size().y * 0.5),
                 color,
             );
         }
@@ -1807,7 +1805,7 @@ pub(crate) fn location_card(
         {
             let uri = thumbnail_uri(ui.ctx(), &message.chat, preview_key, bytes);
             let height = (card * 0.56).round();
-            let crop = (1.0 - height / card) / 2.0;
+            let crop = (1.0 - height / card) * 0.5;
             ui.add(
                 egui::Image::new(uri)
                     .maintain_aspect_ratio(false)

@@ -102,9 +102,12 @@ struct Entry {
 fn entries(app: &mut App) -> Vec<Entry> {
     let locale = app.locale;
     let active = app.active;
-    (0..app.accounts.len())
-        .map(|index| {
-            let account = &mut app.accounts[index];
+    let debug_account = app.debug_account;
+    app.accounts
+        .iter_mut()
+        .enumerate()
+        .filter(|(_, account)| debug_account || account.me_name.as_deref() != Some("Debug Account"))
+        .map(|(index, account)| {
             let me = account.me.clone().unwrap_or_default();
             let picture = (!me.is_empty()).then(|| account.avatar(&me)).flatten();
             let name = account.display_label(locale);
@@ -170,12 +173,14 @@ fn menu(app: &mut App, button: &egui::Response) {
             ) {
                 app.actions.push(Action::AddAccount);
             }
-            if widgets::menu_item(
-                ui,
-                &palette,
-                Some(Icon::MessageCircle),
-                "Add test account (Debug)",
-            ) {
+            if app.debug_account
+                && widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::MessageCircle),
+                    "Add test account (Debug)",
+                )
+            {
                 app.actions.push(Action::EnableDebugAccount);
                 ui.close();
             }

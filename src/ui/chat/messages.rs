@@ -110,7 +110,6 @@ pub(crate) fn album_run(messages: &[Message], start: usize) -> Option<&[Message]
 }
 
 pub(crate) fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize) -> f32 {
-    // Bubbles take at most 72% of the transcript, and 560 points.
     let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
     let text_rows = |text: &str| {
         let per_row = bubble / 7.5;
@@ -495,7 +494,6 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
     let pass = ui.ctx().cumulative_pass_nr();
     let redo = ui.ctx().current_pass_index() > 0;
     let mut rows = std::mem::take(&mut conversation.rows);
-    // Forget rows that left the conversation, such as deleted messages.
     if rows.len() > conversation.messages.len() * 2 + 64 {
         let ids: HashSet<&str> = conversation
             .messages
@@ -507,7 +505,6 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
     let mut grew_above = 0.0;
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new(("messages", &chat.id)));
     let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
-    // The list has not been shown before: it starts at the top.
     let first_show = scroll_state.is_none();
     let offset = scroll_state.map_or(0.0, |state| state.offset.y);
     let mut key_scroll = conversation.key_scroll.take();
@@ -1460,10 +1457,8 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
     }
     app.actions.extend(actions);
     if edge_scrolled_up {
-        // Scrolling up releases stick-to-bottom.
         app.scroll_to_bottom = false;
     }
-    // Show a return-to-bottom button while reading older messages.
     if !at_bottom {
         let rect = output.inner_rect;
         let center = pos2(rect.right() - 34.0, rect.bottom() - 34.0);
@@ -1474,7 +1469,6 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
         let unread = app.chat(&chat.id).map_or(0, |chat| chat.unread);
-        // It floats over the messages: a soft shadow lifts it off them.
         child.painter().add(
             egui::epaint::Shadow {
                 offset: [0, 3],

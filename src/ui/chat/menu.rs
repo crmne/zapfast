@@ -287,17 +287,7 @@ pub(crate) fn selection_menu(
     );
 }
 
-fn floating_menu_colors(palette: &Palette) -> (Color32, Color32, Color32) {
-    if palette.dark {
-        (
-            Color32::from_rgb(21, 25, 28),
-            Color32::from_white_alpha(20),
-            Color32::from_white_alpha(16),
-        )
-    } else {
-        (palette.overlay, palette.outline, palette.surface_hover)
-    }
-}
+pub(crate) use widgets::{floating_menu_colors, menu_card_frame};
 
 fn reaction_pill_frame(palette: &Palette) -> Frame {
     let (bg, border, _) = floating_menu_colors(palette);
@@ -306,16 +296,6 @@ fn reaction_pill_frame(palette: &Palette) -> Frame {
         .stroke(Stroke::new(1.0, border))
         .corner_radius(CornerRadius::same(24))
         .inner_margin(egui::Margin::symmetric(8, 5))
-        .shadow(palette.float_shadow())
-}
-
-pub(crate) fn menu_card_frame(palette: &Palette) -> Frame {
-    let (bg, border, _) = floating_menu_colors(palette);
-    Frame::new()
-        .fill(bg)
-        .stroke(Stroke::new(1.0, border))
-        .corner_radius(CornerRadius::same(16))
-        .inner_margin(egui::Margin::symmetric(6, 8))
         .shadow(palette.float_shadow())
 }
 
@@ -479,56 +459,10 @@ pub(crate) fn context_menu(
         MenuOrigin::List => true,
     };
 
-    let anim_start_id = egui::Id::new(("msg-menu-open-time", &message.id));
-    let current_time = ui.input(|i| i.time);
-    let start_time = ui
-        .ctx()
-        .data_mut(|data| *data.get_temp_mut_or_insert_with(anim_start_id, || current_time));
-
-    let elapsed = (current_time - start_time) as f32;
-    let duration = 0.14;
-    let t = (elapsed / duration).clamp(0.0, 1.0);
-    if t < 1.0 {
-        ui.ctx().request_repaint();
-    }
-
-    let spring = if t >= 1.0 {
-        1.0
-    } else {
-        let s = 0.8;
-        let u = t - 1.0;
-        (1.0 + u * u * ((s + 1.0) * u + s)).max(0.0)
-    };
-
-    let stretch = if t >= 1.0 {
-        1.0
-    } else {
-        (0.88 + 0.12 * spring).clamp(0.85, 1.03)
-    };
-    let row_height = if t >= 1.0 {
-        MENU_ROW_HEIGHT
-    } else {
-        MENU_ROW_HEIGHT * stretch
-    };
-    let sep_height = if t >= 1.0 {
-        MENU_SEPARATOR_HEIGHT
-    } else {
-        MENU_SEPARATOR_HEIGHT * stretch
-    };
-
-    let bounce_dy = if t >= 1.0 {
-        0.0
-    } else if opens_down {
-        (1.0 - spring) * -6.0
-    } else {
-        (1.0 - spring) * 6.0
-    };
-
-    let transform = egui::emath::TSTransform::from_translation(vec2(0.0, bounce_dy));
-    let first = ui.with_visual_transform(transform, |ui| {
-        if t < 1.0 {
-            ui.multiply_opacity((t * 3.0).clamp(0.0, 1.0));
-        }
+    let anim_id = egui::Id::new(("msg-menu-open-time", &message.id));
+    let first = widgets::show_animated_menu(ui, anim_id, opens_down, |ui, stretch| {
+        let row_height = MENU_ROW_HEIGHT * stretch;
+        let sep_height = MENU_SEPARATOR_HEIGHT * stretch;
 
         let palette = view.palette;
         let chat = &view.chat.id;
@@ -648,7 +582,7 @@ pub(crate) fn context_menu(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
 
-                let mut draw_item =
+                let draw_item =
                     |ui: &mut egui::Ui, icon: Icon, label: &str, enabled: bool, first: &mut Option<egui::Id>| {
                         let response = draw_context_row(
                             ui,
@@ -971,8 +905,7 @@ pub(crate) fn context_menu(
     });
 
         (!ui.is_sizing_pass()).then_some(first).flatten()
-    })
-    .inner;
+    });
 
     let chat = &view.chat.id;
     ui.ctx().data_mut(|data| {

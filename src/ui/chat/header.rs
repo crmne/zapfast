@@ -456,16 +456,11 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 if block.clicked() {
                     app.actions.push(Action::OpenInfo(chat.id.clone()));
                 }
-                let leave_label = if chat.is_channel() {
-                    crate::i18n::gettext(app.locale, "Leave channel")
-                } else {
-                    crate::i18n::gettext(app.locale, "Leave group")
-                };
                 let select_messages_label = crate::i18n::gettext(app.locale, "Select messages");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(room.right + caption_gap(room.right));
                     if palette.vibrant() {
-                        ui.add_space(BUTTON_GAP / 2.0);
+                        ui.add_space(BUTTON_GAP * 0.5);
                     }
                     let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
@@ -480,20 +475,14 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         ui.painter()
                             .set(more_glass, glass_button(&palette, more.rect));
                     }
+                    let (pin_icon, pin_label, pin_act) = super::actions::pin_action(chat, app.locale);
+                    let (archive_icon, archive_label, archive_act) = super::actions::archive_action(chat, app.locale);
+                    let (clear_icon, clear_label, clear_act) = super::actions::clear_chat_action(chat, app.locale);
+                    let leave = super::actions::leave_action(chat, app.locale, &app.our_ids());
+                    let copy_number = super::actions::copy_number_action(chat, app.locale);
+
                     let info_label = crate::i18n::gettext(app.locale, "Info");
-                    let pin_label = if chat.pinned {
-                        crate::i18n::gettext(app.locale, "Unpin")
-                    } else {
-                        crate::i18n::gettext(app.locale, "Pin to top")
-                    };
-                    let archive_label = if chat.archived {
-                        crate::i18n::gettext(app.locale, "Unarchive")
-                    } else {
-                        crate::i18n::gettext(app.locale, "Archive")
-                    };
                     let export_label = crate::i18n::gettext(app.locale, "Export chat…");
-                    let clear_label = crate::i18n::gettext(app.locale, "Clear chat");
-                    let copy_number_label = crate::i18n::gettext(app.locale, "Copy number");
                     let close_label = crate::i18n::gettext(app.locale, "Close chat");
                     let search_label = crate::i18n::gettext(app.locale, "Search messages");
                     let voice_call_label = crate::i18n::gettext(app.locale, "Voice call");
@@ -510,21 +499,18 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             archive_label.as_ref(),
                             clear_label.as_ref(),
                             export_label.as_ref(),
-                            leave_label.as_ref(),
-                            copy_number_label.as_ref(),
                             close_label.as_ref(),
                             &super::blocking::label(app, &chat.id),
                         ],
                         true,
                     );
-                    // Demo/test: hold this menu open for a screenshot.
                     #[cfg(any(test, feature = "demo"))]
                     if app.open_header_menu.as_deref() == Some(chat.id.as_str()) {
                         egui::Popup::open_id(ui.ctx(), more.id.with("popup"));
                     }
                     egui::Popup::menu(&more)
                         .width(width)
-                        .frame(widgets::menu_frame(&palette))
+                        .frame(widgets::menu_card_frame(&palette))
                         .show(|ui| {
                             if folded {
                                 if widgets::menu_item(
@@ -575,23 +561,11 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             ) {
                                 app.actions.push(Action::StartSelection);
                             }
-                            if widgets::menu_item(
-                                ui,
-                                &palette,
-                                Some(if chat.pinned { Icon::PinOff } else { Icon::Pin }),
-                                pin_label.as_ref(),
-                            ) {
-                                app.actions
-                                    .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
+                            if widgets::menu_item(ui, &palette, Some(pin_icon), &pin_label) {
+                                app.actions.push(pin_act);
                             }
-                            if widgets::menu_item(
-                                ui,
-                                &palette,
-                                Some(Icon::Archive),
-                                archive_label.as_ref(),
-                            ) {
-                                app.actions
-                                    .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+                            if widgets::menu_item(ui, &palette, Some(archive_icon), &archive_label) {
+                                app.actions.push(archive_act);
                             }
                             if widgets::menu_item_enabled(
                                 ui,
@@ -609,41 +583,24 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             if widgets::menu_item_enabled(
                                 ui,
                                 &palette,
-                                Some(Icon::Eraser),
-                                clear_label.as_ref(),
+                                Some(clear_icon),
+                                &clear_label,
                                 app.is_connected(),
                             ) {
-                                app.actions
-                                    .push(Action::ShowDialog(Dialog::ConfirmClearChat(
-                                        chat.id.clone(),
-                                    )));
+                                app.actions.push(clear_act);
                             }
                             widgets::menu_separator(ui, &palette);
-                            if chat.can_leave(&app.our_ids())
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::LogOut),
-                                    leave_label.as_ref(),
-                                )
-                            {
-                                app.actions
-                                    .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
-                                        chat.id.clone(),
-                                    )));
+                            if let Some((icon, label, act)) = leave {
+                                if widgets::menu_item(ui, &palette, Some(icon), &label) {
+                                    app.actions.push(act);
+                                }
                             }
-                            if let Some(phone) = chat.phone()
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::Copy),
-                                    copy_number_label.as_ref(),
-                                )
-                            {
-                                app.actions.push(Action::CopyText(format!("+{phone}")));
+                            if let Some((icon, label, act)) = copy_number {
+                                if widgets::menu_item(ui, &palette, Some(icon), &label) {
+                                    app.actions.push(act);
+                                }
                             }
-                            if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref())
-                            {
+                            if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref()) {
                                 app.actions.push(Action::CloseChat);
                             }
                         });

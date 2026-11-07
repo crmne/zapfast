@@ -1,5 +1,3 @@
-//! Composer panel, pill container, animated reply drawer, text input row, and recording/selection bars.
-
 use super::*;
 
 pub(crate) const COMPOSER_RADIUS: u8 = 20;
@@ -333,8 +331,6 @@ impl ReplyDrawer {
             return;
         }
 
-        // Allocate only the current interpolated height in the parent pill layout so the input row
-        // below stays locked at the bottom and never bounces or shifts.
         let (_, section_rect) = ui.allocate_space(vec2(width, extra_height));
         ui.ctx()
             .data_mut(|data| data.insert_temp(reply_strip_id(), section_rect));
@@ -344,7 +340,6 @@ impl ReplyDrawer {
             return;
         }
 
-        // Anchor content to the bottom of the animated section to reveal cleanly upward without top clipping.
         let content_rect = Rect::from_min_size(
             pos2(section_rect.left(), section_rect.bottom() - Self::TARGET_HEIGHT),
             vec2(width, Self::TARGET_HEIGHT),
@@ -429,7 +424,6 @@ impl ReplyDrawer {
     }
 }
 
-/// Unified rounded pill container holding the optional `ReplyDrawer` above `ComposerInputRow`.
 pub struct ComposerPill;
 
 impl ComposerPill {
@@ -476,7 +470,8 @@ impl ComposerPill {
             .max(COMPOSER_CONTROL);
         let field_margin = ((line - line_height) * 0.5).round().max(4.0);
         let wrap_id = id.with("wrap");
-        let format = egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
+        let mut format = egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
+        format.line_height = Some(20.0);
         let (measured_height, rows) = ui
             .ctx()
             .data(|data| data.get_temp::<f32>(wrap_id))
@@ -536,7 +531,6 @@ impl ComposerPill {
     }
 }
 
-/// Bottom row of controls inside `ComposerPill` (attach, emoji, text field, view-once, mic/send).
 pub struct ComposerInputRow;
 
 impl ComposerInputRow {
@@ -639,8 +633,9 @@ impl ComposerInputRow {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let mut clusters: Vec<(usize, usize, String)> = Vec::new();
-                        let format =
+                        let mut format =
                             egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
+                        format.line_height = Some(20.0);
                         let composer_rtl = crate::bidi::base_rtl(&app.composer);
                         let mut layouter =
                             |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
@@ -962,34 +957,135 @@ impl ComposerInputRow {
                 app.actions.push(Action::ClosePicker);
             }
         }
+        let anim_id = id.with("open-time");
         let mut draw_open = open;
         if draw_open && !picker_open {
             egui::Popup::menu(plus)
                 .id(id)
                 .open_bool(&mut draw_open)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-                .width(190.0)
+                .width(205.0)
                 .frame(widgets::menu_frame(&app.palette))
                 .show(|ui| {
-                    let send_files = crate::i18n::gettext(app.locale, "Send files");
-                    if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), &send_files) {
-                        app.actions.push(Action::Attach { documents: false });
-                    }
-                    let document = crate::i18n::gettext(app.locale, "Send as document");
-                    if widgets::menu_item(ui, &app.palette, Some(Icon::FileText), &document) {
-                        app.actions.push(Action::Attach { documents: true });
-                    }
-                    let send_location = crate::i18n::gettext(app.locale, "Send location");
-                    if widgets::menu_item(ui, &app.palette, Some(Icon::MapPin), &send_location) {
-                        app.actions
-                            .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
-                    }
-                    let create_poll = crate::i18n::gettext(app.locale, "Create poll");
-                    if widgets::menu_item(ui, &app.palette, Some(Icon::ListChecks), &create_poll) {
-                        app.actions
-                            .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
-                    }
+                    widgets::show_animated_menu(ui, anim_id, false, |ui, stretch| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let item_height = 38.0 * stretch;
+                        let locale = app.locale;
+                        let palette = app.palette;
+
+                        let document = crate::i18n::gettext(locale, "Document");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::FileText,
+                            Color32::from_rgb(0x7f, 0x66, 0xff),
+                            &document,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: true });
+                        }
+
+                        let photos = if locale == crate::i18n::Locale::Spanish {
+                            "Fotos y videos".to_string()
+                        } else {
+                            crate::i18n::gettext(locale, "Photos & videos").into_owned()
+                        };
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Image,
+                            Color32::from_rgb(0x00, 0x7b, 0xfc),
+                            &photos,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: false });
+                        }
+
+                        let camera = crate::i18n::gettext(locale, "Camera");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Video,
+                            Color32::from_rgb(0xeb, 0x12, 0x60),
+                            &camera,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: false });
+                        }
+
+                        let audio = crate::i18n::gettext(locale, "Audio");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Music,
+                            Color32::from_rgb(0xf3, 0x6b, 0x00),
+                            &audio,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: false });
+                        }
+
+                        let contact = crate::i18n::gettext(locale, "Contact");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Contact,
+                            Color32::from_rgb(0x00, 0xa5, 0xf4),
+                            &contact,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::ShowDialog(Dialog::NewContact));
+                        }
+
+                        let poll = crate::i18n::gettext(locale, "Poll");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::ListChecks,
+                            Color32::from_rgb(0xff, 0xb0, 0x00),
+                            &poll,
+                            item_height,
+                        ) {
+                            app.actions
+                                .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
+                        }
+
+                        let event = if locale == crate::i18n::Locale::Spanish {
+                            "Evento".to_string()
+                        } else {
+                            crate::i18n::gettext(locale, "Event").into_owned()
+                        };
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Calendar,
+                            Color32::from_rgb(0xff, 0x57, 0x57),
+                            &event,
+                            item_height,
+                        ) {
+                            app.actions
+                                .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
+                        }
+
+                        let sticker = if locale == crate::i18n::Locale::Spanish {
+                            "Nuevo sticker".to_string()
+                        } else {
+                            crate::i18n::gettext(locale, "New sticker").into_owned()
+                        };
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Sticker,
+                            Color32::from_rgb(0x00, 0xc9, 0x82),
+                            &sticker,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: false });
+                        }
+                    });
                 });
+        } else {
+            widgets::cleanup_menu_anim(&plus.ctx, anim_id);
         }
         if draw_open != app.composer_tools_open {
             app.actions.push(Action::SetComposerTools(draw_open));
@@ -1129,7 +1225,6 @@ impl VoiceRecorderBar {
     }
 }
 
-/// Multi-message selection action bar replacing the composer when messages are ticked.
 pub struct SelectionBar;
 
 impl SelectionBar {

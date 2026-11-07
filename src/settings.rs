@@ -835,6 +835,9 @@ pub struct AccountSettings {
     /// background. Off by default: it asks the phone for history nobody
     /// scrolled to, so an account that has never turned it on does not.
     pub history_prefetch: bool,
+    /// Whether this account continuously maintains connection and sync in the background
+    /// while another account is active.
+    pub background_sync: bool,
     /// The chip or label the chat list last showed, as
     /// [`crate::model::ListFilter::key`] writes it; `None` shows every chat.
     pub list_filter: Option<String>,
@@ -855,6 +858,7 @@ impl Default for AccountSettings {
             save_contacts_to_phone: true,
             wallpaper_image: None,
             history_prefetch: false,
+            background_sync: true,
             list_filter: None,
             call_filter: None,
         }
@@ -873,6 +877,7 @@ impl AccountSettings {
             save_contacts_to_phone: settings.save_contacts_to_phone,
             wallpaper_image: settings.wallpaper_image.clone(),
             history_prefetch: false,
+            background_sync: true,
             list_filter: None,
             call_filter: None,
         }

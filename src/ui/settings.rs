@@ -2,7 +2,10 @@
 
 use std::borrow::Cow;
 
-use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{
+    Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2,
+    vec2,
+};
 
 use crate::app::App;
 use crate::i18n::Locale;
@@ -188,7 +191,24 @@ impl Section {
         }
         let palette = app.palette;
         section(ui, &palette, &title.shown, |ui| {
-            for (row, control) in entries {
+            for (index, (row, control)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    let (divider_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    let divider_color = if palette.dark {
+                        Color32::from_rgb(0x28, 0x37, 0x40)
+                    } else {
+                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
+                    };
+                    ui.painter().hline(
+                        divider_rect.x_range(),
+                        divider_rect.center().y,
+                        Stroke::new(1.0, divider_color),
+                    );
+                    ui.add_space(8.0);
+                }
                 match control {
                     Control::Row(control) => widgets::setting_row(
                         ui,
@@ -224,7 +244,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.ctx(),
         Rect::from_min_size(
             pos2(
-                page.center().x - column_width / 2.0,
+                page.center().x - column_width * 0.5,
                 page.top() + TOP_MARGIN,
             ),
             vec2(column_width, 32.0),
@@ -240,7 +260,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let full = ui.available_width();
             let width = (full - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
             let column = Rect::from_min_size(
-                ui.cursor().min + vec2((full - width) / 2.0, TOP_MARGIN),
+                ui.cursor().min + vec2((full - width) * 0.5, TOP_MARGIN),
                 vec2(width, ui.available_height()),
             );
             ui.ctx()
@@ -251,6 +271,58 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
                     ui.set_width(width);
+
+                    let is_dark = palette.dark;
+                    let ctrl_bg = if is_dark {
+                        Color32::from_rgb(0x24, 0x32, 0x3a)
+                    } else {
+                        Color32::from_rgb(0xf3, 0xf4, 0xf6)
+                    };
+                    let ctrl_stroke = Stroke::new(
+                        1.0,
+                        if is_dark {
+                            Color32::from_rgb(0x38, 0x4b, 0x56)
+                        } else {
+                            Color32::from_rgb(0xd1, 0xd5, 0xdb)
+                        },
+                    );
+                    let ctrl_hover_bg = if is_dark {
+                        Color32::from_rgb(0x2c, 0x3c, 0x46)
+                    } else {
+                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
+                    };
+                    let ctrl_hover_stroke = Stroke::new(
+                        1.0,
+                        if is_dark {
+                            Color32::from_rgb(0x48, 0x5d, 0x6b)
+                        } else {
+                            Color32::from_rgb(0x9c, 0xa3, 0xaf)
+                        },
+                    );
+
+                    let widgets = &mut ui.visuals_mut().widgets;
+                    widgets.inactive.bg_fill = ctrl_bg;
+                    widgets.inactive.weak_bg_fill = ctrl_bg;
+                    widgets.inactive.bg_stroke = ctrl_stroke;
+                    widgets.inactive.corner_radius = CornerRadius::same(6);
+
+                    widgets.hovered.bg_fill = ctrl_hover_bg;
+                    widgets.hovered.weak_bg_fill = ctrl_hover_bg;
+                    widgets.hovered.bg_stroke = ctrl_hover_stroke;
+                    widgets.hovered.corner_radius = CornerRadius::same(6);
+
+                    widgets.active.bg_fill = ctrl_hover_bg;
+                    widgets.active.weak_bg_fill = ctrl_hover_bg;
+                    widgets.active.bg_stroke = ctrl_stroke;
+                    widgets.active.corner_radius = CornerRadius::same(6);
+
+                    widgets.open.bg_fill = ctrl_hover_bg;
+                    widgets.open.weak_bg_fill = ctrl_hover_bg;
+                    widgets.open.bg_stroke = ctrl_hover_stroke;
+                    widgets.open.corner_radius = CornerRadius::same(6);
+
+                    ui.spacing_mut().button_padding = vec2(10.0, 5.0);
+
                     ui.add_space(room.top);
                     ui.horizontal(|ui| {
                         ui.add_space(room.left);
@@ -269,7 +341,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         theme::text(
                             ui,
                             crate::i18n::gettext(locale, "Settings"),
-                            theme::bold(24.0),
+                            theme::semibold(20.0),
                             palette.text,
                         );
                     });
@@ -368,7 +440,59 @@ fn sections(app: &App) -> Vec<Section> {
             } else {
                 wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
             };
-            if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &label, false).clicked() {
+            let button_bg = if palette.dark {
+                Color32::from_rgb(0x24, 0x32, 0x3a)
+            } else {
+                Color32::from_rgb(0xf3, 0xf4, 0xf6)
+            };
+            let button_stroke = Stroke::new(
+                1.0,
+                if palette.dark {
+                    Color32::from_rgb(0x38, 0x4b, 0x56)
+                } else {
+                    Color32::from_rgb(0xd1, 0xd5, 0xdb)
+                },
+            );
+            let text_galley = ui.painter().layout_no_wrap(
+                label.clone(),
+                theme::regular(13.5),
+                palette.text,
+            );
+            let size = vec2(text_galley.size().x + 36.0, 30.0);
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            if ui.is_rect_visible(rect) {
+                let fill = if response.hovered() {
+                    if palette.dark {
+                        Color32::from_rgb(0x2c, 0x3c, 0x46)
+                    } else {
+                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
+                    }
+                } else {
+                    button_bg
+                };
+                ui.painter().rect(
+                    rect,
+                    CornerRadius::same(6),
+                    fill,
+                    button_stroke,
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    pos2(rect.left() + 10.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    &label,
+                    theme::regular(13.5),
+                    palette.text,
+                );
+                Icon::ChevronRight.image(palette.secondary, 14.0).paint_at(
+                    ui,
+                    Rect::from_center_size(
+                        pos2(rect.right() - 12.0, rect.center().y),
+                        Vec2::splat(14.0),
+                    ),
+                );
+            }
+            if response.clicked() {
                 app.actions.push(Action::Open(Page::Wallpaper));
             }
         },
@@ -380,36 +504,64 @@ fn sections(app: &App) -> Vec<Section> {
             "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it.",
         )),
         move |ui, app| {
-            if theme::icon_button(
-                ui,
-                Icon::Plus,
-                16.0,
-                palette.secondary,
-                palette.text,
-                &crate::i18n::gettext(app.locale, "Larger"),
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ZoomBy(0.1));
-            }
-            theme::text(
-                ui,
-                format!("{:.0}%", app.settings.zoom * 100.0),
-                theme::medium(13.5),
-                palette.text,
+            let pill_bg = if palette.dark {
+                Color32::from_rgb(0x24, 0x32, 0x3a)
+            } else {
+                Color32::from_rgb(0xf3, 0xf4, 0xf6)
+            };
+            let pill_stroke = Stroke::new(
+                1.0,
+                if palette.dark {
+                    Color32::from_rgb(0x38, 0x4b, 0x56)
+                } else {
+                    Color32::from_rgb(0xd1, 0xd5, 0xdb)
+                },
             );
-            if theme::icon_button(
-                ui,
-                Icon::Minus,
-                16.0,
-                palette.secondary,
-                palette.text,
-                &crate::i18n::gettext(app.locale, "Smaller"),
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ZoomBy(-0.1));
-            }
+            Frame::new()
+                .fill(pill_bg)
+                .stroke(pill_stroke)
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(Margin {
+                    left: 4,
+                    right: 4,
+                    top: 2,
+                    bottom: 2,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if theme::icon_button(
+                            ui,
+                            Icon::Minus,
+                            16.0,
+                            palette.secondary,
+                            palette.text,
+                            &crate::i18n::gettext(app.locale, "Smaller"),
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(Action::ZoomBy(-0.1));
+                        }
+                        theme::text(
+                            ui,
+                            format!("{:.0}%", app.settings.zoom * 100.0),
+                            theme::medium(13.5),
+                            palette.text,
+                        );
+                        if theme::icon_button(
+                            ui,
+                            Icon::Plus,
+                            16.0,
+                            palette.secondary,
+                            palette.text,
+                            &crate::i18n::gettext(app.locale, "Larger"),
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(Action::ZoomBy(0.1));
+                        }
+                    });
+                });
         },
     );
     appearance.row(translated(locale, "Language"), "", language_picker);
@@ -446,6 +598,14 @@ fn sections(app: &App) -> Vec<Section> {
             "Asks your phone in the background for older messages in the open, pinned and ten most recent chats.",
         ),
         |settings| &mut settings.history_prefetch,
+    );
+    chats.account_toggle(
+        translated(locale, "Background synchronization"),
+        translated(
+            locale,
+            "Keeps this account connected and syncing in the background so mobile sync is not interrupted.",
+        ),
+        |settings| &mut settings.background_sync,
     );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
@@ -1130,7 +1290,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
         );
         text.paint(
             ui,
-            egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
+            egui::pos2(rect.left() + 10.0, rect.center().y - text.size().y * 0.5),
             palette.text,
         );
         response.response.widget_info(|| {
@@ -1142,28 +1302,32 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             info.current_text_value = Some(selected.to_owned());
             info
         });
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            &crate::i18n::gettext(app.locale, "Open themes folder"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::OpenThemesFolder);
-        }
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            &crate::i18n::gettext(app.locale, "How to make a theme"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
-        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(app.locale, "Open themes folder"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenThemesFolder);
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(app.locale, "How to make a theme"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
+            }
+        });
     });
 }
 
@@ -1316,7 +1480,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                     let grid_width = button_width * columns as f32
                                         + item_spacing * columns.saturating_sub(1) as f32;
                                     ui.horizontal(|ui| {
-                                        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
+                                        ui.add_space((palette_width - grid_width).max(0.0) * 0.5);
                                         ui.horizontal_wrapped(|ui| {
                                             let selected =
                                                 app.settings.wallpaper_color_for(palette.dark);
@@ -1392,7 +1556,7 @@ fn image_buttons(app: &mut App, ui: &mut egui::Ui, width: f32) {
         vec2(width, 32.0),
         Layout::left_to_right(Align::Center),
         |ui| {
-            ui.add_space(((width - row_width) / 2.0).max(0.0));
+            ui.add_space(((width - row_width) * 0.5).max(0.0));
             if theme::soft_button(ui, &palette, Some(Icon::Image), &choose, false).clicked() {
                 app.actions.push(Action::PickWallpaperImage);
             }
@@ -1575,12 +1739,12 @@ fn storage_bar_row(
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
     if ui.is_rect_visible(rect) {
         ui.painter()
-            .rect_filled(rect, rect.height() / 2.0, palette.outline);
+            .rect_filled(rect, rect.height() * 0.5, palette.outline);
         let width = crate::model::StorageStats::bar_width(bytes, total, rect.width());
         if width > 0.5 {
             ui.painter().rect_filled(
                 Rect::from_min_size(rect.min, vec2(width, rect.height())),
-                rect.height() / 2.0,
+                rect.height() * 0.5,
                 palette.accent,
             );
         }
@@ -1595,25 +1759,30 @@ fn section(
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(12.0);
-    theme::text(ui, title, theme::bold(18.0), palette.text);
-    ui.add_space(8.0);
+    ui.add_space(10.0);
+    theme::text(ui, title, theme::semibold(13.0), palette.secondary);
+    ui.add_space(6.0);
+    let card_stroke = if palette.dark {
+        Color32::from_rgb(0x2d, 0x3d, 0x47)
+    } else {
+        Color32::from_rgb(0xdc, 0xe0, 0xe5)
+    };
     Frame::new()
-        .fill(theme::blend(palette.panel, palette.surface, 0.5))
-        .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS + 2))
+        .fill(palette.surface)
+        .stroke(Stroke::new(1.0, card_stroke))
+        .corner_radius(CornerRadius::same(8))
         // Every row ends with its own gap, so the bottom margin is smaller.
         .inner_margin(Margin {
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: 6,
+            left: 16,
+            right: 16,
+            top: 12,
+            bottom: 8,
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add_contents(ui);
         });
-    ui.add_space(8.0);
+    ui.add_space(10.0);
 }
 
 /// Our WhatsApp profile, which can be edited in place, and unlinking.
@@ -2053,7 +2222,7 @@ fn privacy_control(ui: &mut egui::Ui, app: &mut App, kind: PrivacyKind) {
             );
             text.paint(
                 ui,
-                egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
+                egui::pos2(rect.left() + 10.0, rect.center().y - text.size().y * 0.5),
                 palette.text,
             );
             response.response.widget_info(|| {
@@ -2086,7 +2255,7 @@ fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selecte
     if ui.is_rect_visible(rect) {
         line.paint(
             ui,
-            egui::pos2(rect.left() + 8.0, rect.center().y - line.size().y / 2.0),
+            egui::pos2(rect.left() + 8.0, rect.center().y - line.size().y * 0.5),
             palette.text,
         );
     }

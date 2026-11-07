@@ -78,13 +78,24 @@ pub fn layout(
     style: &Style,
     max_width: f32,
 ) -> Text {
-    let big = emoji::only_emoji(text).is_some_and(|count| count <= 3);
-    let size = if big { style.size * 2.4 } else { style.size };
+    let count = emoji::only_emoji(text);
+    let big = count.is_some_and(|count| count <= 3);
+    let size = match count {
+        Some(1) => style.size * 3.45,
+        Some(2) => style.size * 2.6,
+        Some(3) => style.size * 2.0,
+        _ => style.size,
+    };
     let mut job = LayoutJob::default();
     job.wrap.max_width = max_width;
     let mut placements = Vec::new();
     let mut links = Vec::new();
     let mut characters = 0;
+    let line_height = Some(if big {
+        (size * 1.15).round()
+    } else {
+        20.0
+    });
     for span in parse(text, mentions) {
         let font_id = if span.mono {
             FontId::monospace(size * 0.95)
@@ -116,6 +127,7 @@ pub fn layout(
             } else {
                 Stroke::NONE
             },
+            line_height,
             ..Default::default()
         };
         let before = characters;
@@ -129,7 +141,12 @@ pub fn layout(
         job.append(
             " ",
             0.0,
-            TextFormat::simple(theme::regular(size), style.color),
+            TextFormat {
+                font_id: theme::regular(size),
+                color: style.color,
+                line_height,
+                ..Default::default()
+            },
         );
     }
     let galley = bidi::layout_job(ui, job);

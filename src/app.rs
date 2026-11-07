@@ -466,6 +466,7 @@ pub struct App {
     pub accounts: Vec<Account>,
     pub active: usize,
     pub adding_account: bool,
+    pub debug_account: bool,
     /// The account on screen when "Add account" was chosen, for Cancel.
     account_before_adding: Option<AccountId>,
     /// Whether the account switcher under our own avatar is open.
@@ -1558,6 +1559,7 @@ impl App {
             accounts,
             active,
             adding_account: false,
+            debug_account: false,
             account_before_adding: None,
             account_menu: false,
             palette,
@@ -7093,19 +7095,20 @@ impl App {
     fn sync_prefetch(&mut self) {
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
+            let is_active = index == active;
             let wanted = (
-                account.settings.history_prefetch,
-                (index == active)
-                    .then(|| account.open_chat.clone())
-                    .flatten(),
+                account.settings.history_prefetch
+                    || (account.settings.background_sync && account.syncing),
+                is_active.then(|| account.open_chat.clone()).flatten(),
             );
-            if account.prefetch_sent.as_ref() != Some(&wanted) {
-                account.backend.send(Command::SetHistoryPrefetch {
-                    on: wanted.0,
-                    focused: wanted.1.clone(),
-                });
-                account.prefetch_sent = Some(wanted);
+            if account.prefetch_sent.as_ref() == Some(&wanted) {
+                continue;
             }
+            account.backend.send(Command::SetHistoryPrefetch {
+                on: wanted.0,
+                focused: wanted.1.clone(),
+            });
+            account.prefetch_sent = Some(wanted);
         }
     }
 
@@ -10427,11 +10430,13 @@ impl App {
             self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
-            let online = looking && index == active;
-            if account.reported_online != Some(online) {
-                account.reported_online = Some(online);
-                account.backend.send(Command::SetOnline(online));
+            let online = (looking && index == active)
+                || (account.settings.background_sync && account.syncing);
+            if account.reported_online == Some(online) {
+                continue;
             }
+            account.reported_online = Some(online);
+            account.backend.send(Command::SetOnline(online));
         }
     }
 
