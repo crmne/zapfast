@@ -18,6 +18,9 @@ pub fn hardware_fingerprint() -> [u8; 32] {
     {
         let id = linux_machine_id();
         hasher.update(id.as_bytes());
+        hasher.update(b"\0");
+        let dmi = linux_dmi_uuid();
+        hasher.update(dmi.as_bytes());
     }
 
     #[cfg(target_os = "macos")]
@@ -143,6 +146,17 @@ fn linux_machine_id() -> String {
     }
 
     "linux-default-machine-id".to_owned()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_dmi_uuid() -> String {
+    if let Ok(uuid) = std::fs::read_to_string("/sys/class/dmi/id/product_uuid") {
+        let trimmed = uuid.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+    String::new()
 }
 
 #[cfg(target_os = "macos")]
