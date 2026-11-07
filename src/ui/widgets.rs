@@ -944,14 +944,30 @@ pub fn raised<R>(
     shown
 }
 
-/// Shared popup-menu frame.
-pub fn menu_frame(palette: &Palette) -> egui::Frame {
+pub fn floating_menu_colors(palette: &Palette) -> (Color32, Color32, Color32) {
+    if palette.dark {
+        (
+            Color32::from_rgb(21, 25, 28),
+            Color32::from_white_alpha(20),
+            Color32::from_white_alpha(16),
+        )
+    } else {
+        (palette.overlay, palette.outline, palette.surface_hover)
+    }
+}
+
+pub fn menu_card_frame(palette: &Palette) -> egui::Frame {
+    let (bg, border, _) = floating_menu_colors(palette);
     egui::Frame::new()
-        .fill(palette.overlay)
-        .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::same(6))
+        .fill(bg)
+        .stroke(Stroke::new(1.0, border))
+        .corner_radius(CornerRadius::same(16))
+        .inner_margin(egui::Margin::symmetric(6, 8))
         .shadow(palette.float_shadow())
+}
+
+pub fn menu_frame(palette: &Palette) -> egui::Frame {
+    menu_card_frame(palette)
 }
 
 pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body: &str) {

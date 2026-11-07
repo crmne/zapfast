@@ -67,21 +67,18 @@ pub struct ReplyTarget {
 }
 
 impl ReplyTarget {
-    /// Returns the explicit group source, or the destination for an ordinary same-chat reply.
     pub fn source_chat<'a>(&'a self, destination: &'a str) -> &'a str {
         self.chat.as_deref().unwrap_or(destination)
     }
 }
 
 impl From<String> for ReplyTarget {
-    /// Wraps a same-chat message id without inventing a cross-chat source.
     fn from(id: String) -> Self {
         Self { id, chat: None }
     }
 }
 
 impl From<&str> for ReplyTarget {
-    /// Wraps a same-chat message id without inventing a cross-chat source.
     fn from(id: &str) -> Self {
         id.to_owned().into()
     }
@@ -90,7 +87,6 @@ impl From<&str> for ReplyTarget {
 impl std::ops::Deref for ReplyTarget {
     type Target = str;
 
-    /// Exposes the message id for existing transcript lookup helpers.
     fn deref(&self) -> &str {
         &self.id
     }

@@ -16,11 +16,11 @@ pub type Catalog = fastframe_theme::Catalog<Palette>;
 /// and stay isolated from the desktop and its files.
 pub const DESKTOP_THEMES: fastframe_theme::DesktopThemes = fastframe_theme::DesktopThemes {
     slug: "zapfast",
-    omarchy_template: include_str!("../contrib/omarchy/zapfast.json.tpl"),
+    omarchy_template: include_str!("../../contrib/omarchy/zapfast.json.tpl"),
     // Every template ZapFast shipped before, so an untouched copy installed
     // by an older release is replaced with the current one.
     omarchy_previous_templates: &[include_str!(
-        "../contrib/omarchy/previous/zapfast-1.json.tpl"
+        "../../contrib/omarchy/previous/zapfast-1.json.tpl"
     )],
     presets: true,
 };
@@ -885,7 +885,7 @@ fastframe_icons::icons! {
     /// fastframe-icons (`lucide`); the rest are ZapFast's own files.
     pub enum Icon {
         prefix: "zapfast-icon-",
-        directory: "../assets/icons/",
+        directory: "../../assets/icons/",
         Archive => "archive",
         ArrowDown => "arrow-down",
         ArrowLeft => lucide "arrow-left",
@@ -1984,15 +1984,15 @@ mod tests {
     /// renders as Omarchy's own renderer does.
     #[test]
     fn the_omarchy_template_renders_like_omarchy_in_light_and_dark_themes() {
-        const TEMPLATE: &str = include_str!("../contrib/omarchy/zapfast.json.tpl");
+        const TEMPLATE: &str = include_str!("../../contrib/omarchy/zapfast.json.tpl");
         for (colors, expected) in [
             (
-                include_str!("../tests/fixtures/omarchy/catppuccin.tsv"),
-                include_str!("../tests/fixtures/omarchy/catppuccin.json"),
+                include_str!("../../tests/fixtures/omarchy/catppuccin.tsv"),
+                include_str!("../../tests/fixtures/omarchy/catppuccin.json"),
             ),
             (
-                include_str!("../tests/fixtures/omarchy/catppuccin-latte.tsv"),
-                include_str!("../tests/fixtures/omarchy/catppuccin-latte.json"),
+                include_str!("../../tests/fixtures/omarchy/catppuccin-latte.tsv"),
+                include_str!("../../tests/fixtures/omarchy/catppuccin-latte.json"),
             ),
         ] {
             let actual =
@@ -2016,7 +2016,7 @@ mod tests {
     #[test]
     fn the_shipped_omarchy_hook_has_not_drifted() {
         assert_eq!(
-            include_str!("../contrib/omarchy/zapfast-theme").replace("\r\n", "\n"),
+            include_str!("../../contrib/omarchy/zapfast-theme").replace("\r\n", "\n"),
             fastframe_theme::omarchy::hook_script("zapfast")
         );
     }

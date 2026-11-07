@@ -972,9 +972,7 @@ pub(crate) fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Messa
     })
 }
 
-/// Width of a quote's accent bar.
 pub(crate) const QUOTE_BAR: f32 = 4.0;
-/// Corner radius of a quote.
 pub(crate) const QUOTE_RADIUS: u8 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1101,15 +1099,10 @@ pub(crate) fn quote_block(
     }
 }
 
-/// Diameter of the tinted disc behind a call entry's glyph.
 pub(crate) const CALL_BADGE: f32 = 36.0;
-/// Size of the glyph inside it.
 pub(crate) const CALL_GLYPH: f32 = 18.0;
-/// Room between the disc and the words.
 pub(crate) const CALL_BADGE_GAP: f32 = 10.0;
-/// Room between the title and the line under it.
 pub(crate) const CALL_LINE_GAP: f32 = 2.0;
-/// Height of the time's line, as [`footer`] draws it.
 pub(crate) const FOOTER_HEIGHT: f32 = 15.0;
 
 pub(crate) fn call_entry(
@@ -1217,9 +1210,7 @@ pub(crate) fn mirrored_row(
     });
 }
 
-/// Size of the forwarded label's arrow.
 pub(crate) const FORWARDED_ICON: f32 = 14.0;
-/// Gap between the forwarded label's arrow and its word.
 pub(crate) const FORWARDED_GAP: f32 = 4.0;
 pub(crate) const FORWARDED_HEIGHT: f32 = 15.0;
 
@@ -1274,11 +1265,8 @@ pub(crate) fn paint_forwarded_label(
     rect
 }
 
-/// Painted size of the star mark in the bubble footer.
 pub(crate) const FOOTER_MARK: f32 = 13.0;
-/// One gap: time to the mark.
 pub(crate) const FOOTER_MARK_GAP: f32 = 8.0;
-/// Room one visible mark keeps next to the clock.
 pub(crate) const FOOTER_MARK_SLOT: f32 = FOOTER_MARK + FOOTER_MARK_GAP;
 pub(crate) const FOOTER_STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
 

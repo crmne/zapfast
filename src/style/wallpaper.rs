@@ -9,7 +9,7 @@ use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2}
 /// The default doodle tile, drawn from Lucide icons (ISC, see
 /// `assets/icons/LICENSE.txt`). It is embedded so the wallpaper works offline
 /// and does not depend on a third-party request at runtime.
-const DEFAULT_SVG: &[u8] = include_bytes!("../assets/wallpaper.svg");
+const DEFAULT_SVG: &[u8] = include_bytes!("../../assets/wallpaper.svg");
 
 /// The longest side a wallpaper image keeps, which bounds its texture to about
 /// 26 MB even for a square picture while staying sharp on a 1440p display.

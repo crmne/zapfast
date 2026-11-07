@@ -1133,7 +1133,7 @@ mod tests {
     /// A video being sent gets its picture, size, and length from its bytes.
     #[test]
     fn a_video_says_its_size_and_length_and_shows_a_frame() {
-        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let bytes = include_bytes!("../../tests/fixtures/video/sample.mp4");
         let poster = poster(bytes).expect("an MP4");
         assert_eq!((poster.width, poster.height, poster.seconds), (320, 180, 3));
         let picture = poster.picture.expect("H.264 decodes in-process");
@@ -1149,7 +1149,7 @@ mod tests {
     /// configuration in the sample entry; such a video still opens.
     #[test]
     fn a_video_with_its_aspect_box_first_still_opens() {
-        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let bytes = include_bytes!("../../tests/fixtures/video/sample.mp4");
         let find = |name: &[u8]| {
             bytes
                 .windows(4)
