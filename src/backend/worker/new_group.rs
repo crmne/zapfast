@@ -176,6 +176,9 @@ impl Worker {
             .archive
             .set_group_rights(&chat, group.info_locked, group.admin);
         let _ = self.archive.set_group_settings(&chat, &group.settings);
+        // New group creates an ordinary group, never a community container
+        // or subgroup. Keep its complete metadata complete after this upgrade.
+        let _ = self.archive.set_group_community(&chat, &Default::default());
         let _ = self.archive.set_group_description(&chat, "");
         let _ = self.archive.touch_activity(&chat, group.created_at);
         self.emit_chat(&chat);
