@@ -1620,11 +1620,12 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 crate::i18n::gettext(app.locale, "{name} is recording audio…")
                     .replace("{name}", typing[0].1.trim_start_matches('~'))
             } else if chat.is_group() {
-                format!("{} is typing…", typing[0].1.trim_start_matches('~'))
+                crate::i18n::gettext(app.locale, "{name} is typing…")
+                    .replace("{name}", typing[0].1.trim_start_matches('~'))
             } else if recording {
                 crate::i18n::gettext(app.locale, "recording audio…").into_owned()
             } else {
-                "typing…".to_owned()
+                crate::i18n::gettext(app.locale, "typing…").into_owned()
             };
             widgets::line(
                 ui,
