@@ -12301,6 +12301,15 @@ fn extension_for(mime: &str, file_name: Option<&str>) -> String {
     })
 }
 
+/// Characters that reorder how a file manager draws a name, so a stem can
+/// look like it ends in another extension. They are not `is_control`.
+fn is_bidi_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// A document's own name in the reader's download folder, made safe for
 /// every platform's file system: no path, no characters Windows refuses, no
 /// device names, no leading dot, at most 120 characters before a validated
@@ -12313,7 +12322,10 @@ fn named_media_path(dir: &Path, mime: &str, file_name: &str) -> Option<PathBuf> 
     let stem: String = stem
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if c.is_control()
+                || is_bidi_format(c)
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
@@ -15657,6 +15669,23 @@ mod tests {
         assert_eq!(
             named("COM1.txt.pdf"),
             Some(PathBuf::from("/downloads/_COM1.txt.pdf"))
+        );
+        // Bidi formatting characters would reorder the name a file manager shows.
+        assert_eq!(
+            named("invoice\u{202E}fdp.pdf"),
+            Some(PathBuf::from("/downloads/invoice_fdp.pdf"))
+        );
+        assert_eq!(
+            named("a\u{2066}b\u{2069}.pdf"),
+            Some(PathBuf::from("/downloads/a_b_.pdf"))
+        );
+        assert_eq!(
+            named("x\u{200F}y\u{200E}z\u{061C}.pdf"),
+            Some(PathBuf::from("/downloads/x_y_z_.pdf"))
+        );
+        assert_eq!(
+            named("דוח שנתי – تقرير.pdf"),
+            Some(PathBuf::from("/downloads/דוח שנתי – تقرير.pdf"))
         );
         assert_eq!(named("..."), None);
         assert_eq!(named(" .pdf"), None);
