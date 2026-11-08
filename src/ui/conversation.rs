@@ -1024,10 +1024,15 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
                             .replace("{names}", &rest.join(", "))
                             .replace("{last}", last),
                     ),
-                    (_, [one]) => Some(format!("{one} is typing…")),
-                    (_, [rest @ .., last]) => {
-                        Some(format!("{} and {last} are typing…", rest.join(", ")))
-                    }
+                    (_, [one]) => Some(
+                        crate::i18n::gettext(app.locale, "{name} is typing…")
+                            .replace("{name}", one),
+                    ),
+                    (_, [rest @ .., last]) => Some(
+                        crate::i18n::gettext(app.locale, "{names} and {last} are typing…")
+                            .replace("{names}", &rest.join(", "))
+                            .replace("{last}", last),
+                    ),
                 }
             };
             [ChatActivity::Typing, ChatActivity::RecordingAudio]
@@ -1038,7 +1043,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
         } else if activity == ChatActivity::RecordingAudio {
             crate::i18n::gettext(app.locale, "recording audio…").into_owned()
         } else {
-            "typing…".to_owned()
+            crate::i18n::gettext(app.locale, "typing…").into_owned()
         };
         return (text, palette.accent);
     }
@@ -1046,7 +1051,7 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
         let names = app.participant_names(chat);
         return (
             if names.is_empty() {
-                "Group".to_owned()
+                crate::i18n::gettext(app.locale, "Group").into_owned()
             } else {
                 names
             },
@@ -1055,7 +1060,10 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
     }
     if let Some(presence) = app.presence.get(&chat.id) {
         if presence.online {
-            return ("online".to_owned(), palette.accent);
+            return (
+                crate::i18n::gettext(app.locale, "online").into_owned(),
+                palette.accent,
+            );
         }
         if let Some(seen) = presence.last_seen {
             return (crate::util::last_seen(app.locale, seen), palette.secondary);
@@ -1569,11 +1577,21 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         ui.horizontal(|ui| {
                             let width = 230.0;
                             ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                            theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
-                            theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
                             theme::text(
                                 ui,
-                                "can send messages",
+                                crate::i18n::gettext(app.locale, "Only"),
+                                theme::regular(13.5),
+                                palette.secondary,
+                            );
+                            theme::text(
+                                ui,
+                                crate::i18n::gettext(app.locale, "admins"),
+                                theme::semibold(13.5),
+                                palette.accent,
+                            );
+                            theme::text(
+                                ui,
+                                crate::i18n::gettext(app.locale, "can send messages"),
                                 theme::regular(13.5),
                                 palette.secondary,
                             );
