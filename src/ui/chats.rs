@@ -1,6 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, UiBuilder, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::model::{Action, Chat, ChatActivity, ChatFilter, Contact, Dialog, Message, Page};
@@ -11,30 +11,76 @@ use super::focus::{Stop, TabStop};
 use super::labels;
 use super::widgets;
 
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
+pub fn show(app: &mut App, ui: &mut egui::Ui, anim_t: f32) {
     search_keyboard(app, ui);
     let palette = app.palette;
-    let panel = egui::Panel::left("chats")
-        .resizable(true)
-        .default_size(app.settings.sidebar_width)
-        .size_range(260.0..=520.0)
+    let ease = super::pane::ease_out_cubic(anim_t);
+    let target_width = app.settings.sidebar_width;
+    let is_animating = anim_t < 0.999;
+    let animated_width = (target_width * ease).max(1.0);
+
+    let panel_id = egui::Id::new("chats");
+    if is_animating {
+        ui.ctx()
+            .data_mut(|data| data.remove::<egui::PanelState>(panel_id));
+    }
+
+    let panel = egui::Panel::left(panel_id)
         .show_separator_line(false)
         .frame(
             Frame::new()
                 .fill(palette.sidebar())
                 .inner_margin(Margin::ZERO),
         );
+    let panel = if is_animating {
+        panel.resizable(false).exact_size(animated_width)
+    } else {
+        panel
+            .resizable(true)
+            .default_size(target_width)
+            .size_range(260.0..=520.0)
+    };
+
     let response = panel.show(ui, |ui| {
-        header(app, ui);
-        body(app, ui);
+        let panel_rect = ui.max_rect();
+        ui.set_clip_rect(panel_rect);
+        if is_animating {
+            ui.ctx().request_repaint();
+            let left_x = panel_rect.right() - target_width;
+            let content_rect = Rect::from_min_size(
+                pos2(left_x, panel_rect.top()),
+                vec2(target_width, panel_rect.height()),
+            );
+            let mut child_ui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(content_rect)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            child_ui.set_clip_rect(panel_rect.intersect(ui.clip_rect()));
+            header(app, &mut child_ui);
+            body(app, &mut child_ui);
+        } else {
+            header(app, ui);
+            body(app, ui);
+        }
     });
-    let width = response.response.rect.width();
-    if (width - app.settings.sidebar_width).abs() > 1.0 {
-        app.settings.sidebar_width = width;
-        app.actions.push(Action::SettingsChanged);
+
+    if !is_animating {
+        let width = response.response.rect.width();
+        if (width - app.settings.sidebar_width).abs() > 1.0 {
+            app.settings.sidebar_width = width;
+            app.actions.push(Action::SettingsChanged);
+        }
     }
     // Separate the panel from the conversation, as the header's line does.
-    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    if ease > 0.01 {
+        let rect = response.response.rect;
+        ui.painter().vline(
+            rect.right(),
+            rect.y_range(),
+            egui::Stroke::new(1.0, palette.outline.gamma_multiply(ease)),
+        );
+    }
 }
 
 /// The chat list across the whole window, when the window is too narrow to
@@ -419,9 +465,9 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
             HeaderButton::Sync => {
                 let spinning = app.syncing;
                 let tooltip = if spinning {
-                    "Sincronizando..."
+                    crate::i18n::gettext(app.locale, "Syncing…")
                 } else {
-                    "Sincronizar ahora"
+                    crate::i18n::gettext(app.locale, "Sync now")
                 };
                 if theme::icon_button(
                     ui,
@@ -429,7 +475,7 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
                     HEADER_ICON,
                     if spinning { palette.accent } else { palette.secondary },
                     if spinning { palette.accent } else { palette.text },
-                    tooltip,
+                    tooltip.as_ref(),
                 )
                 .clicked()
                 {
@@ -3076,7 +3122,7 @@ mod tests {
                     if collapsed {
                         super::super::rail::show(app, ui, true);
                     } else {
-                        show(app, ui);
+                        show(app, ui, 1.0);
                     }
                 },
             );

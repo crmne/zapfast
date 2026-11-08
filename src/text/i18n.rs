@@ -5,8 +5,20 @@
 //! English is both the source language and the fallback for any untranslated
 //! message. Only languages with a catalog are offered.
 
-pub use fastframe_i18n::{gettext, ngettext, pgettext};
+use std::borrow::Cow;
+pub use fastframe_i18n::{ngettext, pgettext};
 use serde::{Deserialize, Serialize};
+
+use crate::utils::json_i18n::JsonI18n;
+
+/// Returns the translated message for `locale`, checking JSON language packs first
+/// before falling back to compiled gettext catalogs.
+pub fn gettext(locale: Locale, key: &'static str) -> Cow<'static, str> {
+    if let Some(translated) = JsonI18n::translate(locale.tag(), key) {
+        return Cow::Owned(translated);
+    }
+    fastframe_i18n::gettext(locale, key)
+}
 
 include!(concat!(env!("OUT_DIR"), "/catalogs.rs"));
 
@@ -68,6 +80,23 @@ impl Locale {
             Self::ChineseTraditional => "繁體中文",
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
+        }
+    }
+
+    /// Language tag string (e.g., "en", "es", "pt-BR").
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::PortugueseBrazil => "pt-BR",
+            Self::German => "de",
+            Self::Spanish => "es",
+            Self::Italian => "it",
+            Self::French => "fr",
+            Self::Russian => "ru",
+            Self::ChineseSimplified => "zh-Hans",
+            Self::ChineseTraditional => "zh-Hant",
+            Self::Turkish => "tr",
+            Self::Indonesian => "id",
         }
     }
 

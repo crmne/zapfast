@@ -50,7 +50,30 @@ impl JsonI18n {
         Ok(())
     }
 
+    pub fn init_bundled() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let packs = [
+                include_str!("../../assets/i18n/en.json"),
+                include_str!("../../assets/i18n/es.json"),
+                include_str!("../../assets/i18n/pt-BR.json"),
+                include_str!("../../assets/i18n/de.json"),
+                include_str!("../../assets/i18n/fr.json"),
+                include_str!("../../assets/i18n/it.json"),
+                include_str!("../../assets/i18n/ru.json"),
+                include_str!("../../assets/i18n/tr.json"),
+                include_str!("../../assets/i18n/id.json"),
+                include_str!("../../assets/i18n/zh-Hans.json"),
+                include_str!("../../assets/i18n/zh-Hant.json"),
+            ];
+            for json in packs {
+                let _ = Self::load_json(json);
+            }
+        });
+    }
+
     pub fn translate(locale: &str, key: &str) -> Option<String> {
+        Self::init_bundled();
         let reg = REGISTRY.read().unwrap_or_else(|p| p.into_inner());
         let map = reg.get(locale)?;
         map.get(key).cloned()

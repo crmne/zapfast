@@ -160,9 +160,13 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // step aside while the panel is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
+    let sidebar_anim_id = egui::Id::new("sidebar-panel-tween");
+    let sidebar_t = ui.ctx().animate_bool_with_time(sidebar_anim_id, full_list, 0.24);
+    let sidebar_visible = full_list || sidebar_t > 0.001;
+
     let mut list_width = chats::compact_width(ui.ctx());
-    if full_list {
-        list_width += app.settings.sidebar_width;
+    if sidebar_visible {
+        list_width += app.settings.sidebar_width * pane::ease_out_cubic(sidebar_t);
     }
     let crowded = app.info_visible()
         && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
@@ -170,9 +174,11 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         title_strip(app, ui);
     }
     if !narrow(ui.ctx()) && !crowded {
-        rail::show(app, ui, !full_list);
-        if full_list {
-            chats::show(app, ui);
+        // Only show chat avatars in the rail when the chat list is completely closed.
+        let rail_hidden = !full_list && sidebar_t <= 0.001;
+        rail::show(app, ui, rail_hidden);
+        if sidebar_visible {
+            chats::show(app, ui, sidebar_t);
         }
     }
     let search_overlay = pane::show(app, ui);

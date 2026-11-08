@@ -594,7 +594,7 @@ impl ComposerInputRow {
                         palette.secondary
                     },
                     palette.text,
-                    "Emoji, GIFs, and stickers",
+                    &crate::i18n::gettext(app.locale, "Emojis, GIFs, Stickers"),
                 )
             })
             .tab_stop(Stop::Emoji);
@@ -985,11 +985,7 @@ impl ComposerInputRow {
                             app.actions.push(Action::Attach { documents: true });
                         }
 
-                        let photos = if locale == crate::i18n::Locale::Spanish {
-                            "Fotos y videos".to_string()
-                        } else {
-                            crate::i18n::gettext(locale, "Photos & videos").into_owned()
-                        };
+                        let photos = crate::i18n::gettext(locale, "Photos & videos");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1050,11 +1046,7 @@ impl ComposerInputRow {
                                 .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                         }
 
-                        let event = if locale == crate::i18n::Locale::Spanish {
-                            "Evento".to_string()
-                        } else {
-                            crate::i18n::gettext(locale, "Event").into_owned()
-                        };
+                        let event = crate::i18n::gettext(locale, "Event");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1067,11 +1059,7 @@ impl ComposerInputRow {
                                 .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
                         }
 
-                        let sticker = if locale == crate::i18n::Locale::Spanish {
-                            "Nuevo sticker".to_string()
-                        } else {
-                            crate::i18n::gettext(locale, "New sticker").into_owned()
-                        };
+                        let sticker = crate::i18n::gettext(locale, "New sticker");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,

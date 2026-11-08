@@ -73,8 +73,14 @@ pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
 /// Otherwise returns the conversation's rect for [`show_overlay`], drawn
 /// after the conversation so it lies on top.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
-    if !app.info_visible() {
+    let anim_id = egui::Id::new("chat-info-pane-anim");
+    let is_open = app.info_visible();
+    let t = ui.ctx().animate_bool_with_time(anim_id, is_open, 0.24);
+    if !is_open && t <= 0.001 {
         ui.ctx().data_mut(|data| data.remove::<bool>(docked_id()));
+        ui.ctx().data_mut(|data| {
+            data.remove::<(crate::model::ChatId, InfoView)>(egui::Id::new("chat-info-cached-view"))
+        });
         // The thumbnails go with the panel, not with the resident window.
         for uri in std::mem::take(&mut app.info_textures) {
             crate::image_cache::forget(ui.ctx(), &uri);
@@ -94,11 +100,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         wanted,
         pane::INFO_MIN,
         pane::INFO_CONVERSATION_MIN,
+        t,
         |app, ui| contents(app, ui, false),
     ) {
         Docking::Docked { width, wanted } => {
             // Only a drag moves the edge off the width asked for.
-            if (width - wanted).abs() > 1.0 {
+            if t >= 0.999 && (width - wanted).abs() > 1.0 {
                 app.settings.info_pane_width = width;
                 app.actions.push(Action::SettingsChanged);
             }
@@ -112,8 +119,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 
 /// The panel as a page over the whole conversation in a narrow window.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
+    let anim_id = egui::Id::new("chat-info-pane-anim");
+    let is_open = app.info_visible();
+    let t = ctx.animate_bool_with_time(anim_id, is_open, 0.24);
+    if !is_open && t <= 0.001 {
+        return;
+    }
     let width = region.width();
-    pane::overlay(app, ctx, "chat-info-overlay", width, region, |app, ui| {
+    pane::overlay(app, ctx, "chat-info-overlay", width, region, t, |app, ui| {
         contents(app, ui, true)
     });
     ctx.data_mut(|data| data.insert_temp(docked_id(), false));
@@ -128,9 +141,19 @@ pub fn docked_id() -> egui::Id {
 /// The panel's contents. Over a narrow conversation (`overlay`) an item
 /// that goes to a message closes the panel, so the message can be seen.
 fn contents(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
-    let (chat, view) = match &app.info {
-        Some(info) => (info.chat.clone(), info.view),
-        None => return,
+    let cached_id = egui::Id::new("chat-info-cached-view");
+    let (chat, view) = if let Some(info) = &app.info {
+        let pair = (info.chat.clone(), info.view);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(cached_id, pair.clone()));
+        pair
+    } else if let Some(cached) = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<(crate::model::ChatId, InfoView)>(cached_id))
+    {
+        cached
+    } else {
+        return;
     };
     match view {
         InfoView::Overview => overview(app, ui, &chat, overlay),

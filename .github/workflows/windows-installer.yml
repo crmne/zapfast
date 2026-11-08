@@ -1,0 +1,166 @@
+name: Windows Installer
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'packaging/windows/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/windows-installer.yml'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish release assets to GitHub Releases (if run on a tag or release)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    name: Build Windows Installer (x64)
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          key: windows-msvc
+
+      - name: Determine version
+        id: get_version
+        shell: pwsh
+        run: |
+          $cargoVersion = (Get-Content Cargo.toml | Select-String '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
+          $ref = $env:GITHUB_REF_NAME
+          $version = if ($ref -and $ref.StartsWith("v")) { $ref.TrimStart("v") } else { $cargoVersion }
+          Write-Host "Resolved Version: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build ZapFast binary
+        shell: pwsh
+        run: |
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Locked build failed, trying standard release build..."
+            cargo build --release --target x86_64-pc-windows-msvc
+          }
+
+      - name: Prepare distribution directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "dist" | Out-Null
+          New-Item -ItemType Directory -Force "dist\payload" | Out-Null
+          Copy-Item "target\x86_64-pc-windows-msvc\release\zapfast.exe" "dist\payload\zapfast.exe"
+          Copy-Item "target\x86_64-pc-windows-msvc\release\zapfast.exe" "dist\payload\fastsapp.exe"
+          Copy-Item "README.md", "LICENSE", "THIRD-PARTY-NOTICES.md" "dist\payload\"
+          Copy-Item "packaging\windows\zapfast-installer.txt" "dist\payload\"
+
+      - name: Setup Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $innoPath = "${env:ProgramFiles(x86)}\Inno Setup 6"
+            if (-not (Test-Path "$innoPath\ISCC.exe")) {
+              Write-Host "Installing Inno Setup via Chocolatey..."
+              choco install innosetup --no-progress
+            }
+            if (Test-Path "$innoPath\ISCC.exe") {
+              "$innoPath" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+            }
+          }
+
+      - name: Build Inno Setup installer (.exe)
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          $binary = (Resolve-Path "target\x86_64-pc-windows-msvc\release\zapfast.exe").Path
+          $outDir = (Resolve-Path "dist").Path
+          
+          Write-Host "Running ISCC for version $ver..."
+          iscc "/DVersion=$ver" "/DArch=x86_64" "/DBinary=$binary" "/DOutputDir=$outDir" packaging\windows\zapfast.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC compilation failed with code $LASTEXITCODE" }
+          
+          # Rename to friendly installer name
+          $generatedExe = Get-ChildItem "dist\*setup.exe" | Select-Object -First 1
+          if ($generatedExe) {
+            Copy-Item $generatedExe.FullName "dist\ZapFast-v$ver-x64-Setup.exe"
+            Write-Host "Created Inno Setup installer: dist\ZapFast-v$ver-x64-Setup.exe"
+          }
+
+      - name: Setup WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Build Windows Installer package (.msi)
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          $numeric = $ver.Split("-")[0]
+          $payload = (Resolve-Path "dist\payload").Path
+          $msiOut = "dist\ZapFast-v$ver-x64.msi"
+          
+          Write-Host "Building WiX MSI package for version $ver (numeric: $numeric)..."
+          wix build packaging\windows\zapfast.wxs `
+            -arch x64 `
+            -ext WixToolset.Util.wixext `
+            -d "Version=$numeric" `
+            -d "SourceDir=$payload" `
+            -pdbtype none `
+            -o $msiOut
+          if ($LASTEXITCODE -ne 0) { throw "WiX MSI build failed with code $LASTEXITCODE" }
+          Write-Host "Created WiX MSI package: $msiOut"
+
+      - name: Create Portable ZIP package
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          $zipName = "ZapFast-v$ver-x64-Portable.zip"
+          $portableDir = "dist\portable"
+          New-Item -ItemType Directory -Force $portableDir | Out-Null
+          
+          Copy-Item "target\x86_64-pc-windows-msvc\release\zapfast.exe" "$portableDir\"
+          Copy-Item "README.md", "LICENSE", "THIRD-PARTY-NOTICES.md" "$portableDir\"
+          
+          Compress-Archive -Path "$portableDir\*" -DestinationPath "dist\$zipName" -Force
+          Write-Host "Created Portable ZIP: dist\$zipName"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZapFast-Windows-x64-v${{ steps.get_version.outputs.version }}
+          path: |
+            dist/*.exe
+            dist/*.msi
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.msi
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

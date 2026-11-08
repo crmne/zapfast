@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use egui::{Align, Align2, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2};
+use egui::{Align, Align2, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, UiBuilder, Vec2};
 use egui::{pos2, vec2};
 use jiff::civil::Date;
 
@@ -37,20 +37,31 @@ fn field_id() -> egui::Id {
     egui::Id::new("chat-message-search")
 }
 
+/// Smooth Fluent ease-out tween: fast initial motion, ultra-smooth gentle deceleration.
+#[inline]
+pub(super) fn ease_out_cubic(t: f32) -> f32 {
+    let p = 1.0 - t.clamp(0.0, 1.0);
+    let p2 = p * p;
+    1.0 - p2 * p2
+}
+
 /// Docks the pane when there is room, before the conversation is laid out.
 /// Otherwise returns the conversation's rect for [`show_overlay`], drawn
 /// after the conversation so it lies on top.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
-    if !app.chat_search_visible() {
+    let anim_id = egui::Id::new("chat-search-pane-anim");
+    let is_open = app.chat_search_visible();
+    let t = ui.ctx().animate_bool_with_time(anim_id, is_open, 0.24);
+    if !is_open && t <= 0.001 {
         return None;
     }
     let wanted = app.settings.search_pane_width;
-    match dock(app, ui, "chat-search-pane", wanted, |app, ui| {
+    match dock(app, ui, "chat-search-pane", wanted, t, |app, ui| {
         search(app, ui, false)
     }) {
         Docking::Docked { width, wanted } => {
             // Only a drag moves the edge off the width asked for.
-            if (width - wanted).abs() > 1.0 {
+            if t >= 0.999 && (width - wanted).abs() > 1.0 {
                 app.settings.search_pane_width = width;
                 app.actions.push(Action::SettingsChanged);
             }
@@ -62,8 +73,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 
 /// The pane over the right of a conversation too narrow to share.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
+    let anim_id = egui::Id::new("chat-search-pane-anim");
+    let is_open = app.chat_search_visible();
+    let t = ctx.animate_bool_with_time(anim_id, is_open, 0.24);
+    if !is_open && t <= 0.001 {
+        return;
+    }
     let width = app.settings.search_pane_width.clamp(MIN_WIDTH, MAX_WIDTH);
-    overlay(app, ctx, "chat-search-overlay", width, region, |app, ui| {
+    overlay(app, ctx, "chat-search-overlay", width, region, t, |app, ui| {
         search(app, ui, true)
     });
 }
@@ -83,13 +100,14 @@ pub(super) fn dock(
     ui: &mut egui::Ui,
     id: &str,
     wanted: f32,
+    anim_t: f32,
     contents: impl FnOnce(&mut App, &mut egui::Ui),
 ) -> Docking {
     let region = ui.available_rect_before_wrap();
     if region.width() < MIN_WIDTH + CONVERSATION_MIN {
         return Docking::Overlay(region);
     }
-    docked(app, ui, id, wanted, MIN_WIDTH, CONVERSATION_MIN, contents)
+    docked(app, ui, id, wanted, MIN_WIDTH, CONVERSATION_MIN, anim_t, contents)
 }
 
 /// Docks a right-hand pane whatever the room, narrowing the conversation
@@ -101,30 +119,60 @@ pub(super) fn docked(
     wanted: f32,
     min: f32,
     conversation_min: f32,
+    anim_t: f32,
     contents: impl FnOnce(&mut App, &mut egui::Ui),
 ) -> Docking {
     let region = ui.available_rect_before_wrap();
     let palette = app.palette;
     let max = (region.width() - conversation_min).clamp(min, MAX_WIDTH);
     let wanted = wanted.clamp(min, max);
-    let id = egui::Id::new(id);
+    let ease = ease_out_cubic(anim_t);
+    let is_animating = anim_t < 0.999;
+    let animated_width = (wanted * ease).max(1.0);
+    let panel_id = egui::Id::new(id);
+
     // egui would remember a width a narrow window squeezed; the saved width
     // is the reader's, so it comes back when the window widens again.
     ui.ctx()
-        .data_mut(|data| data.remove::<egui::PanelState>(id));
-    let response = egui::Panel::right(id)
-        .resizable(true)
-        .default_size(wanted)
-        .size_range(min..=max)
+        .data_mut(|data| data.remove::<egui::PanelState>(panel_id));
+    let panel = egui::Panel::right(panel_id)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
-        .show(ui, |ui| contents(app, ui));
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO));
+    let panel = if is_animating {
+        panel.resizable(false).exact_size(animated_width)
+    } else {
+        panel.resizable(true).default_size(wanted).size_range(min..=max)
+    };
+
+    let response = panel.show(ui, |ui| {
+        let panel_rect = ui.max_rect();
+        ui.set_clip_rect(panel_rect);
+        if is_animating {
+            ui.ctx().request_repaint();
+            let content_rect = Rect::from_min_size(
+                pos2(panel_rect.left(), panel_rect.top()),
+                vec2(wanted, panel_rect.height()),
+            );
+            let mut child_ui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(content_rect)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            child_ui.set_clip_rect(panel_rect.intersect(ui.clip_rect()));
+            contents(app, &mut child_ui);
+        } else {
+            contents(app, ui);
+        }
+    });
+
     let rect = response.response.rect;
-    ui.painter().vline(
-        rect.left(),
-        rect.y_range(),
-        Stroke::new(1.0, palette.outline),
-    );
+    if ease > 0.01 {
+        ui.painter().vline(
+            rect.left(),
+            rect.y_range(),
+            Stroke::new(1.0, palette.outline.gamma_multiply(ease)),
+        );
+    }
     Docking::Docked {
         width: rect.width(),
         wanted,
@@ -138,11 +186,15 @@ pub(super) fn overlay(
     id: &str,
     width: f32,
     region: Rect,
+    anim_t: f32,
     contents: impl FnOnce(&mut App, &mut egui::Ui),
 ) {
     let palette = app.palette;
+    let ease = ease_out_cubic(anim_t);
+    let is_animating = anim_t < 0.999;
     let width = width.max(MIN_WIDTH).min(region.width());
-    let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
+    let current_width = (width * ease).max(1.0);
+    let rect = Rect::from_min_max(pos2(region.right() - current_width, region.top()), region.max);
     // Above the conversation's header too, which a vibrant window draws on
     // a layer of its own over the messages, so the header keeps its glass.
     egui::Area::new(egui::Id::new(id))
@@ -157,18 +209,35 @@ pub(super) fn overlay(
                     offset: [-4, 0],
                     blur: 16,
                     spread: 0,
-                    color: palette.shadow,
+                    color: palette.shadow.gamma_multiply(ease),
                 })
                 .show(ui, |ui| {
                     ui.set_min_size(rect.size());
                     ui.set_max_size(rect.size());
-                    contents(app, ui);
+                    if is_animating {
+                        ui.ctx().request_repaint();
+                        let content_rect = Rect::from_min_size(
+                            rect.min,
+                            vec2(width, rect.height()),
+                        );
+                        let mut child_ui = ui.new_child(
+                            UiBuilder::new()
+                                .max_rect(content_rect)
+                                .layout(Layout::top_down(Align::Min)),
+                        );
+                        child_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                        contents(app, &mut child_ui);
+                    } else {
+                        contents(app, ui);
+                    }
                 });
-            ui.painter().vline(
-                rect.left(),
-                rect.y_range(),
-                Stroke::new(1.0, palette.outline),
-            );
+            if ease > 0.01 {
+                ui.painter().vline(
+                    rect.left(),
+                    rect.y_range(),
+                    Stroke::new(1.0, palette.outline.gamma_multiply(ease)),
+                );
+            }
         });
 }
 

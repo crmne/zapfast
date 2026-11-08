@@ -298,6 +298,36 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     ui.add_space(super::rail::lights_overhang(ui.ctx()));
                 }
                 ui.add_space(room.left);
+                if narrow {
+                    if palette.vibrant() {
+                        ui.add_space(BUTTON_GAP * 0.5);
+                    }
+                    let back_glass = ui.painter().add(egui::Shape::Noop);
+                    let back_label = if app.page == crate::model::Page::Calls {
+                        crate::i18n::gettext(app.locale, "Back to the calls").into_owned()
+                    } else {
+                        crate::i18n::gettext(app.locale, "Back to chats").into_owned()
+                    };
+                    let back = theme::icon_button(
+                        ui,
+                        Icon::ArrowLeft,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &back_label,
+                    )
+                    .tab_stop(Stop::Back);
+                    if palette.vibrant() {
+                        ui.painter()
+                            .set(back_glass, glass_button(&palette, back.rect));
+                    }
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(back_button_id(), back.rect));
+                    if back.clicked() {
+                        app.actions.push(Action::CloseChat);
+                    }
+                    ui.add_space(if palette.vibrant() { BUTTON_GAP * 0.5 } else { 4.0 });
+                }
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
                 let call_here = app.call_live_here(&chat.id);
@@ -309,7 +339,7 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     0.0
                 };
                 let extra = room.right + caption_gap(room.right);
-                let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
+                let buttons = 2.0 + call_buttons;
                 let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant())
                     && !call_here;
                 let (buttons, call_buttons) = if folded {
@@ -696,35 +726,6 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             } else {
                                 Action::OpenChatSearch
                             });
-                        }
-                    }
-                    if narrow {
-                        if palette.vibrant() {
-                            ui.add_space(BUTTON_GAP);
-                        }
-                        let back_glass = ui.painter().add(egui::Shape::Noop);
-                        let back_label = if app.page == crate::model::Page::Calls {
-                            crate::i18n::gettext(app.locale, "Back to the calls").into_owned()
-                        } else {
-                            "Back to chats".to_owned()
-                        };
-                        let back = theme::icon_button(
-                            ui,
-                            Icon::ArrowLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            &back_label,
-                        )
-                        .tab_stop(Stop::Back);
-                        if palette.vibrant() {
-                            ui.painter()
-                                .set(back_glass, glass_button(&palette, back.rect));
-                        }
-                        ui.ctx()
-                            .data_mut(|data| data.insert_temp(back_button_id(), back.rect));
-                        if back.clicked() {
-                            app.actions.push(Action::CloseChat);
                         }
                     }
                 });
