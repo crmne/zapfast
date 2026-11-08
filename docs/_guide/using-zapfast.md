@@ -960,9 +960,11 @@ Shift+Tab bring the focused button into view, too.
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray, unless **Keep running when
-the window closes** is off, which also leaves out the tray icon. On macOS, click the menu
-bar icon to open its menu, then choose **Show or hide ZapFast** to reopen the
-window. On Linux and Windows, click the tray icon to reopen it, and click it
+the window closes** is off, which also leaves out the tray icon. On macOS,
+closing the window always keeps ZapFast running in the Dock, as other Mac apps
+do: click the Dock icon to reopen the window, and turn off **Show in the menu
+bar** if you do not want the menu bar icon. With the icon, click it to open its
+menu, then choose **Show or hide ZapFast**. On Linux and Windows, click the tray icon to reopen it, and click it
 again to hide a window that is in front. Launching the
 app again reopens the window on every platform. To quit, use **Quit** in the
 tray menu, or **Quit** in the Dock icon's menu on macOS, or on Linux **Quit ZapFast** in the
