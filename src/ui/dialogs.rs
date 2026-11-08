@@ -1379,6 +1379,7 @@ const MAKER_PREVIEW: f32 = 112.0;
 /// checkerboard, drawn the way the sticker is made.
 fn sticker_key_controls(
     ui: &mut egui::Ui,
+    locale: crate::i18n::Locale,
     palette: &theme::Palette,
     draft: &mut crate::model::StickerDraft,
 ) {
@@ -1386,7 +1387,7 @@ fn sticker_key_controls(
         super::widgets::switch(ui, palette, &mut draft.remove_color);
         theme::text(
             ui,
-            "Make a colour transparent",
+            crate::i18n::gettext(locale, "Make a colour transparent"),
             theme::regular(13.0),
             palette.text,
         );
@@ -1395,16 +1396,21 @@ fn sticker_key_controls(
         ui.horizontal(|ui| {
             egui::widgets::color_picker::color_edit_button_srgb(ui, &mut draft.key.color);
             let label = if draft.picking {
-                "Click the picture…"
+                crate::i18n::gettext(locale, "Click the picture…")
             } else {
-                "Pick from the picture"
+                crate::i18n::gettext(locale, "Pick from the picture")
             };
-            if theme::pill_button(ui, palette, label, false).clicked() {
+            if theme::pill_button(ui, palette, &label, false).clicked() {
                 draft.picking = !draft.picking;
             }
         });
         ui.horizontal(|ui| {
-            theme::text(ui, "Tolerance", theme::regular(13.0), palette.secondary);
+            theme::text(
+                ui,
+                crate::i18n::gettext(locale, "Tolerance"),
+                theme::regular(13.0),
+                palette.secondary,
+            );
             ui.spacing_mut().slider_width = ui.available_width() - 8.0;
             ui.add(egui::Slider::new(&mut draft.key.tolerance, 0..=160).show_value(false));
         });
@@ -1466,11 +1472,14 @@ fn sticker_key_controls(
                 .paint_at(ui, rect);
         }
         ui.vertical(|ui| {
-            theme::text(ui, "Preview", theme::medium(13.0), palette.text);
+            theme::text(ui, crate::i18n::gettext(locale, "Preview"), theme::medium(13.0), palette.text);
             if draft.animated {
                 theme::paragraph(
                     ui,
-                    "It moves: it is sent as an animated sticker, every frame cropped and keyed the same way.",
+                    crate::i18n::gettext(
+                        locale,
+                        "It moves: it is sent as an animated sticker, every frame cropped and keyed the same way.",
+                    ),
                     theme::regular(12.5),
                     palette.secondary,
                 );
@@ -1628,7 +1637,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             );
         });
     }
-    sticker_key_controls(ui, &palette, &mut draft);
+    sticker_key_controls(ui, locale, &palette, &mut draft);
     Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS))

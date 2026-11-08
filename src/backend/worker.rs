@@ -7998,6 +7998,9 @@ impl Worker {
                     let path = dir.join(name);
                     let result = crate::proxy::agent()
                         .get(&url)
+                        .config()
+                        .timeout_global(Some(GIF_TIMEOUT))
+                        .build()
                         .call()
                         .and_then(|mut response| {
                             response
@@ -13840,6 +13843,9 @@ const GIF_STICKER_LIMIT: u64 = 20 * 1024 * 1024;
 fn moving_picture(link: &str, dir: &Path) -> Option<(PathBuf, super::sticker_maker::Inspected)> {
     let bytes = crate::proxy::agent()
         .get(link)
+        .config()
+        .timeout_global(Some(GIF_TIMEOUT))
+        .build()
         .call()
         .and_then(|mut response| {
             response

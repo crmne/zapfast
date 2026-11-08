@@ -1145,13 +1145,16 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                         let response = response
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text("Click to send, right-click to make a sticker");
+                            .on_hover_text(gettext(
+                                app.locale,
+                                "Click to send, right-click to make a sticker",
+                            ));
                         response.context_menu(|ui| {
                             if widgets::menu_item(
                                 ui,
                                 palette,
                                 Some(Icon::Sticker),
-                                "Make a sticker",
+                                &gettext(app.locale, "Make a sticker"),
                             ) {
                                 app.actions.push(Action::MakeGifSticker(gif.clone()));
                                 ui.close();
@@ -1580,7 +1583,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 ui,
                 palette,
                 Some(Icon::Copy),
-                "Paste a picture as a sticker",
+                &gettext(locale, "Paste a picture as a sticker"),
                 false,
             )
             .clicked()

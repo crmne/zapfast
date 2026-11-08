@@ -8918,16 +8918,22 @@ impl App {
             }
             Action::MakeGifSticker(gif) => match gif.sticker_source {
                 Some(url) => {
-                    self.toast("Opening the GIF…");
+                    self.toast(crate::i18n::gettext(self.locale, "Opening the GIF…"));
                     self.backend
                         .send(Command::FetchGifSticker { id: gif.id, url });
                 }
-                None => self.toast_error("This GIF has no animated version to make a sticker from"),
+                None => self.toast_error(crate::i18n::gettext(
+                    self.locale,
+                    "This GIF has no animated version to make a sticker from",
+                )),
             },
             Action::PasteStickerPicture => match read_clipboard(ctx, &self.clipboard_reader) {
                 Ok(ClipboardPaste::Files(paths)) => match paths.into_iter().next() {
                     Some(path) => self.backend.send(Command::OpenStickerPicture(path)),
-                    None => self.toast_error("There is no picture to paste"),
+                    None => self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "There is no picture to paste",
+                    )),
                 },
                 Ok(ClipboardPaste::Image {
                     width,
@@ -8939,7 +8945,10 @@ impl App {
                     rgba,
                     link: read_clipboard_html(ctx).as_deref().and_then(picture_link),
                 }),
-                Err(_) => self.toast_error("There is no picture to paste"),
+                Err(_) => self.toast_error(crate::i18n::gettext(
+                    self.locale,
+                    "There is no picture to paste",
+                )),
             },
             Action::PickStickerPicture => {
                 self.backend.send(Command::PickStickerPicture);
