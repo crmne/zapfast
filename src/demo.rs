@@ -17952,7 +17952,10 @@ mod tests {
             .filter(|node| node.label() == Some("Mute notifications"))
             .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
             .collect();
-        assert_eq!(bells, [false, true], "one bell per account, the second on");
+        // egui hands the nodes over in id-hash order, so only the count and
+        // the one lit bell are pinned; the label check below names the account.
+        assert_eq!(bells.len(), 2, "one bell per account");
+        assert_eq!(bells.iter().filter(|on| **on).count(), 1, "{bells:?}");
         // Only the muted account's row says so, not the one on screen.
         let said: Vec<_> = nodes
             .iter()
