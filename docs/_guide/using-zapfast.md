@@ -869,6 +869,10 @@ panel closes. In a narrow window the panel is a page of its own: **Back**
 returns to the chat. A locked
 chat's media is listed only while the locked folder is open.
 
+A person's details also list the groups you are both in, under a heading
+such as **3 groups in common**: click one to open it. Groups you left and
+locked chats are not listed.
+
 **Development builds** also show a group's description in the panel. You can
 select and copy its text, and a long description scrolls. To change the
 description, use your phone.
