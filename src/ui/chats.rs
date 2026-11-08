@@ -719,7 +719,6 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
                     ui,
                     &palette,
                     &entry.message,
-                    entry.starred_at,
                     conversation::Marks { starred: true },
                     &mut actions,
                 );
@@ -728,7 +727,14 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     app.actions.append(&mut actions);
 }
 
-/// One starred message: where it is, when it was starred, and the message's own
+/// The day a starred row shows: the message's own, as the chat's day
+/// separators write it. When it was starred only orders the list. The bubble
+/// below already carries the clock time, so this is the day alone.
+fn starred_stamp(locale: crate::i18n::Locale, message_timestamp: i64) -> String {
+    crate::util::day_label(locale, message_timestamp)
+}
+
+/// One starred message: where it is, the day it was sent, and the message's own
 /// words inside a bubble drawn from its side and fill. Clicking opens its chat
 /// at the message; right-clicking the bubble opens the chat's own menu.
 fn starred_row(
@@ -736,7 +742,6 @@ fn starred_row(
     ui: &mut egui::Ui,
     palette: &Palette,
     message: &Message,
-    marked_at: i64,
     marks: conversation::Marks,
     actions: &mut Vec<Action>,
 ) {
@@ -783,7 +788,7 @@ fn starred_row(
         ui.painter()
             .rect_filled(rect, 6.0, palette.surface_hover.gamma_multiply(0.5));
     }
-    let when = crate::util::moment_stamp(app.locale, marked_at);
+    let when = starred_stamp(app.locale, message.timestamp);
     let name_line = widgets::line(
         ui,
         &name,
@@ -2405,6 +2410,17 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A starred row is dated by its message, never by when it was starred.
+    #[test]
+    fn starred_row_shows_the_message_day() {
+        let locale = crate::i18n::Locale::English;
+        let sent = 86_400 * 400;
+        let label = starred_stamp(locale, sent);
+        assert_eq!(label, crate::util::day_label(locale, sent));
+        assert_ne!(label, crate::util::day_label(locale, crate::util::now()));
+        assert!(!label.contains(" at "), "{label}");
+    }
 
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
