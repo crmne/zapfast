@@ -731,6 +731,57 @@ mod backend {
         Ok(())
     }
 
+    /// Opens the device in a format nokhwa can set. On macOS nokhwa lists both
+    /// ends of each frame-rate range but only sets a range's maximum, so a
+    /// FaceTime camera (15 to 30 fps) refuses the first listed format, its
+    /// 15 fps end. The highest frame rate is always a range's maximum.
+    fn first_open(index: &CameraIndex) -> Result<nokhwa::Camera, String> {
+        let kinds: &[RequestedFormatType] = if cfg!(target_os = "macos") {
+            &[
+                RequestedFormatType::AbsoluteHighestFrameRate,
+                RequestedFormatType::None,
+            ]
+        } else {
+            &[RequestedFormatType::None]
+        };
+        let mut failure = String::new();
+        for &kind in kinds {
+            let request = RequestedFormat::with_formats(kind, &READABLE);
+            match nokhwa::Camera::new(index.clone(), request) {
+                Ok(camera) => return Ok(camera),
+                Err(error) => {
+                    log::debug!("[CALL] the camera refused {kind}: {error}");
+                    failure = error.to_string();
+                }
+            }
+        }
+        Err(format!("the camera could not be opened: {failure}"))
+    }
+
+    /// The modes the backend can switch to. On macOS that is each format at
+    /// its highest frame rate, for the reason given at [`first_open`].
+    #[cfg(target_os = "macos")]
+    pub(super) fn settable(mut modes: Vec<Mode>) -> Vec<Mode> {
+        let highest = |of: &Mode, modes: &[Mode]| {
+            modes
+                .iter()
+                .filter(|other| {
+                    (other.width, other.height, other.pixel) == (of.width, of.height, of.pixel)
+                })
+                .map(|other| other.fps)
+                .max()
+                .unwrap_or(of.fps)
+        };
+        let all = modes.clone();
+        modes.retain(|mode| mode.fps == highest(mode, &all));
+        modes
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn settable(modes: Vec<Mode>) -> Vec<Mode> {
+        modes
+    }
+
     pub struct Camera {
         camera: nokhwa::Camera,
         mode: Mode,
@@ -745,20 +796,20 @@ mod backend {
                 Ok(number) => CameraIndex::Index(number),
                 Err(_) => CameraIndex::String(id.to_owned()),
             };
-            let any = RequestedFormat::with_formats(RequestedFormatType::None, &READABLE);
-            let mut camera = nokhwa::Camera::new(index, any)
-                .map_err(|error| format!("the camera could not be opened: {error}"))?;
-            let modes: Vec<Mode> = camera
-                .compatible_camera_formats()
-                .map_err(|error| format!("the camera's formats could not be read: {error}"))?
-                .into_iter()
-                .map(|format| Mode {
-                    width: format.resolution().width(),
-                    height: format.resolution().height(),
-                    fps: format.frame_rate(),
-                    pixel: pixel(format.format()),
-                })
-                .collect();
+            let mut camera = first_open(&index)?;
+            let modes: Vec<Mode> = settable(
+                camera
+                    .compatible_camera_formats()
+                    .map_err(|error| format!("the camera's formats could not be read: {error}"))?
+                    .into_iter()
+                    .map(|format| Mode {
+                        width: format.resolution().width(),
+                        height: format.resolution().height(),
+                        fps: format.frame_rate(),
+                        pixel: pixel(format.format()),
+                    })
+                    .collect(),
+            );
             if let Some(chosen) = super::choose_mode(&modes, budget, fps) {
                 let format = CameraFormat::new(
                     Resolution::new(chosen.width, chosen.height),
@@ -1031,5 +1082,28 @@ mod tests {
         // A portrait camera fits the budget turned upright.
         let upright = [mode(720, 1280, Pixel::Nv12, 30)];
         assert_eq!(choose_mode(&upright, (1280, 720), 20).unwrap().height, 1280);
+    }
+
+    /// A MacBook's FaceTime camera lists each size at 15 and 30 fps, but
+    /// AVFoundation through nokhwa only accepts 30, the top of the range.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_offers_only_the_top_of_each_frame_rate_range() {
+        let mode = |width, height, fps| Mode {
+            width,
+            height,
+            fps,
+            pixel: Pixel::Yuyv,
+        };
+        let listed = vec![
+            mode(1920, 1080, 15),
+            mode(1920, 1080, 30),
+            mode(1280, 720, 15),
+            mode(1280, 720, 30),
+        ];
+        let settable = backend::settable(listed);
+        assert_eq!(settable, [mode(1920, 1080, 30), mode(1280, 720, 30)]);
+        let chosen = choose_mode(&settable, (1280, 720), 15).unwrap();
+        assert_eq!(chosen, mode(1280, 720, 30));
     }
 }
