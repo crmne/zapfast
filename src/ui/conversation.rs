@@ -492,7 +492,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
                 // In a narrow pane, or on vibrant glass, which takes more room,
                 // Search and the call buttons go into More rather than push
-                // the name under them.
+                // the name under them. A live call keeps its Hang up and folds
+                // Search alone.
                 let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant());
                 let (buttons, call_buttons) = if folded {
                     if call_here {
