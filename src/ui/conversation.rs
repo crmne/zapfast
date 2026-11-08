@@ -493,16 +493,24 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 // In a narrow pane, or on vibrant glass, which takes more room,
                 // Search and the call buttons go into More rather than push
                 // the name under them.
-                let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant())
-                    && !call_here;
+                let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant());
                 let (buttons, call_buttons) = if folded {
-                    (buttons - call_buttons - 1.0, 0.0)
+                    if call_here {
+                        // A live call keeps its Hang up; fold Search into More
+                        // instead, so the call and Back stay clear of it.
+                        (buttons - 1.0, call_buttons)
+                    } else {
+                        (buttons - call_buttons - 1.0, 0.0)
+                    }
                 } else {
                     (buttons, call_buttons)
                 };
                 let right_controls = controls_width(buttons, palette.vibrant())
                     + name_glass_tail(palette.vibrant())
                     + extra;
+                // A live call may shrink the name to nothing rather than push
+                // its Hang up under the name glass.
+                let name_min = if call_here { 0.0 } else { 80.0 };
                 // On a vibrant window the name and the buttons sit on glass
                 // pills, drawn beneath them once they are measured.
                 let name_pill = ui.painter().add(egui::Shape::Noop);
@@ -514,7 +522,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         // Fix the child height before centering its contents.
                         ui.allocate_ui_with_layout(
                             vec2(
-                                (ui.available_width() - right_controls).max(80.0),
+                                (ui.available_width() - right_controls).max(name_min),
                                 HEADER_ROW,
                             ),
                             Layout::left_to_right(Align::Center),
@@ -538,7 +546,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 // Room for the name's glass pill to clear the avatar.
                                 ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
-                                    let width = ui.available_width().max(80.0);
+                                    let width = ui.available_width().max(name_min);
                                     ui.set_max_width(width);
                                     // On glass the lines centre on the avatar: the
                                     // column starts at the row's top otherwise.
@@ -740,7 +748,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         Action::OpenChatSearch
                                     });
                                 }
-                                if callable(chat, app.me.as_deref()) {
+                                if !call_here
+                                    && callable(chat, app.me.as_deref())
+                                    && !app.blocklist.contains(&chat.id)
+                                {
                                     if widgets::menu_item(
                                         ui,
                                         &palette,
