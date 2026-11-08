@@ -10032,6 +10032,7 @@ mod tests {
             ("offline,empty", wide),
             ("offline,settings", wide),
             ("preview", wide),
+            ("preview", narrow),
         ];
         for footprint in footprints {
             for (page, size) in pages {
