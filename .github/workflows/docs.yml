@@ -1,13 +1,19 @@
 name: Docs
 
+# The stable site at / is built from the newest release tag and /next/
+# from main (jekyll_vitepress.versions in docs/_config.yml), so a release
+# tag deploys too. Path filters do not apply to tag pushes.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
     paths:
       - docs/**
       - .github/workflows/docs.yml
       - .github/scripts/indexnow.rb
+  release:
+    types: [published]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -17,73 +23,11 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # sitemap lastmod comes from each page's last commit
-
-      - uses: actions/configure-pages@v6
-
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '4.0'
-
-      - name: Install site dependencies
-        working-directory: docs
-        run: |
-          bundle config set path vendor/bundle
-          bundle install
-
-      - name: Build site
-        working-directory: docs
-        env:
-          # Analytics is only included in production builds, so a local
-          # `jekyll serve` does not report visits.
-          JEKYLL_ENV: production
-        run: bundle exec jekyll build --destination ./_site
-
-      # IndexNow tells Bing and the other IndexNow engines which pages are
-      # new or changed: planned from this build against the live sitemap,
-      # sent once the deploy is live.
-      - name: Plan IndexNow submission
-        run: ruby .github/scripts/indexnow.rb plan docs/_site "$RUNNER_TEMP/indexnow.json"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: indexnow
-          path: ${{ runner.temp }}/indexnow.json
-          retention-days: 1
-
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./docs/_site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
-
-  indexnow:
-    needs: deploy
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          sparse-checkout: .github/scripts
-      - uses: actions/download-artifact@v7
-        with:
-          name: indexnow
-      - name: Submit changed URLs to IndexNow
-        run: ruby .github/scripts/indexnow.rb submit indexnow.json
+  # Builds with JEKYLL_ENV=production, which turns on analytics
+  # (docs/_includes/jekyll_vitepress/head_end.html), so a local
+  # `jekyll serve` does not report visits.
+  docs:
+    uses: crmne/jekyll-vitepress-theme/.github/workflows/publish-docs.yml@v1
