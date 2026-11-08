@@ -693,7 +693,9 @@ a group that hides numbers, WhatsApp sends only a masked one such as
 To find a contact in **New chat**, type part of their name or number. Each
 word you type matches the start of a word in the name, in order: `will shak`
 finds William Shakespeare, and `j d` finds John Doe. A plain part of the name
-also works, such as `liam`.
+also works, such as `liam`. The first match is highlighted; press Enter to open
+its chat. The list is only as tall as its matches, up to the space the window
+leaves.
 
 Connection and history-sync notices appear below the open chat’s header,
 leaving the chat list in place. In a narrow window showing only the list,
