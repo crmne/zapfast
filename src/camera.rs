@@ -683,6 +683,24 @@ mod backend {
 
         pub fn stop(&mut self) {}
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::{NO_CAMERA, Source, cameras};
+
+        #[test]
+        fn default_camera_reports_freebsd_unsupported() {
+            assert!(cameras().is_empty());
+            assert_eq!(
+                Source::open(None, (640, 480), 30).err().as_deref(),
+                Some(NO_CAMERA)
+            );
+            assert_eq!(
+                Source::open(Some("0"), (640, 480), 30).err().as_deref(),
+                Some(NO_CAMERA)
+            );
+        }
+    }
 }
 
 /// AVFoundation on macOS and Media Foundation on Windows, through nokhwa.

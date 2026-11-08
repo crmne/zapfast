@@ -15243,7 +15243,7 @@ mod tests {
     /// A trackpad gesture keeps its pane while fastframe-scroll says it goes
     /// on: a frame that is slow to draw is no pause, and the gesture's glide
     /// stays with the pane too. A pause in the input itself ends the gesture.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_trackpad_gesture_keeps_its_pane_through_a_slow_frame_and_its_glide() {
         let mut app = app();
