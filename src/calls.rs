@@ -1168,7 +1168,9 @@ fn capture_frames(
         if let Some(measured) = cadence.observe(captured) {
             let next = SendPlan::new(plan.full, measured, plan.setting);
             match CameraEncoder::new(&next) {
-                Ok(fresh) => {
+                Ok(mut fresh) => {
+                    // Keep the FEC-adjusted rate; the plan's is the whole wire rate.
+                    fresh.set_bitrate(encoder.wanted);
                     encoder = fresh;
                     clock.respace(next.sent_fps());
                     plan = next;
