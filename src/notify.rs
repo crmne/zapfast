@@ -82,8 +82,10 @@ impl AppBadge {
             }
             // AppKit is main-thread only; the interface always calls from there.
             let Some(main) = objc2::MainThreadMarker::new() else {
+                log::debug!("app badge: not on the main thread");
                 return;
             };
+            log::debug!("app badge: {mark:?}");
             let tile = objc2_app_kit::NSApplication::sharedApplication(main).dockTile();
             let label = mark
                 .label()
