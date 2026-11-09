@@ -7874,7 +7874,7 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Save attachment")
-                        .set_file_name(&name);
+                        .set_file_name(replace_bidi_format(&name));
                     if let Some(downloads) = directories::UserDirs::new()
                         .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
                     {
@@ -12310,6 +12310,13 @@ fn is_bidi_format(c: char) -> bool {
     )
 }
 
+/// The name with each bidi formatting character replaced by `_`.
+fn replace_bidi_format(name: &str) -> String {
+    name.chars()
+        .map(|c| if is_bidi_format(c) { '_' } else { c })
+        .collect()
+}
+
 /// A document's own name in the reader's download folder, made safe for
 /// every platform's file system: no path, no characters Windows refuses, no
 /// device names, no leading dot, at most 120 characters before a validated
@@ -12368,7 +12375,8 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
 /// us. Checking existence before fs::copy could still overwrite a user's file.
 fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
     use std::io::ErrorKind;
-    let name = Path::new(name)
+    let name = replace_bidi_format(name);
+    let name = Path::new(&name)
         .file_name()
         .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
     let path = Path::new(name);
@@ -14943,6 +14951,32 @@ mod tests {
         );
         assert_eq!(std::fs::read(first).unwrap(), b"synthetic picture");
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
+    }
+
+    /// Every bidi formatting character is replaced in a suggested or copied name.
+    #[test]
+    fn bidi_characters_are_replaced_in_every_suggested_name() {
+        let bidi = ('\u{202A}'..='\u{202E}')
+            .chain('\u{2066}'..='\u{2069}')
+            .chain(['\u{061C}', '\u{200E}', '\u{200F}']);
+        for c in bidi {
+            assert!(is_bidi_format(c), "U+{:04X}", c as u32);
+            assert_eq!(replace_bidi_format(&format!("a{c}b.pdf")), "a_b.pdf");
+            let name = format!("invoice{c}fdp.pdf");
+            assert_eq!(
+                named_media_path(Path::new("/d"), "application/pdf", &name),
+                Some(PathBuf::from("/d/invoice_fdp.pdf")),
+                "U+{:04X}",
+                c as u32
+            );
+        }
+        assert_eq!(replace_bidi_format("דוח – تقرير.pdf"), "דוח – تقرير.pdf");
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.pdf");
+        std::fs::write(&source, b"synthetic").unwrap();
+        let saved = save_album_copy(&source, root.path(), "photo\u{202E}gpj.png").unwrap();
+        assert_eq!(saved.file_name().unwrap(), "photo_gpj.png");
     }
 
     /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
