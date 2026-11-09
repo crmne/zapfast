@@ -104,10 +104,7 @@ impl Source {
     /// The camera's own frame rate, as the driver granted it. A camera that would not say is
     /// taken to deliver 30 frames a second.
     pub fn fps(&self) -> u32 {
-        match self.camera.mode().fps {
-            0 => 30,
-            fps => fps,
-        }
+        granted_fps(self.camera.mode().fps)
     }
 
     /// Waits for the next frame and writes it into `out` as YUV 4:2:0 of `size`: the Y plane,
@@ -157,6 +154,15 @@ impl Source {
     pub fn stop(&mut self) {
         self.camera.stop();
     }
+}
+
+/// The rate a call plans for from what the driver reports. Windows cameras through Media
+/// Foundation can report 1 fps while delivering 15 or 30; planning for 1 fps sizes every frame
+/// for a whole second and makes every fifth one a keyframe, which floods the link until the
+/// measured cadence corrects it. Too high a guess only makes frames smaller until then, so a
+/// rate below 5 is taken as unknown.
+fn granted_fps(reported: u32) -> u32 {
+    if reported < 5 { 30 } else { reported }
 }
 
 /// The mode a call asks for: the largest size that fits the budget either
@@ -994,6 +1000,14 @@ mod tests {
         assert_eq!(fit_even((1080, 1920), (1280, 720)), (720, 1280));
         assert_eq!(fit_even((640, 480), (1280, 720)), (640, 480));
         assert_eq!(fit_even((641, 481), (1280, 720)), (640, 480));
+    }
+
+    #[test]
+    fn an_implausibly_low_reported_rate_is_planned_as_thirty() {
+        assert_eq!(granted_fps(0), 30);
+        assert_eq!(granted_fps(1), 30);
+        assert_eq!(granted_fps(5), 5);
+        assert_eq!(granted_fps(15), 15);
     }
 
     #[test]
