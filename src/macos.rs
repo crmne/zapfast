@@ -409,3 +409,51 @@ pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette, on: bool
         }
     });
 }
+
+/// Adds the Dock badge to the notification permission. fastframe-notifications
+/// asks only for alerts and sounds, and since macOS lets an app that uses
+/// notifications draw its Dock badge only with this permission, the badge
+/// stayed hidden and System Settings offered no switch for it. Asked only once
+/// notifications were allowed or refused, so the first prompt still comes
+/// when the first notification does; macOS then adds the badge without a
+/// second prompt. An unbundled run has no notification center, so it skips
+/// this.
+pub fn request_badge_permission() {
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::{NSBundle, NSError};
+    use objc2_user_notifications::{
+        UNAuthorizationOptions, UNAuthorizationStatus, UNNotificationSetting,
+        UNNotificationSettings, UNUserNotificationCenter,
+    };
+    use std::ptr::NonNull;
+
+    if NSBundle::mainBundle().bundleIdentifier().is_none() {
+        return;
+    }
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    center.getNotificationSettingsWithCompletionHandler(&RcBlock::new(
+        move |settings: NonNull<UNNotificationSettings>| {
+            // SAFETY: AppKit hands the handler a live settings object.
+            let settings = unsafe { settings.as_ref() };
+            if settings.authorizationStatus() == UNAuthorizationStatus::NotDetermined
+                || settings.badgeSetting() != UNNotificationSetting::NotSupported
+            {
+                return;
+            }
+            UNUserNotificationCenter::currentNotificationCenter()
+                .requestAuthorizationWithOptions_completionHandler(
+                    UNAuthorizationOptions::Alert
+                        | UNAuthorizationOptions::Sound
+                        | UNAuthorizationOptions::Badge,
+                    &RcBlock::new(|granted: Bool, error: *mut NSError| {
+                        log::debug!(
+                            "badge permission: granted {}, error {}",
+                            granted.as_bool(),
+                            !error.is_null()
+                        );
+                    }),
+                );
+        },
+    ));
+}

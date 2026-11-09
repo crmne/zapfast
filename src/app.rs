@@ -1428,6 +1428,8 @@ impl App {
         app.badge = Some(crate::notify::AppBadge::new(
             fastframe_desktop::desktop_entry("zapfast"),
         ));
+        #[cfg(target_os = "macos")]
+        crate::macos::request_badge_permission();
         app.custom_themes
             .enable_desktop_themes(crate::theme::DESKTOP_THEMES);
         app.load_custom_themes();
