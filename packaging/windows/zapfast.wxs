@@ -10,6 +10,8 @@
   - Takes over a copy installed by the Inno Setup installer: it installs into
     that folder, then removes Inno's uninstaller and its Settings > Apps
     entry. Chats, settings and the login live elsewhere and stay.
+  - Registers the whatsapp: link scheme for the user, as zapfast.desktop
+    declares it on Linux, unless another program already runs those links.
   - Refuses to install or uninstall while ZapFast runs, so it never leaves
     half a program behind.
 
@@ -68,6 +70,15 @@
         <FileSearch Id="DesktopShortcut" Name="ZapFast.lnk" />
       </DirectorySearch>
     </Property>
+    <!-- What a whatsapp: link runs now, for this user and for the whole machine. -->
+    <Property Id="USERWHATSAPPHANDLER">
+      <RegistrySearch Id="UserWhatsAppHandler" Root="HKCU"
+        Key="Software\Classes\whatsapp\shell\open\command" Type="raw" />
+    </Property>
+    <Property Id="MACHINEWHATSAPPHANDLER">
+      <RegistrySearch Id="MachineWhatsAppHandler" Root="HKLM"
+        Key="Software\Classes\whatsapp\shell\open\command" Type="raw" />
+    </Property>
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
@@ -99,6 +110,25 @@
         <File Id="Notices" Name="THIRD-PARTY-NOTICES.md" Source="$(SourceDir)\THIRD-PARTY-NOTICES.md" KeyPath="no" />
         <RegistryValue Root="HKCU" Key="Software\ZapFast"
           Name="Documents" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <!--
+        whatsapp: links start zapfast.exe with the link, which opens that
+        chat or group invite, or hands it to the copy already running.
+        ZapFast's own registration is renewed; another program's, for the
+        user or the machine, is left alone.
+      -->
+      <Component Id="WhatsAppLinks" Guid="{F42D2645-37D0-47BC-B6E7-CB056BA40EF9}"
+        Condition="(NOT USERWHATSAPPHANDLER AND NOT MACHINEWHATSAPPHANDLER) OR USERWHATSAPPHANDLER ~&gt;&lt; &quot;zapfast.exe&quot;">
+        <RegistryValue Root="HKCU" Key="Software\Classes\whatsapp"
+          Type="string" Value="URL:whatsapp" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\whatsapp"
+          Name="URL Protocol" Type="string" Value="" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\whatsapp\DefaultIcon"
+          Type="string" Value="&quot;[#ZapFastExe]&quot;,0" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\whatsapp\shell\open\command"
+          Type="string" Value="&quot;[#ZapFastExe]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKCU" Key="Software\ZapFast"
+          Name="WhatsAppLinks" Type="integer" Value="1" KeyPath="yes" />
       </Component>
       <!--
         Taking over an Inno Setup install: its uninstaller and Settings > Apps

@@ -127,6 +127,17 @@ their users download the `.msi` once (`docs/_guide/download.md` says so).
 `packaging/windows/zapfast.iss` stays only so `test-installer.ps1` can make an
 Inno install for the package to take over.
 
+The package also registers the `whatsapp:` link scheme for the user, under
+`HKCU\Software\Classes`, as `zapfast.desktop` declares it on Linux: a link
+runs `zapfast.exe` with the link. When another program's
+`whatsapp\shell\open\command` is already registered, for the user or the
+whole machine, the package leaves the links to it; ZapFast's own registration
+from an earlier install is renewed. Windows Installer removes these values by
+name on uninstall and when an update replaces the package, so a program that
+registered `whatsapp:` after ZapFast loses its registration then. `wa:`, which
+`zapfast.desktop` also declares, is left out because ZapFast does not read
+`wa:` links.
+
 ## Windows signing
 
 Tag releases sign `zapfast.exe` and the MSI with Azure Artifact Signing, as

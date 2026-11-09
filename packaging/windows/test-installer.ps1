@@ -1,12 +1,14 @@
 # Installs, updates and removes ZapFast's Windows packages on a CI runner,
 # with stand-in program files: the Inno Setup installer, the MSI
-# taking it over (as the updater runs it, and by hand), an MSI update, and
-# uninstalling with ZapFast running and then without.
+# taking it over (as the updater runs it, and by hand), an MSI update,
+# uninstalling with ZapFast running and then without, and the whatsapp: links
+# the MSI registers, or leaves to another program.
 #
 #   pwsh packaging/windows/test-installer.ps1
 #
-# Needs Inno Setup 6, WiX 5 with WixToolset.Util.wixext, and Ruby. Run from
-# the repository root. Changes the current user's ZapFast install.
+# Needs Inno Setup 6, WiX 5 with WixToolset.Util.wixext, Ruby, and an
+# administrator for the machine-wide whatsapp: case. Run from the repository
+# root. Changes the current user's ZapFast install.
 
 $ErrorActionPreference = "Stop"
 $root = Join-Path $env:RUNNER_TEMP "zapfast-installer-test"
@@ -68,6 +70,21 @@ function Program($folder) {
   Get-Content -Raw (Join-Path $folder "zapfast.exe")
 }
 
+$links = "HKCU:\Software\Classes\whatsapp"
+
+# What a whatsapp: link runs, or nothing when no program is registered for it.
+function WhatsAppLink {
+  if (-not (Test-Path $links)) { return $null }
+  if ($null -eq (Get-ItemProperty $links -Name "URL Protocol" -ErrorAction SilentlyContinue)) { return $null }
+  $command = Join-Path $links "shell\open\command"
+  if (-not (Test-Path $command)) { return $null }
+  (Get-Item $command).GetValue("")
+}
+
+function Opens($folder) {
+  "`"$(Join-Path $folder "zapfast.exe")`" `"%1`""
+}
+
 # What Settings > Apps lists for ZapFast: the MSI installs Windows Installer
 # knows by ZapFast's UpgradeCode, and the Inno Setup entry.
 function Entries {
@@ -99,6 +116,7 @@ Check (-not (Test-Path (Join-Path $defaultFolder "fastsapp.exe"))) "the copy kep
 Check ((Entries) -eq 1) "Settings > Apps lists ZapFast once"
 Check (Test-Path $startMenu) "the Start menu shortcut is there"
 Check (Test-Path $desktop) "the desktop shortcut is kept"
+Check ((WhatsAppLink) -eq (Opens $defaultFolder)) "whatsapp: links open ZapFast"
 
 # 3. An MSI update run by hand finds the install on its own.
 $v2 = Msi "0.18.2"
@@ -107,6 +125,7 @@ Check ($code -in 0, 3010) "the next MSI updates in place ($code)"
 Check ((Program $defaultFolder) -eq "zapfast.exe msi-0.18.2-x64") "the program is the new one"
 Check ((Entries) -eq 1) "Settings > Apps still lists ZapFast once"
 Check (Test-Path $desktop) "the desktop shortcut survives the update"
+Check ((WhatsAppLink) -eq (Opens $defaultFolder)) "whatsapp: links still open ZapFast after the update"
 
 # 4. Uninstalling while ZapFast runs is refused, untouched.
 $fake = Join-Path $root "running"
@@ -129,6 +148,8 @@ Check (-not (Test-Path $defaultFolder)) "the program folder is gone"
 Check (-not (Test-Path $startMenu)) "the Start menu shortcut is gone"
 Check (-not (Test-Path $desktop)) "the desktop shortcut is gone"
 Check ((Entries) -eq 0) "Settings > Apps no longer lists ZapFast"
+Check ($null -eq (WhatsAppLink)) "whatsapp: links no longer run the removed program"
+Check (-not (Test-Path $links)) "their registration is gone"
 
 # 6. An Inno install in a folder of its own, taken over by an MSI run by hand.
 $custom = Join-Path $env:LOCALAPPDATA "ZapFast Elsewhere"
@@ -138,10 +159,40 @@ Check ($code -in 0, 3010) "a hand-run MSI takes over the Inno install ($code)"
 Check ((Program $custom) -eq "zapfast.exe msi-0.18.1-x64") "it installs into Inno's folder"
 Check (-not (Test-Path $defaultFolder)) "and not into the default one"
 Check (-not (Test-Path $desktop)) "no desktop shortcut appears that Inno did not make"
+Check ((WhatsAppLink) -eq (Opens $custom)) "whatsapp: links open the copy in that folder"
 $code = Msiexec "/x `"$v1`" /qn /norestart"
 Check ($code -in 0, 3010) "and uninstalls ($code)"
 Check (-not (Test-Path $custom)) "leaving no folder behind"
+Check ($null -eq (WhatsAppLink)) "nor a link to it"
 
-# 7. The Windows on ARM package builds.
+# 7. Another program's whatsapp: links stay its own through an install and
+# an uninstall.
+$other = "`"C:\Other\WhatsApp.exe`" `"%1`""
+New-Item -Force (Join-Path $links "shell\open\command") -Value $other | Out-Null
+New-ItemProperty -Force $links -Name "URL Protocol" -Value "" | Out-Null
+$code = Msiexec "/i `"$v2`" /qn /norestart"
+Check ($code -in 0, 3010) "ZapFast installs beside another program's links ($code)"
+Check ((WhatsAppLink) -eq $other) "whatsapp: links still run the other program"
+$code = Msiexec "/x `"$v2`" /qn /norestart"
+Check ($code -in 0, 3010) "and uninstalls ($code)"
+Check ((WhatsAppLink) -eq $other) "leaving the other program's links in place"
+Remove-Item -Recurse -Force $links
+
+# 8. So do another program's links registered for the whole machine.
+$machineLinks = "HKLM:\Software\Classes\whatsapp"
+New-Item -Force (Join-Path $machineLinks "shell\open\command") -Value $other | Out-Null
+New-ItemProperty -Force $machineLinks -Name "URL Protocol" -Value "" | Out-Null
+try {
+  $code = Msiexec "/i `"$v2`" /qn /norestart"
+  Check ($code -in 0, 3010) "ZapFast installs beside the machine's links ($code)"
+  Check (-not (Test-Path $links)) "without registering its own over them"
+  $code = Msiexec "/x `"$v2`" /qn /norestart"
+  Check ($code -in 0, 3010) "and uninstalls ($code)"
+  Check ((Get-Item (Join-Path $machineLinks "shell\open\command")).GetValue("") -eq $other) "leaving the machine's links in place"
+} finally {
+  Remove-Item -Recurse -Force $machineLinks
+}
+
+# 9. The Windows on ARM package builds.
 Msi "0.18.1" "arm64" | Out-Null
 Check $true "the arm64 MSI builds"
