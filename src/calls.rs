@@ -1163,28 +1163,24 @@ fn capture_frames(
         };
         countdown = if send { plan.every - 1 } else { countdown - 1 };
         // A camera that slows down in the dark, or never ran at the rate it claimed, gets a new
-        // fraction, so the frames sent stay close to the step's rate.
+        // fraction, so the frames sent stay close to the step's rate. The encoder is rebuilt even
+        // when the fraction stays: its keyframe period and rate budget are counted in frames.
         if let Some(measured) = cadence.observe(captured) {
             let next = SendPlan::new(plan.full, measured, plan.setting);
-            if next.every != plan.every {
-                match CameraEncoder::new(&next) {
-                    Ok(fresh) => {
-                        encoder = fresh;
-                        clock.respace(next.sent_fps());
-                        plan = next;
-                        countdown = 0;
-                        log::info!(
-                            "[CALL] camera runs at {measured:.1} fps, sending {}",
-                            plan.describe()
-                        );
-                    }
-                    Err(error) => {
-                        log::warn!("[CALL] the camera encoder could not restart: {error}")
-                    }
+            match CameraEncoder::new(&next) {
+                Ok(fresh) => {
+                    encoder = fresh;
+                    clock.respace(next.sent_fps());
+                    plan = next;
+                    countdown = 0;
+                    log::info!(
+                        "[CALL] camera runs at {measured:.1} fps, sending {}",
+                        plan.describe()
+                    );
                 }
-            } else {
-                plan.camera_fps = measured;
-                clock.respace(plan.sent_fps());
+                Err(error) => {
+                    log::warn!("[CALL] the camera encoder could not restart: {error}")
+                }
             }
         }
         if !send {

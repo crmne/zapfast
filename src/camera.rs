@@ -101,8 +101,8 @@ impl Source {
         self.size
     }
 
-    /// The camera's own frame rate, as the driver granted it. A camera that would not say is
-    /// taken to deliver 30 frames a second.
+    /// The rate a call plans for, from what the driver granted: a camera that reports under 5
+    /// frames a second, or would not say, is taken to deliver 30 (see `granted_fps`).
     pub fn fps(&self) -> u32 {
         granted_fps(self.camera.mode().fps)
     }
@@ -1006,6 +1006,7 @@ mod tests {
     fn an_implausibly_low_reported_rate_is_planned_as_thirty() {
         assert_eq!(granted_fps(0), 30);
         assert_eq!(granted_fps(1), 30);
+        assert_eq!(granted_fps(4), 30);
         assert_eq!(granted_fps(5), 5);
         assert_eq!(granted_fps(15), 15);
     }
