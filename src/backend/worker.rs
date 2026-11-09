@@ -6242,19 +6242,24 @@ impl Worker {
         self.emit_chats();
     }
 
+    /// Ends a transaction a failed rollback left open before anything else
+    /// writes. No transaction outlives a turn of the loop or a command, and
+    /// every write made in this one would join it and be lost. The window
+    /// may have been sent chats read inside it, so it gets the list again.
+    fn end_leftover_transaction(&mut self) {
+        if !self.archive.in_transaction() {
+            return;
+        }
+        match self.archive.roll_back_leftover() {
+            Ok(()) => self.emit_chats(),
+            Err(error) => log::warn!("could not roll back a transaction left open: {error}"),
+        }
+    }
+
     /// Archives a history chunk in one transaction. `metadata` controls
     /// chat-state updates. Returns each chat's message count and whether the
     /// phone has more, or nothing for a chunk that could not be saved, so it
     /// completes no request.
-    /// Ends a transaction a failed rollback left open before anything else
-    /// writes. No transaction outlives a turn of the loop or a command, and
-    /// every write made in this one would join it and be lost.
-    fn end_leftover_transaction(&self) {
-        if let Err(error) = self.archive.roll_back_leftover() {
-            log::warn!("could not roll back a transaction left open: {error}");
-        }
-    }
-
     fn apply_history(
         &mut self,
         parsed: ParsedHistory,
@@ -22627,6 +22632,7 @@ mod receipt_tests {
             Event::Error(text) if text.starts_with("Could not save part of the chat history")
         )));
         crate::archive::tests::set_rollback_failure(&worker.archive, false);
+        while events.try_recv().is_ok() {}
         worker
             .handle_command(Command::SaveDraft {
                 chat: group.into(),
@@ -22636,6 +22642,13 @@ mod receipt_tests {
         assert!(
             !worker.archive.in_transaction(),
             "a command ends the transaction before it writes"
+        );
+        assert!(
+            events.try_iter().any(|event| matches!(
+                event,
+                Event::Chats(chats) if chats.iter().all(|chat| chat.id != group)
+            )),
+            "the window loses the group it was shown from the open transaction"
         );
         assert_eq!(
             worker.archive.drafts().unwrap(),
