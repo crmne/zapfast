@@ -989,8 +989,12 @@ show the unread count as a badge on the app icon: KDE Plasma's taskbar, with
 or Dash to Panel. Windows overlays a compact unread-message count on ZapFast's
 taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
-does not count toasts remaining in Windows notification history. On macOS, the
-Dock icon shows the number of unread chats in a red badge. The icon and
+does not count toasts remaining in Windows notification history. The app icon
+counts what was said to you: every unread message in a direct chat and every
+unread mention in a group, including muted ones. On macOS, a red badge on the
+Dock icon shows that number, or an empty red dot when only groups or channels
+that did not mention you are unread. The badge drops as you read each chat,
+not when you open ZapFast. The icon and
 badge stay with the app when its window is closed and reopened. A macOS
 source build run through Cargo uses ZapFast's icon too. Starting hidden
 lets you open the first window from the menu-bar menu. On Linux and
