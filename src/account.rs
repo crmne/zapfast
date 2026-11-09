@@ -309,7 +309,11 @@ impl Account {
         matches!(
             self.link,
             LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
-        ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
+        ) || (!self.chats.is_empty()
+            && !matches!(
+                self.link,
+                LinkStatus::LoggedOut | LinkStatus::Passkey { .. }
+            ))
     }
 
     /// The taskbar count: unarchived, unmuted, unlocked chats that look

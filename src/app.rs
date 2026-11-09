@@ -2775,7 +2775,11 @@ impl App {
         matches!(
             self.link,
             LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
-        ) || (!self.chats.is_empty() && !matches!(self.link, LinkStatus::LoggedOut))
+        ) || (!self.chats.is_empty()
+            && !matches!(
+                self.link,
+                LinkStatus::LoggedOut | LinkStatus::Passkey { .. }
+            ))
     }
 
     pub fn chat(&self, id: &str) -> Option<&Chat> {
@@ -9955,6 +9959,9 @@ impl App {
                     self.backend.send(Command::PairWithPhone(digits));
                 }
             }
+            Action::StartPasskey(attempt) => self.backend.send(Command::StartPasskey(attempt)),
+            Action::ConfirmPasskey(attempt) => self.backend.send(Command::ConfirmPasskey(attempt)),
+            Action::CancelPasskey(attempt) => self.backend.send(Command::CancelPasskey(attempt)),
             Action::Unlink => {
                 self.dialog = None;
                 self.backend.send(Command::Unlink);

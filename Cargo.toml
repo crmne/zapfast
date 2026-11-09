@@ -76,8 +76,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # 0.21.1 (#1847). Back to crates.io once released. `voip` is the call stack:
 # signaling, the sans-IO media engine with MLOW and libopus codecs, and the
 # native UDP relay transport.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "e634d245f71d66e2ae55f79ef714c4ca01615ed8", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "e634d245f71d66e2ae55f79ef714c4ca01615ed8", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip", "passkey"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util", "process"] }
+# Isolates authenticator tracing from the application's logs in the helper.
+tracing = "0.1"
 # Queue between the call's audio streams and the engine.
 async-channel = "2.5"
 # Opens the WhatsApp WebSocket through a proxy. Both crates are already
@@ -262,6 +264,8 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "1cc61c8a8
 winit = { git = "https://github.com/crmne/winit", rev = "59ebfb727b8c83fcd28f8ca59c3733e32b4b4e9b" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Statically links caBLE's D-Bus client; ordinary chat does not require BlueZ.
+dbus = { version = "0.9.7", features = ["vendored"] }
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Pauses MPRIS media players while recording or playing voice messages.
 # Already in the tree through fastframe-notifications and fastframe-tray.
@@ -281,6 +285,10 @@ raw-window-handle = "0.6"
 # winit, the fork in [patch.crates-io].
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+# Phone passkeys over standard QR/Bluetooth hybrid transport, without CLI prompts.
+webauthn-authenticator-rs = { version = "=0.6.2", default-features = false, features = ["cable"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menu bar, built with tray-icon's muda at the version
@@ -298,6 +306,8 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-avf
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
+# Windows owns the hybrid QR dialog and Bluetooth transport.
+webauthn-authenticator-rs = { version = "=0.6.2", default-features = false, features = ["win10"] }
 # Locale calls, and the taskbar's light or dark style.
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.

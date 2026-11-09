@@ -57,6 +57,7 @@ mod link_preview;
 mod link_preview_setting;
 mod link_watch;
 mod new_group;
+mod passkey_link;
 mod poll_history;
 mod polls;
 mod prefetch;
@@ -1008,6 +1009,7 @@ pub async fn run(
         pairing_phone: None,
         pair_code: None,
         qr: None,
+        passkey: passkey_link::State::default(),
         syncing: false,
         sync_deadline: None,
         group_info_requested: HashSet::new(),
@@ -1166,6 +1168,18 @@ pub async fn run(
                 RuntimeEvent::WhatsApp { session, event } => {
                     worker.whatsapp_event(session, event).await;
                 }
+                RuntimeEvent::Link { connection, event } => {
+                    worker.link_event(connection, event).await;
+                }
+                RuntimeEvent::PasskeyProgress { attempt, progress } => {
+                    worker.passkey_progress(attempt, progress);
+                }
+                RuntimeEvent::PasskeyAssertion { attempt, result } => {
+                    worker.passkey_assertion(attempt, result);
+                }
+                RuntimeEvent::PasskeySent { attempt, success } => {
+                    worker.passkey_sent(attempt, success);
+                }
                 RuntimeEvent::MessageRemoval { generation, event } => {
                     worker.handle_session_deletion(generation, event).await;
                 }
@@ -1212,6 +1226,7 @@ pub async fn run(
             }
             _ = tick.tick() => {
                 worker.watch_link();
+                worker.expire_passkey();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
                 worker.refresh_legacy_preferences();
@@ -1243,6 +1258,22 @@ enum RuntimeEvent {
         session: u64,
         event: Arc<wa_events::Event>,
     },
+    Link {
+        connection: u64,
+        event: Arc<wa_events::Event>,
+    },
+    PasskeyProgress {
+        attempt: u64,
+        progress: super::passkey::Progress,
+    },
+    PasskeyAssertion {
+        attempt: u64,
+        result: Result<whatsapp_rust::passkey::Assertion, whatsapp_rust::passkey::PasskeyError>,
+    },
+    PasskeySent {
+        attempt: u64,
+        success: bool,
+    },
     MessageRemoval {
         generation: u64,
         event: Arc<wa_events::Event>,
@@ -1258,9 +1289,15 @@ enum RuntimeEvent {
         complete: bool,
     },
     /// The one-time read of the phone's favorite chats finished.
-    FavoriteChatsRead { generation: u64, complete: bool },
+    FavoriteChatsRead {
+        generation: u64,
+        complete: bool,
+    },
     /// The one-time read of the phone's link preview setting finished.
-    LinkPreviewsRead { generation: u64, complete: bool },
+    LinkPreviewsRead {
+        generation: u64,
+        complete: bool,
+    },
 }
 
 /// Renames an archive whose key is gone, with its SQLite side files, and
@@ -1349,6 +1386,7 @@ struct UiEvents {
     /// The account session this connection belongs to: its events reach the
     /// worker only while that session is still the worker's.
     session: u64,
+    link_connection: u64,
 }
 
 impl wa_events::EventHandler for UiEvents {
@@ -1359,6 +1397,28 @@ impl wa_events::EventHandler for UiEvents {
         ) {
             RuntimeEvent::MessageRemoval {
                 generation: self.generation,
+                event,
+            }
+        } else if matches!(
+            event.as_ref(),
+            wa_events::Event::PairPasskeyRequest(_)
+                | wa_events::Event::PairPasskeyConfirmation(_)
+                | wa_events::Event::PairPasskeyError(_)
+                | wa_events::Event::PairingQrCode(_)
+                | wa_events::Event::PairingCode(_)
+                | wa_events::Event::PairingCodeError(_)
+                | wa_events::Event::PairingQrCodesExhausted(_)
+                | wa_events::Event::PairSuccess(_)
+                | wa_events::Event::Connected(_)
+                | wa_events::Event::Disconnected(_)
+                | wa_events::Event::LoggedOut(_)
+                | wa_events::Event::ConnectFailure(_)
+                | wa_events::Event::StreamReplaced(_)
+                | wa_events::Event::TemporaryBan(_)
+                | wa_events::Event::ClientOutdated(_)
+        ) {
+            RuntimeEvent::Link {
+                connection: self.link_connection,
                 event,
             }
         } else {
@@ -1516,6 +1576,7 @@ struct Worker {
     pairing_phone: Option<String>,
     pair_code: Option<String>,
     qr: Option<String>,
+    passkey: passkey_link::State,
     syncing: bool,
     sync_deadline: Option<Instant>,
     /// Groups queued or already requested. Queries are rate-limited.
@@ -3153,6 +3214,7 @@ impl Worker {
                 sender,
                 generation: self.privacy_generation,
                 session: self.account_session,
+                link_connection: self.passkey.connection,
             })
             .build()
             .await;
@@ -3432,6 +3494,7 @@ impl Worker {
     }
 
     async fn stop_bot(&mut self) {
+        self.passkey.reset();
         self.blocklist.invalidate();
         self.client = None;
         // A batch still going belongs to the session that was sending it, and
@@ -4047,18 +4110,40 @@ impl Worker {
                     }),
                 );
             }
+            E::PairPasskeyRequest(request) => {
+                self.passkey_requested(&request.request_options_json);
+            }
+            E::PairPasskeyConfirmation(confirmation) => {
+                self.passkey_confirmation(confirmation);
+            }
+            E::PairPasskeyError(error) => {
+                log::warn!(
+                    "passkey protocol failed (continuation: {})",
+                    error.continuation
+                );
+                self.passkey_failed();
+            }
             E::PairingQrCode(qr) => {
+                if self.passkey.active() {
+                    return;
+                }
                 // The prefix lets the phone camera open WhatsApp at Linked devices.
                 self.qr = Some(format!("{NATIVE_CAMERA_DEEP_LINK_PREFIX}{}", qr.code));
                 let status = self.unlinked();
                 self.set_status(status);
             }
             E::PairingCode(code) => {
+                if self.passkey.active() {
+                    return;
+                }
                 self.pair_code = Some(code.code.clone());
                 let status = self.unlinked();
                 self.set_status(status);
             }
             E::PairingCodeError(error) => {
+                if self.passkey.active() {
+                    return;
+                }
                 self.pair_code = None;
                 self.pairing_phone = None;
                 self.emit(Event::Error(format!(
@@ -4076,6 +4161,13 @@ impl Worker {
                 }
             }
             E::PairingQrCodesExhausted(exhausted) => {
+                if self.passkey.active() {
+                    if exhausted.disconnected {
+                        log::warn!("passkey interrupted: WhatsApp QR references exhausted");
+                        self.passkey_failed();
+                    }
+                    return;
+                }
                 self.qr = None;
                 let status = self.unlinked();
                 self.set_status(status);
@@ -4090,6 +4182,7 @@ impl Worker {
                 }
             }
             E::PairSuccess(pair) => {
+                self.passkey.finish();
                 self.qr = None;
                 self.pair_code = None;
                 self.pairing_phone = None;
@@ -4097,6 +4190,7 @@ impl Worker {
                 self.set_status(LinkStatus::Connecting);
             }
             E::Connected(_) => {
+                self.passkey.finish();
                 let (pn, lid, name) = match &self.client {
                     Some(client) => (client.pn(), client.lid(), Some(client.push_name())),
                     None => (None, None, None),
@@ -4194,6 +4288,11 @@ impl Worker {
                 }
             }
             E::Disconnected(disconnected) => {
+                if self.passkey.active() {
+                    log::warn!("passkey interrupted: WhatsApp connection closed");
+                    self.passkey_failed();
+                    return;
+                }
                 if matches!(self.status, LinkStatus::Connected | LinkStatus::Connecting) {
                     self.set_status(LinkStatus::Disconnected {
                         reason: disconnected.reason.to_string(),
@@ -4652,6 +4751,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.passkey.reset();
         self.stop_chat_export().await;
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
@@ -8801,7 +8901,18 @@ impl Worker {
                     .map_err(|error| error.to_string())
                 });
             }
+            Command::StartPasskey(attempt) => self.start_passkey(attempt).await,
+            Command::ConfirmPasskey(attempt) => self.confirm_passkey(attempt),
+            Command::CancelPasskey(attempt) => {
+                if self.passkey.is_current(attempt) {
+                    self.stop_bot().await;
+                    self.start_bot().await;
+                }
+            }
             Command::PairWithPhone(phone) => {
+                if self.passkey.active() {
+                    return;
+                }
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::Error("Not connected to WhatsApp yet".to_owned()));
                     return;
@@ -8811,6 +8922,7 @@ impl Worker {
                 let status = self.unlinked();
                 self.set_status(status);
                 let commands = self.commands.clone();
+                let connection = self.passkey.connection;
                 tokio::spawn(async move {
                     let result = client
                         .pair_with_code(PairCodeOptions {
@@ -8819,24 +8931,32 @@ impl Worker {
                         })
                         .await
                         .map_err(|error| error.to_string());
-                    let _ = commands.send(Command::PairCode { result });
+                    let _ = commands.send(Command::PairCode { connection, result });
                 });
             }
-            Command::PairCode { result } => match result {
-                Ok(code) => {
-                    self.pair_code = Some(code);
-                    let status = self.unlinked();
-                    self.set_status(status);
+            Command::PairCode { connection, result } => {
+                if connection != self.passkey.connection
+                    || self.passkey.active()
+                    || self.pairing_phone.is_none()
+                {
+                    return;
                 }
-                Err(error) => {
-                    self.pairing_phone = None;
-                    self.emit(Event::Error(format!(
-                        "Could not link by phone number: {error}"
-                    )));
-                    let status = self.unlinked();
-                    self.set_status(status);
+                match result {
+                    Ok(code) => {
+                        self.pair_code = Some(code);
+                        let status = self.unlinked();
+                        self.set_status(status);
+                    }
+                    Err(error) => {
+                        self.pairing_phone = None;
+                        self.emit(Event::Error(format!(
+                            "Could not link by phone number: {error}"
+                        )));
+                        let status = self.unlinked();
+                        self.set_status(status);
+                    }
                 }
-            },
+            }
             Command::Unlink => {
                 if let Some(client) = self.client.clone() {
                     // The logged-out event clears this side either way; a
@@ -8865,6 +8985,11 @@ impl Worker {
                 self.emit(Event::AccountRemoved);
             }
             Command::Reconnect => {
+                if self.passkey.active() {
+                    self.stop_bot().await;
+                    self.start_bot().await;
+                    return;
+                }
                 if let Some(client) = self.client.clone() {
                     tokio::spawn(async move { client.reconnect_immediately().await });
                 } else {
@@ -20071,6 +20196,7 @@ mod receipt_tests {
             pairing_phone: None,
             pair_code: None,
             qr: None,
+            passkey: passkey_link::State::default(),
             syncing: false,
             sync_deadline: None,
             group_info_requested: HashSet::new(),
@@ -25527,6 +25653,7 @@ mod chat_removal_tests {
             sender: sender.clone(),
             generation: 0,
             session: worker.account_session,
+            link_connection: worker.passkey.connection,
         };
         worker.privacy_generation = 1;
         worker.archive.clear().unwrap();
@@ -25559,6 +25686,7 @@ mod chat_removal_tests {
             sender,
             generation: 1,
             session: worker.account_session,
+            link_connection: worker.passkey.connection,
         };
         wa_events::EventHandler::handle_event(&current, deletion("m200"));
         let RuntimeEvent::MessageRemoval { generation, event } = inbox.try_recv().unwrap() else {

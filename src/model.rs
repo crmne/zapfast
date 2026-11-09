@@ -3391,6 +3391,12 @@ pub enum Action {
     ResetZoom,
     /// Requests a pairing code for a phone number.
     PairWithPhone(String),
+    /// Starts a phone passkey flow for the challenged attempt.
+    StartPasskey(u64),
+    /// Confirms that the phone displays the same verification code.
+    ConfirmPasskey(u64),
+    /// Cancels only the matching passkey attempt.
+    CancelPasskey(u64),
     /// Unlinks the device remotely and locally.
     Unlink,
     /// Hides everything behind the app lock, when a password is set.

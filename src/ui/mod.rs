@@ -609,6 +609,13 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             true,
             None,
         ),
+        LinkStatus::Passkey { .. } => (
+            Icon::Smartphone,
+            crate::i18n::gettext(app.locale, "Passkey authentication required").into_owned(),
+            palette.warning,
+            false,
+            None,
+        ),
         LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
             crate::i18n::gettext(app.locale, "Not linked to a phone").into_owned(),

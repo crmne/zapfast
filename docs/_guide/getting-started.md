@@ -68,6 +68,13 @@ ZapFast links as a companion device, like WhatsApp Web. Start it and either:
 - click **Link with phone number** and enter the eight-character code on your
   phone.
 
+Development builds also show a passkey step when WhatsApp requires it.
+Select **Start** and scan that separate QR code with your phone's camera.
+Keep Bluetooth enabled on both devices and approve your WhatsApp passkey on
+the phone. Compare the verification codes when asked. See
+[passkey verification](/how-it-links/#passkey-verification) for requirements
+and the experimental transport's limitations.
+
 The link survives restarts. Your phone does not need to stay on the same
 network or be online to read messages already stored in ZapFast.
 
