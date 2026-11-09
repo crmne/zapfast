@@ -152,6 +152,9 @@ name or description, in the interface language or in English.
   because some Intel graphics drivers draw a frameless window with a black
   band at the top, with clicks landing below where they are drawn. macOS
   always keeps its own traffic lights.
+- **Tray icon** (Linux): automatic follows the desktop when it exposes a
+  panel colour. Custom panel themes can choose a black icon for a light panel,
+  a white icon for a dark panel, or ZapFast's original coloured icon instead.
 
 **Chats**
 
