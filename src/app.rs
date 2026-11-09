@@ -2414,10 +2414,47 @@ impl App {
     /// desktop's colour scheme.
     #[cfg(target_os = "linux")]
     fn panel_is_dark(&self) -> Option<bool> {
-        if fastframe_desktop::is_gnome() {
+        let desktops = [
+            std::env::var("XDG_CURRENT_DESKTOP").ok(),
+            std::env::var("XDG_SESSION_DESKTOP").ok(),
+            std::env::var("DESKTOP_SESSION").ok(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(":");
+        let desktops = (!desktops.is_empty()).then_some(desktops.as_str());
+        let appearance = self
+            .system_appearance
+            .as_ref()
+            .and_then(|appearance| appearance.dark());
+        Self::linux_panel_dark(desktops, appearance)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_panel_dark(desktops: Option<&str>, appearance: Option<bool>) -> Option<bool> {
+        if Self::names_gnome(desktops) || Self::names_mate(desktops) {
             return Some(true);
         }
-        self.system_appearance.as_ref()?.dark()
+        appearance
+    }
+
+    #[cfg(target_os = "linux")]
+    fn names_gnome(desktops: Option<&str>) -> bool {
+        desktops.is_some_and(|desktops| {
+            desktops
+                .split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("GNOME"))
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn names_mate(desktops: Option<&str>) -> bool {
+        desktops.is_some_and(|desktops| {
+            desktops
+                .split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("MATE"))
+        })
     }
 
     /// Whether the taskbar is dark, which Windows sets apart from the apps'
@@ -15720,6 +15757,17 @@ mod tests {
         assert_eq!(super::tray_colour(Some(true)), IconColour::White);
         assert_eq!(super::tray_colour(Some(false)), IconColour::Black);
         assert_eq!(super::tray_colour(None), IconColour::Original);
+    }
+
+    #[test]
+    fn mate_and_gnome_panels_are_treated_as_dark() {
+        assert_eq!(App::linux_panel_dark(Some("MATE"), Some(false)), Some(true));
+        assert_eq!(App::linux_panel_dark(Some("ubuntu:MATE"), None), Some(true));
+        assert_eq!(App::linux_panel_dark(Some("KDE"), Some(false)), Some(false));
+        assert_eq!(
+            App::linux_panel_dark(Some("GNOME"), Some(false)),
+            Some(true)
+        );
     }
 
     #[test]
