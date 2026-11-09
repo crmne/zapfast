@@ -850,6 +850,7 @@ impl Archive {
             "UPDATE chats SET read_through = MAX(COALESCE(read_through, 0), ?2),
              unread = MIN(unread, (SELECT COUNT(*) FROM messages
                  WHERE chat = ?1 AND from_me = 0 AND id NOT LIKE 'zapfast-timer-%'
+                 AND id NOT LIKE 'zapfast-call-%'
                  AND timestamp > MAX(COALESCE(read_through, 0), ?2))) WHERE id = ?1",
             params![id, timestamp],
         )?;
@@ -866,6 +867,7 @@ impl Archive {
              unread = MIN(unread, (SELECT COUNT(*) FROM messages m
                  JOIN messages boundary ON boundary.chat = m.chat AND boundary.id = ?2
                  WHERE m.chat = ?1 AND m.from_me = 0 AND m.id NOT LIKE 'zapfast-timer-%'
+                 AND m.id NOT LIKE 'zapfast-call-%'
                  AND (m.timestamp > boundary.timestamp
                       OR (m.timestamp = boundary.timestamp AND
                           (COALESCE(m.history_order, 9223372036854775807), m.rowid) >
@@ -4094,6 +4096,39 @@ pub(crate) mod tests {
         archive.bump_unread(chat).expect("bump");
         archive.mark_read_through(chat, 100).expect("read through");
         assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+    }
+
+    /// A call entry is never unread: a read on another device that covers an
+    /// older mention leaves only the newer message, and the mention is gone.
+    #[test]
+    fn a_call_entry_does_not_keep_a_read_mention_unread() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1-2@g.us";
+        archive.ensure_chat(chat, "Club").expect("chat");
+        let me = "15550001111@s.whatsapp.net";
+        let mut tagged = message(chat, "tagged", 100, false);
+        tagged.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: me.into(),
+        }];
+        archive.insert_message(&tagged, None).expect("insert");
+        archive
+            .insert_message(&message(chat, "later", 200, false), None)
+            .expect("insert");
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 300, false), None)
+            .expect("insert");
+        let unread = |archive: &Archive| archive.chat(chat).expect("chat").expect("exists").unread;
+
+        archive.bump_unread(chat).expect("bump");
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_to(chat, "tagged").expect("read");
+        assert_eq!(unread(&archive), 1);
+        assert_eq!(archive.unread_mentions(chat, 1, &[me]).unwrap(), (None, 0));
+
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_through(chat, 100).expect("read through");
+        assert_eq!(unread(&archive), 1);
     }
 
     /// An archive from before group editing learns who may edit a group's
