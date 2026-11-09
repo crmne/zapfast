@@ -24826,6 +24826,12 @@ mod tests {
 
         app.account_mut().settings.notifications = false;
         assert_eq!(app.badge_mark_everywhere(), BadgeMark::default());
+
+        // Reading the tagged group takes its mentions off the badge.
+        app.account_mut().settings.notifications = true;
+        app.mark_read("4-1@g.us");
+        assert_eq!(app.chat("4-1@g.us").unwrap().unread_mentions, 0);
+        assert_eq!(app.badge_mark_everywhere().count, 5);
     }
 
     #[test]

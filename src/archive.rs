@@ -2471,7 +2471,7 @@ impl Archive {
         }
         let mut statement = self.connection.prepare(
             "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
-             AND id NOT LIKE 'zapfast-timer-%'
+             AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC,
                       rowid DESC
              LIMIT ?2",
@@ -5849,6 +5849,19 @@ pub(crate) mod tests {
             "the oldest unread one, not one already read"
         );
         assert_eq!(archive.unread_mention(chat, 4, &[]).unwrap(), None);
+        assert_eq!(
+            archive.unread_mentions(chat, 4, &ours).unwrap(),
+            (Some("first".to_owned()), 2),
+            "the badge counts each unread mention"
+        );
+        // A call entry is never unread, so it takes no place in the window.
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 700, false), None)
+            .expect("insert");
+        assert_eq!(
+            archive.unread_mentions(chat, 2, &ours).unwrap(),
+            (Some("lid".to_owned()), 1)
+        );
     }
 
     #[test]
