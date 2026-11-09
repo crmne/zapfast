@@ -327,6 +327,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         labels: Vec::new(),
         ephemeral_expiration: row.get::<_, Option<u32>>(16)?,
         unread_mention: None,
+        unread_mentions: 0,
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
@@ -2454,8 +2455,19 @@ impl Archive {
     /// The oldest of a chat's `unread` newest incoming messages that mentions
     /// us (under any id in `ours`) or everyone.
     pub fn unread_mention(&self, chat: &str, unread: u32, ours: &[&str]) -> Result<Option<String>> {
+        Ok(self.unread_mentions(chat, unread, ours)?.0)
+    }
+
+    /// The oldest of a chat's `unread` newest incoming messages that mentions
+    /// us (under any id in `ours`) or everyone, and how many of them do.
+    pub fn unread_mentions(
+        &self,
+        chat: &str,
+        unread: u32,
+        ours: &[&str],
+    ) -> Result<(Option<String>, u32)> {
         if unread == 0 {
-            return Ok(None);
+            return Ok((None, 0));
         }
         let mut statement = self.connection.prepare(
             "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
@@ -2468,6 +2480,7 @@ impl Archive {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         let mut oldest = None;
+        let mut count = 0u32;
         for row in rows {
             let (id, mentions) = row?;
             let mentions: Vec<crate::model::MentionRef> =
@@ -2477,9 +2490,10 @@ impl Archive {
                 .any(|mention| crate::mentions::names_us(mention, ours))
             {
                 oldest = Some(id);
+                count = count.saturating_add(1);
             }
         }
-        Ok(oldest)
+        Ok((oldest, count))
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {

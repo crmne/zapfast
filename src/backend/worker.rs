@@ -2335,9 +2335,9 @@ impl Worker {
                 .into_iter()
                 .flatten()
                 .collect();
-            chat.unread_mention = self
+            (chat.unread_mention, chat.unread_mentions) = self
                 .archive
-                .unread_mention(&chat.id, chat.unread, &ours)
+                .unread_mentions(&chat.id, chat.unread, &ours)
                 .unwrap_or_default();
         }
     }
