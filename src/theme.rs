@@ -353,6 +353,17 @@ impl Palette {
         self.focus.unwrap_or(self.accent)
     }
 
+    /// The ring around a focused control filled with `fill`. On an accent
+    /// fill, such as a primary button, any focus colour could vanish into
+    /// it, so the ring takes the colour drawn on the accent instead.
+    pub fn focus_ring(&self, fill: Color32) -> Color32 {
+        if fill == self.accent {
+            self.on_accent
+        } else {
+            self.focus()
+        }
+    }
+
     pub fn on_bubble(&self, own: bool) -> Self {
         let fill = if own { self.bubble_out } else { self.bubble_in };
         // Buttons and icons inside a bubble tint it with the accent, which in
@@ -2012,6 +2023,9 @@ mod tests {
         assert!(stored.get("focus").is_none());
         let cached: Palette = serde_json::from_value(stored).unwrap();
         assert_eq!(cached.focus(), Palette::dark().accent);
+        // A primary button keeps a ring that contrasts with its accent fill.
+        assert_eq!(own.focus_ring(own.accent), own.on_accent);
+        assert_eq!(own.focus_ring(Color32::TRANSPARENT), own.focus());
         let round_trip: Palette =
             serde_json::from_value(serde_json::to_value(own).unwrap()).unwrap();
         assert_eq!(round_trip.focus(), own.focus());
