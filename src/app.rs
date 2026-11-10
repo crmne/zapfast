@@ -1991,7 +1991,10 @@ impl App {
         self.nav_history.clear();
         // The remembered chat is on screen again: what arrived while another
         // account was shown is read now, as when the window regains focus.
-        if self.chat_view()
+        // The Calls tab shows it only when picked from the history: a narrow
+        // window shows the history otherwise, so a chat merely remembered
+        // there is not being read.
+        if (self.page == Page::Chats || self.call_picked())
             && self.window_focused
             && !self.window_hidden
             && let Some(open) = self.open_chat.clone()
@@ -13255,7 +13258,7 @@ mod tests {
     #[test]
     fn switching_back_reads_the_chat_left_open() {
         let directory = tempfile::tempdir().unwrap();
-        let (mut app, _commands) = two_accounts(directory.path());
+        let (mut app, mut commands) = two_accounts(directory.path());
         let ctx = egui::Context::default();
         app.window_focused = true;
         let chat = "15550003333@s.whatsapp.net";
@@ -13266,6 +13269,21 @@ mod tests {
         app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
         assert_eq!(app.open_chat.as_deref(), Some(chat));
         assert_eq!(app.chat(chat).unwrap().unread, 0);
+
+        // On the Calls tab with no call picked, the chat is only remembered.
+        app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        app.apply(Action::Open(Page::Calls), &ctx);
+        app.accounts[0].chats[0].unread = 1;
+        while commands.try_recv().is_ok() {}
+        app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
+        assert_eq!(app.page, Page::Calls);
+        assert_eq!(app.open_chat.as_deref(), Some(chat));
+        assert_eq!(app.chat(chat).unwrap().unread, 1);
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::MarkRead { .. })),
+            "no receipt for a chat nobody sees"
+        );
     }
 
     /// The Calls tab stays open across a switch of account and shows that
