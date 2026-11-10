@@ -103,7 +103,8 @@ sending until authorized again. Deleting the recipient chat discards its
 private-reply recovery, including refusals arriving after deletion.
 
 Double-click beside a message, or on its edge, to reply to it. A double-click
-on its text still selects the word.
+on its text still selects the word. On a touchpad, swipe a message to the right
+with two fingers and let go once the reply arrow fills in.
 
 Deleting a message asks which copies to remove. **Delete for everyone**
 revokes it through WhatsApp. In **0.19.0**, **Delete for me** removes only this
