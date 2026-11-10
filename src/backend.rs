@@ -140,6 +140,34 @@ pub struct SendTurn {
     pub gate: crate::model::UploadGate,
 }
 
+/// A failed attachment download: the text the reader and the log see, and
+/// the codes behind it, kept apart because the library's text is a
+/// diagnostic whose wording changes between versions.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DownloadError {
+    pub text: String,
+    /// The HTTP status the CDN refused the download with.
+    pub http_status: Option<u16>,
+    /// The code of the server's refusal of a request the download needed,
+    /// such as 429 (`rate-overlimit`) when it asked for a media connection.
+    pub iq_code: Option<u16>,
+}
+
+impl From<String> for DownloadError {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<&str> for DownloadError {
+    fn from(text: &str) -> Self {
+        text.to_owned().into()
+    }
+}
+
 #[derive(Debug)]
 pub enum Command {
     FetchBlocklist,
@@ -581,7 +609,7 @@ pub enum Command {
     /// Internal: a favorite from the phone finished downloading.
     FavoriteFetched {
         hash: String,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, DownloadError>,
     },
     /// Takes a sticker out of Recent here and on the phone.
     RemoveRecentSticker {
@@ -1002,7 +1030,7 @@ pub enum Command {
         card: Option<usize>,
         chat: ChatId,
         id: String,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, DownloadError>,
     },
     /// Internal motion-clip download result.
     MotionDownloaded {
@@ -1013,7 +1041,7 @@ pub enum Command {
     /// Internal recent-sticker download result.
     StickerFetched {
         hash: String,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, DownloadError>,
     },
     /// Internal profile-picture result.
     AvatarFetched {
