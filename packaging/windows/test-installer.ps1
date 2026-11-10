@@ -20,6 +20,37 @@ $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "ZapFast.lnk"
 $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "ZapFast.lnk"
 $defaultFolder = Join-Path $env:LOCALAPPDATA "Programs\ZapFast"
 
+# A whatsapp: registration this machine already has, for the user or for all
+# users, is set aside while the test runs and put back when it ends, passing
+# or failing (not when it is interrupted).
+$registrations = "HKCU\Software\Classes\whatsapp", "HKLM\Software\Classes\whatsapp"
+$cleared = [System.Collections.Generic.List[string]]::new()
+function Saved($key) {
+  Join-Path $root "$($key.Split('\')[0])-whatsapp.reg"
+}
+# Removes what the test registered in a cleared place, and puts back what was
+# there before.
+function Restore {
+  foreach ($key in $cleared) {
+    reg delete $key /f 2>$null | Out-Null
+    if (Test-Path (Saved $key)) {
+      reg import (Saved $key) 2>$null | Out-Null
+      if ($LASTEXITCODE -ne 0) { Write-Warning "could not put back $key from $(Saved $key)" }
+    }
+  }
+}
+trap { Restore; break }
+foreach ($key in $registrations) {
+  reg query $key 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    reg export $key (Saved $key) /y | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not save $key" }
+    reg delete $key /f | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not set aside $key" }
+  }
+  $cleared.Add($key)
+}
+
 function Check($condition, $what) {
   if (-not $condition) { throw "FAILED: $what" }
   Write-Host "ok: $what"
@@ -196,3 +227,5 @@ try {
 # 9. The Windows on ARM package builds.
 Msi "0.18.1" "arm64" | Out-Null
 Check $true "the arm64 MSI builds"
+
+Restore
