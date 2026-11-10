@@ -205,6 +205,28 @@ impl Downloadable for FavoriteDownload {
     }
 }
 
+/// Tries a favorite's references in turn until one downloads. A rate limit
+/// stops the rest, which would only ask too often again, and the favorite
+/// reads as gone only when every reference was gone.
+async fn first_download(
+    attempts: impl IntoIterator<Item = impl Future<Output = Result<PathBuf, DownloadError>>>,
+) -> Result<PathBuf, DownloadError> {
+    let mut failure: Option<DownloadError> = None;
+    for attempt in attempts {
+        let error = match attempt.await {
+            Ok(path) => return Ok(path),
+            Err(error) => error,
+        };
+        if super::sticker_pace::rate_limited(&error) {
+            return Err(error);
+        }
+        if failure.as_ref().is_none_or(super::sticker_pace::gone) {
+            failure = Some(error);
+        }
+    }
+    Err(failure.unwrap_or_else(|| "no download references".into()))
+}
+
 /// A favorite change on its way to the phone.
 pub(super) struct FavoritePush {
     hash: String,
@@ -729,15 +751,11 @@ impl Worker {
         self.favorite_fetches.insert(hash.clone());
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let mut result = Err("no download references".into());
-            for download in &candidates {
-                result =
-                    download_attachment(&client, download, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT)
-                        .await;
-                if result.is_ok() {
-                    break;
-                }
-            }
+            let (client, dir, path) = (&client, &dir, &path);
+            let result = first_download(candidates.into_iter().map(|download| async move {
+                download_attachment(client, &download, dir, path, ATTACHMENT_DOWNLOAD_LIMIT).await
+            }))
+            .await;
             let _ = commands.send(Command::FavoriteFetched { hash, result });
         });
     }
@@ -1895,6 +1913,58 @@ mod tests {
         assert_eq!(
             worker.sticker_pace.take(now + Duration::from_secs(30), 0),
             [hash]
+        );
+    }
+
+    /// A favorite rests a week only when every reference to it is gone: one
+    /// that failed for another reason may work on the next connection,
+    /// whichever order the references failed in.
+    #[tokio::test]
+    async fn a_favorite_rests_only_when_every_reference_is_gone() {
+        let (mut worker, _root, _events, _commands) = sticker_worker();
+        for (statuses, rests) in [([500, 403], false), ([403, 500], false), ([403, 410], true)] {
+            let bytes = sticker_bytes(&format!("refused with {statuses:?}"));
+            let hash = crate::backend::sticker_store::content_hash(&bytes);
+            worker.favorite_sticker_update(&phone_favorite(&bytes, true, now_millis()));
+            let mut refusals = Vec::new();
+            for status in statuses {
+                refusals.push(super::super::tests::refused_download(status).await);
+            }
+            let result = first_download(
+                refusals
+                    .into_iter()
+                    .map(|error| std::future::ready(Err(error))),
+            )
+            .await;
+            worker.favorite_fetched(&hash, result);
+            assert_eq!(worker.favorite_recently_gone(&hash), rests, "{statuses:?}");
+        }
+    }
+
+    /// A rate limit on one of a favorite's references stops the rest, which
+    /// would only ask too often again, and pauses every sticker download.
+    #[tokio::test]
+    async fn a_rate_limit_on_one_reference_stops_the_rest() {
+        let (mut worker, _root, _events, _commands) = sticker_worker();
+        let bytes = sticker_bytes("one reference asked for too often");
+        let hash = crate::backend::sticker_store::content_hash(&bytes);
+        worker.favorite_sticker_update(&phone_favorite(&bytes, true, now_millis()));
+        worker.sticker_pace = Default::default();
+        let mut asked = 0;
+        let attempts = [
+            Err(super::super::tests::rate_overlimit()),
+            Ok(PathBuf::from("never asked for.webp")),
+        ];
+        let result = first_download(attempts.into_iter().map(|attempt| {
+            asked += 1;
+            std::future::ready(attempt)
+        }))
+        .await;
+        assert_eq!(asked, 1, "the next reference is not asked for");
+        worker.favorite_fetched(&hash, result);
+        assert!(
+            !worker.sticker_pace.open(Instant::now()),
+            "every sticker download waits"
         );
     }
 
