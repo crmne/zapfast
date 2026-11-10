@@ -4916,8 +4916,15 @@ fn bubble(
         }
         reply_on_double_click(&strip, message, actions);
     }
+    // A carousel scrolls sideways itself, so it keeps the swipe.
+    let swipe = previous.filter(|_| !carousel).map_or(0.0, |rect| {
+        let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
+        let over = ui.rect_contains_pointer(strip);
+        swipe_to_reply(ui, view, id, over, message, actions)
+    });
+    let first_shape = ui.painter().add(egui::Shape::Noop);
     let mut response = None;
-    ui.with_layout(
+    let row = ui.with_layout(
         Layout::top_down(if own { Align::Max } else { Align::Min }),
         |ui| {
             if with_avatar {
@@ -5006,7 +5013,164 @@ fn bubble(
             }
         },
     );
+    if swipe > 0.5 {
+        // The row slides with the fingers; its click targets stay put until
+        // the swipe lets go, a fraction of a second later.
+        let end_shape = ui.painter().add(egui::Shape::Noop);
+        let layer = ui.layer_id();
+        ui.ctx().graphics_mut(|graphics| {
+            graphics.entry(layer).transform_range(
+                first_shape,
+                end_shape,
+                egui::emath::TSTransform::from_translation(vec2(swipe, 0.0)),
+            );
+        });
+        paint_swipe_reply(ui, view, row.response.rect, swipe);
+    }
     response
+}
+
+/// How far a two-finger swipe drags a bubble before letting go replies.
+const SWIPE_REPLY: f32 = 64.0;
+/// How far a bubble follows the swipe at most.
+const SWIPE_MAX: f32 = 96.0;
+/// Seconds without swipe events that count as letting go, for touchpads that
+/// report no end phase.
+const SWIPE_QUIET: f64 = 0.15;
+
+/// One message's horizontal swipe, kept between frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Swipe {
+    offset: f32,
+    last: f64,
+    /// Let go already: the rest of this gesture (a glide included) is ignored.
+    spent: bool,
+}
+
+impl Swipe {
+    /// Feeds one frame's horizontal travel; true when it lets go far enough
+    /// to reply.
+    fn step(&mut self, dx: f32, ended: bool, now: f64) -> bool {
+        if dx != 0.0 {
+            self.last = now;
+            if !self.spent {
+                self.offset = (self.offset + dx).clamp(0.0, SWIPE_MAX);
+            }
+        }
+        let quiet = now - self.last > SWIPE_QUIET;
+        let mut reply = false;
+        if (ended || quiet) && !self.spent && self.offset > 0.0 {
+            reply = self.offset >= SWIPE_REPLY;
+            self.offset = 0.0;
+            self.spent = true;
+        }
+        if quiet {
+            self.spent = false;
+        }
+        reply
+    }
+}
+
+/// Follows a rightward touchpad swipe over the message's row, as the phone's
+/// swipe to reply does, and returns how far to draw the row moved. Only
+/// trackpad travel (points) counts; a mouse wheel never swipes.
+fn swipe_to_reply(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    id: egui::Id,
+    over: bool,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) -> f32 {
+    let key = id.with("swipe");
+    let mut swipe: Swipe = ui.ctx().data(|data| data.get_temp(key)).unwrap_or_default();
+    let replyable = view.chat.can_send()
+        && !matches!(
+            message.content,
+            Content::Revoked | Content::PhoneOnly { .. } | Content::Call { .. }
+        );
+    // A gesture belongs to the row it started on, so the rows it passes over
+    // once the list moves stay put. An owner that is no longer drawn (scrolled
+    // away, chat left) lets go after a pause.
+    let now = ui.input(|input| input.time);
+    let owner_key = egui::Id::new("message-swipe-owner");
+    let owner: Option<(egui::Id, f64)> = ui.ctx().data(|data| data.get_temp(owner_key));
+    let owner = owner.filter(|(_, seen)| now - seen <= SWIPE_QUIET * 2.0);
+    let mine = owner.is_some_and(|(owner, _)| owner == key);
+    let (dx, ended) = if replyable && (mine || (owner.is_none() && over)) {
+        ui.input(|input| {
+            input
+                .events
+                .iter()
+                .fold((0.0, false), |(dx, ended), event| match event {
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta,
+                        phase,
+                        ..
+                    } => (
+                        // A vertical scroll's sideways wobble is not a swipe.
+                        dx + if delta.x.abs() > delta.y.abs() {
+                            delta.x
+                        } else {
+                            0.0
+                        },
+                        ended || matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel),
+                    ),
+                    _ => (dx, ended),
+                })
+        })
+    } else {
+        (0.0, true)
+    };
+    let before = swipe;
+    if swipe.step(dx, ended, now) {
+        actions.push(Action::Reply(message.id.clone()));
+    }
+    if swipe != before {
+        ui.ctx().data_mut(|data| data.insert_temp(key, swipe));
+    }
+    if swipe.offset == 0.0 && !swipe.spent {
+        if mine {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Id, f64)>(owner_key));
+        }
+        return 0.0;
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(owner_key, (key, now)));
+    if swipe.offset > 0.0 {
+        // The list holds still while a row is swiped. The transcript's
+        // scroll area reads this after its rows are drawn.
+        ui.ctx()
+            .input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+    }
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs_f64(SWIPE_QUIET));
+    ui.ctx()
+        .animate_value_with_time(key.with("shown"), swipe.offset, 0.08)
+}
+
+/// The reply arrow in the gap a swiped row leaves, filling in as the swipe
+/// nears the distance that replies.
+fn paint_swipe_reply(ui: &egui::Ui, view: &View<'_>, row: Rect, swipe: f32) {
+    let size = REACTION_AFFORDANCE_SIZE;
+    if swipe < size {
+        return;
+    }
+    let progress = (swipe / SWIPE_REPLY).min(1.0);
+    let rect = Rect::from_center_size(
+        pos2(row.left() + swipe / 2.0, row.center().y),
+        Vec2::splat(size),
+    );
+    floating_circle(ui, &view.palette, rect, progress >= 1.0);
+    theme::paint_icon(
+        ui,
+        Icon::Reply,
+        rect.shrink(5.0),
+        15.0,
+        view.palette.text.gamma_multiply(progress),
+    );
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
