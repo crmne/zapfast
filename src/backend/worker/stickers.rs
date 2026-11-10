@@ -1502,6 +1502,32 @@ mod tests {
         );
     }
 
+    /// A favorite's rate limit pauses the picker too; stickers the picker
+    /// asks for meanwhile start once the pause is over.
+    #[tokio::test]
+    async fn picker_downloads_asked_for_during_a_favorites_pause_start_after_it() {
+        let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
+        let chat = "a@s.whatsapp.net".to_owned();
+        for (at, id) in [(30, "s1"), (20, "s2"), (10, "s3")] {
+            sent_sticker_without_file(&worker, &chat, id, at);
+        }
+        let bytes = sticker_bytes("asked for too often");
+        let hash = crate::backend::sticker_store::content_hash(&bytes);
+        worker.favorite_fetched(&hash, Err(super::super::tests::rate_overlimit()));
+        worker.handle_command(Command::RecentStickers).await;
+        assert!(
+            worker.sticker_downloads.is_empty(),
+            "nothing starts while paused"
+        );
+        // The pause is over.
+        worker.sticker_pace = Default::default();
+        worker.resume_sticker_fetches();
+        assert_eq!(
+            worker.sticker_downloads.len(),
+            super::super::sticker_pace::IN_FLIGHT
+        );
+    }
+
     #[tokio::test]
     async fn failed_chat_stickers_do_not_hide_the_ones_after_them() {
         let (mut worker, _root, _bot, _commands, _events) = picker_worker().await;
