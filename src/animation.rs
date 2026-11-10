@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 
-/// Maximum frame width uploaded to the GPU.
+/// Maximum frame width uploaded to the GPU; low-resource builds also bound its height.
 const MAX_WIDTH: u32 = 320;
 /// Maximum frames kept per animation.
 const MAX_FRAMES: usize = 150;
@@ -22,7 +22,10 @@ const MAX_FRAMES: usize = 150;
 const IDLE: Duration = Duration::from_secs(20);
 /// A playing animation not drawn within this window has left the viewport.
 const VISIBLE: Duration = Duration::from_millis(500);
-/// Maximum concurrent decoders.
+/// Maximum concurrent decoders. Serial decoding leaves more CPU for the UI on older machines.
+#[cfg(feature = "nano-low-resource")]
+const MAX_DECODERS: usize = 1;
+#[cfg(not(feature = "nano-low-resource"))]
 const MAX_DECODERS: usize = 2;
 /// Bound source pixels before either poster decoder allocates its full canvas.
 const MAX_IMAGE_SIDE: u32 = 4096;
@@ -30,6 +33,9 @@ const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Global texture-frame budget. Least-recently-used animations are removed first.
+#[cfg(feature = "nano-low-resource")]
+const MAX_RESIDENT_FRAMES: usize = 120;
+#[cfg(not(feature = "nano-low-resource"))]
 const MAX_RESIDENT_FRAMES: usize = 450;
 
 static DECODING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -562,11 +568,23 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
 }
 
 fn to_color_image(image: &image::RgbaImage) -> ColorImage {
-    let image = if image.width() > MAX_WIDTH {
-        let height = (image.height() * MAX_WIDTH / image.width()).max(1);
+    // The normal build preserves tall portrait playback, as it has done so far.
+    // The low-resource profile also bounds height: a 320x4096 frame would
+    // otherwise occupy about 5 MiB even though the chat displays it small.
+    let max_height = if cfg!(feature = "nano-low-resource") {
+        MAX_WIDTH
+    } else {
+        u32::MAX
+    };
+    let scale = (f64::from(MAX_WIDTH) / f64::from(image.width()))
+        .min(f64::from(max_height) / f64::from(image.height()))
+        .min(1.0);
+    let image = if scale < 1.0 {
+        let width = (f64::from(image.width()) * scale).floor().max(1.0) as u32;
+        let height = (f64::from(image.height()) * scale).floor().max(1.0) as u32;
         image::imageops::resize(
             image,
-            MAX_WIDTH,
+            width,
             height,
             image::imageops::FilterType::Triangle,
         )
@@ -983,7 +1001,7 @@ mod tests {
 
     /// Tall animated posters stay bounded while playback retains its previous resolution.
     #[test]
-    fn animated_webp_posters_bound_both_sides_without_shrinking_playback() {
+    fn animated_webp_posters_are_bounded_and_playback_obeys_the_build_profile() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tall.webp");
         let mut encoder = webp_animation::Encoder::new((320, 4096)).unwrap();
@@ -999,6 +1017,9 @@ mod tests {
         assert!((size[0] as f32 / size[1] as f32 - 320.0 / 4096.0).abs() < 0.005);
         let playback = decode(&path, MAX_FRAMES).unwrap();
         assert_eq!(playback.frames.len(), 2);
+        #[cfg(feature = "nano-low-resource")]
+        assert_eq!(playback.frames[0].0.size, [25, 320]);
+        #[cfg(not(feature = "nano-low-resource"))]
         assert_eq!(playback.frames[0].0.size, [320, 4096]);
         assert_eq!(poster.frames[0].1, playback.frames[0].1);
     }
