@@ -723,6 +723,8 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.widgets.open.bg_fill = palette.surface_hover;
     visuals.widgets.open.weak_bg_fill = palette.surface_hover;
     visuals.text_cursor.stroke = Stroke::new(2.0, palette.accent);
+    // Blink at the system's rate, or not at all where it says so.
+    crate::caret::follow_system(&mut visuals.text_cursor);
     visuals.striped = false;
     visuals.slider_trailing_fill = true;
     visuals.handle_shape = egui::style::HandleShape::Circle;
