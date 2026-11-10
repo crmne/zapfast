@@ -5100,7 +5100,20 @@ fn swipe_to_reply(
     let owner: Option<(egui::Id, f64)> = ui.ctx().data(|data| data.get_temp(owner_key));
     let owner = owner.filter(|(_, seen)| now - seen <= SWIPE_QUIET * 2.0);
     let mine = owner.is_some_and(|(owner, _)| owner == key);
-    let (dx, ended) = if replyable && (mine || (owner.is_none() && over)) {
+    if !(replyable && (mine || (owner.is_none() && over))) {
+        // A row that stops taking the gesture (a selection started, the
+        // message was revoked, the swipe went stale off screen) drops its
+        // swipe without replying.
+        if swipe != Swipe::default() {
+            ui.ctx().data_mut(|data| data.remove::<Swipe>(key));
+        }
+        if mine {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Id, f64)>(owner_key));
+        }
+        return 0.0;
+    }
+    let (dx, ended) = {
         ui.input(|input| {
             input
                 .events
@@ -5123,8 +5136,6 @@ fn swipe_to_reply(
                     _ => (dx, ended),
                 })
         })
-    } else {
-        (0.0, true)
     };
     let before = swipe;
     if swipe.step(dx, ended, now) {
