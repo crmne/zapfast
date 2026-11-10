@@ -1003,10 +1003,15 @@ pub(super) struct CallEntry {
 impl Worker {
     /// Files a call among its chat's messages, as WhatsApp shows calls, unless
     /// the chat already has an entry for it (the phone's own call-log
-    /// message). The entry is local: an id of ZapFast's own, never sent, never
-    /// unread.
+    /// message) or was deleted or cleared after it, since the phone's call log
+    /// outlives both. The entry is local: an id of ZapFast's own, never sent,
+    /// never unread.
     pub(super) fn file_call_entry(&mut self, entry: CallEntry) {
-        if entry.chat.is_empty() || entry.call_id.is_empty() || entry.timestamp <= 0 {
+        if entry.chat.is_empty()
+            || entry.call_id.is_empty()
+            || entry.timestamp <= 0
+            || self.predates_removal(&entry.chat, entry.timestamp)
+        {
             return;
         }
         let id = format!("{}{}", crate::model::CALL_ENTRY_PREFIX, entry.call_id);

@@ -637,8 +637,9 @@ Every call takes its place among the chat's messages, as on the phone: who
 called, voice or video, how long it lasted, or that it was missed, declined, or
 not answered. Calls made here are filed when they end, and so are the phone's:
 the ones it reports as they happen, the calls missed while ZapFast was closed,
-and the call history it sends when the computer is linked. Right-click a call
-in a chat to call back from there.
+and the call history it sends when the computer is linked. A call from before
+its chat was deleted or cleared on the phone is left out, as the chat's own
+messages are. Right-click a call in a chat to call back from there.
 
 **Calls** in the rail on the left of the chat list (`Ctrl+Shift+2`, Command
 on macOS) opens the **Calls** tab, laid out as in WhatsApp: the list shows
@@ -804,7 +805,10 @@ phone. **Clear chat** is in this menu and in the chat header's menu; it needs a
 connection and asks first. It clears messages on this computer and your phone,
 removes cached media from this computer, and keeps the chat. Media saved in
 your configured download folder stays there. **Delete chat** in
-the same menu also needs a connection and confirmation. Groups and channels
+the same menu also needs a connection and confirmation. A chat deleted on your
+phone stays deleted here, also when you link ZapFast later: the archive, pin,
+mute, lock or read setting your phone still keeps for it does not bring it
+back, and neither does a call from before the deletion. Groups and channels
 can be left from the same menu, keeping their history here. `Ctrl+E`
 (Command+E on macOS) archives the open chat, or unarchives it from
 **Archived**, as in WhatsApp.
