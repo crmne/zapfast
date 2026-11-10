@@ -10592,6 +10592,7 @@ impl Worker {
         // A few at a time, and none while the server asked to wait: each
         // arrival starts the next (#298).
         if !self.sticker_pace.open(Instant::now()) {
+            self.sticker_resume = true;
             return;
         }
         let phone = match self.archive.phone_stickers() {
