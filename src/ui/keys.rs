@@ -11,6 +11,27 @@ fn jump_keys_reach_chat(editing_text: bool, composer_focused: bool, composer_emp
     !editing_text || (composer_focused && composer_empty)
 }
 
+/// Takes the quit shortcut, Ctrl+Q (Command+Q on macOS), and reports whether
+/// it was pressed. `consume_key` ignores extra Alt, but Ctrl+Alt+Q / AltGr+Q
+/// types `@`, so Alt-modified presses stay for text input.
+pub(super) fn take_quit(input: &mut egui::InputState) -> bool {
+    let mut quit = false;
+    input.events.retain(|event| {
+        let matched = matches!(
+            event,
+            egui::Event::Key {
+                key: Key::Q,
+                pressed: true,
+                modifiers,
+                ..
+            } if !modifiers.alt && modifiers.matches_logically(Modifiers::COMMAND)
+        );
+        quit |= matched;
+        !matched
+    });
+    quit
+}
+
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     // A focused menu takes what is typed before any shortcut sees it.
@@ -40,23 +61,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         jump_keys_reach_chat(editing_text, composer_focused, app.composer.is_empty());
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
-        // consume_key ignores extra Alt, but Ctrl+Alt+Q / AltGr+Q types @.
-        // Leave those events for text input instead of quitting.
-        let mut quit = false;
-        input.events.retain(|event| {
-            let matched = matches!(
-                event,
-                egui::Event::Key {
-                    key: Key::Q,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if !modifiers.alt && modifiers.matches_logically(Modifiers::COMMAND)
-            );
-            quit |= matched;
-            !matched
-        });
-        if quit {
+        if take_quit(input) {
             actions.push(Action::Quit);
         }
         // The message list's key counts only with its modifier alone:
