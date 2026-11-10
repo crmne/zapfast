@@ -1041,6 +1041,7 @@ pub async fn run(
         channel_list_generation: 0,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
+        silent_before: HashMap::new(),
         pending_avatars: HashMap::new(),
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
@@ -1601,6 +1602,10 @@ struct Worker {
     /// Chats already told that the phone did not answer; cleared when the
     /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
+    /// The oldest message of each chat when the phone last left a request for
+    /// older history unanswered; forgotten when it answers for the chat. Only
+    /// for this run: two silences may be a phone that was offline both times.
+    silent_before: HashMap<ChatId, String>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
     /// Followed channels' pictures, which no profile-picture lookup finds.
@@ -6725,7 +6730,7 @@ impl Worker {
             if count > 0 {
                 // The phone answers for this chat again; a later silence is news.
                 self.older_warned.remove(&chat);
-                let _ = self.archive.set_silent_before(&chat, None);
+                self.silent_before.remove(&chat);
             }
             match self.owner_of_answer(&chat, session) {
                 AnswerOwner::Pending => {
@@ -6864,9 +6869,8 @@ impl Worker {
             // A phone leaves a request unanswered while it is offline, and
             // also when it has nothing older, as for a chat that began while
             // linked. Silent again before the same message, it has nothing.
-            let before = request.before.1.as_str();
-            let again = self.archive.silent_before(&chat).ok().flatten().as_deref() == Some(before);
-            let _ = self.archive.set_silent_before(&chat, Some(before));
+            let before = request.before.1.clone();
+            let again = self.silent_before.insert(chat.clone(), before.clone()) == Some(before);
             self.remember_late(chat.clone(), request);
             if background {
                 // Only this chat backs off; the others keep the normal
@@ -6957,7 +6961,7 @@ impl Worker {
         // This repairs gaps inside existing history, even when the phone has
         // already told us there is nothing before the start of the chat.
         self.older_warned.remove(&chat);
-        let _ = self.archive.set_silent_before(&chat, None);
+        self.silent_before.remove(&chat);
         self.request_history(
             chat,
             anchor.id,
@@ -20112,6 +20116,7 @@ mod receipt_tests {
             channel_list_generation: 0,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
+            silent_before: HashMap::new(),
             pending_avatars: HashMap::new(),
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
@@ -27459,8 +27464,8 @@ mod older_history_tests {
         assert_eq!(fetched(&again), Some(false), "and the window stops asking");
     }
 
-    /// The silence stays with the chat: after a reconnect or a restart, the
-    /// reader's request before the same message does not warn again.
+    /// The silence stays with the chat: after a reconnect, the reader's
+    /// request before the same message does not warn again.
     #[test]
     fn a_new_chat_warns_about_its_silent_phone_only_once() {
         let (mut worker, events, _, _) = receipt_tests::worker();
@@ -27475,6 +27480,26 @@ mod older_history_tests {
         let again = drain(&events);
         assert_eq!(warnings(&again), 0);
         assert_eq!(fetched(&again), Some(false));
+    }
+
+    /// Two silences may be a phone that was offline both times, so the guess
+    /// does not outlive the run: the next start, over the same archive, asks
+    /// again and reports a phone that is still silent.
+    #[test]
+    fn a_restart_reports_a_silent_phone_again() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        let (mut restarted, events, _, _) = receipt_tests::worker();
+        std::mem::swap(&mut restarted.archive, &mut worker.archive);
+        waiting(&mut restarted, true);
+        restarted.expire_older_requests();
+        let after = drain(&events);
+        assert_eq!(warnings(&after), 1, "the phone may still be offline");
+        assert_eq!(fetched(&after), Some(true), "so the window keeps asking");
     }
 
     /// A phone that answers for the chat was not silent for want of

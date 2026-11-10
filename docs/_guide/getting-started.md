@@ -92,7 +92,10 @@ ZapFast asks your phone for older messages. The phone must be online. A phone
 with nothing older, as in a chat that started after you linked ZapFast, does
 not answer. When it stays silent twice before the same message, ZapFast takes
 that as the start of the chat. It stops asking until you restart ZapFast, and
-no longer warns that the phone did not answer.
+no longer warns that the phone did not answer. An offline phone is silent too,
+so two silences do not prove that the chat starts there. If older messages are
+missing, bring the phone online, then right-click the first message and choose
+**Reload earlier messages**: ZapFast forgets the silence and asks again.
 
 ## Try it in your own chat
 

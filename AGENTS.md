@@ -660,10 +660,12 @@ protocol. These notes are for coding agents and new contributors.
   chat until it answers or the link reconnects. A chunk saying nothing more
   remains on the phone sets `chats.history_start`, and that chat is not
   asked again. No chunk ever says so for a chat that began while linked, so
-  every timeout files the oldest message's id in `chats.silent_before`, and
-  a silence again before the same message counts as the chat's start
+  every timeout keeps the oldest message's id in `Worker::silent_before`,
+  and a silence again before the same message counts as the chat's start
   (#964): it warns of nothing and answers `more: false`, so the window stops
-  asking until the next start. An answer with messages for the chat, or
+  asking. An offline phone is silent too, so unlike `history_start` this
+  guess stays in memory: it survives a reconnect, and the next start asks
+  and warns again. An answer with messages for the chat, or
   `ReloadHistory`, forgets it.
   `ReloadHistory` requests before a selected archived message to repair gaps
   inside existing history, even after reaching the chat's start. History keeps

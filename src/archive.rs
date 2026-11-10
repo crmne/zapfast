@@ -230,9 +230,6 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "voice_speed", "REAL"),
     // A group's permissions and admins as JSON; NULL until its metadata says.
     ("chats", "group_settings", "TEXT"),
-    // The oldest message's id when the phone last left a request for older
-    // history unanswered; NULL once it answers for the chat.
-    ("chats", "silent_before", "TEXT"),
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
@@ -682,30 +679,6 @@ impl Archive {
             )
             .optional()?
             .unwrap_or(false))
-    }
-
-    /// Records the message the phone last left a request for older history
-    /// before unanswered, or forgets it with `None`.
-    pub fn set_silent_before(&self, id: &str, message: Option<&str>) -> Result<()> {
-        self.connection.execute(
-            "UPDATE chats SET silent_before = ?2 WHERE id = ?1",
-            params![id, message],
-        )?;
-        Ok(())
-    }
-
-    /// The message the phone last left a request for older history before
-    /// unanswered.
-    pub fn silent_before(&self, id: &str) -> Result<Option<String>> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT silent_before FROM chats WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten())
     }
 
     pub fn rename_chat(&self, id: &str, name: &str) -> Result<()> {
