@@ -78,8 +78,11 @@ someone reacts to one of your messages, the chat moves to the top of the list.
 emojis and the total count. Hover for a quick list, or click the badge to see
 every person grouped by emoji. Click **You** in that list to remove your
 reaction; use React to add or change it.
-Editing uses the composer. Press Escape to cancel. If WhatsApp refuses an
-edit, the message keeps its earlier text.
+For 15 minutes after sending, you can edit your text messages and the caption
+of a photo, video or document you sent with one. As on WhatsApp, an attachment
+sent without a caption cannot be given one later. Editing uses the composer.
+Press Escape to cancel. If WhatsApp refuses an edit, the message keeps its
+earlier text.
 
 **Development builds** also show when your message was delivered and read when
 you click its time or ticks, as on WhatsApp.

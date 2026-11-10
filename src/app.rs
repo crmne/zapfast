@@ -3570,7 +3570,7 @@ impl App {
     /// Whether an outgoing message is still editable.
     pub fn can_edit(&self, message: &Message) -> bool {
         message.from_me
-            && matches!(message.content, Content::Text { .. })
+            && message.content.editable_text().is_some()
             && crate::util::now() - message.timestamp <= EDIT_WINDOW.as_secs() as i64
     }
 
@@ -6377,9 +6377,8 @@ impl App {
         }
     }
 
-    /// The most recent own text message in the open chat, for Arrow-Up
-    /// editing. Non-text and revoked messages cannot be edited and are
-    /// skipped.
+    /// The most recent own message in the open chat that can still be edited,
+    /// for Arrow-Up editing: text, or a caption. Other messages are skipped.
     pub(crate) fn previous_own_editable(&self) -> Option<String> {
         let conversation = self.conversations.get(self.open_chat.as_deref()?)?;
         conversation
@@ -6672,7 +6671,7 @@ impl App {
                 .get_mut(&chat)
                 .and_then(|conversation| conversation.message_mut(&id))
             {
-                message.content = Content::text(text.clone());
+                message.content.set_edited_text(text.clone());
                 message.edited = true;
                 message.mentions = mention_refs(&mentions);
                 if mention_everyone {
@@ -8392,20 +8391,15 @@ impl App {
                     open.as_deref()
                         .and_then(|chat| self.conversations.get(chat))
                         .and_then(|conversation| conversation.message(&id))
-                        .and_then(|message| match &message.content {
-                            Content::Text { text, .. } => Some(text.clone()),
-                            _ => None,
-                        })
+                        .and_then(|message| message.content.editable_text())
                         .or_else(|| {
                             let chat = open.as_deref()?;
                             let entry = self.starred.iter().find(|entry| {
                                 entry.message.chat == chat && entry.message.id == id
                             })?;
-                            match &entry.message.content {
-                                Content::Text { text, .. } => Some(text.clone()),
-                                _ => None,
-                            }
-                        });
+                            entry.message.content.editable_text()
+                        })
+                        .map(str::to_owned);
                 if let Some(text) = text {
                     self.editing = Some(id);
                     self.composer_tools_open = false;
@@ -21891,6 +21885,112 @@ mod tests {
             !sent
                 .iter()
                 .any(|command| matches!(command, Command::SendText { .. }))
+        );
+    }
+
+    fn captioned_photo(caption: Option<&str>) -> Content {
+        Content::Image {
+            caption: caption.map(Into::into),
+            media: Media {
+                mime: "image/jpeg".into(),
+                size: 2048,
+                width: Some(640),
+                height: Some(480),
+                album: None,
+                path: Some("/synthetic/photo.jpg".into()),
+                state: MediaState::Idle,
+            },
+            motion: None,
+        }
+    }
+
+    /// As on WhatsApp, the caption of our own photo, video or document can be
+    /// edited within the edit window. Media sent without a caption, a round
+    /// video message, and someone else's message cannot.
+    #[test]
+    fn captions_of_our_media_are_editable_within_the_window() {
+        let app = app();
+        let now = crate::util::now();
+        let own = |content: Content, timestamp: i64| {
+            let mut message = message(PREVIEW_CHAT, "media", timestamp);
+            message.from_me = true;
+            message.content = content;
+            message
+        };
+        let video = |note: bool| Content::Video {
+            caption: Some("Clip".into()),
+            media: Media {
+                mime: "video/mp4".into(),
+                size: 4096,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            seconds: Some(4),
+            gif: false,
+            note,
+        };
+        let document = Content::Document {
+            media: Media {
+                mime: "application/pdf".into(),
+                size: 4096,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            file_name: "notes.pdf".into(),
+            caption: Some("Notes".into()),
+            pages: Some(3),
+        };
+        assert!(app.can_edit(&own(captioned_photo(Some("Look")), now)));
+        assert!(app.can_edit(&own(video(false), now)));
+        assert!(app.can_edit(&own(document, now)));
+        assert!(app.can_edit(&own(Content::text("Hello"), now)));
+        assert!(!app.can_edit(&own(captioned_photo(None), now)));
+        assert!(!app.can_edit(&own(video(true), now)));
+        let late = now - EDIT_WINDOW.as_secs() as i64 - 1;
+        assert!(!app.can_edit(&own(captioned_photo(Some("Look")), late)));
+        let mut theirs = own(captioned_photo(Some("Look")), now);
+        theirs.from_me = false;
+        assert!(!app.can_edit(&theirs));
+    }
+
+    /// Editing a caption starts from the caption, and the bubble keeps its
+    /// picture while the edit goes out as the new caption.
+    #[test]
+    fn editing_a_caption_keeps_the_photo() {
+        let (mut app, mut commands, _events) = composer_preview_app();
+        let ctx = egui::Context::default();
+        let mut photo = message(PREVIEW_CHAT, "photo", crate::util::now());
+        photo.from_me = true;
+        photo.content = captioned_photo(Some("Old caption"));
+        app.conversations.insert(
+            PREVIEW_CHAT.into(),
+            Conversation {
+                messages: vec![photo],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.apply(Action::Edit("photo".into()), &ctx);
+        assert_eq!(app.editing.as_deref(), Some("photo"));
+        assert_eq!(app.composer, "Old caption");
+
+        app.composer = "New caption".into();
+        send_composer(&mut app);
+        let shown = app.conversations[PREVIEW_CHAT].message("photo").unwrap();
+        assert_eq!(shown.content, captioned_photo(Some("New caption")));
+        assert!(shown.edited);
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            sent.iter().any(|command| matches!(command,
+                Command::EditText { chat, id, text, .. }
+                    if chat == PREVIEW_CHAT && id == "photo" && text == "New caption")),
+            "{sent:?}"
         );
     }
 
