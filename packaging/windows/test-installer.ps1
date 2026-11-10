@@ -29,17 +29,23 @@ function Saved($key) {
   Join-Path $root "$($key.Split('\')[0])-whatsapp.reg"
 }
 # Removes what the test registered in a cleared place, and puts back what was
-# there before.
+# there before. Returns what it could not do.
 function Restore {
   foreach ($key in $cleared) {
     reg delete $key /f 2>$null | Out-Null
+    reg query $key 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      "could not remove $key; what was there before is saved in $(Saved $key)"
+      continue
+    }
     if (Test-Path (Saved $key)) {
       reg import (Saved $key) 2>$null | Out-Null
-      if ($LASTEXITCODE -ne 0) { Write-Warning "could not put back $key from $(Saved $key)" }
+      if ($LASTEXITCODE -ne 0) { "could not put back $key from $(Saved $key)" }
     }
   }
 }
-trap { Restore; break }
+# A failing run reports its own error; what Restore could not do is a warning.
+trap { Restore | ForEach-Object { Write-Warning $_ }; break }
 foreach ($key in $registrations) {
   reg query $key 2>$null | Out-Null
   if ($LASTEXITCODE -eq 0) {
@@ -228,4 +234,7 @@ try {
 Msi "0.18.1" "arm64" | Out-Null
 Check $true "the arm64 MSI builds"
 
-Restore
+# A passing run fails if the machine is not left as it was found.
+$unrestored = @(Restore)
+$unrestored | ForEach-Object { Write-Host "FAILED: $_" }
+if ($unrestored.Count -gt 0) { exit 1 }
