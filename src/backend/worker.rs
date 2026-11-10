@@ -2221,7 +2221,9 @@ impl Worker {
     /// Whether a chat was deleted and nothing newer has brought it back. The
     /// phone's app state keeps a deleted chat's archive, pin, mute, lock and
     /// read settings, and a newly linked device receives them after the
-    /// deletion; they must not file the chat again.
+    /// deletion; they must not file the chat again. All but the read state,
+    /// which covers the deleted messages, wait in the archive until a newer
+    /// message or call files it.
     fn removed_outright(&self, chat: &str) -> bool {
         self.archive.removal_point(chat).ok().flatten().is_some()
             && matches!(self.archive.chat(chat), Ok(None))
@@ -4396,29 +4398,27 @@ impl Worker {
             }
             E::ArchiveUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let archived = update.action.archived.unwrap_or(false);
+                let at = update.timestamp.timestamp_millis();
                 if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_archived_at(&chat, archived, at);
                     return;
                 }
                 // The update can arrive before history creates the chat.
                 self.ensure_chat(&chat, None);
-                let _ = self.archive.set_archived_at(
-                    &chat,
-                    update.action.archived.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
-                );
+                let _ = self.archive.set_archived_at(&chat, archived, at);
                 self.emit_chat(&chat);
             }
             E::PinUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let pinned = update.action.pinned.unwrap_or(false);
+                let at = update.timestamp.timestamp_millis();
                 if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_pinned_at(&chat, pinned, at);
                     return;
                 }
                 self.ensure_chat(&chat, None);
-                let _ = self.archive.set_pinned_at(
-                    &chat,
-                    update.action.pinned.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
-                );
+                let _ = self.archive.set_pinned_at(&chat, pinned, at);
                 self.emit_chat(&chat);
             }
             E::MuteUpdate(update) => {
@@ -4426,20 +4426,21 @@ impl Worker {
                 // App state keeps mutes of channels long unfollowed, and a
                 // channel's own Mute comes from the server's list instead.
                 // Such a mute must not file an empty "Unknown" channel.
-                if (chat.ends_with("@newsletter") && matches!(self.archive.chat(&chat), Ok(None)))
-                    || self.removed_outright(&chat)
-                {
+                if chat.ends_with("@newsletter") && matches!(self.archive.chat(&chat), Ok(None)) {
                     return;
                 }
-                self.ensure_chat(&chat, None);
                 let until = if update.action.muted.unwrap_or(false) {
                     Some(seconds(update.action.mute_end_timestamp.unwrap_or(0)))
                 } else {
                     None
                 };
-                let _ =
-                    self.archive
-                        .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
+                let at = update.timestamp.timestamp_millis();
+                if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_muted_at(&chat, until, at);
+                    return;
+                }
+                self.ensure_chat(&chat, None);
+                let _ = self.archive.set_muted_at(&chat, until, at);
                 self.emit_chat(&chat);
             }
             E::RemoveRecentStickerUpdate(update) => self.recent_sticker_removed(update),
@@ -4448,14 +4449,14 @@ impl Worker {
             E::StarUpdate(update) => self.star_update(update),
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let locked = update.action.locked.unwrap_or(false);
+                let at = update.timestamp.timestamp_millis();
                 if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_locked_at(&chat, locked, at);
                     return;
                 }
                 self.ensure_chat(&chat, None);
-                let locked = update.action.locked.unwrap_or(false);
-                let _ =
-                    self.archive
-                        .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());
+                let _ = self.archive.set_locked_at(&chat, locked, at);
                 self.emit_chat(&chat);
             }
             E::DeleteChatUpdate(update) => {
@@ -26450,6 +26451,42 @@ mod chat_removal_tests {
             let chat = worker.archive.chat(CHAT).unwrap().expect("still listed");
             assert!(chat.archived && chat.pinned && chat.locked && chat.marked_unread);
             assert_eq!(chat.muted_until, Some(0));
+        }
+    }
+
+    /// A deleted chat that a newer message, call or history files again
+    /// takes the settings the phone kept for it, so a chat locked on the
+    /// phone does not come back unlocked.
+    #[tokio::test]
+    async fn a_deleted_chat_filed_again_takes_the_settings_the_phone_kept() {
+        for refile in ["message", "call", "history"] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            for event in phone_settings(CHAT, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "{refile}");
+            match refile {
+                "message" => worker.archive_message(
+                    crate::archive::tests::message(CHAT, "m300", 300, false),
+                    None,
+                    None,
+                    false,
+                ),
+                "call" => {
+                    let mut record = wa::CallLogRecord::default();
+                    record.call_result = Some(wa::call_log_record::CallResult::MISSED);
+                    record.start_time = Some(300);
+                    let peer: Jid = CHAT.parse().unwrap();
+                    worker.call_log_entry("LATER", Some(&peer), Some(false), &record);
+                }
+                _ => {
+                    worker.apply_history(history(CHAT, &[300]), false);
+                }
+            }
+            let chat = worker.archive.chat(CHAT).unwrap().expect("filed again");
+            assert!(chat.locked && chat.pinned && chat.archived, "{refile}");
+            assert_eq!(chat.muted_until, Some(0), "{refile}");
         }
     }
 
