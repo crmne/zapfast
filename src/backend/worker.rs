@@ -2218,6 +2218,15 @@ impl Worker {
             .is_some_and(|through| timestamp <= through)
     }
 
+    /// Whether a chat was deleted and nothing newer has brought it back. The
+    /// phone's app state keeps a deleted chat's archive, pin, mute, lock and
+    /// read settings, and a newly linked device receives them after the
+    /// deletion; they must not file the chat again.
+    fn removed_outright(&self, chat: &str) -> bool {
+        self.archive.removal_point(chat).ok().flatten().is_some()
+            && matches!(self.archive.chat(chat), Ok(None))
+    }
+
     /// Blocks a deleted message's replay, failing closed if the barrier cannot be read.
     fn message_was_removed(&self, chat: &str, id: &str) -> bool {
         match self.archive.message_removed(chat, id) {
@@ -4387,6 +4396,9 @@ impl Worker {
             }
             E::ArchiveUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                if self.removed_outright(&chat) {
+                    return;
+                }
                 // The update can arrive before history creates the chat.
                 self.ensure_chat(&chat, None);
                 let _ = self.archive.set_archived_at(
@@ -4398,6 +4410,9 @@ impl Worker {
             }
             E::PinUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                if self.removed_outright(&chat) {
+                    return;
+                }
                 self.ensure_chat(&chat, None);
                 let _ = self.archive.set_pinned_at(
                     &chat,
@@ -4411,7 +4426,9 @@ impl Worker {
                 // App state keeps mutes of channels long unfollowed, and a
                 // channel's own Mute comes from the server's list instead.
                 // Such a mute must not file an empty "Unknown" channel.
-                if chat.ends_with("@newsletter") && matches!(self.archive.chat(&chat), Ok(None)) {
+                if (chat.ends_with("@newsletter") && matches!(self.archive.chat(&chat), Ok(None)))
+                    || self.removed_outright(&chat)
+                {
                     return;
                 }
                 self.ensure_chat(&chat, None);
@@ -4431,6 +4448,9 @@ impl Worker {
             E::StarUpdate(update) => self.star_update(update),
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                if self.removed_outright(&chat) {
+                    return;
+                }
                 self.ensure_chat(&chat, None);
                 let locked = update.action.locked.unwrap_or(false);
                 let _ =
@@ -4479,6 +4499,9 @@ impl Worker {
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                if self.removed_outright(&chat) {
+                    return;
+                }
                 self.ensure_chat(&chat, None);
                 if update.action.read.unwrap_or(true) {
                     let through = update
@@ -26284,6 +26307,174 @@ mod chat_removal_tests {
         worker.pump_group_info();
         assert!(worker.group_info_queue.is_empty());
         assert!(worker.group_info_retry.is_empty());
+    }
+
+    /// The phone's deletion of a chat, through `through`, as app state sends it.
+    async fn phone_deletes(worker: &mut Worker, chat: &str, through: i64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DeleteChatUpdate(
+                wa_events::DeleteChatUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .delete_media(false)
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(300)).into())
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::DeleteChatAction::default();
+                        proto.message_range = Some({
+                            let mut proto =
+                                wa::sync_action_value::SyncActionMessageRange::default();
+                            proto.last_message_timestamp = Some(through);
+                            proto
+                        })
+                        .into();
+                        proto
+                    }))
+                    .from_full_sync(true)
+                    .build(),
+            )))
+            .await;
+    }
+
+    /// A chat's archive, pin, mute, lock and read settings, made at `at`, as
+    /// the phone's app state hands them to a device it links.
+    fn phone_settings(chat: &str, at: u64) -> Vec<wa_events::Event> {
+        let jid: Jid = chat.parse().unwrap();
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(at);
+        vec![
+            wa_events::Event::MuteUpdate(
+                wa_events::MuteUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MuteAction::default();
+                        proto.muted = Some(true);
+                        proto.mute_end_timestamp = Some(-1);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::ArchiveUpdate(
+                wa_events::ArchiveUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::ArchiveChatAction::default();
+                        proto.archived = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::PinUpdate(
+                wa_events::PinUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::PinAction::default();
+                        proto.pinned = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::LockChatUpdate(
+                wa_events::LockChatUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::LockChatAction::default();
+                        proto.locked = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::MarkChatAsReadUpdate(
+                wa_events::MarkChatAsReadUpdate::builder()
+                    .jid(jid)
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
+                        proto.read = Some(false);
+                        proto
+                    }))
+                    .build(),
+            ),
+        ]
+    }
+
+    /// A newly linked device receives the phone's deletions before the
+    /// settings it still keeps for the deleted chats (`regular_high` syncs
+    /// before `regular_low`), whether or not history filed the chat first.
+    #[tokio::test]
+    async fn settings_the_phone_kept_do_not_bring_back_a_deleted_chat() {
+        for chat in [CHAT, "120363000000000001@g.us"] {
+            for filed_first in [true, false] {
+                let (mut worker, _events, _, _) = receipt_tests::worker();
+                if filed_first {
+                    worker.apply_history(history(chat, &[100, 200]), true);
+                }
+                phone_deletes(&mut worker, chat, 200).await;
+                for event in phone_settings(chat, 250) {
+                    let kind = event.kind();
+                    worker.handle_wa_event(Arc::new(event)).await;
+                    assert!(
+                        worker.archive.chat(chat).unwrap().is_none(),
+                        "{kind:?} brought back {chat}, filed first: {filed_first}"
+                    );
+                }
+                worker.apply_history(history(chat, &[100, 200]), false);
+                assert!(worker.archive.chat(chat).unwrap().is_none());
+                assert!(worker.group_info_queue.is_empty());
+            }
+        }
+    }
+
+    /// A chat cleared rather than deleted, or back with a newer message, is
+    /// still there to take them.
+    #[tokio::test]
+    async fn a_chat_still_listed_after_a_removal_takes_the_phones_settings() {
+        for cleared in [true, false] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            worker.apply_history(history(CHAT, &[100, 200]), true);
+            if cleared {
+                assert!(worker.empty_chat(CHAT, 200, false));
+            } else {
+                phone_deletes(&mut worker, CHAT, 200).await;
+                worker.apply_history(history(CHAT, &[300]), false);
+            }
+            for event in phone_settings(CHAT, 400) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            let chat = worker.archive.chat(CHAT).unwrap().expect("still listed");
+            assert!(chat.archived && chat.pinned && chat.locked && chat.marked_unread);
+            assert_eq!(chat.muted_until, Some(0));
+        }
+    }
+
+    /// The phone's call log outlives a chat it deleted, and a newly linked
+    /// device receives it with history.
+    #[test]
+    fn a_call_from_before_a_deletion_does_not_bring_the_chat_back() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Somebody").expect("chat");
+        worker.remove_chat(CHAT, 200, false);
+        let peer: Jid = CHAT.parse().unwrap();
+        let call = |at| {
+            let mut record = wa::CallLogRecord::default();
+            record.call_result = Some(wa::call_log_record::CallResult::MISSED);
+            record.start_time = Some(at);
+            record
+        };
+        worker.call_log_entry("BEFORE", Some(&peer), Some(false), &call(150));
+        assert!(worker.archive.chat(CHAT).expect("chat").is_none());
+
+        worker.call_log_entry("AFTER", Some(&peer), Some(false), &call(250));
+        assert_eq!(
+            stored(&worker, CHAT),
+            [format!("{}AFTER", crate::model::CALL_ENTRY_PREFIX)]
+        );
     }
 
     #[tokio::test]
