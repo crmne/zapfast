@@ -1602,9 +1602,9 @@ struct Worker {
     /// Chats already told that the phone did not answer; cleared when the
     /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
-    /// The oldest message of each chat when the phone last left a request for
-    /// older history unanswered; forgotten when it answers for the chat. Only
-    /// for this run: two silences may be a phone that was offline both times.
+    /// The message each chat's last unanswered request for older history was
+    /// anchored at; forgotten when the phone answers for the chat. Only for
+    /// this run: two silences may be a phone that was offline both times.
     silent_before: HashMap<ChatId, String>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
