@@ -27466,15 +27466,24 @@ mod older_history_tests {
 
     /// The silence stays with the chat: after a reconnect, the reader's
     /// request before the same message does not warn again.
-    #[test]
-    fn a_new_chat_warns_about_its_silent_phone_only_once() {
+    #[tokio::test]
+    async fn a_new_chat_warns_about_its_silent_phone_only_once() {
         let (mut worker, events, _, _) = receipt_tests::worker();
         new_chat(&mut worker, &events);
         waiting(&mut worker, true);
         worker.expire_older_requests();
         assert_eq!(warnings(&drain(&events)), 1, "maybe the phone is offline");
 
-        worker.older_warned.clear();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::Connected(
+                wa_events::Connected::builder().build(),
+            )))
+            .await;
+        assert!(
+            worker.older_warned.is_empty(),
+            "a reconnect may reach a phone that was away"
+        );
+        drain(&events);
         waiting(&mut worker, true);
         worker.expire_older_requests();
         let again = drain(&events);
