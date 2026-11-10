@@ -106,3 +106,36 @@ Use the same commit, machine, account, window state, warm-up period and measurem
 This feature changes only the backend runtime worker count. It does not replace the multi-thread Tokio scheduler, alter protocol logic, or change the default build. One worker may increase latency if CPU-heavy work competes with network tasks, so compare message responsiveness, synchronization, media transfers and calls before considering a default change.
 
 Do not expect a large RAM reduction: the primary purpose is to measure the cost and sufficiency of one fewer runtime worker thread.
+
+## Low-resource animation experiment
+
+Branch: `nano/low-resource-animation`, based on `nano/one-worker-experiment`.
+
+Build the one-worker comparison without the low-resource profile:
+
+```sh
+cargo build --locked --release --features nano-one-worker
+```
+
+Build the low-resource comparison:
+
+```sh
+cargo build --locked --release --features "nano-one-worker nano-low-resource"
+```
+
+The opt-in `nano-low-resource` feature makes three targeted changes:
+
+- Runs at most one animation decoder at a time (two in the normal build), leaving more CPU headroom for the UI and backend on older processors.
+- Reduces the resident animation texture budget from 450 frames to 120.
+- Bounds both width and height of retained playback frames to 320 pixels. The normal build retains the existing full-height behaviour for tall portrait animations; the low-resource build scales those frames down while preserving aspect ratio and frame timing.
+
+It deliberately keeps the 150-frame per-animation decode ceiling and does not change the WhatsApp protocol, archive, message history, or files on disk. Visible playing animations remain protected from eviction, so 120 is a cache budget, not a hard process-memory ceiling. A single decoder can also make simultaneous animation previews arrive more slowly.
+
+Run the animation tests with the feature enabled:
+
+```sh
+cargo test --locked --features "nano-one-worker nano-low-resource" animation::
+```
+
+For a useful comparison, use the same account and window size, open a tall animated WebP/GIF and a normal landscape clip, then compare private bytes/working set, CPU, playback smoothness, and message responsiveness. Close the app between builds. Do not judge battery impact from CPU percentage alone; use the battery-discharge procedure above. The feature remains experimental until the measurements and media-quality checks agree.
+
