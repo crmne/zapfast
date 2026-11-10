@@ -808,8 +808,11 @@ your configured download folder stays there. **Delete chat** in
 the same menu also needs a connection and confirmation. A chat deleted on your
 phone stays deleted here, also when you link ZapFast later: the archive, pin,
 mute, lock or read setting your phone still keeps for it does not bring it
-back, and neither does a call from before the deletion. Groups and channels
-can be left from the same menu, keeping their history here. `Ctrl+E`
+back, and neither does a call from before the deletion. A message or call
+newer than the deletion does bring it back. A chat that an older version of
+ZapFast already brought back is not removed again: delete it with
+**Delete chat**. Groups and channels can be left from the same menu, keeping
+their history here. `Ctrl+E`
 (Command+E on macOS) archives the open chat, or unarchives it from
 **Archived**, as in WhatsApp.
 Archiving and unarchiving need a connection. The chat moves only after
