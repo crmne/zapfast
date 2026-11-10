@@ -88,12 +88,17 @@ and its unread chats count toward neither the dot nor the app icon's badge.
 After linking, the phone sends recent history. The chat list appears within
 seconds, and messages can take a few minutes to finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
-ZapFast asks your phone for older messages. The phone must be online. A phone
-with nothing older, as in a chat that started after you linked ZapFast, does
-not answer. When it stays silent twice before the same message, ZapFast takes
-that as the start of the chat. It stops asking until you restart ZapFast, and
-no longer warns that the phone did not answer. An offline phone is silent too,
-so two silences do not prove that the chat starts there. If older messages are
+ZapFast asks your phone for older messages. It also asks on its own when a
+chat is too short to scroll, and in the background when **Fetch older
+history** is on. The phone must be online. If the phone does not answer a
+request you made by scrolling, ZapFast warns you; its own requests never warn.
+A phone with nothing older, as in a chat that started after you linked
+ZapFast, does not answer. When it stays silent twice before the same message,
+whether you or ZapFast asked, ZapFast takes that as the start of the chat.
+Scrolling to the top then no longer asks the phone until you restart ZapFast,
+and ZapFast no longer warns. An offline phone is silent too, so two silences
+do not prove that the chat starts there. If the first one came from a request
+ZapFast made on its own, you see no warning at all. If older messages are
 missing, bring the phone online, then right-click the first message and choose
 **Reload earlier messages**: ZapFast forgets the silence and asks again. A
 chat that has no messages at all has no message to stop before, so ZapFast
