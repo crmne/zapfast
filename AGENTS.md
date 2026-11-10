@@ -659,7 +659,12 @@ protocol. These notes are for coding agents and new contributors.
   request (the reader scrolled to the top) reports a silent phone, once per
   chat until it answers or the link reconnects. A chunk saying nothing more
   remains on the phone sets `chats.history_start`, and that chat is not
-  asked again.
+  asked again. No chunk ever says so for a chat that began while linked, so
+  every timeout files the oldest message's id in `chats.silent_before`, and
+  a silence again before the same message counts as the chat's start
+  (#964): it warns of nothing and answers `more: false`, so the window stops
+  asking until the next start. An answer with messages for the chat, or
+  `ReloadHistory`, forgets it.
   `ReloadHistory` requests before a selected archived message to repair gaps
   inside existing history, even after reaching the chat's start. History keeps
   edited snapshots under the protocol target id, even when the outer envelope

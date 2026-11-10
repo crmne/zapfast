@@ -88,7 +88,11 @@ and its unread chats count toward neither the dot nor the app icon's badge.
 After linking, the phone sends recent history. The chat list appears within
 seconds, and messages can take a few minutes to finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
-ZapFast asks your phone for older messages. The phone must be online.
+ZapFast asks your phone for older messages. The phone must be online. A phone
+with nothing older, as in a chat that started after you linked ZapFast, does
+not answer. When it stays silent twice before the same message, ZapFast takes
+that as the start of the chat. It stops asking until you restart ZapFast, and
+no longer warns that the phone did not answer.
 
 ## Try it in your own chat
 

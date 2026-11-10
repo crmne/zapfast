@@ -6725,6 +6725,7 @@ impl Worker {
             if count > 0 {
                 // The phone answers for this chat again; a later silence is news.
                 self.older_warned.remove(&chat);
+                let _ = self.archive.set_silent_before(&chat, None);
             }
             match self.owner_of_answer(&chat, session) {
                 AnswerOwner::Pending => {
@@ -6860,6 +6861,12 @@ impl Worker {
                 continue;
             };
             let (explicit, background) = (request.explicit, request.background);
+            // A phone leaves a request unanswered while it is offline, and
+            // also when it has nothing older, as for a chat that began while
+            // linked. Silent again before the same message, it has nothing.
+            let before = request.before.1.as_str();
+            let again = self.archive.silent_before(&chat).ok().flatten().as_deref() == Some(before);
+            let _ = self.archive.set_silent_before(&chat, Some(before));
             self.remember_late(chat.clone(), request);
             if background {
                 // Only this chat backs off; the others keep the normal
@@ -6874,14 +6881,14 @@ impl Worker {
             }
             self.emit(Event::OlderFetched {
                 chat: chat.clone(),
-                more: true,
+                more: !again,
                 silent: false,
             });
             // A phone often leaves an automatic request for a short or empty
             // chat unanswered when it has nothing to add, so only a request
             // the reader made reports the silence, once per chat; later
             // retries back off quietly.
-            if explicit && self.older_warned.insert(chat) {
+            if explicit && !again && self.older_warned.insert(chat) {
                 self.emit(Event::Error(
                     "Your phone did not send older messages. Check that it is online".to_owned(),
                 ));
@@ -6950,6 +6957,7 @@ impl Worker {
         // This repairs gaps inside existing history, even when the phone has
         // already told us there is nothing before the start of the chat.
         self.older_warned.remove(&chat);
+        let _ = self.archive.set_silent_before(&chat, None);
         self.request_history(
             chat,
             anchor.id,
@@ -27409,6 +27417,101 @@ mod older_history_tests {
         worker.apply_history(history, true);
         worker.apply_history(chat_removal_tests::history(CHAT, &[90]), true);
         assert!(!worker.archive.history_start(CHAT).unwrap());
+    }
+
+    /// A chat that began while linked: its first message, m100, came live,
+    /// and no history chunk will ever say the chat starts there.
+    fn new_chat(worker: &mut Worker, events: &std::sync::mpsc::Receiver<Event>) {
+        worker.store_message(
+            Message {
+                chat: CHAT.into(),
+                ..receipt_tests::own_message("m100", 100)
+            },
+            None,
+            None,
+        );
+        drain(events);
+    }
+
+    /// The phone has nothing before a new chat's first message and leaves
+    /// every request for it unanswered (#964). Once may be a phone that is
+    /// offline; the same silence before the same message again is the
+    /// chat's start, which is no news, and the window stops asking.
+    #[test]
+    fn a_new_chat_stops_asking_once_the_phone_is_silent_again() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+
+        // Opening the short chat asks on its own.
+        waiting(&mut worker, false);
+        worker.expire_older_requests();
+        assert_eq!(
+            fetched(&drain(&events)),
+            Some(true),
+            "one silence may be a phone that is offline"
+        );
+
+        // The chat grew and the reader scrolled to its top.
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        let again = drain(&events);
+        assert_eq!(warnings(&again), 0, "the phone has nothing older");
+        assert_eq!(fetched(&again), Some(false), "and the window stops asking");
+    }
+
+    /// The silence stays with the chat: after a reconnect or a restart, the
+    /// reader's request before the same message does not warn again.
+    #[test]
+    fn a_new_chat_warns_about_its_silent_phone_only_once() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1, "maybe the phone is offline");
+
+        worker.older_warned.clear();
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        let again = drain(&events);
+        assert_eq!(warnings(&again), 0);
+        assert_eq!(fetched(&again), Some(false));
+    }
+
+    /// A phone that answers for the chat was not silent for want of
+    /// messages: its next silence may be an offline phone again.
+    #[test]
+    fn an_answer_makes_the_next_silence_news() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+        waiting(&mut worker, false);
+        worker.expire_older_requests();
+        let filed = worker.apply_history(chat_removal_tests::history(CHAT, &[100]), false);
+        worker.answer_older(filed, None);
+        drain(&events);
+
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        let events = drain(&events);
+        assert_eq!(warnings(&events), 1);
+        assert_eq!(fetched(&events), Some(true));
+    }
+
+    /// Reloading earlier messages is the reader's own repair, so a phone
+    /// that does not answer it is reported, as before.
+    #[test]
+    fn a_reload_reports_a_silent_phone() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+        for _ in 0..2 {
+            waiting(&mut worker, false);
+            worker.expire_older_requests();
+        }
+        worker.reload_history(CHAT.into(), "m100".into());
+        drain(&events);
+
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
     }
 }
 
