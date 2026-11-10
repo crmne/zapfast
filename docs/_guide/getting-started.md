@@ -95,7 +95,9 @@ that as the start of the chat. It stops asking until you restart ZapFast, and
 no longer warns that the phone did not answer. An offline phone is silent too,
 so two silences do not prove that the chat starts there. If older messages are
 missing, bring the phone online, then right-click the first message and choose
-**Reload earlier messages**: ZapFast forgets the silence and asks again.
+**Reload earlier messages**: ZapFast forgets the silence and asks again. A
+chat that has no messages at all has no message to stop before, so ZapFast
+keeps asking when you open it.
 
 ## Try it in your own chat
 
