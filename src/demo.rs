@@ -20931,6 +20931,57 @@ mod tests {
         assert_eq!(cursor, Some(0));
     }
 
+    /// An edit begun with files staged, as from the starred list, goes out as
+    /// the edit, and the files wait in the composer for their own send.
+    #[test]
+    fn an_edit_with_files_staged_edits_and_keeps_the_files() {
+        use crate::backend::Command;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let chat = sample_ids()[0].to_owned();
+        let own = app
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| {
+                conversation.messages.iter().rev().find(|message| {
+                    message.from_me && matches!(message.content, Content::Text { .. })
+                })
+            })
+            .map(|message| message.id.clone())
+            .expect("an own text message");
+        let (photo, _) = sample_files(&app);
+        app.stage(crate::app::Pending::File(photo));
+        app.actions.push(crate::model::Action::Edit(own.clone()));
+        render(&mut app, &ctx);
+        assert_eq!(app.editing.as_deref(), Some(own.as_str()));
+        app.backend.record_demo_commands();
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(" (fixed)".into())]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::EditText { id, text, .. } if *id == own && text.ends_with("(fixed)")
+            )),
+            "{commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::SendFiles { .. } | Command::SendImage { .. }
+            )),
+            "{commands:?}"
+        );
+        assert!(app.editing.is_none());
+        assert_eq!(app.pending.len(), 1, "the file stays staged");
+    }
+
     #[test]
     fn arrow_up_in_an_empty_composer_edits_the_previous_own_message() {
         let mut app = app();
