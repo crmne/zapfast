@@ -3264,7 +3264,8 @@ impl App {
         if !chat.is_group() {
             return Vec::new();
         }
-        let needle = crate::util::search_key(query.trim());
+        let query = query.trim();
+        let needle = crate::util::search_key(query);
         let digits: String = query.chars().filter(char::is_ascii_digit).collect();
         let mut found: Vec<(String, String)> = self
             .participant_list(chat)
@@ -3274,7 +3275,7 @@ impl App {
                     return false;
                 }
                 if needle.is_empty() {
-                    return true;
+                    return query.is_empty();
                 }
                 self.cached_key(name.trim_start_matches('~'), |key| key.contains(&needle))
                     || (!digits.is_empty()
@@ -25821,6 +25822,18 @@ mod tests {
             assert_eq!(offered[0].1, "José", "{query}");
         }
         assert!(app.mention_candidates(&chat, "joseph").is_empty());
+    }
+
+    #[test]
+    fn a_mention_query_of_accents_alone_suggests_no_one() {
+        let app = app();
+        let chat = group_chat(3);
+        assert!(app.mention_candidates(&chat, "\u{301}").is_empty());
+        assert!(app.mention_candidates(&chat, "\u{e38}").is_empty());
+
+        let offered = app.mention_candidates(&chat, " ");
+        assert_eq!(offered.len(), 4);
+        assert_eq!(offered[0].0, crate::mentions::ALL_ID);
     }
 
     #[test]
