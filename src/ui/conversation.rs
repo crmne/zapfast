@@ -12502,6 +12502,111 @@ mod tests {
         }
     }
 
+    /// Runs one frame of `swipe_to_reply` for each `(row, pointer over it)`,
+    /// returning each row's drawn offset.
+    fn swipe_frame(
+        ctx: &egui::Context,
+        view: &View<'_>,
+        rows: &[(&str, bool)],
+        events: Vec<egui::Event>,
+        time: f64,
+        actions: &mut Vec<Action>,
+    ) -> Vec<f32> {
+        let mut offsets = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 300.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                for (row, over) in rows {
+                    let item = Message {
+                        id: (*row).into(),
+                        ..message(Content::Text {
+                            text: "hi".into(),
+                            preview: None,
+                        })
+                    };
+                    offsets.push(swipe_to_reply(
+                        ui,
+                        view,
+                        egui::Id::new(row),
+                        *over,
+                        &item,
+                        actions,
+                    ));
+                }
+            },
+        );
+        output.textures_delta.clear();
+        offsets
+    }
+
+    fn sideways(unit: egui::MouseWheelUnit, x: f32) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit,
+            delta: vec2(x, 0.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_swipe_stays_with_its_row_and_selection_cancels_it_without_replying() {
+        let ctx = egui::Context::default();
+        with_still_view(|view| {
+            let point = egui::MouseWheelUnit::Point;
+            let mut actions = Vec::new();
+            // The swipe starts on "a"; "b" comes under the pointer and stays put.
+            let events = vec![sideways(point, 80.0)];
+            swipe_frame(&ctx, view, &[("a", true)], events, 1.0, &mut actions);
+            let events = vec![sideways(point, 5.0)];
+            let offsets = swipe_frame(
+                &ctx,
+                view,
+                &[("a", false), ("b", true)],
+                events,
+                1.02,
+                &mut actions,
+            );
+            assert!(offsets[0] > 0.0, "the row it began on keeps the swipe");
+            assert_eq!(offsets[1], 0.0, "the row passed over stays put");
+            // Selecting starts with the swipe past the reply distance.
+            let selecting = View {
+                selecting: true,
+                ..*view
+            };
+            let offsets = swipe_frame(
+                &ctx,
+                &selecting,
+                &[("a", false)],
+                vec![],
+                1.04,
+                &mut actions,
+            );
+            assert_eq!(offsets, [0.0]);
+            swipe_frame(&ctx, view, &[("a", true)], vec![], 2.0, &mut actions);
+            assert!(actions.is_empty(), "a cancelled swipe never replies");
+            // A mouse wheel turned sideways never swipes.
+            let events = vec![sideways(egui::MouseWheelUnit::Line, 80.0)];
+            let offsets = swipe_frame(&ctx, view, &[("c", true)], events, 3.0, &mut actions);
+            assert_eq!(offsets, [0.0]);
+            // And a real swipe still replies once let go.
+            swipe_frame(
+                &ctx,
+                view,
+                &[("c", true)],
+                vec![sideways(point, 80.0)],
+                4.0,
+                &mut actions,
+            );
+            swipe_frame(&ctx, view, &[("c", true)], vec![], 4.5, &mut actions);
+            assert!(matches!(&actions[..], [Action::Reply(id)] if id == "c"));
+        });
+    }
+
     #[test]
     fn timer_notices_return_a_navigation_response_without_selection() {
         let ctx = egui::Context::default();
@@ -12625,7 +12730,7 @@ mod tests {
         let mut swipe = Swipe::default();
         assert!(!swipe.step(40.0, false, 2.0));
         assert!(!swipe.step(40.0, false, 2.02));
-        assert_eq!(swipe.offset, SWIPE_MAX.min(80.0));
+        assert_eq!(swipe.offset, 80.0);
         assert!(swipe.step(0.0, true, 2.03));
         assert!(!swipe.step(90.0, false, 2.05));
         assert_eq!(swipe.offset, 0.0);
