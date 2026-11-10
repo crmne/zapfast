@@ -663,7 +663,9 @@ protocol. These notes are for coding agents and new contributors.
   every timeout keeps the oldest message's id in `Worker::silent_before`,
   and a silence again before the same message counts as the chat's start
   (#964): it warns of nothing and answers `more: false`, so the window stops
-  asking. An offline phone is silent too, so unlike `history_start` this
+  asking. A chat without messages is asked before an empty id, which never
+  counts, so it is still asked each time it opens. An offline phone is
+  silent too, so unlike `history_start` this
   guess stays in memory: it survives a reconnect, and the next start asks
   and warns again. An answer with messages for the chat, or
   `ReloadHistory`, forgets it.

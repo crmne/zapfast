@@ -6869,8 +6869,11 @@ impl Worker {
             // A phone leaves a request unanswered while it is offline, and
             // also when it has nothing older, as for a chat that began while
             // linked. Silent again before the same message, it has nothing.
+            // A chat without messages is asked before no message, so its
+            // silences never repeat one and its openings keep asking.
             let before = request.before.1.clone();
-            let again = self.silent_before.insert(chat.clone(), before.clone()) == Some(before);
+            let again = !before.is_empty()
+                && self.silent_before.insert(chat.clone(), before.clone()) == Some(before);
             self.remember_late(chat.clone(), request);
             if background {
                 // Only this chat backs off; the others keep the normal
@@ -27462,6 +27465,23 @@ mod older_history_tests {
         let again = drain(&events);
         assert_eq!(warnings(&again), 0, "the phone has nothing older");
         assert_eq!(fetched(&again), Some(false), "and the window stops asking");
+    }
+
+    /// History sync can bring a chat with no messages at all. It is asked
+    /// from the present, before no message, so its silences never repeat one:
+    /// it has no message to reload before, and each opening asks again.
+    #[test]
+    fn an_empty_chat_keeps_asking_its_silent_phone() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        for _ in 0..2 {
+            waiting(&mut worker, false);
+            worker.pending_older.get_mut(CHAT).unwrap().before =
+                (crate::util::now(), String::new());
+            worker.expire_older_requests();
+            let events = drain(&events);
+            assert_eq!(warnings(&events), 0, "the window asked on its own");
+            assert_eq!(fetched(&events), Some(true));
+        }
     }
 
     /// The silence stays with the chat: after a reconnect, the reader's
