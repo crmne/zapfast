@@ -8990,6 +8990,40 @@ mod tests {
         );
     }
 
+    /// Our own photo's menu offers Edit for its caption, as WhatsApp does,
+    /// and offers nothing to edit on a photo sent without one.
+    #[test]
+    fn the_menu_offers_edit_for_our_photos_caption() {
+        for caption in [Some("Fixture caption"), None] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let photo = Content::Image {
+                caption: caption.map(Into::into),
+                media: media("image/jpeg", 2048, Some(640), Some(480)),
+                motion: None,
+            };
+            let chat = focus_fixture_message(&mut app, &ctx, photo);
+            let fixture = app
+                .conversations
+                .get_mut(&chat)
+                .unwrap()
+                .message_mut("key-fixture")
+                .unwrap();
+            fixture.from_me = true;
+            fixture.timestamp = crate::util::now();
+            open_menu_by_keys(&mut app, &ctx);
+            let labels = accessible_nodes(&mut app, &ctx, Vec::new());
+            assert_eq!(
+                labels.iter().any(|(text, _, _)| text == "Edit"),
+                caption.is_some(),
+                "{caption:?}: {labels:?}"
+            );
+        }
+    }
+
     #[test]
     fn e_opens_the_reaction_picker_with_focus_in_its_search() {
         let mut app = app();

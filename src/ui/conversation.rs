@@ -7511,7 +7511,7 @@ fn context_menu(
     }
     let age = view.now - message.timestamp;
     let can_edit = message.from_me
-        && matches!(message.content, Content::Text { .. })
+        && message.content.editable_text().is_some()
         && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
     let can_revoke = revoke_blocker(message, view.now).is_none();
     if can_edit
