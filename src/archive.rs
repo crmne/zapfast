@@ -233,7 +233,57 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
+    // The settings the phone keeps for a chat it deleted, each with when it
+    // was made, until something files the chat again (`restore_kept`).
+    ("chat_removals", "archived", "INTEGER"),
+    ("chat_removals", "archive_updated_at", "INTEGER"),
+    ("chat_removals", "pinned", "INTEGER"),
+    ("chat_removals", "pin_updated_at", "INTEGER"),
+    ("chat_removals", "muted_until", "INTEGER"),
+    ("chat_removals", "mute_updated_at", "INTEGER"),
+    ("chat_removals", "locked", "INTEGER"),
+    ("chat_removals", "lock_updated_at", "INTEGER"),
 ];
+
+/// Gives a chat's row the settings kept for it while it was deleted, in
+/// timestamp order with the row's own, and forgets them; a chat without a
+/// row keeps them. `chat` is SQL naming the chat, `NEW.id` or a parameter,
+/// never an id itself.
+fn restore_kept(chat: &str) -> [String; 5] {
+    let setting = |columns: &str, updated_at: &str| {
+        format!(
+            "UPDATE chats SET {columns}, {updated_at} = kept.{updated_at}
+             FROM chat_removals kept WHERE chats.id = {chat} AND kept.chat = {chat}
+             AND kept.{updated_at} >= COALESCE(chats.{updated_at}, -1)"
+        )
+    };
+    [
+        setting("archived = kept.archived", "archive_updated_at"),
+        setting(
+            "pinned = kept.pinned,
+             pinned_at = CASE WHEN kept.pinned THEN kept.pin_updated_at ELSE 0 END",
+            "pin_updated_at",
+        ),
+        setting("muted_until = kept.muted_until", "mute_updated_at"),
+        setting("locked = kept.locked", "lock_updated_at"),
+        format!(
+            "UPDATE chat_removals SET archived = NULL, archive_updated_at = NULL,
+                pinned = NULL, pin_updated_at = NULL, muted_until = NULL,
+                mute_updated_at = NULL, locked = NULL, lock_updated_at = NULL
+             WHERE chat = {chat} AND EXISTS(SELECT 1 FROM chats WHERE id = {chat})"
+        ),
+    ]
+}
+
+/// Whatever files a deleted chat again, a newer message, a call or history,
+/// gives it the settings the phone kept for it.
+fn restore_kept_trigger() -> String {
+    format!(
+        "CREATE TRIGGER IF NOT EXISTS restore_kept_settings AFTER INSERT ON chats
+         WHEN EXISTS(SELECT 1 FROM chat_removals WHERE chat = NEW.id) BEGIN {}; END;",
+        restore_kept("NEW.id").join(";\n")
+    )
+}
 
 /// One copy of a message that a merge meets twice, as stored.
 struct MessageCopy {
@@ -508,6 +558,7 @@ impl Archive {
             }
         }
         connection.execute_batch(broadcast_lists::INDEX)?;
+        connection.execute_batch(&restore_kept_trigger())?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -787,6 +838,45 @@ impl Archive {
             "UPDATE chats SET locked = ?2, lock_updated_at = ?3 WHERE id = ?1
                 AND (lock_updated_at IS NULL OR lock_updated_at <= ?3)",
             params![id, locked, timestamp],
+        )?;
+        Ok(())
+    }
+
+    /// Keeps the phone's archive setting for a chat it deleted, for when the
+    /// chat is filed again, in timestamp order like `set_archived_at`.
+    pub fn retain_archived_at(&self, id: &str, archived: bool, timestamp: i64) -> Result<()> {
+        self.retain_at(id, "archived", "archive_updated_at", archived, timestamp)
+    }
+
+    /// Keeps the phone's pin for a chat it deleted, like `retain_archived_at`.
+    pub fn retain_pinned_at(&self, id: &str, pinned: bool, timestamp: i64) -> Result<()> {
+        self.retain_at(id, "pinned", "pin_updated_at", pinned, timestamp)
+    }
+
+    /// Keeps the phone's mute for a chat it deleted, like `retain_archived_at`.
+    pub fn retain_muted_at(&self, id: &str, until: Option<i64>, timestamp: i64) -> Result<()> {
+        self.retain_at(id, "muted_until", "mute_updated_at", until, timestamp)
+    }
+
+    /// Keeps the phone's lock for a chat it deleted, like `retain_archived_at`.
+    pub fn retain_locked_at(&self, id: &str, locked: bool, timestamp: i64) -> Result<()> {
+        self.retain_at(id, "locked", "lock_updated_at", locked, timestamp)
+    }
+
+    fn retain_at(
+        &self,
+        id: &str,
+        column: &str,
+        updated_at: &str,
+        value: impl rusqlite::ToSql,
+        timestamp: i64,
+    ) -> Result<()> {
+        self.connection.execute(
+            &format!(
+                "UPDATE chat_removals SET {column} = ?2, {updated_at} = ?3 WHERE chat = ?1
+                    AND ({updated_at} IS NULL OR {updated_at} <= ?3)"
+            ),
+            params![id, value, timestamp],
         )?;
         Ok(())
     }
@@ -1177,9 +1267,34 @@ impl Archive {
             params![lid, pn],
         )?;
         self.connection.execute(
-            "INSERT INTO chat_removals (chat, through) SELECT ?2, through FROM chat_removals WHERE chat = ?1
-             ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
-            params![lid_chat, phone_chat])?;
+            "INSERT INTO chat_removals (chat, through, archived, archive_updated_at, pinned,
+                pin_updated_at, muted_until, mute_updated_at, locked, lock_updated_at)
+             SELECT ?2, through, archived, archive_updated_at, pinned, pin_updated_at,
+                muted_until, mute_updated_at, locked, lock_updated_at
+                FROM chat_removals WHERE chat = ?1
+             ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
+                archived = CASE WHEN excluded.archive_updated_at >= COALESCE(archive_updated_at, -1)
+                    THEN excluded.archived ELSE archived END,
+                archive_updated_at = MAX(COALESCE(archive_updated_at, excluded.archive_updated_at),
+                    COALESCE(excluded.archive_updated_at, archive_updated_at)),
+                pinned = CASE WHEN excluded.pin_updated_at >= COALESCE(pin_updated_at, -1)
+                    THEN excluded.pinned ELSE pinned END,
+                pin_updated_at = MAX(COALESCE(pin_updated_at, excluded.pin_updated_at),
+                    COALESCE(excluded.pin_updated_at, pin_updated_at)),
+                muted_until = CASE WHEN excluded.mute_updated_at >= COALESCE(mute_updated_at, -1)
+                    THEN excluded.muted_until ELSE muted_until END,
+                mute_updated_at = MAX(COALESCE(mute_updated_at, excluded.mute_updated_at),
+                    COALESCE(excluded.mute_updated_at, mute_updated_at)),
+                locked = CASE WHEN excluded.lock_updated_at >= COALESCE(lock_updated_at, -1)
+                    THEN excluded.locked ELSE locked END,
+                lock_updated_at = MAX(COALESCE(lock_updated_at, excluded.lock_updated_at),
+                    COALESCE(excluded.lock_updated_at, lock_updated_at))",
+            params![lid_chat, phone_chat],
+        )?;
+        // The trigger covers a phone-number chat filed later, not one listed already.
+        for statement in restore_kept("?1") {
+            transaction.execute(&statement, params![phone_chat])?;
+        }
         self.connection.execute(
             "INSERT INTO message_removals (account, chat, id)
              SELECT account, chat, id FROM pending_message_removals WHERE confirmed = 1 AND chat IN (?1, ?2)
@@ -4519,6 +4634,84 @@ pub(crate) mod tests {
         assert!(archive.chat(chat).unwrap().is_some());
         assert!(archive.message(chat, "m1").unwrap().is_some());
         assert_eq!(archive.removal_point(chat).unwrap(), None);
+    }
+
+    /// The phone's settings for a chat it deleted, kept on an archive from
+    /// before they were, list nothing and go to the chat once something files
+    /// it again, newest first, and only once.
+    #[test]
+    fn a_deleted_chats_kept_settings_go_to_it_when_it_is_filed_again() {
+        let chat = "1@s.whatsapp.net";
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_removals (chat, through) VALUES (?1, 200)",
+                [chat],
+            )
+            .unwrap();
+        let archive = Archive::prepare(connection).unwrap();
+        archive.retain_locked_at(chat, true, 2_000).unwrap();
+        archive.retain_locked_at(chat, false, 1_000).unwrap();
+        archive.retain_muted_at(chat, Some(9_000), 2_000).unwrap();
+        archive.retain_pinned_at(chat, true, 2_000).unwrap();
+        archive.retain_archived_at(chat, true, 2_000).unwrap();
+        assert!(archive.chat(chat).unwrap().is_none());
+
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let filed = archive.chat(chat).unwrap().expect("filed again");
+        assert!(filed.locked && filed.pinned && filed.archived);
+        assert_eq!(filed.pinned_at, 2_000);
+        assert_eq!(filed.muted_until, Some(9_000));
+
+        // Unlocked while listed and deleted again, it does not take the lock
+        // kept the first time.
+        archive.set_locked_at(chat, false, 3_000).unwrap();
+        archive.remove_chat_through(chat, 300, true).unwrap();
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        assert!(!archive.chat(chat).unwrap().expect("filed again").locked);
+
+        // History has no lock time, so its snapshot cannot undo a kept lock.
+        let group = "120363000000000001@g.us";
+        archive.remove_chat_through(group, 200, true).unwrap();
+        archive.retain_locked_at(group, true, 2_000).unwrap();
+        archive
+            .upsert_chat(&Chat::new(group.into(), "Group".into()))
+            .unwrap();
+        archive.set_locked_snapshot(group, false).unwrap();
+        assert!(archive.chat(group).unwrap().expect("filed again").locked);
+    }
+
+    /// Settings kept for a chat deleted under its privacy id go with the
+    /// removal point to its phone number: to the chat listed there, or to
+    /// the one filed there later, unless the phone number kept a newer one.
+    #[test]
+    fn a_deleted_chats_kept_settings_follow_its_privacy_id() {
+        let phone = "15550000000@s.whatsapp.net";
+        for (listed, newer_unlock, locked) in [
+            (false, false, true),
+            (true, false, true),
+            (false, true, false),
+        ] {
+            let archive = Archive::in_memory().unwrap();
+            if listed {
+                archive.ensure_chat(phone, "Fixture").unwrap();
+            }
+            if newer_unlock {
+                archive.remove_chat_through(phone, 150, true).unwrap();
+                archive.retain_locked_at(phone, false, 3_000).unwrap();
+            }
+            archive.remove_chat_through("42@lid", 150, true).unwrap();
+            archive.retain_locked_at("42@lid", true, 2_000).unwrap();
+            archive.put_lid("42", "15550000000").unwrap();
+            assert_eq!(archive.chat(phone).unwrap().is_some(), listed);
+            archive.ensure_chat(phone, "Fixture").unwrap();
+            assert_eq!(
+                archive.chat(phone).unwrap().expect("filed").locked,
+                locked,
+                "listed: {listed}, newer unlock: {newer_unlock}"
+            );
+        }
     }
 
     /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
