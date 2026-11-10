@@ -1763,7 +1763,7 @@ impl Backend {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(if cfg!(feature = "nano-one-worker") { 1 } else { 2 })
             .thread_name("zapfast-runtime")
             .enable_all()
             .build()

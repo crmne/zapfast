@@ -84,3 +84,25 @@ Only after capturing the baseline:
 3. Change one subsystem at a time.
 4. Run the project's formatting, Clippy and test commands from CONTRIBUTING.md.
 5. Repeat the same idle benchmark before considering the change successful.
+
+## One-worker runtime experiment
+
+An isolated A/B build is available on branch `nano/one-worker-experiment`.
+
+Default build (two Tokio worker threads per account backend):
+
+```sh
+cargo build --locked --release
+```
+
+Experimental build (one Tokio worker thread per account backend):
+
+```sh
+cargo build --locked --release --features nano-one-worker
+```
+
+Use the same commit, machine, account, window state, warm-up period and measurement script. Fully exit the previous process before launching the other binary. Record process count as well as memory and CPU.
+
+This feature changes only the backend runtime worker count. It does not replace the multi-thread Tokio scheduler, alter protocol logic, or change the default build. One worker may increase latency if CPU-heavy work competes with network tasks, so compare message responsiveness, synchronization, media transfers and calls before considering a default change.
+
+Do not expect a large RAM reduction: the primary purpose is to measure the cost and sufficiency of one fewer runtime worker thread.
