@@ -1836,7 +1836,7 @@ mod tests {
         worker.fetch_missing_favorites();
         assert_eq!(
             worker.sticker_pace.take(Instant::now(), 0),
-            [hash.clone()],
+            std::slice::from_ref(&hash),
             "the next connection asks the servers again"
         );
 
