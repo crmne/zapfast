@@ -3339,11 +3339,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         "passkey-waiting" => PasskeyStage::Waiting,
                         "passkey-confirm" => PasskeyStage::Confirm("123456".into()),
                         "passkey-error" => PasskeyStage::Failed(
-                            crate::i18n::gettext(
-                                app.locale,
-                                "The passkey request timed out. Your saved chats have not changed.",
-                            )
-                            .into_owned(),
+                            crate::backend::passkey::MISSING_USER_HANDLE_ERROR.into(),
                         ),
                         _ => PasskeyStage::Ready,
                     },

@@ -18,7 +18,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Use `--demo-page passkey` for the passkey introduction, `passkey-qr` for a
 clearly synthetic FIDO QR code, `passkey-waiting` for phone approval,
-`passkey-confirm` for the same-code confirmation, and `passkey-error` for retry.
+`passkey-confirm` for the same-code confirmation, and `passkey-error` for the
+missing-user-handle failure and retry.
 Add `,light` to any of these flags to preview the light theme. These fixtures
 keep the sample chats and never start Bluetooth discovery or authentication.
 

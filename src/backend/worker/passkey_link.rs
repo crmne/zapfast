@@ -19,6 +19,7 @@ struct Attempt {
     request: Option<AssertionRequest>,
     task: Option<tokio::task::JoinHandle<()>>,
     deadline: Option<Instant>,
+    confirmation_received: bool,
 }
 
 impl State {
@@ -78,6 +79,7 @@ impl Worker {
             request,
             task: None,
             deadline: None,
+            confirmation_received: false,
         });
         self.qr = None;
         self.pair_code = None;
@@ -208,6 +210,11 @@ impl Worker {
                     PasskeyError::InvalidOptions(_) => {
                         "WhatsApp requested passkey options this authenticator cannot use. Try again or update ZapFast."
                     }
+                    PasskeyError::Backend(message)
+                        if message == passkey::MISSING_USER_HANDLE_ERROR =>
+                    {
+                        passkey::MISSING_USER_HANDLE_ERROR
+                    }
                     _ => {
                         "Could not authenticate with the phone. Check Bluetooth permissions and internet access, then try again."
                     }
@@ -241,9 +248,13 @@ impl Worker {
         &mut self,
         confirmation: &wa_events::PairPasskeyConfirmation,
     ) {
-        let Some(id) = self.passkey.attempt.as_ref().map(|attempt| attempt.id) else {
+        let Some(attempt) = self.passkey.attempt.as_ref() else {
             return;
         };
+        if attempt.confirmation_received {
+            return;
+        }
+        let id = attempt.id;
         if !matches!(
             self.status,
             LinkStatus::Passkey {
@@ -253,6 +264,11 @@ impl Worker {
         ) {
             return;
         }
+        let attempt = self.passkey.attempt.as_mut().unwrap();
+        attempt.confirmation_received = true;
+        // Authentication may have used most of its window. Give the person a
+        // fresh comparison window, also bounding the subsequent pairing wait.
+        attempt.deadline = Some(Instant::now() + Duration::from_secs(120));
         self.passkey_stage(id, PasskeyStage::Confirm(confirmation.code.clone()));
         if confirmation.skip_handoff_ux {
             // Upstream proves continuity for a re-link. Fresh links always wait
@@ -299,12 +315,16 @@ impl Worker {
     }
 
     pub(super) fn expire_passkey(&mut self) {
+        self.expire_passkey_at(Instant::now());
+    }
+
+    fn expire_passkey_at(&mut self, now: Instant) {
         if self
             .passkey
             .attempt
             .as_ref()
             .and_then(|attempt| attempt.deadline)
-            .is_some_and(|deadline| Instant::now() >= deadline)
+            .is_some_and(|deadline| now >= deadline)
         {
             self.passkey_failed();
         }
@@ -434,6 +454,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn late_confirmation_gets_a_full_comparison_window_then_expires() {
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        worker.passkey_requested(REQUEST);
+        worker.passkey_stage(1, PasskeyStage::Submitting);
+        let old_deadline = Instant::now() - Duration::from_secs(1);
+        worker.passkey.attempt.as_mut().unwrap().deadline = Some(old_deadline);
+        let _ = latest(&events);
+        let confirmation = wa_events::PairPasskeyConfirmation::builder()
+            .code("ABCD-EFGH".into())
+            .skip_handoff_ux(false)
+            .build();
+        let before = Instant::now();
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::PairPasskeyConfirmation(
+                confirmation,
+            )))
+            .await;
+        let after = Instant::now();
+        let deadline = worker.passkey.attempt.as_ref().unwrap().deadline.unwrap();
+        assert!(deadline >= before + Duration::from_secs(120));
+        assert!(deadline <= after + Duration::from_secs(120));
+        assert_eq!(
+            latest(&events),
+            LinkStatus::Passkey {
+                attempt: 1,
+                stage: PasskeyStage::Confirm("ABCD-EFGH".into()),
+            }
+        );
+        worker.expire_passkey_at(old_deadline);
+        worker.expire_passkey_at(deadline - Duration::from_nanos(1));
+        assert!(events.try_recv().is_err());
+        worker.expire_passkey_at(deadline);
+        assert!(matches!(
+            latest(&events),
+            LinkStatus::Passkey {
+                attempt: 1,
+                stage: PasskeyStage::Failed(_),
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn repeated_confirmations_neither_extend_the_window_nor_reopen_comparison() {
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        worker.passkey_requested(REQUEST);
+        worker.passkey_stage(1, PasskeyStage::Submitting);
+        let confirmation = wa_events::PairPasskeyConfirmation::builder()
+            .code("ABCD-EFGH".into())
+            .skip_handoff_ux(false)
+            .build();
+        worker.passkey_confirmation(&confirmation);
+        let deadline = worker.passkey.attempt.as_ref().unwrap().deadline;
+        let _ = latest(&events);
+        let duplicate = wa_events::PairPasskeyConfirmation::builder()
+            .code("OTHER-CODE".into())
+            .skip_handoff_ux(true)
+            .build();
+        worker.passkey_confirmation(&duplicate);
+        assert!(events.try_recv().is_err());
+        assert_eq!(worker.passkey.attempt.as_ref().unwrap().deadline, deadline);
+        assert_eq!(
+            worker.status,
+            LinkStatus::Passkey {
+                attempt: 1,
+                stage: PasskeyStage::Confirm("ABCD-EFGH".into()),
+            }
+        );
+        // The confirmation send returns to Submitting, just like the assertion
+        // send, but a repeated server event must not open comparison again.
+        worker.passkey_stage(1, PasskeyStage::Submitting);
+        worker.passkey_sent(1, true);
+        let _ = latest(&events);
+        worker.passkey_confirmation(&duplicate);
+        assert!(events.try_recv().is_err());
+        assert_eq!(worker.passkey.attempt.as_ref().unwrap().deadline, deadline);
+        assert_eq!(
+            worker.status,
+            LinkStatus::Passkey {
+                attempt: 1,
+                stage: PasskeyStage::Submitting,
+            }
+        );
+        worker.expire_passkey_at(deadline.unwrap());
+        assert!(matches!(
+            latest(&events),
+            LinkStatus::Passkey {
+                attempt: 1,
+                stage: PasskeyStage::Failed(_),
+            }
+        ));
+    }
+
+    #[tokio::test]
     async fn stopping_authentication_aborts_its_owned_task() {
         let (mut worker, _, _, _) = super::super::receipt_tests::worker();
         worker.passkey_requested(REQUEST);
@@ -555,5 +668,41 @@ mod tests {
             "a finished attempt must not overwrite its error"
         );
         assert_eq!(worker.status, original);
+    }
+
+    #[tokio::test]
+    async fn helper_backend_failures_only_preserve_the_known_missing_handle_error() {
+        for (backend_message, known_message) in [
+            (passkey::MISSING_USER_HANDLE_ERROR.to_owned(), true),
+            ("sensitive-backend-marker".to_owned(), false),
+            (
+                format!(
+                    "{} sensitive-backend-marker",
+                    passkey::MISSING_USER_HANDLE_ERROR
+                ),
+                false,
+            ),
+        ] {
+            let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+            worker.passkey_requested(REQUEST);
+            worker.passkey_stage(1, PasskeyStage::Waiting);
+            worker.passkey.attempt.as_mut().unwrap().deadline =
+                Some(Instant::now() - Duration::from_secs(1));
+            let _ = latest(&events);
+            worker.passkey_assertion(1, Err(PasskeyError::Backend(backend_message)));
+            let expected = latest(&events);
+            let LinkStatus::Passkey {
+                stage: PasskeyStage::Failed(message),
+                ..
+            } = &expected
+            else {
+                panic!("backend failure did not reach the error view");
+            };
+            assert_eq!(message == passkey::MISSING_USER_HANDLE_ERROR, known_message);
+            assert!(!message.contains("sensitive-backend-marker"));
+            worker.expire_passkey();
+            assert!(events.try_recv().is_err());
+            assert_eq!(worker.status, expected);
+        }
     }
 }

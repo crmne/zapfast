@@ -2772,14 +2772,7 @@ impl App {
 
     /// Whether the device has linked data, including while offline.
     pub fn is_linked(&self) -> bool {
-        matches!(
-            self.link,
-            LinkStatus::Connected | LinkStatus::Connecting | LinkStatus::Disconnected { .. }
-        ) || (!self.chats.is_empty()
-            && !matches!(
-                self.link,
-                LinkStatus::LoggedOut | LinkStatus::Passkey { .. }
-            ))
+        self.account().is_linked()
     }
 
     pub fn chat(&self, id: &str) -> Option<&Chat> {
@@ -14528,6 +14521,27 @@ mod tests {
         app.accounts.push(second);
         app.active = 0;
         (app, commands)
+    }
+
+    #[test]
+    fn linked_state_follows_the_routed_account_not_other_linked_accounts() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        app.link = LinkStatus::Passkey {
+            attempt: 1,
+            stage: crate::backend::PasskeyStage::Ready,
+        };
+        app.chats
+            .push(Chat::new("fixture".into(), "Fixture".into()));
+        assert!(app.any_linked());
+        assert!(
+            !app.is_linked(),
+            "cached chats must not hide passkey linking"
+        );
+        app.active = 1;
+        assert!(app.is_linked(), "the routed account is connected");
+        app.active = 0;
+        assert!(!app.is_linked());
     }
 
     #[test]

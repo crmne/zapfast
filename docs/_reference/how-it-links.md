@@ -33,8 +33,10 @@ The phone's operating system determines which passkey providers it offers.
 
 For a fresh link, compare the code shown on both devices before continuing.
 Cancel and failed-attempt retries keep the local archive and session files.
-The authenticator request expires after at most one minute; the remaining
-linking steps have a two-minute overall deadline after **Start**.
+The authenticator request expires after at most one minute. Linking initially
+has a two-minute deadline after **Start**. When a confirmation code arrives,
+a fresh two-minute window covers code comparison and the remaining pairing
+steps. Repeated confirmation events do not extend that window.
 Failed attempts retain their original error instead of replacing it when that
 deadline passes. Diagnostic logs record linking stages and error categories,
 not QR payloads, challenges, or credentials.
@@ -48,10 +50,14 @@ review. Live compatibility with a particular phone or passkey provider must
 be checked before relying on it.
 
 The published `webauthn-authenticator-rs` 0.6.2 crate drops the authenticator's
-user handle from CTAP assertions on Linux and macOS. Linking can fail when
-WhatsApp requires that value. The successful local trial used a dependency
-patch; this build uses the unmodified published crate and has not had the
-same end-to-end verification. Windows uses the native WebAuthn API instead.
+user handle from CTAP assertions on Linux and macOS. A discoverable request,
+with no allowed credential IDs, requires a non-empty user handle. If the
+authenticator omits it, ZapFast stops before submitting the assertion and
+explains that updated authenticator support is needed. It never fabricates
+a handle. Requests that name allowed credential IDs may omit it.
+The successful local trial used a dependency patch; this build uses the
+unmodified published crate and has not had the same end-to-end verification.
+Windows uses the native WebAuthn API instead.
 
 Each linked device can have one connection. Two clients using the same device
 keys will disconnect each other. A second ZapFast launch reopens the existing

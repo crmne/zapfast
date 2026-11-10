@@ -14,6 +14,7 @@ use whatsapp_rust::passkey::{Assertion, AssertionRequest, PasskeyError, UserVeri
 const MAX_FRAME: usize = 64 * 1024;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const ORIGIN: &str = "https://web.whatsapp.com";
+pub(crate) const MISSING_USER_HANDLE_ERROR: &str = "passkey-missing-user-handle";
 
 pub(super) enum Progress {
     Qr(String),
@@ -49,6 +50,7 @@ enum Reply {
 enum Failure {
     InvalidOptions,
     UnsupportedOptions,
+    MissingUserHandle,
     NoCredential,
     Cancelled,
     BluetoothUnavailable,
@@ -71,6 +73,7 @@ impl Failure {
             Self::UnsupportedOptions => PasskeyError::InvalidOptions(
                 "these passkey options are not supported by this authenticator".into(),
             ),
+            Self::MissingUserHandle => PasskeyError::Backend(MISSING_USER_HANDLE_ERROR.into()),
             Self::NoCredential => PasskeyError::NoCredential,
             Self::Cancelled => PasskeyError::Cancelled,
             Self::BluetoothUnavailable => PasskeyError::Backend(
@@ -297,6 +300,7 @@ fn options(request: &AssertionRequest) -> Result<RequestChallengeResponse, Failu
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn perform(options: RequestChallengeResponse) -> Result<Assertion, Failure> {
+    let user_handle_required = options.public_key.allow_credentials.is_empty();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -318,13 +322,14 @@ fn perform(options: RequestChallengeResponse) -> Result<Assertion, Failure> {
         let credential = authenticator
             .do_authentication(origin()?, options)
             .map_err(authenticator_error)?;
-        assertion(credential)
+        assertion(credential, user_handle_required)
     })
 }
 
 #[cfg(target_os = "windows")]
 fn perform(options: RequestChallengeResponse) -> Result<Assertion, Failure> {
     use webauthn_authenticator_rs::win10::Win10;
+    let user_handle_required = options.public_key.allow_credentials.is_empty();
     if !Win10::supports_cable() {
         return Err(Failure::UnsupportedOptions);
     }
@@ -332,14 +337,17 @@ fn perform(options: RequestChallengeResponse) -> Result<Assertion, Failure> {
     let credential = Win10::default()
         .do_authentication(origin()?, options)
         .map_err(authenticator_error)?;
-    assertion(credential)
+    assertion(credential, user_handle_required)
 }
 
 fn origin() -> Result<Url, Failure> {
     Url::parse(ORIGIN).map_err(|_| Failure::Backend)
 }
 
-fn assertion(credential: PublicKeyCredential) -> Result<Assertion, Failure> {
+fn assertion(
+    credential: PublicKeyCredential,
+    user_handle_required: bool,
+) -> Result<Assertion, Failure> {
     if credential.type_ != "public-key"
         || credential.raw_id.is_empty()
         || credential.response.authenticator_data.is_empty()
@@ -347,6 +355,15 @@ fn assertion(credential: PublicKeyCredential) -> Result<Assertion, Failure> {
         || credential.response.signature.is_empty()
     {
         return Err(Failure::Backend);
+    }
+    if user_handle_required
+        && credential
+            .response
+            .user_handle
+            .as_ref()
+            .is_none_or(|handle| handle.is_empty())
+    {
+        return Err(Failure::MissingUserHandle);
     }
     let json = whatsapp_rust::passkey::build_webauthn_assertion_json(
         &credential.raw_id,
@@ -430,6 +447,42 @@ impl webauthn_authenticator_rs::ui::UiCallback for HybridUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn credential(user_handle: serde_json::Value) -> PublicKeyCredential {
+        serde_json::from_value(serde_json::json!({
+            "id": "AQID",
+            "rawId": "AQID",
+            "type": "public-key",
+            "response": {
+                "authenticatorData": "AQID",
+                "clientDataJSON": "e30",
+                "signature": "BAUG",
+                "userHandle": user_handle
+            },
+            "clientExtensionResults": {}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn discoverable_assertion_reports_a_missing_user_handle() {
+        for handle in [serde_json::Value::Null, serde_json::json!("")] {
+            let failure = assertion(credential(handle), true)
+                .err()
+                .map(Failure::error);
+            assert!(matches!(
+                failure,
+                Some(PasskeyError::Backend(message)) if message == MISSING_USER_HANDLE_ERROR
+            ));
+        }
+    }
+
+    #[test]
+    fn allowed_credential_assertion_does_not_invent_a_user_handle() {
+        let assertion = assertion(credential(serde_json::Value::Null), false).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&assertion.assertion_json).unwrap();
+        assert!(json["response"]["userHandle"].is_null());
+    }
 
     #[test]
     fn optional_webauthn_metadata_does_not_block_phone_authentication() {

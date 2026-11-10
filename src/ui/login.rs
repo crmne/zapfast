@@ -292,16 +292,27 @@ fn passkey_view(app: &mut App, ui: &mut egui::Ui, attempt: u64, stage: &PasskeyS
         ),
         PasskeyStage::Failed(message) => {
             theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
-            theme::paragraph(ui, message, theme::regular(13.0), palette.danger);
-            theme::paragraph(
-                ui,
+            let missing_user_handle = message == crate::backend::passkey::MISSING_USER_HANDLE_ERROR;
+            let explanation = if missing_user_handle {
                 crate::i18n::gettext(
                     locale,
-                    "Check Bluetooth, internet access, and that your phone has your WhatsApp passkey, then try again.",
-                ),
-                theme::regular(13.0),
-                palette.secondary,
-            );
+                    "The authenticator did not return the user handle required for this passkey request. ZapFast needs updated authenticator support to complete it.",
+                )
+            } else {
+                std::borrow::Cow::Borrowed(message.as_str())
+            };
+            theme::paragraph(ui, explanation, theme::regular(13.0), palette.danger);
+            if !missing_user_handle {
+                theme::paragraph(
+                    ui,
+                    crate::i18n::gettext(
+                        locale,
+                        "Check Bluetooth, internet access, and that your phone has your WhatsApp passkey, then try again.",
+                    ),
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+            }
             if theme::pill_button(
                 ui,
                 &palette,
