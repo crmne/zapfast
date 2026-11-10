@@ -975,7 +975,9 @@ again to hide a window that is in front. Launching the
 app again reopens the window on every platform. To quit, use **Quit** in the
 tray menu, or **Quit** in the Dock icon's menu on macOS, or on Linux **Quit ZapFast** in the
 launcher's right-click menu (KDE Plasma's task manager and application menu,
-GNOME's Dash). On every platform, `zapfast quit` in a terminal or a script quits
+GNOME's Dash). `Ctrl+Q` (`Command+Q` on macOS) also quits. Adding Alt does
+not quit, so `Ctrl+Alt+Q` / `AltGr+Q` stays available for typing `@` on
+keyboard layouts that use it. On every platform, `zapfast quit` in a terminal or a script quits
 the running copy the same way, and does nothing when none runs. A copy from
 before this command is left running, and the command says so and fails.
 With several numbers linked, a notification's title also names the number it

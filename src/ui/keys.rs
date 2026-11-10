@@ -40,6 +40,25 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         jump_keys_reach_chat(editing_text, composer_focused, app.composer.is_empty());
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
+        // consume_key ignores extra Alt, but Ctrl+Alt+Q / AltGr+Q types @.
+        // Leave those events for text input instead of quitting.
+        let mut quit = false;
+        input.events.retain(|event| {
+            let matched = matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::Q,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !modifiers.alt && modifiers.matches_logically(Modifiers::COMMAND)
+            );
+            quit |= matched;
+            !matched
+        });
+        if quit {
+            actions.push(Action::Quit);
+        }
         // The message list's key counts only with its modifier alone:
         // `consume_key` would also take Alt+Shift+2, and on macOS
         // Command+Control+2, which is Command+2's chat.
@@ -107,7 +126,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         }
         key(Modifiers::COMMAND, Key::B, Action::ToggleSidebar);
         key(Modifiers::COMMAND, Key::Comma, Action::ToggleSettings);
-        key(Modifiers::COMMAND, Key::Q, Action::Quit);
         key(Modifiers::COMMAND, Key::W, Action::CloseWindow);
         key(
             Modifiers::COMMAND,
@@ -2095,6 +2113,39 @@ mod tests {
         );
         output.textures_delta.clear();
         survived
+    }
+
+    #[test]
+    fn alt_q_never_quits_but_the_quit_shortcut_still_does() {
+        let (_root, mut app, _) = app_with_chats(1);
+        let ctx = egui::Context::default();
+        for command in [
+            Modifiers::COMMAND,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            for shift in [Modifiers::NONE, Modifiers::SHIFT] {
+                app.actions.clear();
+                assert!(press(
+                    &mut app,
+                    &ctx,
+                    Key::Q,
+                    command | shift | Modifiers::ALT
+                ));
+                assert!(
+                    !app.actions
+                        .iter()
+                        .any(|action| matches!(action, Action::Quit))
+                );
+                app.actions.clear();
+                assert!(!press(&mut app, &ctx, Key::Q, command | shift));
+                assert!(
+                    app.actions
+                        .iter()
+                        .any(|action| matches!(action, Action::Quit))
+                );
+            }
+        }
     }
 
     /// The modifiers a real Ctrl+Shift press carries on Linux and Windows,
