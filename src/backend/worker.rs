@@ -1602,9 +1602,11 @@ struct Worker {
     /// Chats already told that the phone did not answer; cleared when the
     /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
-    /// The message each chat's last unanswered request for older history was
-    /// anchored at; forgotten when the phone answers for the chat. Only for
-    /// this run: two silences may be a phone that was offline both times.
+    /// The message each chat's last timed-out request for older history was
+    /// anchored at. A request for a chat without messages has no anchor and
+    /// never sets it. Forgotten for a chat when an answer brings it messages
+    /// or on `ReloadHistory`, and for every chat on logout. Only for this
+    /// run: two silences may be a phone that was offline both times.
     silent_before: HashMap<ChatId, String>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
@@ -4692,6 +4694,8 @@ impl Worker {
         self.older_ids_match = false;
         self.forward_queue = None;
         self.pending_older.clear();
+        self.older_warned.clear();
+        self.silent_before.clear();
         self.pending_avatars.clear();
         // A star request belongs to the account that just left. A task that
         // finishes after logout must not write the next account, whose
@@ -27528,6 +27532,35 @@ mod older_history_tests {
         restarted.expire_older_requests();
         let after = drain(&events);
         assert_eq!(warnings(&after), 1, "the phone may still be offline");
+        assert_eq!(fetched(&after), Some(true), "so the window keeps asking");
+    }
+
+    /// The silences were the old link's phone's. After a logout, the next
+    /// link to that account slot starts with none: its first silence before
+    /// the same message warns and keeps the window asking.
+    #[tokio::test]
+    async fn a_logout_forgets_the_silent_phone() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        new_chat(&mut worker, &events);
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        assert_eq!(warnings(&drain(&events)), 1);
+
+        worker.on_logged_out().await;
+        assert!(
+            worker.older_warned.is_empty(),
+            "the next link was told nothing"
+        );
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::Connected(
+                wa_events::Connected::builder().build(),
+            )))
+            .await;
+        new_chat(&mut worker, &events);
+        waiting(&mut worker, true);
+        worker.expire_older_requests();
+        let after = drain(&events);
+        assert_eq!(warnings(&after), 1, "the new link's phone may be offline");
         assert_eq!(fetched(&after), Some(true), "so the window keeps asking");
     }
 
