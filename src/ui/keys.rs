@@ -2115,6 +2115,8 @@ mod tests {
         survived
     }
 
+    /// Ctrl+Q (Command+Q on macOS) quits, with or without Shift, while Alt
+    /// (Ctrl+Alt+Q, AltGr+Q) leaves the press for the focused text field.
     #[test]
     fn alt_q_never_quits_but_the_quit_shortcut_still_does() {
         let (_root, mut app, _) = app_with_chats(1);
@@ -2145,6 +2147,28 @@ mod tests {
                         .any(|action| matches!(action, Action::Quit))
                 );
             }
+        }
+    }
+
+    /// Q without the command key, with or without Shift or Alt (Option+Q on
+    /// macOS), is typing and neither quits nor is taken.
+    #[test]
+    fn q_without_the_command_key_is_left_for_typing() {
+        let (_root, mut app, _) = app_with_chats(1);
+        let ctx = egui::Context::default();
+        for modifiers in [
+            Modifiers::NONE,
+            Modifiers::SHIFT,
+            Modifiers::ALT,
+            Modifiers::ALT | Modifiers::SHIFT,
+        ] {
+            app.actions.clear();
+            assert!(press(&mut app, &ctx, Key::Q, modifiers));
+            assert!(
+                !app.actions
+                    .iter()
+                    .any(|action| matches!(action, Action::Quit))
+            );
         }
     }
 
