@@ -5084,7 +5084,10 @@ fn swipe_to_reply(
 ) -> f32 {
     let key = id.with("swipe");
     let mut swipe: Swipe = ui.ctx().data(|data| data.get_temp(key)).unwrap_or_default();
+    // While selecting, the selection bar stands in for the composer, so a
+    // reply would wait unseen until the selection ends.
     let replyable = view.chat.can_send()
+        && !view.selecting
         && !matches!(
             message.content,
             Content::Revoked | Content::PhoneOnly { .. } | Content::Call { .. }
