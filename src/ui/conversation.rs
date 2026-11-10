@@ -12601,6 +12601,31 @@ mod tests {
     }
 
     #[test]
+    fn swipe_replies_only_past_the_distance_and_once_per_gesture() {
+        let mut swipe = Swipe::default();
+        // A short swipe springs back without replying.
+        assert!(!swipe.step(30.0, false, 1.0));
+        assert!(!swipe.step(0.0, true, 1.01));
+        assert_eq!(swipe.offset, 0.0);
+        // A long one replies when the fingers lift, and its glide is ignored.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(40.0, false, 2.0));
+        assert!(!swipe.step(40.0, false, 2.02));
+        assert_eq!(swipe.offset, SWIPE_MAX.min(80.0));
+        assert!(swipe.step(0.0, true, 2.03));
+        assert!(!swipe.step(90.0, false, 2.05));
+        assert_eq!(swipe.offset, 0.0);
+        // Without an end phase, a pause counts as letting go.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(70.0, false, 3.0));
+        assert!(swipe.step(0.0, false, 3.0 + SWIPE_QUIET + 0.01));
+        // Leftward travel never moves the bubble.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(-50.0, false, 4.0));
+        assert_eq!(swipe.offset, 0.0);
+    }
+
+    #[test]
     fn reaction_affordance_sits_beside_the_bubble_without_clipping() {
         let bounds = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 300.0));
         let incoming = Rect::from_min_max(pos2(20.0, 20.0), pos2(140.0, 80.0));
