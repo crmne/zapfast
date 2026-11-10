@@ -2097,7 +2097,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 && (!app.composer.trim().is_empty() || !app.pending.is_empty())
             {
                 let text = std::mem::take(&mut app.composer);
-                if app.pending.is_empty() {
+                if app.editing.is_some() || app.pending.is_empty() {
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
                         text,
