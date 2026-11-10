@@ -203,34 +203,36 @@ Check (-not (Test-Path $custom)) "leaving no folder behind"
 Check ($null -eq (WhatsAppLink)) "nor a link to it"
 
 # 7. Another program's whatsapp: links stay its own through an install and
-# an uninstall.
+# an uninstall: registered for the user or the whole machine, under a default
+# verb other than open, or by a program whose name contains zapfast.exe.
 $other = "`"C:\Other\WhatsApp.exe`" `"%1`""
-New-Item -Force (Join-Path $links "shell\open\command") -Value $other | Out-Null
-New-ItemProperty -Force $links -Name "URL Protocol" -Value "" | Out-Null
-$code = Msiexec "/i `"$v2`" /qn /norestart"
-Check ($code -in 0, 3010) "ZapFast installs beside another program's links ($code)"
-Check ((WhatsAppLink) -eq $other) "whatsapp: links still run the other program"
-$code = Msiexec "/x `"$v2`" /qn /norestart"
-Check ($code -in 0, 3010) "and uninstalls ($code)"
-Check ((WhatsAppLink) -eq $other) "leaving the other program's links in place"
-Remove-Item -Recurse -Force $links
-
-# 8. So do another program's links registered for the whole machine.
 $machineLinks = "HKLM:\Software\Classes\whatsapp"
-New-Item -Force (Join-Path $machineLinks "shell\open\command") -Value $other | Out-Null
-New-ItemProperty -Force $machineLinks -Name "URL Protocol" -Value "" | Out-Null
-try {
-  $code = Msiexec "/i `"$v2`" /qn /norestart"
-  Check ($code -in 0, 3010) "ZapFast installs beside the machine's links ($code)"
-  Check (-not (Test-Path $links)) "without registering its own over them"
-  $code = Msiexec "/x `"$v2`" /qn /norestart"
-  Check ($code -in 0, 3010) "and uninstalls ($code)"
-  Check ((Get-Item (Join-Path $machineLinks "shell\open\command")).GetValue("") -eq $other) "leaving the machine's links in place"
-} finally {
-  Remove-Item -Recurse -Force $machineLinks
+$registered = @(
+  @{ Where = "for the user"; Key = $links; Verb = "open"; Command = $other },
+  @{ Where = "for the whole machine"; Key = $machineLinks; Verb = "open"; Command = $other },
+  @{ Where = "under another default verb"; Key = $machineLinks; Verb = "launch"; Command = $other },
+  @{ Where = "by a program named like ZapFast"; Key = $links; Verb = "open"
+     Command = "`"C:\Other\zapfast.exe-helper.exe`" `"%1`"" }
+)
+foreach ($handler in $registered) {
+  $command = Join-Path $handler.Key "shell\$($handler.Verb)\command"
+  New-Item -Force $command -Value $handler.Command | Out-Null
+  New-ItemProperty -Force $handler.Key -Name "URL Protocol" -Value "" | Out-Null
+  if ($handler.Verb -ne "open") { Set-Item (Join-Path $handler.Key "shell") -Value $handler.Verb }
+  try {
+    $code = Msiexec "/i `"$v2`" /qn /norestart"
+    Check ($code -in 0, 3010) "ZapFast installs beside links registered $($handler.Where) ($code)"
+    Check ((Get-Item $command).GetValue("") -eq $handler.Command) "they still run the other program"
+    if ($handler.Key -ne $links) { Check (-not (Test-Path $links)) "and ZapFast registers nothing over them" }
+    $code = Msiexec "/x `"$v2`" /qn /norestart"
+    Check ($code -in 0, 3010) "and uninstalls ($code)"
+    Check ((Get-Item $command).GetValue("") -eq $handler.Command) "leaving them in place"
+  } finally {
+    Remove-Item -Recurse -Force $handler.Key
+  }
 }
 
-# 9. The Windows on ARM package builds.
+# 8. The Windows on ARM package builds.
 Msi "0.18.1" "arm64" | Out-Null
 Check $true "the arm64 MSI builds"
 
