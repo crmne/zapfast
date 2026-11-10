@@ -1809,13 +1809,13 @@ mod tests {
 
     /// A favorite the phone names but that cannot be fetched now stays owed:
     /// the next connection fetches it instead of forgetting it.
-    #[test]
-    fn a_favorite_that_could_not_be_fetched_is_fetched_again() {
+    #[tokio::test]
+    async fn a_favorite_that_could_not_be_fetched_is_fetched_again() {
         let (mut worker, _root, _events, _commands) = sticker_worker();
         let bytes = sticker_bytes("not on this computer yet");
         let hash = crate::backend::sticker_store::content_hash(&bytes);
         worker.favorite_sticker_update(&phone_favorite(&bytes, true, now_millis()));
-        worker.favorite_fetched(&hash, Err("HTTP 410 https://mmg.example/v/x".into()));
+        worker.favorite_fetched(&hash, Err(super::super::tests::refused_download(500).await));
         assert_eq!(
             worker
                 .archive
@@ -1832,6 +1832,13 @@ mod tests {
         let action =
             wa::sync_action_value::StickerAction::decode_from_slice(&stored).expect("decodes");
         assert!(fetchable(&action));
+        worker.sticker_pace = Default::default();
+        worker.fetch_missing_favorites();
+        assert_eq!(
+            worker.sticker_pace.take(Instant::now(), 0),
+            [hash.clone()],
+            "the next connection asks the servers again"
+        );
 
         // By the next connection the sticker arrived in a pack.
         let pack = worker.packs_dir().join("Ducks");
