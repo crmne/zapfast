@@ -1989,6 +1989,18 @@ impl App {
         // Chats belong to the account that owns them; another account's chat
         // cannot be restored into this one.
         self.nav_history.clear();
+        // The remembered chat is on screen again: what arrived while another
+        // account was shown is read now, as when the window regains focus.
+        if self.chat_view()
+            && self.window_focused
+            && !self.window_hidden
+            && let Some(open) = self.open_chat.clone()
+            && self
+                .chat(&open)
+                .is_some_and(|chat| chat.unread > 0 && (!chat.locked || self.locked_folder_open()))
+        {
+            self.mark_read(&open);
+        }
     }
 
     /// Drops App-owned pointers into the previous account's chats and media.
@@ -13236,6 +13248,24 @@ mod tests {
             app.open_chat, None,
             "the first account's chat is not restored"
         );
+    }
+
+    /// A message that reached the chat left open in another account is read
+    /// once that account is shown again, without opening the chat anew.
+    #[test]
+    fn switching_back_reads_the_chat_left_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        app.window_focused = true;
+        let chat = "15550003333@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.apply(Action::OpenChat(chat.into()), &ctx);
+        app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        app.accounts[0].chats[0].unread = 1;
+        app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(chat));
+        assert_eq!(app.chat(chat).unwrap().unread, 0);
     }
 
     /// The Calls tab stays open across a switch of account and shows that
