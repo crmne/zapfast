@@ -5182,8 +5182,8 @@ impl Worker {
             }
             _ => chat,
         };
-        // A message older than its chat's deletion is not filed, so its timer
-        // does not file the chat either.
+        // A message older than its chat's deletion, or deleted for me, is not
+        // filed, so its timer does not file the chat either.
         if let Some(expiration) = base.get_ephemeral_expiration()
             && list.is_none()
             && self
@@ -5193,7 +5193,8 @@ impl Worker {
                 .flatten()
                 .is_none()
             && (self.archive.chat(&chat).ok().flatten().is_some()
-                || !self.predates_removal(&chat, info.timestamp.timestamp()))
+                || !(self.predates_removal(&chat, info.timestamp.timestamp())
+                    || self.message_was_removed(&chat, &info.id)))
         {
             self.ensure_chat(&chat, push_name.as_deref());
             let _ = self.archive.set_ephemeral(&chat, expiration, 0);
@@ -26773,6 +26774,35 @@ mod chat_removal_tests {
             worker.archive.ephemeral_expiration(CHAT).unwrap(),
             Some(86_400)
         );
+    }
+
+    /// A message deleted for me before its chat was deleted does not file
+    /// the chat for its timer when it is delivered again.
+    #[tokio::test]
+    async fn a_message_deleted_for_me_with_a_timer_leaves_a_deleted_chat_deleted() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 300]), true);
+        worker.archive.delete_message(CHAT, "m300").unwrap();
+        phone_deletes(&mut worker, CHAT, 100).await;
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
+
+        let message = wa::Message::text_with_context("sent at 300".to_owned(), {
+            let mut proto = wa::ContextInfo::default();
+            proto.expiration = Some(86_400);
+            proto
+        });
+        let info = MessageInfo {
+            id: "m300".into(),
+            source: MessageSource {
+                chat: CHAT.parse().unwrap(),
+                sender: CHAT.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(300).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(message), &info);
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
     }
 
     /// A deleted chat that a newer message, call or history files again
