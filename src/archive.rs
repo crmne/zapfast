@@ -2418,6 +2418,10 @@ impl Archive {
             }
         } else if delete {
             self.keep_settings(chat)?;
+            // A read past the removal point covers messages not here yet.
+            if let Some(read) = self.read_through(chat)? {
+                self.retain_read_through(chat, read)?;
+            }
             self.delete_chat(chat)?
         } else {
             self.clear_chat(chat)?
