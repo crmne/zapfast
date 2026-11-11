@@ -300,6 +300,7 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::super::receipt_tests::{PEER, worker};
 
     #[test]
@@ -322,9 +323,6 @@ mod tests {
         assert!(!sync.ready(now + Duration::from_secs(29)));
         assert!(sync.ready(now + Duration::from_secs(30)));
     }
-
-
-    use super::*;
 
     const GROUP: &str = "120363000000000042@g.us";
     const CHANNEL: &str = "120363000000000099@newsletter";
