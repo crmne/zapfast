@@ -997,14 +997,17 @@ pub enum Command {
         id: String,
         error: Option<String>,
     },
-    /// Internal: WhatsApp refused a delete for everyone. The message, shown
-    /// as deleted while the revoke was out, gets back what it had.
-    RevokeRefused {
+    /// Internal: WhatsApp's answer to a delete for everyone. On a refusal,
+    /// the message, shown as deleted while the revoke was out, gets back
+    /// what it had.
+    RevokeAnswered {
         chat: ChatId,
         id: String,
+        /// The account session that sent it; a later one ignores it.
+        session: u64,
         /// The content and edited flag before the revoke, when known.
         previous: Option<(crate::model::Content, bool)>,
-        error: String,
+        error: Option<String>,
     },
     /// Internal attachment-download result.
     Downloaded {
