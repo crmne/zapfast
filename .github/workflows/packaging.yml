@@ -102,7 +102,7 @@ jobs:
         image: ${{ fromJSON(inputs.version && '["debian:12-slim", "ubuntu:24.04", "debian:13-slim", "fedora:41", "fedora:latest"]' || '["ubuntu:24.04", "debian:13-slim", "fedora:41", "fedora:latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: native-packages
           path: dist/native-packages
@@ -129,7 +129,7 @@ jobs:
             target: linux-arm64
             arch: aarch64
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: native-packages
           path: dist/native-packages
