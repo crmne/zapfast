@@ -23,6 +23,7 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+pub(crate) use worker::replace_bidi_format;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
