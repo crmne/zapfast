@@ -26490,6 +26490,27 @@ mod chat_removal_tests {
         }
     }
 
+    /// A lock the phone keeps for a chat deleted under its privacy id reaches
+    /// the phone number's chat listed here as soon as the two are known to be
+    /// one, not at the next unrelated update.
+    #[tokio::test]
+    async fn a_lock_kept_under_a_privacy_id_reaches_the_listed_chat_at_once() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Somebody").unwrap();
+        let lid = "200000000000001@lid";
+        phone_deletes(&mut worker, lid, 200).await;
+        for event in phone_settings(lid, 250) {
+            worker.handle_wa_event(Arc::new(event)).await;
+        }
+        events.try_iter().for_each(drop);
+        worker.learn_lid("200000000000001", "4915700000001");
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::BlocklistMapped { chats, .. }
+                if chats.iter().any(|listed| listed.id == CHAT && listed.locked)
+        )));
+    }
+
     /// The phone's call log outlives a chat it deleted, and a newly linked
     /// device receives it with history.
     #[test]

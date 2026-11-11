@@ -1292,9 +1292,12 @@ impl Archive {
             params![lid_chat, phone_chat],
         )?;
         // The trigger covers a phone-number chat filed later, not one listed already.
-        for statement in restore_kept("?1") {
-            transaction.execute(&statement, params![phone_chat])?;
+        let [kept @ .., forget] = restore_kept("?1");
+        let mut restored = 0;
+        for statement in kept {
+            restored += transaction.execute(&statement, params![phone_chat])?;
         }
+        transaction.execute(&forget, params![phone_chat])?;
         self.connection.execute(
             "INSERT INTO message_removals (account, chat, id)
              SELECT account, chat, id FROM pending_message_removals WHERE confirmed = 1 AND chat IN (?1, ?2)
@@ -1469,7 +1472,7 @@ impl Archive {
         self.purge_chat_rows(&lid_chat)?;
         transaction.execute("DELETE FROM chats WHERE id = ?1", params![lid_chat])?;
         transaction.commit()?;
-        Ok(changed > 0 || favorite || removed > 0 || had_lid_chat)
+        Ok(changed > 0 || restored > 0 || favorite || removed > 0 || had_lid_chat)
     }
 
     /// Both copies of each message that merging `from` into `to` meets and
@@ -4703,7 +4706,8 @@ pub(crate) mod tests {
             }
             archive.remove_chat_through("42@lid", 150, true).unwrap();
             archive.retain_locked_at("42@lid", true, 2_000).unwrap();
-            archive.put_lid("42", "15550000000").unwrap();
+            // The listed chat changed, so the worker sends the chat list again.
+            assert_eq!(archive.put_lid("42", "15550000000").unwrap(), listed);
             assert_eq!(archive.chat(phone).unwrap().is_some(), listed);
             archive.ensure_chat(phone, "Fixture").unwrap();
             assert_eq!(
