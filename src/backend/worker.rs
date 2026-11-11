@@ -26511,6 +26511,42 @@ mod chat_removal_tests {
         )));
     }
 
+    /// The archive, pin, mute and lock a chat had here when it was deleted,
+    /// on the phone or with Delete chat here, come back with it like the ones
+    /// the phone sends after the deletion. At link time the phone's settings
+    /// can file the chat before its deletion is decoded.
+    #[tokio::test]
+    async fn a_chat_deleted_with_settings_takes_them_back_when_it_returns() {
+        for here in [false, true] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            for event in phone_settings(CHAT, 150) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().expect("filed").locked);
+            if here {
+                worker
+                    .handle_command(Command::ChatDeleted {
+                        chat: CHAT.into(),
+                        deleted: true,
+                        through: 200,
+                    })
+                    .await;
+            } else {
+                phone_deletes(&mut worker, CHAT, 200).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "here: {here}");
+            worker.archive_message(
+                crate::archive::tests::message(CHAT, "m300", 300, false),
+                None,
+                None,
+                false,
+            );
+            let chat = worker.archive.chat(CHAT).unwrap().expect("filed again");
+            assert!(chat.locked && chat.pinned && chat.archived, "here: {here}");
+            assert_eq!(chat.muted_until, Some(0), "here: {here}");
+        }
+    }
+
     /// The phone's call log outlives a chat it deleted, and a newly linked
     /// device receives it with history.
     #[test]
