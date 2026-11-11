@@ -139,3 +139,41 @@ cargo test --locked --features "nano-one-worker nano-low-resource" animation::
 
 For a useful comparison, use the same account and window size, open a tall animated WebP/GIF and a normal landscape clip, then compare private bytes/working set, CPU, playback smoothness, and message responsiveness. Close the app between builds. Do not judge battery impact from CPU percentage alone; use the battery-discharge procedure above. The feature remains experimental until the measurements and media-quality checks agree.
 
+## Ultra-low-resource animation experiment
+
+Branch: `nano/ultra-low-resource`, based on `nano/low-resource-animation`.
+
+Build the previous low-resource profile (320px maximum side, 120 resident frames):
+
+```sh
+cargo build --locked --release --features "nano-one-worker nano-low-resource"
+```
+
+Build the more aggressive profile (256px maximum side, 64 resident frames):
+
+```sh
+cargo build --locked --release --features "nano-one-worker nano-ultra-low-resource"
+```
+
+The `nano-ultra-low-resource` Cargo feature automatically includes `nano-low-resource`. It therefore keeps the single animation decoder and additionally:
+
+- Limits retained animation/poster frame dimensions to 256×256 while preserving aspect ratio.
+- Reduces the global resident animation-frame budget from 120 to 64.
+- Keeps the existing maximum of 150 decoded frames per animation, preserving the timeline of longer animations rather than truncating them.
+
+At 256×256 RGBA, 64 frames represent about 16 MiB of pixel data before texture-driver overhead. This is a cache target, not a hard memory ceiling: visible animations are protected from eviction and temporary decode buffers also consume memory. The lower resolution may soften large sticker previews; check text and fine details before preferring it.
+
+Run the profile-specific regression test:
+
+```sh
+cargo test --locked --features "nano-one-worker nano-ultra-low-resource" animation::tests::animated_webp_posters_are_bounded_and_playback_obeys_the_build_profile
+```
+
+Then run the full animation test group:
+
+```sh
+cargo test --locked --features "nano-one-worker nano-ultra-low-resource" animation::
+```
+
+Compare it against the previous 320px/120-frame build using the same account, selected chat, UI size, window visibility, warm-up time, and media state. This profile is experimental and is not enabled by default.
+
