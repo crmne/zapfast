@@ -1,6 +1,6 @@
 # Performance baseline
 
-This document defines a repeatable, privacy-preserving baseline for WhatsApp Nano (the ZapFast fork).
+This document defines a repeatable, privacy-preserving baseline for WhatsNano (the ZapFast-derived native client).
 
 ## Why this exists
 
@@ -84,6 +84,24 @@ Only after capturing the baseline:
 3. Change one subsystem at a time.
 4. Run the project's formatting, Clippy and test commands from CONTRIBUTING.md.
 5. Repeat the same idle benchmark before considering the change successful.
+
+## Native GUI profiler (debug build only)
+
+The `nano-gui-profile` feature measures the native eframe callbacks without changing the GUI framework, renderer, backend runtime, or application architecture. It reports one line every ten seconds:
+
+- GUI logic callback count and rate (calls/second).
+- Average and maximum logic callback duration.
+- Average and maximum `background_frame` duration.
+- Average and maximum `app.window_logic` duration.
+- UI callback count/rate and average/maximum UI construction duration.
+
+Build the current debug profile with the existing low-resource experiments and GUI profiler:
+
+```sh
+cargo build --locked --release --features "nano-one-worker nano-ultra-low-resource nano-gui-profile"
+```
+
+Look for `gui_profile` in the application log. The counters describe native GUI callback activity; they do not measure GPU presentation time, compositor scheduling, backend thread CPU, or battery discharge. The profiler adds a small timing/logging cost, so use it to locate hot phases and callback frequency, then repeat the actual memory/CPU benchmark without the profiler feature. Do not treat callback rate alone as proof of an OS wakeup or GPU bottleneck.
 
 ## One-worker runtime experiment
 
