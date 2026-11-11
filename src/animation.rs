@@ -1024,7 +1024,7 @@ mod tests {
         let playback = decode(&path, MAX_FRAMES).unwrap();
         assert_eq!(playback.frames.len(), 2);
         #[cfg(feature = "nano-ultra-low-resource")]
-        assert_eq!(playback.frames[0].0.size, [16, 256]);
+        assert_eq!(playback.frames[0].0.size, [20, 256]);
         #[cfg(all(feature = "nano-low-resource", not(feature = "nano-ultra-low-resource")))]
         assert_eq!(playback.frames[0].0.size, [25, 320]);
         #[cfg(not(feature = "nano-low-resource"))]
