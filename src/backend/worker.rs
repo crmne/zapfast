@@ -8896,6 +8896,12 @@ impl Worker {
                     self.handle_failed_group(chat, permanent);
                 }
             }
+            Command::RevokeRefused {
+                chat,
+                id,
+                previous,
+                error,
+            } => self.revoke_refused(&chat, &id, previous, error),
             Command::Sent { chat, id, error } => {
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
@@ -11359,6 +11365,7 @@ impl Worker {
             self.emit_chat(&chat);
             self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
         }
+        let previous = old.map(|old| (old.content, old.edited));
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let kind = match admin_sender {
@@ -11367,16 +11374,42 @@ impl Worker {
                 },
                 None => RevokeType::Sender,
             };
-            if let Err(error) = client.revoke_message_raw(jid, id, kind).await {
-                let _ = commands.send(Command::Sent {
+            if let Err(error) = client.revoke_message_raw(jid, id.clone(), kind).await {
+                let _ = commands.send(Command::RevokeRefused {
                     chat,
-                    id: String::new(),
-                    error: Some(format!(
-                        "Could not delete the message for everyone: {error}"
-                    )),
+                    id,
+                    previous,
+                    error: format!("Could not delete the message for everyone: {error}"),
                 });
             }
         });
+    }
+
+    /// Puts back a message whose delete for everyone WhatsApp refused (an
+    /// admin who lost the role, a message past the limit), unless something
+    /// else has deleted it since, and says why.
+    fn revoke_refused(
+        &mut self,
+        chat: &str,
+        id: &str,
+        previous: Option<(Content, bool)>,
+        error: String,
+    ) {
+        let still_ours = self
+            .archive
+            .message(chat, id)
+            .ok()
+            .flatten()
+            .is_some_and(|message| matches!(message.content, Content::Revoked));
+        if let Some((content, edited)) = previous.filter(|_| still_ours)
+            && !matches!(content, Content::Revoked)
+            && let Ok(true) = self.archive.set_content(chat, id, &content, edited)
+        {
+            self.emit_message(chat, id);
+            self.emit_chat(chat);
+            self.media_changed(chat, None, Some(&content));
+        }
+        self.emit(Event::Error(error));
     }
 
     /// Takes the chat's next place for an attachment: the first value resolves
@@ -25536,6 +25569,57 @@ mod receipt_tests {
             Content::Revoked
         );
         assert!(worker.archive.message(PEER, "old").unwrap().is_none());
+    }
+
+    /// A delete for everyone that WhatsApp refuses (an admin who lost the
+    /// role meanwhile) puts the message back as it was, and says why. One
+    /// that something else deleted since stays deleted.
+    #[test]
+    fn a_refused_delete_for_everyone_puts_the_message_back() {
+        const GROUP: &str = "120363000000000000@g.us";
+        let (mut worker, _e, _i, _w) = worker();
+        worker.archive.ensure_chat(GROUP, "Group").unwrap();
+        let original = received_from(GROUP, "member", 100, PEER);
+        worker.archive.insert_message(&original, None).unwrap();
+        let content = |worker: &Worker| {
+            worker
+                .archive
+                .message(GROUP, "member")
+                .unwrap()
+                .unwrap()
+                .content
+        };
+        worker
+            .archive
+            .set_content(GROUP, "member", &Content::Revoked, false)
+            .unwrap();
+        worker.revoke_refused(
+            GROUP,
+            "member",
+            Some((original.content.clone(), false)),
+            "refused".into(),
+        );
+        assert_eq!(content(&worker), original.content);
+
+        worker
+            .archive
+            .set_content(GROUP, "member", &Content::Revoked, false)
+            .unwrap();
+        worker.revoke_refused(GROUP, "member", None, "refused".into());
+        assert_eq!(content(&worker), Content::Revoked, "nothing to put back");
+
+        let edited = Content::text("Edited since");
+        worker
+            .archive
+            .set_content(GROUP, "member", &edited, true)
+            .unwrap();
+        worker.revoke_refused(
+            GROUP,
+            "member",
+            Some((original.content.clone(), false)),
+            "refused".into(),
+        );
+        assert_eq!(content(&worker), edited, "only a deleted copy is restored");
     }
 }
 

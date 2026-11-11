@@ -12008,6 +12008,15 @@ mod tests {
             revoke_blocker(&unnamed, 0, true),
             Some(RevokeBlocker::NotOurs)
         );
+        let call = Message {
+            id: format!("{}synthetic", crate::model::CALL_ENTRY_PREFIX),
+            ..member.clone()
+        };
+        assert_eq!(
+            revoke_blocker(&call, 0, true),
+            Some(RevokeBlocker::NotOurs),
+            "a call record never reached WhatsApp"
+        );
         let direct = Message {
             chat: "5511900000000@s.whatsapp.net".into(),
             ..member
