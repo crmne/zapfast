@@ -9835,10 +9835,16 @@ impl Worker {
     }
 
     /// A locked chat accepts messages written in it, but never a forward:
-    /// the picker does not list it, so one aimed there was locked meanwhile.
+    /// the picker does not list it, so one aimed there was locked meanwhile,
+    /// or deleted with a lock the phone keeps, which the forward's copy would
+    /// file again.
     fn forward_writable(&self, chat: &str) -> bool {
         self.destination_writable(chat)
-            && !matches!(self.archive.chat(chat), Ok(Some(chat)) if chat.locked)
+            && match self.archive.chat(chat) {
+                Ok(Some(chat)) => !chat.locked,
+                Ok(None) => matches!(self.archive.kept_lock(chat), Ok(false)),
+                Err(_) => false,
+            }
     }
 
     /// Skips destinations that became unwritable while waiting, marking their
@@ -26614,6 +26620,41 @@ mod chat_removal_tests {
                 "{chat}"
             );
             assert!(worker.call.is_none() && worker.phone_only_calls.is_empty());
+        }
+    }
+
+    /// The window can pick a chat listed unlocked for a forward just before
+    /// the worker hears that the phone deleted it and keeps it locked. The
+    /// forward is refused before its copy files the chat again, locked, and
+    /// before anything is sent; a chat deleted without a lock still takes one.
+    #[tokio::test]
+    async fn a_forward_to_a_deleted_chat_the_phone_keeps_locked_is_refused() {
+        for locked in [true, false] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            worker.archive.ensure_chat(CHAT, "Somebody").unwrap();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            if locked {
+                for event in phone_settings(CHAT, 250) {
+                    worker.handle_wa_event(Arc::new(event)).await;
+                }
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "{locked}");
+            assert_eq!(worker.forward_writable(CHAT), !locked, "{locked}");
+            if locked {
+                events.try_iter().for_each(drop);
+                worker
+                    .handle_command(Command::Forward {
+                        from_chat: "2@s.whatsapp.net".into(),
+                        messages: vec!["source".into()],
+                        to_chats: vec![CHAT.into()],
+                    })
+                    .await;
+                assert!(events.try_iter().any(|event| matches!(
+                    event,
+                    Event::Error(error) if error == "This conversation is read-only in ZapFast"
+                )));
+                assert!(worker.archive.chat(CHAT).unwrap().is_none());
+            }
         }
     }
 
