@@ -28,11 +28,21 @@ pub(super) struct FavoriteChats {
     /// The phone's list arrived while ours was being sent, so ours may lack
     /// its change: the queue is kept and the merged list goes out again.
     overtaken: bool,
+    /// Whether a queue check is needed after a connection or favorites event.
+    needs_pump: bool,
     retry_at: Option<Instant>,
     failures: u32,
 }
 
 impl FavoriteChats {
+    fn wake(&mut self) {
+        self.needs_pump = true;
+    }
+
+    fn drain(&mut self) {
+        self.needs_pump = false;
+    }
+
     fn ready(&self, now: Instant) -> bool {
         !self.reading && !self.sending && self.retry_at.is_none_or(|retry| now >= retry)
     }
@@ -103,7 +113,7 @@ impl Worker {
                 for chat in touched {
                     self.emit_chat(&chat);
                 }
-                self.pump_favorite_chats();
+                self.wake_favorite_chats();
             }
             Ok(None) => log::debug!("ignored an older favorites list"),
             Err(error) => log::warn!("could not apply the phone's favorites: {error}"),
@@ -124,7 +134,7 @@ impl Worker {
                     }
                 }
                 self.emit_chat(chat);
-                self.pump_favorite_chats();
+                self.wake_favorite_chats();
             }
             Ok(false) => self.emit_chat(chat),
             Err(error) => self.emit(Event::Error(error.to_string())),
@@ -139,16 +149,32 @@ impl Worker {
         Some((through, self.archive.favorites().ok()?))
     }
 
+    /// Request a durable queue check after a change or a new connection.
+    pub(super) fn wake_favorite_chats(&mut self) {
+        self.favorite_chats.wake();
+        self.pump_favorite_chats();
+    }
+
     /// Learns the phone's list once, then sends queued changes.
     pub(super) fn pump_favorite_chats(&mut self) {
         let now = Instant::now();
-        if !matches!(self.status, LinkStatus::Connected) || !self.favorite_chats.ready(now) {
+        if !self.favorite_chats.needs_pump
+            || !matches!(self.status, LinkStatus::Connected)
+            || !self.favorite_chats.ready(now)
+        {
             return;
         }
         let Some(client) = self.client.clone() else {
             return;
         };
-        if self.archive.favorites_synced_at().ok().flatten().is_none() {
+        let synced_at = match self.archive.favorites_synced_at() {
+            Ok(synced_at) => synced_at,
+            Err(error) => {
+                log::warn!("could not check favorite chat sync state: {error}");
+                return;
+            }
+        };
+        if synced_at.is_none() {
             self.favorite_chats.reading = true;
             let sender = self.wa_sender.clone();
             let generation = self.privacy_generation;
@@ -174,8 +200,23 @@ impl Worker {
             });
             return;
         }
-        let Some((through, list)) = self.favorites_to_send() else {
-            return;
+        let through = match self.archive.pending_favorites() {
+            Ok(Some(through)) => through,
+            Ok(None) => {
+                self.favorite_chats.drain();
+                return;
+            }
+            Err(error) => {
+                log::warn!("could not check pending favorite chat changes: {error}");
+                return;
+            }
+        };
+        let list = match self.archive.favorites() {
+            Ok(list) => list,
+            Err(error) => {
+                log::warn!("could not load favorite chats to sync: {error}");
+                return;
+            }
         };
         self.favorite_chats.sending = true;
         self.favorite_chats.overtaken = false;
@@ -208,17 +249,30 @@ impl Worker {
         if !complete {
             return;
         }
-        if self.archive.favorites_synced_at().ok().flatten().is_none() {
+        let synced_at = match self.archive.favorites_synced_at() {
+            Ok(synced_at) => synced_at,
+            Err(error) => {
+                log::warn!("could not check the recorded favorite chat sync: {error}");
+                self.favorite_chats.settle(false, Instant::now());
+                return;
+            }
+        };
+        if synced_at.is_none() {
             match self.archive.apply_phone_favorites(&[], 0) {
-                Ok(touched) => {
-                    for chat in touched.unwrap_or_default() {
+                Ok(Some(touched)) => {
+                    for chat in touched {
                         self.emit_chat(&chat);
                     }
                 }
-                Err(error) => log::warn!("could not record the favorites sync: {error}"),
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!("could not record the favorites sync: {error}");
+                    self.favorite_chats.settle(false, Instant::now());
+                    return;
+                }
             }
         }
-        self.pump_favorite_chats();
+        self.wake_favorite_chats();
     }
 
     pub(super) fn favorites_sent(&mut self, through: i64, at: i64, success: bool) {
@@ -232,19 +286,44 @@ impl Worker {
         }
         if std::mem::take(&mut self.favorite_chats.overtaken) {
             // The merged list still holds our changes; send it again.
-            self.pump_favorite_chats();
+            self.wake_favorite_chats();
             return;
         }
         if let Err(error) = self.archive.favorites_sent(through, at) {
             log::warn!("could not record the favorites sync: {error}");
+            self.favorite_chats.settle(false, Instant::now());
+            return;
         }
-        self.pump_favorite_chats();
+        self.wake_favorite_chats();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::receipt_tests::{PEER, worker};
+
+    #[test]
+    fn an_idle_favorites_sync_stays_asleep_until_woken() {
+        let mut sync = FavoriteChats::default();
+        assert!(!sync.needs_pump);
+        sync.wake();
+        assert!(sync.needs_pump);
+        sync.drain();
+        assert!(!sync.needs_pump);
+    }
+
+    #[test]
+    fn failed_favorites_sync_keeps_work_armed_until_backoff_expires() {
+        let mut sync = FavoriteChats::default();
+        let now = Instant::now();
+        sync.wake();
+        sync.settle(false, now);
+        assert!(sync.needs_pump);
+        assert!(!sync.ready(now + Duration::from_secs(29)));
+        assert!(sync.ready(now + Duration::from_secs(30)));
+    }
+
+
     use super::*;
 
     const GROUP: &str = "120363000000000042@g.us";

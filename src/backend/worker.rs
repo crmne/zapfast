@@ -4114,7 +4114,7 @@ impl Worker {
                 self.retry_avatars();
                 self.read_sync.wake();
                 self.pump_read_sync();
-                self.pump_favorite_chats();
+                self.wake_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
                 self.push_favorites();
                 self.fetch_missing_favorites();
