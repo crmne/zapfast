@@ -234,3 +234,6 @@ For the memory check, launch the same account, scroll through several image-heav
 ### Idle background work
 
 The worker keeps its five-second connection-health and retry watchdog: this is intentionally unchanged so a dropped or silent connection is still detected promptly. Private read/unread state synchronization is now event-driven between those checks. A durable queue check is requested when the account connects or a read/unread state changes, and retries retain their existing backoff. Once both archive queues are confirmed empty, the worker skips further SQLite queue scans until new work or a reconnect occurs.
+
+
+Poll-vote recovery is event-driven as well. The five-second watchdog no longer queries SQLite while the pending poll-vote queue is idle. Reconnects, new vote events, poll creation or history updates, and decryption completions wake the queue; the existing batch limit and reconnect retry behaviour remain in place. Database errors keep the queue armed for a later retry.

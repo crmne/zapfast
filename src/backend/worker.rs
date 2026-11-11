@@ -1067,6 +1067,7 @@ pub async fn run(
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
+        poll_votes_need_pump: false,
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
         prefetch: prefetch::State::default(),
@@ -1466,6 +1467,8 @@ struct Worker {
     /// Sending favorite chats to the phone, and reading its list once.
     favorite_chats: favorite_chats::FavoriteChats,
     poll_decrypting: usize,
+    /// A durable poll-vote scan is needed after an event or a failed attempt.
+    poll_votes_need_pump: bool,
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
@@ -4120,7 +4123,7 @@ impl Worker {
                 self.recover_stars();
                 self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
-                self.pump_poll_votes();
+                self.wake_poll_votes();
                 if let Some(client) = self.client.clone() {
                     let me = self.me_pn.clone().and_then(|pn| Self::jid_of(&pn));
                     let commands = self.commands.clone();
@@ -5351,7 +5354,7 @@ impl Worker {
             self.settle_early_receipts(&chat, &id);
         }
         if is_poll {
-            self.pump_poll_votes();
+            self.wake_poll_votes();
         }
     }
 
@@ -6707,7 +6710,7 @@ impl Worker {
             }
             filed.push((id, count, chat.more_on_phone));
         }
-        self.pump_poll_votes();
+        self.wake_poll_votes();
         self.pump_poll_history();
         for (id, _, _) in &filed {
             self.emit_chat(id);
@@ -20154,6 +20157,7 @@ mod receipt_tests {
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
+            poll_votes_need_pump: false,
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
             prefetch: prefetch::State::default(),
