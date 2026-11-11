@@ -15,6 +15,7 @@ use crate::model::{
 };
 use crate::paths::AccountDirs;
 
+pub(crate) mod heic;
 pub(crate) mod picture_edit;
 
 // Re-exported so the picker can detect pasted Signal pack links.
@@ -814,6 +815,13 @@ pub enum Command {
     PicturePreviewReady {
         target: crate::app::AttachmentId,
         image: Option<egui::ColorImage>,
+    },
+    /// Converts a staged HEIC photo to a JPEG written beside the media
+    /// cache, which then replaces it through `PictureEdited`. A photo that
+    /// cannot be converted stays as it was staged.
+    ConvertPicture {
+        target: crate::app::AttachmentId,
+        path: PathBuf,
     },
     /// Reads a staged picture's size, so the cropper can open on it.
     InspectPicture {

@@ -8056,6 +8056,23 @@ impl Worker {
             Command::PicturePreviewReady { target, image } => {
                 self.emit(Event::PicturePreviewReady { target, image });
             }
+            Command::ConvertPicture { target, path } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.media_cache_dir().join("edited");
+                tokio::task::spawn_blocking(move || {
+                    match super::heic::write(&path, &dir) {
+                        Ok(converted) => {
+                            let _ = commands.send(Command::PictureEdited {
+                                target,
+                                result: Ok(converted),
+                            });
+                        }
+                        // It stays staged as it is and goes as a document.
+                        // Only the reason: never the path.
+                        Err(error) => log::warn!("could not convert a HEIC photo: {error}"),
+                    }
+                });
+            }
             Command::InspectPicture { target, path } => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {
@@ -11459,6 +11476,12 @@ impl Worker {
                     let mime = mime_guess2::from_path(&path)
                         .first_or_octet_stream()
                         .to_string();
+                    // A HEIC photo sent before its staged conversion landed,
+                    // or restored from a draft, is converted here instead.
+                    let (bytes, mime) = match heic_as_jpeg(&path, documents).await {
+                        Some(jpeg) => (jpeg, "image/jpeg".to_owned()),
+                        None => (bytes, mime),
+                    };
                     let file_name = path
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned());
@@ -13463,6 +13486,21 @@ fn whatsapp_audio_mime(mime: &str) -> Option<&'static str> {
 /// original file; ZapFast does not transcode.
 fn whatsapp_video_mime(mime: &str) -> bool {
     mime == "video/mp4"
+}
+
+/// The JPEG a HEIC photo goes out as, where this system can convert one.
+/// `None` leaves the file as it is: it is not HEIC, it was picked to go as a
+/// document, or it could not be converted and so goes as a document too.
+async fn heic_as_jpeg(path: &Path, documents: bool) -> Option<Vec<u8>> {
+    if documents || !super::heic::convertible() || !super::heic::is_heic(path) {
+        return None;
+    }
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || super::heic::to_jpeg(&path))
+        .await
+        .ok()?
+        .inspect_err(|error| log::warn!("could not convert a HEIC photo: {error}"))
+        .ok()
 }
 
 /// Uploads a file and builds its message. Images are encoded as JPEG.

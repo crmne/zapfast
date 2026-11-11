@@ -1111,6 +1111,17 @@ impl App {
                 rgba: std::sync::Arc::clone(rgba),
             });
         }
+        // A HEIC photo is replaced by a JPEG once the backend has converted
+        // it, so it can be reviewed, cropped, and sent as a photo.
+        if let Pending::File(path) = &item
+            && crate::backend::heic::convertible()
+            && crate::backend::heic::is_heic(path)
+        {
+            self.backend.send(Command::ConvertPicture {
+                target: id,
+                path: path.clone(),
+            });
+        }
         Staged {
             id,
             item,
@@ -22575,6 +22586,45 @@ mod tests {
             matches!(&staged.item, Pending::File(path) if *path == staying),
             "the late result did not replace the picture that moved into its place"
         );
+    }
+
+    /// Where the system can decode one, a staged HEIC photo is handed to the
+    /// backend, and the JPEG it answers with takes its place. A photo picked
+    /// to go as a document keeps its own bytes.
+    #[test]
+    fn a_staged_heic_photo_is_converted_and_replaced_by_its_jpeg() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands, _events) = Backend::recording_with_events();
+        app.backend = backend;
+        let photo = std::path::PathBuf::from("/fixture/IMG_0001.HEIC");
+        app.stage(Pending::File("/fixture/one.png".into()));
+        app.stage(Pending::Document(photo.clone()));
+        let target = app.stage(Pending::File(photo.clone()));
+        let asked: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::ConvertPicture { target, path } => Some((target, path)),
+                _ => None,
+            })
+            .collect();
+        if !crate::backend::heic::convertible() {
+            assert!(asked.is_empty(), "nothing here can decode it");
+            return;
+        }
+        assert_eq!(asked, [(target, photo)]);
+        let jpeg = std::path::PathBuf::from("/fixture/converted.jpg");
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(jpeg.clone()),
+            },
+            true,
+        );
+        assert!(
+            matches!(&app.pending[2].item, Pending::File(path) if *path == jpeg),
+            "the JPEG is what is reviewed and sent"
+        );
+        assert!(Pending::is_view_once_photo_file(&jpeg));
     }
 
     #[test]
