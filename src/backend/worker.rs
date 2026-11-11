@@ -26620,6 +26620,22 @@ mod chat_removal_tests {
                 "{chat}"
             );
             assert!(worker.call.is_none() && worker.phone_only_calls.is_empty());
+
+            // Nor does its entry reach the Calls page once it ends.
+            worker.file_call_entry(calls::CallEntry {
+                chat: chat.into(),
+                caller: None,
+                call_id: "withheld-entry".into(),
+                from_me: false,
+                timestamp: 300,
+                video: false,
+                status: crate::calls::CallOutcome::Missed,
+                duration: 0,
+                group: chat == GROUP,
+                participants: None,
+            });
+            assert!(worker.archive.call_log(10).unwrap().is_empty(), "{chat}");
+            assert!(stored(&worker, chat).is_empty(), "{chat}");
         }
     }
 
