@@ -8619,12 +8619,16 @@ impl Worker {
                 through,
             } => {
                 if deleted {
-                    self.remove_chat(
-                        &chat,
-                        through,
-                        true,
-                        jiff::Timestamp::now().as_millisecond(),
-                    );
+                    // The phone deletes whatever the clocks say, so a deletion
+                    // made here is never older than a removal it reported.
+                    let at = self
+                        .archive
+                        .removed_at(&chat)
+                        .ok()
+                        .flatten()
+                        .map_or(i64::MIN, |made| made.saturating_add(1))
+                        .max(jiff::Timestamp::now().as_millisecond());
+                    self.remove_chat(&chat, through, true, at);
                 } else {
                     log::warn!("the phone did not delete a chat");
                     self.emit(Event::Error(
@@ -26966,6 +26970,25 @@ mod chat_removal_tests {
                 .try_iter()
                 .any(|event| matches!(event, Event::ChatRemoved { chat } if chat == CHAT))
         );
+    }
+
+    #[tokio::test]
+    async fn a_chat_deleted_here_goes_after_a_clear_stamped_by_a_clock_ahead() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        let ahead = u64::try_from(jiff::Timestamp::now().as_second()).expect("time") + 3600;
+        phone_clears(&mut worker, CHAT, Some(200), ahead).await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
+
+        worker
+            .handle_command(Command::ChatDeleted {
+                chat: CHAT.into(),
+                deleted: true,
+                through: 200,
+            })
+            .await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_none());
+        assert!(worker.archive.deleted(CHAT).expect("removal"));
     }
 
     #[tokio::test]

@@ -2349,6 +2349,20 @@ impl Archive {
             .unwrap_or(false))
     }
 
+    /// When the chat's newest removal was made, in milliseconds; `None` for
+    /// a chat never removed, or removed before the time was kept.
+    pub fn removed_at(&self, chat: &str) -> Result<Option<i64>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT removed_at FROM chat_removals WHERE chat = ?1",
+                params![chat],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
     /// `at` is when the deletion or clear was made, in milliseconds.
