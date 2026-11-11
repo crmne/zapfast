@@ -1060,9 +1060,17 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let decoded = decode(&path, 1).unwrap();
         let poster = &decoded.frames[0].0;
+        #[cfg(feature = "nano-ultra-low-resource")]
+        assert_eq!(poster.size, [128, 256]);
+        #[cfg(all(feature = "nano-low-resource", not(feature = "nano-ultra-low-resource")))]
         assert_eq!(poster.size, [160, 320]);
-        let top = poster.pixels[80 * 160 + 80];
-        let bottom = poster.pixels[240 * 160 + 80];
+        #[cfg(not(feature = "nano-low-resource"))]
+        assert_eq!(poster.size, [160, 320]);
+        let width = poster.size[0];
+        let height = poster.size[1];
+        let x = width / 2;
+        let top = poster.pixels[(height / 4) * width + x];
+        let bottom = poster.pixels[(height * 3 / 4) * width + x];
         assert!(top.r() > 200 && top.b() < 30, "red rotates to the top");
         assert!(
             bottom.b() > 200 && bottom.r() < 30,
