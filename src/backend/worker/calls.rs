@@ -1076,6 +1076,18 @@ impl Worker {
         let link = entry.chat == crate::model::CALL_LINK_CHAT;
         if !link {
             self.ensure_chat(&entry.chat, None);
+            // An entry under a chat with no row reaches the Calls page with
+            // the caller's name and photo, so one the phone keeps locked waits.
+            match self.archive.chat(&entry.chat) {
+                Ok(Some(_)) => {}
+                Ok(None) if matches!(self.archive.kept_lock(&entry.chat), Ok(false)) => {}
+                _ => {
+                    log::warn!(
+                        "[CALL] a call in a locked chat that could not be filed was left out"
+                    );
+                    return;
+                }
+            }
         }
         let sender = if entry.from_me {
             self.me()
