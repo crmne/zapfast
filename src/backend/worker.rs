@@ -11336,6 +11336,21 @@ impl Worker {
             return;
         };
         let old = self.archive.message(&chat, &id).ok().flatten();
+        // A member's message goes as an admin revoke naming its sender; the
+        // server refuses it unless we administer the group.
+        let kind = match old.as_ref().filter(|old| old.admin_revocable()) {
+            Some(old) => match Self::jid_of(&old.sender) {
+                Some(original_sender) => RevokeType::Admin { original_sender },
+                None => {
+                    self.emit(Event::Error(
+                        "Could not delete the message for everyone: its sender is unknown"
+                            .to_owned(),
+                    ));
+                    return;
+                }
+            },
+            None => RevokeType::Sender,
+        };
         if let Ok(true) = self
             .archive
             .set_content(&chat, &id, &Content::Revoked, false)
@@ -11346,7 +11361,7 @@ impl Worker {
         }
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            if let Err(error) = client.revoke_message_raw(jid, id, RevokeType::Sender).await {
+            if let Err(error) = client.revoke_message_raw(jid, id, kind).await {
                 let _ = commands.send(Command::Sent {
                     chat,
                     id: String::new(),

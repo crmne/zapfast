@@ -106,7 +106,9 @@ Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
 Deleting a message asks which copies to remove. **Delete for everyone**
-revokes it through WhatsApp. In **0.19.0**, **Delete for me** removes only this
+revokes it through WhatsApp. It is offered for your own messages and, in a
+group you administer, for the other members' messages too, within the same
+time limit; WhatsApp checks that you are still an admin. In **0.19.0**, **Delete for me** removes only this
 computer's copy, and individual deletions do not sync to or from your phone.
 
 **Development builds** now sync **Delete for me** with your phone and linked
