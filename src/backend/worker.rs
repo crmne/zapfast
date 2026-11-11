@@ -2221,9 +2221,9 @@ impl Worker {
     /// Whether a chat was deleted and nothing newer, a message or a clear, has
     /// brought it back. The phone's app state keeps a deleted chat's archive,
     /// pin, mute, lock and read settings, and a newly linked device receives
-    /// them after the deletion; they must not file the chat again. All but
-    /// the read state, which covers the deleted messages, wait in the archive
-    /// until a newer message or call files it.
+    /// them after the deletion; they must not file the chat again. They wait
+    /// in the archive until a newer message or call files it, the read state
+    /// only when it covers a message newer than the deletion.
     fn removed_outright(&self, chat: &str) -> bool {
         matches!(self.archive.deleted(chat), Ok(true))
             && matches!(self.archive.chat(chat), Ok(None))
@@ -4503,16 +4503,20 @@ impl Worker {
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let read = update.action.read.unwrap_or(true);
+                let through = update
+                    .action
+                    .message_range
+                    .as_option()
+                    .and_then(|range| range.last_message_timestamp);
                 if self.removed_outright(&chat) {
+                    if read && let Some(through) = through {
+                        let _ = self.archive.retain_read_through(&chat, seconds(through));
+                    }
                     return;
                 }
                 self.ensure_chat(&chat, None);
-                if update.action.read.unwrap_or(true) {
-                    let through = update
-                        .action
-                        .message_range
-                        .as_option()
-                        .and_then(|range| range.last_message_timestamp);
+                if read {
                     if let Some(through) = through {
                         let _ = self.archive.mark_read_through(&chat, seconds(through));
                     } else {
@@ -26534,6 +26538,57 @@ mod chat_removal_tests {
                         assert!(chat.expect("listed").locked, "{case}");
                     }
                 }
+            }
+        }
+    }
+
+    /// The phone's read of a message newer than a chat's deletion can reach
+    /// us before the message. It waits without filing the chat and covers the
+    /// message once it files the chat again; a read of only the deleted
+    /// messages is dropped.
+    #[tokio::test]
+    async fn a_read_past_a_deletion_covers_the_message_that_brings_the_chat_back() {
+        for (read_through, unread) in [(300, [0, 1]), (150, [1, 2])] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::MarkChatAsReadUpdate(
+                    wa_events::MarkChatAsReadUpdate::builder()
+                        .jid(CHAT.parse().unwrap())
+                        .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(400)).into())
+                        .from_full_sync(false)
+                        .action(Box::new({
+                            let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
+                            proto.read = Some(true);
+                            proto.message_range =
+                                Some(whatsapp_rust::message_range(read_through, None, Vec::new()))
+                                    .into();
+                            proto
+                        }))
+                        .build(),
+                )))
+                .await;
+            assert!(
+                worker.archive.chat(CHAT).unwrap().is_none(),
+                "{read_through}"
+            );
+            for (at, unread) in [(250, unread[0]), (350, unread[1])] {
+                worker.archive_message(
+                    crate::archive::tests::message(CHAT, &format!("m{at}"), at, false),
+                    None,
+                    None,
+                    false,
+                );
+                assert_eq!(
+                    worker
+                        .archive
+                        .chat(CHAT)
+                        .unwrap()
+                        .expect("filed again")
+                        .unread,
+                    unread,
+                    "read through {read_through}, message at {at}"
+                );
             }
         }
     }

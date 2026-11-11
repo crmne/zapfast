@@ -250,13 +250,16 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // Whether the chat's newest removal was a clear, which leaves it listed
     // on the phone. A removal from before counts as a deletion.
     ("chat_removals", "cleared", "INTEGER NOT NULL DEFAULT 0"),
+    // How far the phone read a deleted chat past its removal point, for the
+    // newer messages that file it again.
+    ("chat_removals", "read_through", "INTEGER"),
 ];
 
 /// Gives a chat's row the settings kept for it while it was deleted, in
-/// timestamp order with the row's own, and forgets them; a chat without a
-/// row keeps them. `chat` is SQL naming the chat, `NEW.id` or a parameter,
-/// never an id itself.
-fn restore_kept(chat: &str) -> [String; 5] {
+/// timestamp order with the row's own, and the read position kept for it,
+/// and forgets them; a chat without a row keeps them. `chat` is SQL naming
+/// the chat, `NEW.id` or a parameter, never an id itself.
+fn restore_kept(chat: &str) -> [String; 6] {
     let setting = |columns: &str, updated_at: &str| {
         format!(
             "UPDATE chats SET {columns}, {updated_at} = kept.{updated_at}
@@ -275,9 +278,15 @@ fn restore_kept(chat: &str) -> [String; 5] {
         setting("muted_until = kept.muted_until", "mute_updated_at"),
         setting("locked = kept.locked", "lock_updated_at"),
         format!(
+            "UPDATE chats SET read_through = kept.read_through
+             FROM chat_removals kept WHERE chats.id = {chat} AND kept.chat = {chat}
+             AND kept.read_through > COALESCE(chats.read_through, 0)"
+        ),
+        format!(
             "UPDATE chat_removals SET archived = NULL, archive_updated_at = NULL,
                 pinned = NULL, pin_updated_at = NULL, pinned_at = NULL, muted_until = NULL,
-                mute_updated_at = NULL, locked = NULL, lock_updated_at = NULL
+                mute_updated_at = NULL, locked = NULL, lock_updated_at = NULL,
+                read_through = NULL
              WHERE chat = {chat} AND EXISTS(SELECT 1 FROM chats WHERE id = {chat})"
         ),
     ]
@@ -885,6 +894,17 @@ impl Archive {
         self.retain_at(id, "locked = ?2", "lock_updated_at", locked, timestamp)
     }
 
+    /// Keeps how far the phone read a chat it deleted, for when the chat is
+    /// filed again, unless the read covers only the deleted messages.
+    pub fn retain_read_through(&self, id: &str, timestamp: i64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chat_removals SET read_through = MAX(COALESCE(read_through, 0), ?2)
+             WHERE chat = ?1 AND ?2 > through",
+            params![id, timestamp],
+        )?;
+        Ok(())
+    }
+
     /// `columns` sets the kept columns from the value, `?2`, and its time, `?3`.
     fn retain_at(
         &self,
@@ -1306,14 +1326,16 @@ impl Archive {
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through, archived, archive_updated_at, pinned,
                 pin_updated_at, pinned_at, muted_until, mute_updated_at, locked, lock_updated_at,
-                cleared)
+                cleared, read_through)
              SELECT ?2, through, archived, archive_updated_at, pinned, pin_updated_at, pinned_at,
-                muted_until, mute_updated_at, locked, lock_updated_at, cleared
+                muted_until, mute_updated_at, locked, lock_updated_at, cleared, read_through
                 FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
                 cleared = CASE WHEN excluded.through > through THEN excluded.cleared
                     WHEN excluded.through < through THEN cleared
                     ELSE MIN(cleared, excluded.cleared) END,
+                read_through = MAX(COALESCE(read_through, excluded.read_through),
+                    COALESCE(excluded.read_through, read_through)),
                 archived = CASE WHEN excluded.archive_updated_at >= COALESCE(archive_updated_at, -1)
                     THEN excluded.archived ELSE archived END,
                 archive_updated_at = MAX(COALESCE(archive_updated_at, excluded.archive_updated_at),
@@ -4999,6 +5021,35 @@ pub(crate) mod tests {
             .unwrap();
         let archive = Archive::prepare(connection).unwrap();
         assert!(archive.deleted(chat).unwrap());
+    }
+
+    /// How far the phone read a chat past its deletion goes to the chat when
+    /// it is filed again, under its privacy id too, and only once. A read of
+    /// only the deleted messages is not kept.
+    #[test]
+    fn a_read_past_a_deletion_goes_to_the_chat_when_it_is_filed_again() {
+        let phone = "15550000000@s.whatsapp.net";
+        for deleted in [phone, "42@lid"] {
+            let archive = Archive::in_memory().unwrap();
+            archive.remove_chat_through(deleted, 200, true).unwrap();
+            archive.retain_read_through(deleted, 300).unwrap();
+            archive.retain_read_through(deleted, 250).unwrap();
+            if deleted != phone {
+                archive.put_lid("42", "15550000000").unwrap();
+            }
+            archive.ensure_chat(phone, "Fixture").unwrap();
+            assert_eq!(archive.read_through(phone).unwrap(), Some(300), "{deleted}");
+
+            archive.remove_chat_through(phone, 400, true).unwrap();
+            archive.ensure_chat(phone, "Fixture").unwrap();
+            assert_eq!(archive.read_through(phone).unwrap(), None, "{deleted}");
+        }
+
+        let archive = Archive::in_memory().unwrap();
+        archive.remove_chat_through(phone, 200, true).unwrap();
+        archive.retain_read_through(phone, 200).unwrap();
+        archive.ensure_chat(phone, "Fixture").unwrap();
+        assert_eq!(archive.read_through(phone).unwrap(), None);
     }
 
     /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
