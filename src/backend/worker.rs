@@ -7906,6 +7906,16 @@ impl Worker {
                 card,
                 path,
             } => self.attachment_missing(&chat, &message, card, &path),
+            Command::ShowFileInFolder(path) => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(error) = crate::opener::show_in_folder(&path) {
+                        let _ = events.send(Event::Error(error));
+                        waker.wake();
+                    }
+                });
+            }
             Command::OpenLog(path) => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();

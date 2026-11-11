@@ -747,6 +747,8 @@ pub enum Command {
     /// Opens the log, or shows it in its folder, off the interface thread;
     /// only a failure reports back.
     OpenLog(PathBuf),
+    /// Shows a downloaded attachment in its folder off the interface thread.
+    ShowFileInFolder(PathBuf),
     /// Asks for one folder, then saves every named attachment into it.
     SaveAttachments {
         files: Vec<(std::path::PathBuf, String)>,

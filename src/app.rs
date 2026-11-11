@@ -8054,6 +8054,9 @@ impl App {
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
             }
+            Action::ShowFileInFolder(path) => {
+                self.backend.send(Command::ShowFileInFolder(path));
+            }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
                     if let Err(error) = open::that_detached(&path) {

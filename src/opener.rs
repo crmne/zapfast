@@ -10,6 +10,42 @@
 
 use std::path::Path;
 
+/// Opens the containing folder, selecting the file when the platform supports it.
+pub fn show_in_folder(path: &Path) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("The file is unavailable".into());
+    }
+    #[cfg(target_os = "windows")]
+    let result = explorer_command(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = linux::show_items(path);
+    #[cfg(not(any(unix, target_os = "windows")))]
+    let result: Result<(), String> = Err("Unsupported platform".into());
+    result.or_else(|error| {
+        let folder = path.parent().ok_or(error)?;
+        open::that_detached(folder).map_err(|error| error.to_string())
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn explorer_command(path: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("explorer.exe");
+    let mut argument = std::ffi::OsString::from("/select,");
+    argument.push(path.as_os_str());
+    command.arg(argument);
+    command
+}
+
 /// Opens `path` in its default application or, failing that, shows it in its
 /// folder. Blocks for up to a few seconds per attempt, so call it off the
 /// interface thread. The error names the file so the reader can go there.
@@ -194,6 +230,30 @@ mod linux {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn explorer_selects_the_full_file_path() {
+        let path = Path::new(r"C:\Users\Example User\Documents\lesson, 1.pptx");
+        let command = explorer_command(path);
+        assert_eq!(command.get_program(), "explorer.exe");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            args,
+            [std::ffi::OsStr::new(
+                r"/select,C:\Users\Example User\Documents\lesson, 1.pptx"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_missing_attachment_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            show_in_folder(&dir.path().join("missing.pdf")),
+            Err("The file is unavailable".into())
+        );
+    }
 
     #[test]
     fn the_first_attempt_that_works_ends_the_chain() {
