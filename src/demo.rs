@@ -3522,6 +3522,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.reply_to = Some("ada-photo".into());
                 app.focus_composer = true;
             }
+            "group-admin-message-menu" => {
+                // Tom's message in Family, which we run, sent a minute ago,
+                // with its menu open: an admin may delete it for everyone.
+                let id = format!("{FAMILY}-2");
+                app.open_chat = Some(FAMILY.to_owned());
+                if let Some(message) = app
+                    .conversations
+                    .get_mut(FAMILY)
+                    .and_then(|conversation| conversation.message_mut(&id))
+                {
+                    message.timestamp = crate::util::now() - 60;
+                }
+                app.open_message_menu = message_menu(app, &id);
+                app.scroll_to_bottom = false;
+                app.scroll_anchor = Some(id);
+            }
             "private-reply" | "private-reply-menu" | "private-reply-locked-source" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.into());
@@ -9804,6 +9820,8 @@ mod tests {
             "private-reply,light",
             "private-reply-menu",
             "private-reply-menu,light",
+            "group-admin-message-menu",
+            "group-admin-message-menu,light",
             "private-reply-locked-source",
             "private-reply-locked-source,light",
             "edit",
@@ -20989,6 +21007,19 @@ mod tests {
         assert_eq!(app.open_chat.as_deref(), Some(next.as_str()));
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
+    }
+
+    /// In Family, which we run, the open menu is on a member's message that
+    /// we may delete for everyone.
+    #[test]
+    fn the_admin_message_menu_page_opens_on_a_deletable_member_message() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-admin-message-menu"));
+        let (chat, id) = app.open_message_menu.clone().expect("a menu");
+        assert_eq!(chat, FAMILY);
+        let message = app.conversations[FAMILY].message(&id).unwrap();
+        assert!(!message.from_me);
+        assert!(app.can_revoke(message));
     }
 
     /// Checks that the group context menu opens the sender draft without dispatching a message.

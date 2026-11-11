@@ -81,6 +81,8 @@ keeping the chat open and showing the retry error,
 the bubble, `motion-preview` opens the photo in the full-window viewer, and
 `motion-viewer` plays its clip there over the photo. `carousel-viewer` opens a
 carousel card's picture in the viewer, among the card's other pictures.
+`--demo-page group-admin-message-menu` shows a member's recent message in a
+group we run with its menu open, where **Delete for everyone** is offered.
 `--demo-page private-reply-menu` shows a group message's menu with **Reply
 privately**, `private-reply` the sender's chat with the group quote in the
 composer, and `private-reply-locked-source` the same quote while its group is
