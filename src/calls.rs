@@ -1641,7 +1641,8 @@ pub struct Call {
     /// answers.
     peer_video_request: Option<whatsapp_rust::voip::VideoUpgradeToken>,
     /// When the call was placed or began to ring, Unix seconds: the time its
-    /// entry in the chat carries.
+    /// entry in the chat carries. An offer's is the server's time for it, so
+    /// one the library hands over late keeps its place before a deletion.
     began: i64,
     /// The roster of a group call; `None` for a one-to-one call.
     group: Option<GroupRoster>,
@@ -1960,6 +1961,11 @@ impl Call {
     /// and answering opens the system's default devices unless others are picked meanwhile.
     pub fn ringing(chat: String, incoming: Box<IncomingCall>, video: bool) -> Self {
         let call_id = incoming.action.call_id().to_owned();
+        let began = incoming
+            .timestamp
+            .map(|at| at.timestamp())
+            .filter(|at| *at > 0)
+            .unwrap_or_else(crate::util::now);
         let group = GroupRoster::of_offer(&incoming);
         log::info!(
             "[CALL] incoming offer call_id={call_id} video={video} group={} participants={}",
@@ -1989,7 +1995,7 @@ impl Call {
             lost_devices: Vec::new(),
             camera_wanted: false,
             peer_video_request: None,
-            began: crate::util::now(),
+            began,
             group,
             join_task: None,
         }

@@ -901,6 +901,20 @@ impl Archive {
         Ok(())
     }
 
+    /// Whether the phone keeps a chat locked that has no row here: one it
+    /// deleted, whose lock waits for something to file it again.
+    pub fn kept_lock(&self, chat: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT COALESCE(locked, 0) FROM chat_removals WHERE chat = ?1",
+                params![chat],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
     /// Applies disappearing-message metadata unless a newer setting is stored.
     pub fn set_ephemeral(&self, id: &str, expiration: u32, setting_timestamp: i64) -> Result<bool> {
         Ok(self.connection.execute(

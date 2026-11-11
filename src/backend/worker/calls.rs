@@ -795,7 +795,14 @@ impl Worker {
         }
         let video = calls::offer_is_video(action);
         let call = Call::ringing(chat, Box::new(incoming.clone()), video);
-        self.file_ringing_chat(&call);
+        if !self.file_ringing_chat(&call) {
+            // Nothing goes back to WhatsApp, so the phone rings on.
+            log::info!(
+                "[CALL] an offer from a deleted chat that may be locked rings on the phone only call_id={}",
+                call.call_id()
+            );
+            return;
+        }
         let update = call.update();
         self.call = Some(CallRuntime::new(call, None));
         self.emit_call_devices().await;
@@ -826,11 +833,17 @@ impl Worker {
         }
         let video = calls::offer_is_video(&incoming.action);
         let call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        if !self.file_ringing_chat(&call) {
+            log::info!(
+                "[CALL] a group call from a deleted chat that may be locked goes unmentioned call_id={}",
+                call.call_id()
+            );
+            return;
+        }
         log::info!(
             "[CALL] a group call rings on the phone only, group calls are off call_id={}",
             call.call_id()
         );
-        self.file_ringing_chat(&call);
         let update = self.canonical_call(call.update());
         if self.phone_only_calls.len() >= MAX_PHONE_ONLY_CALLS {
             self.phone_only_calls.remove(0);
@@ -839,15 +852,35 @@ impl Worker {
         self.emit(Event::PhoneOnlyCall(Box::new(update)));
     }
 
-    /// Files a deleted chat again for a call that rings in it, before the window hears of the
-    /// call. The call is newer than the deletion and files the chat as it ends anyway; filing it
-    /// now gives it the lock, mute and archive kept for it, so a locked chat's call does not ring
-    /// with the caller's name and photo.
-    fn file_ringing_chat(&mut self, call: &Call) {
+    /// Files a deleted chat again for a call newer than its deletion that rings in it, before the
+    /// window hears of the call. The call files the chat as it ends anyway; filing it now gives it
+    /// the lock, mute and archive kept for it, so a locked chat's call does not ring with the
+    /// caller's name and photo. A call no newer than the deletion leaves the chat deleted, as its
+    /// entry does when it ends.
+    ///
+    /// Returns whether the window may hear of the call. It may not while the chat stays unlisted
+    /// and the phone keeps it locked, or while the archive cannot say: nothing would hide the
+    /// caller of a chat the window does not list.
+    fn file_ringing_chat(&mut self, call: &Call) -> bool {
         let chat = call.chat();
-        if self.removed_outright(chat) && !self.predates_removal(chat, call.began()) {
-            self.ensure_chat(chat, None);
-            self.emit_chat(chat);
+        match self.archive.chat(chat) {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            Err(_) => return false,
+        }
+        match self.archive.removal_point(chat) {
+            Ok(Some(through)) if call.began() > through => self.ensure_chat(chat, None),
+            Ok(Some(_)) => {}
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+        match self.archive.chat(chat) {
+            Ok(Some(row)) => {
+                self.emit_listed_chat(row);
+                true
+            }
+            Ok(None) => matches!(self.archive.kept_lock(chat), Ok(false)),
+            Err(_) => false,
         }
     }
 
