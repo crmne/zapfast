@@ -2301,15 +2301,18 @@ impl Worker {
 
     fn emit_chat(&self, id: &str) {
         match self.archive.chat(id) {
-            Ok(Some(mut chat)) => {
-                if chat.locked {
-                    self.cancel_chat_export_for(id);
-                }
-                self.polish_chat(&mut chat);
-                self.emit(Event::ChatUpdated(Box::new(chat)));
-            }
+            Ok(Some(chat)) => self.emit_listed_chat(chat),
             _ => self.cancel_chat_export_for(id),
         }
+    }
+
+    /// Sends the window a chat row already read from the archive.
+    fn emit_listed_chat(&self, mut chat: Chat) {
+        if chat.locked {
+            self.cancel_chat_export_for(&chat.id);
+        }
+        self.polish_chat(&mut chat);
+        self.emit(Event::ChatUpdated(Box::new(chat)));
     }
 
     /// Hands the chat's viewer album to the interface, centred on `around`
@@ -26531,6 +26534,86 @@ mod chat_removal_tests {
             assert_eq!(worker.archive.call_log(10).unwrap().len(), 1, "{chat}");
             assert_eq!(stored(&worker, chat).len(), 1, "{chat}");
             assert!(worker.archive.chat(chat).unwrap().expect("filed").locked);
+        }
+    }
+
+    /// An offer dates from the server's time for it, not from when the worker
+    /// heard of it, so one the library hands over late is still from before a
+    /// deletion after it. An offer no newer than the deletion, in the same
+    /// second too, leaves the chat deleted, as it rings and as it ends. The
+    /// window never hears of it while the phone keeps the chat locked, since
+    /// nothing would hide the caller of a chat it does not list.
+    #[tokio::test]
+    async fn a_call_from_before_a_deletion_never_shows_a_locked_chats_caller() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, direct_offer, group_offer, member};
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            for locked in [true, false] {
+                for offered in [150, 200] {
+                    let case = format!("{chat}, locked: {locked}, offered at {offered}");
+                    let (mut worker, events, _, _) = receipt_tests::worker();
+                    phone_deletes(&mut worker, chat, 200).await;
+                    if locked {
+                        for event in phone_settings(chat, 250) {
+                            worker.handle_wa_event(Arc::new(event)).await;
+                        }
+                    }
+                    events.try_iter().for_each(drop);
+
+                    let mut offer = if chat == GROUP {
+                        group_offer(vec![member("200000000000001", true)])
+                    } else {
+                        direct_offer(CHAT)
+                    };
+                    offer.timestamp =
+                        Some((std::time::UNIX_EPOCH + Duration::from_secs(offered)).into());
+                    worker.call_signaling(&offer).await;
+                    assert!(worker.archive.chat(chat).unwrap().is_none(), "{case}");
+                    let rang = events
+                        .try_iter()
+                        .any(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_)));
+                    assert_eq!(rang, !locked, "{case}");
+
+                    worker.call_resolved(CALL_ID, None);
+                    assert!(worker.archive.chat(chat).unwrap().is_none(), "{case}");
+                    assert!(worker.archive.call_log(10).unwrap().is_empty(), "{case}");
+                }
+            }
+        }
+    }
+
+    /// A call newer than the deletion of a chat the phone keeps locked, whose
+    /// chat cannot be filed again, never reaches the window either.
+    #[tokio::test]
+    async fn a_call_whose_locked_chat_cannot_be_filed_again_is_withheld() {
+        use crate::calls::test_offers::{GROUP, direct_offer, group_offer, member};
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, chat, 200).await;
+            for event in phone_settings(chat, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            worker.archive.execute_for_tests(
+                "CREATE TRIGGER refuse_chats BEFORE INSERT ON chats
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            );
+            events.try_iter().for_each(drop);
+
+            let offer = if chat == GROUP {
+                group_offer(vec![member("200000000000001", true)])
+            } else {
+                direct_offer(CHAT)
+            };
+            worker.call_signaling(&offer).await;
+            assert!(worker.archive.chat(chat).unwrap().is_none(), "{chat}");
+            assert!(
+                !events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_))),
+                "{chat}"
+            );
+            assert!(worker.call.is_none() && worker.phone_only_calls.is_empty());
         }
     }
 

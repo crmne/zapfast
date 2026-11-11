@@ -813,7 +813,8 @@ newer than the deletion does bring it back, a call as soon as it rings. It
 comes back with the archive, pin, mute and lock settings it had when it was
 deleted, on your phone or with **Delete chat** here, unless your phone changed
 them since. A locked chat comes back locked, and a call from it waits as
-"Locked chat". A chat that an older version of
+"Locked chat". A call from before the deletion that is still ringing, from a
+chat your phone keeps locked, rings only on your phone. A chat that an older version of
 ZapFast already brought back is not removed again: delete it with
 **Delete chat**. Groups and channels can be left from the same menu, keeping
 their history here. `Ctrl+E`
