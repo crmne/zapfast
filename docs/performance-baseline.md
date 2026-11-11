@@ -85,7 +85,7 @@ Only after capturing the baseline:
 4. Run the project's formatting, Clippy and test commands from CONTRIBUTING.md.
 5. Repeat the same idle benchmark before considering the change successful.
 
-## Native GUI profiler (debug build only)
+## Native GUI profiler (opt-in)
 
 The `nano-gui-profile` feature measures the native eframe callbacks without changing the GUI framework, renderer, backend runtime, or application architecture. It reports one line every ten seconds:
 
@@ -95,7 +95,7 @@ The `nano-gui-profile` feature measures the native eframe callbacks without chan
 - Average and maximum `app.window_logic` duration.
 - UI callback count/rate and average/maximum UI construction duration.
 
-Build the current debug profile with the existing low-resource experiments and GUI profiler:
+Build the 0.1.3-debug release candidate with the existing low-resource experiments and GUI profiler:
 
 ```sh
 cargo build --locked --release --features "nano-one-worker nano-ultra-low-resource nano-gui-profile"
