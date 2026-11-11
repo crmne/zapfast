@@ -4312,7 +4312,12 @@ impl Worker {
                         .touch_activity(&chat, update.timestamp.timestamp());
                     self.emit_chat(&chat);
                 }
-                if let GroupNotificationAction::Description { description, .. } = &*update.action {
+                // A description set before the group was deleted is not new
+                // activity, so it does not file the group again.
+                if let GroupNotificationAction::Description { description, .. } = &*update.action
+                    && (self.archive.chat(&chat).ok().flatten().is_some()
+                        || !self.predates_removal(&chat, update.timestamp.timestamp()))
+                {
                     *self.description_generation.entry(chat.clone()).or_default() += 1;
                     self.ensure_chat(&chat, None);
                     if self
@@ -19041,6 +19046,60 @@ mod receipt_tests {
             500,
             "an older notice never moves activity back"
         );
+    }
+
+    /// A description notice older than a group's deletion leaves the group
+    /// deleted, and a newer one files it again. A group cleared but still
+    /// listed takes an older one.
+    #[tokio::test]
+    async fn group_description_notice_respects_removal() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let notice = |group: &str, at: i64| {
+            wa_events::Event::GroupUpdate(
+                wa_events::GroupUpdate::builder()
+                    .group_jid(group.parse().unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                    .is_lid_addressing_mode(false)
+                    .action(Box::new(
+                        GroupNotificationAction::description()
+                            .id(format!("description-{at}"))
+                            .maybe_description(Some(format!("Set at {at}")))
+                            .build(),
+                    ))
+                    .build(),
+            )
+        };
+        let description = |worker: &Worker, group: &str| {
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .and_then(|chat| chat.group_description)
+        };
+        let (mut worker, _events, _inbox, _wa) = worker();
+
+        let deleted = "123-111@g.us";
+        worker.archive.ensure_chat(deleted, "Deleted").unwrap();
+        worker
+            .archive
+            .remove_chat_through(deleted, 200, true, 0)
+            .unwrap();
+        worker.handle_wa_event(Arc::new(notice(deleted, 150))).await;
+        assert!(
+            worker.archive.chat(deleted).unwrap().is_none(),
+            "a notice older than the deletion does not refile the group"
+        );
+        worker.handle_wa_event(Arc::new(notice(deleted, 250))).await;
+        assert_eq!(description(&worker, deleted).as_deref(), Some("Set at 250"));
+
+        let cleared = "123-222@g.us";
+        worker.archive.ensure_chat(cleared, "Cleared").unwrap();
+        worker
+            .archive
+            .remove_chat_through(cleared, 200, false, 0)
+            .unwrap();
+        worker.handle_wa_event(Arc::new(notice(cleared, 150))).await;
+        assert_eq!(description(&worker, cleared).as_deref(), Some("Set at 150"));
     }
 
     #[test]
