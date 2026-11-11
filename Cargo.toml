@@ -1,6 +1,6 @@
 [package]
 name = "zapfast"
-version = "0.21.1"
+version = "0.1.3-debug"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -338,6 +338,8 @@ nano-one-worker = []
 nano-low-resource = []
 # More aggressive animation profile; includes nano-low-resource.
 nano-ultra-low-resource = ["nano-low-resource"]
+# Logs native GUI callback rates and phase timings every ten seconds.
+nano-gui-profile = []
 
 [profile.release]
 lto = "thin"
