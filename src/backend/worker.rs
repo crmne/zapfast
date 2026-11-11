@@ -26479,6 +26479,26 @@ mod chat_removal_tests {
             .await;
     }
 
+    /// The phone's read of a chat through `through`, as app state sends it.
+    async fn phone_reads(worker: &mut Worker, chat: &str, through: i64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::MarkChatAsReadUpdate(
+                wa_events::MarkChatAsReadUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(400)).into())
+                    .from_full_sync(false)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
+                        proto.read = Some(true);
+                        proto.message_range =
+                            Some(whatsapp_rust::message_range(through, None, Vec::new())).into();
+                        proto
+                    }))
+                    .build(),
+            )))
+            .await;
+    }
+
     /// A chat's archive, pin, mute, lock and read settings, made at `at`, as
     /// the phone's app state hands them to a device it links.
     fn phone_settings(chat: &str, at: u64) -> Vec<wa_events::Event> {
@@ -26657,23 +26677,7 @@ mod chat_removal_tests {
         for (read_through, unread) in [(300, [0, 1]), (150, [1, 2])] {
             let (mut worker, _events, _, _) = receipt_tests::worker();
             phone_deletes(&mut worker, CHAT, 200).await;
-            worker
-                .handle_wa_event(Arc::new(wa_events::Event::MarkChatAsReadUpdate(
-                    wa_events::MarkChatAsReadUpdate::builder()
-                        .jid(CHAT.parse().unwrap())
-                        .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(400)).into())
-                        .from_full_sync(false)
-                        .action(Box::new({
-                            let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
-                            proto.read = Some(true);
-                            proto.message_range =
-                                Some(whatsapp_rust::message_range(read_through, None, Vec::new()))
-                                    .into();
-                            proto
-                        }))
-                        .build(),
-                )))
-                .await;
+            phone_reads(&mut worker, CHAT, read_through).await;
             assert!(
                 worker.archive.chat(CHAT).unwrap().is_none(),
                 "{read_through}"
@@ -26696,6 +26700,42 @@ mod chat_removal_tests {
                     "read through {read_through}, message at {at}"
                 );
             }
+        }
+    }
+
+    /// The phone can read a chat past the messages we have before the chat
+    /// is deleted through them. That read outlives the deletion and covers
+    /// the late message that files the chat again.
+    #[tokio::test]
+    async fn a_read_ahead_of_a_deleted_chats_messages_covers_the_message_that_brings_it_back() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        phone_reads(&mut worker, CHAT, 300).await;
+        worker
+            .handle_command(Command::ChatDeleted {
+                chat: CHAT.into(),
+                deleted: true,
+                through: 200,
+            })
+            .await;
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
+        for (at, unread) in [(250, 0), (350, 1)] {
+            worker.archive_message(
+                crate::archive::tests::message(CHAT, &format!("m{at}"), at, false),
+                None,
+                None,
+                false,
+            );
+            assert_eq!(
+                worker
+                    .archive
+                    .chat(CHAT)
+                    .unwrap()
+                    .expect("filed again")
+                    .unread,
+                unread,
+                "message at {at}"
+            );
         }
     }
 
