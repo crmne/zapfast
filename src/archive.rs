@@ -277,10 +277,12 @@ fn restore_kept(chat: &str) -> [String; 5] {
 }
 
 /// Whatever files a deleted chat again, a newer message, a call or history,
-/// gives it the settings the phone kept for it.
+/// gives it the settings the phone kept for it. Recreated at every open, so an
+/// archive's stored trigger follows `restore_kept`, which `put_lid` runs too.
 fn restore_kept_trigger() -> String {
     format!(
-        "CREATE TRIGGER IF NOT EXISTS restore_kept_settings AFTER INSERT ON chats
+        "DROP TRIGGER IF EXISTS restore_kept_settings;
+         CREATE TRIGGER restore_kept_settings AFTER INSERT ON chats
          WHEN EXISTS(SELECT 1 FROM chat_removals WHERE chat = NEW.id) BEGIN {}; END;",
         restore_kept("NEW.id").join(";\n")
     )
@@ -4684,6 +4686,27 @@ pub(crate) mod tests {
     /// The phone's settings for a chat it deleted, kept on an archive from
     /// before they were, list nothing and go to the chat once something files
     /// it again, newest first, and only once.
+    #[test]
+    fn an_archive_takes_the_current_kept_settings_trigger() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER restore_kept_settings AFTER INSERT ON chats BEGIN SELECT 1; END;",
+            )
+            .unwrap();
+        let archive = Archive::prepare(connection).unwrap();
+        let stored: String = archive
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'restore_kept_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored.contains("FROM chat_removals kept"), "{stored}");
+    }
+
     #[test]
     fn a_deleted_chats_kept_settings_go_to_it_when_it_is_filed_again() {
         let chat = "1@s.whatsapp.net";
