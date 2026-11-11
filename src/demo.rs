@@ -4770,6 +4770,148 @@ mod tests {
         assert_eq!(row_outline.rect, bubble_outline.rect);
     }
 
+    /// With files among the selected messages, the selection bar offers to
+    /// download them at its bottom-right end. A click asks the worker to
+    /// save just the files together, shows the ones still to come as
+    /// downloading, and ends the selection.
+    #[test]
+    fn the_selection_bar_downloads_the_selected_files_together() {
+        use crate::model::MediaState;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        app.selection = Some((chat.into(), vec!["ada-reply".to_owned()]));
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let offered = |nodes: &[(String, egui::accesskit::Role, egui::Pos2)]| {
+            nodes
+                .iter()
+                .any(|(label, _, _)| label.starts_with("Download ") && label.contains(" file"))
+        };
+        assert!(!offered(&nodes), "text alone has nothing to download");
+
+        app.selection = Some((
+            chat.into(),
+            vec!["ada-doc".to_owned(), "ada-reply".to_owned()],
+        ));
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let at = |name: &str| {
+            nodes
+                .iter()
+                .find(|(label, _, _)| label == name)
+                .map(|(_, _, pos)| *pos)
+                .unwrap_or_else(|| panic!("{name} is offered"))
+        };
+        let download = at("Download 1 file");
+        assert!(download.x > at("Forward…").x, "it is the rightmost button");
+        assert!(download.y > 700.0, "it sits at the bottom of the window");
+        for pressed in [true, false] {
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(download),
+                    egui::Event::PointerButton {
+                        pos: download,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        render(&mut app, &ctx);
+        let saves: Vec<_> = app
+            .backend
+            .take_demo_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                crate::backend::Command::SaveFiles {
+                    chat: saved,
+                    messages,
+                } => Some((saved, messages)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(saves, [(chat.to_owned(), vec!["ada-doc".to_owned()])]);
+        assert_eq!(app.selection, None, "the selection ends");
+        let document = app.conversations[chat].message("ada-doc").unwrap();
+        assert_eq!(
+            document.content.media().unwrap().state,
+            MediaState::Downloading,
+            "a file not here yet shows its download"
+        );
+    }
+
+    /// In a narrow chat the download button folds to its icon, keeping its
+    /// name, so the three buttons never cover the selection's count.
+    #[test]
+    fn a_narrow_selection_bar_keeps_its_count_clear_of_the_buttons() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        app.selection = Some((
+            chat.into(),
+            vec!["ada-doc".to_owned(), "ada-reply".to_owned()],
+        ));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(760.0, 600.0));
+        let mut bounds = Vec::new();
+        for _ in 0..4 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let scale = ctx.pixels_per_point() as f64;
+            bounds = output
+                .platform_output
+                .accesskit_update
+                .map(|tree| {
+                    tree.nodes
+                        .iter()
+                        .filter_map(|(_, node)| {
+                            let label = node.label().or_else(|| node.value())?.to_owned();
+                            let b = node.bounds()?;
+                            let rect = egui::Rect::from_min_max(
+                                egui::pos2((b.x0 / scale) as f32, (b.y0 / scale) as f32),
+                                egui::pos2((b.x1 / scale) as f32, (b.y1 / scale) as f32),
+                            );
+                            Some((label, rect))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        let rect = |name: &str| {
+            bounds
+                .iter()
+                .find(|(label, _)| label == name)
+                .map(|(_, rect)| *rect)
+                .unwrap_or_else(|| panic!("{name} is shown"))
+        };
+        let count = rect("2 selected");
+        let download = rect("Download 1 file");
+        assert!(
+            count.right() <= rect("Delete…").left(),
+            "the count stays clear of the buttons"
+        );
+        assert!(download.left() >= rect("Forward…").right());
+        assert!(download.right() <= screen.right());
+    }
+
     /// A clicked notification lands on the message it announced and keeps it
     /// in view, even with the unread divider far above it.
     #[test]

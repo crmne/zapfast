@@ -8054,6 +8054,42 @@ impl App {
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
             }
+            Action::SaveSelectedFiles { chat, messages } => {
+                // A file not here yet shows its download in its bubble while
+                // the worker fetches it; the worker reports the save.
+                let mut coming = 0usize;
+                if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    for id in &messages {
+                        let Some(message) = conversation.message_mut(id) else {
+                            continue;
+                        };
+                        if message.content.file().is_none() {
+                            continue;
+                        }
+                        let Some(media) = message.content.media_mut() else {
+                            continue;
+                        };
+                        if media.path.is_none() {
+                            coming += 1;
+                            media.state = MediaState::Downloading;
+                        }
+                    }
+                }
+                self.backend.send(Command::SaveFiles { chat, messages });
+                self.selection = None;
+                self.sweep = None;
+                if coming > 0 {
+                    self.toast(
+                        crate::i18n::ngettext(
+                            self.locale,
+                            "Downloading {count} file to save with the others…",
+                            "Downloading {count} files to save with the others…",
+                            coming as u32,
+                        )
+                        .replace("{count}", &coming.to_string()),
+                    );
+                }
+            }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
                     if let Err(error) = open::that_detached(&path) {

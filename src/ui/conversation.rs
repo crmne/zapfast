@@ -11692,7 +11692,64 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
         )
         .replace("{count}", &selected.len().to_string());
         theme::text(ui, &count, theme::medium(14.5), palette.text);
+        let files: Vec<String> = app
+            .conversations
+            .get(chat)
+            .map(|conversation| {
+                selected
+                    .iter()
+                    .filter(|id| {
+                        conversation
+                            .message(id)
+                            .is_some_and(|message| message.content.file().is_some())
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // Rightmost, at the window's bottom-right corner: the selected
+            // photos, videos, audio and documents, downloaded and saved
+            // together. Text and stickers among them stay out.
+            if !files.is_empty() {
+                let label = crate::i18n::ngettext(
+                    locale,
+                    "Download {count} file",
+                    "Download {count} files",
+                    files.len() as u32,
+                )
+                .replace("{count}", &files.len().to_string());
+                // In a narrow chat the three buttons would cover the count,
+                // so this one folds to its icon, keeping its name for the
+                // tooltip and screen readers.
+                let wanted = theme::pill_width(ui, &label)
+                    + theme::pill_width(ui, &crate::i18n::gettext(locale, "Forward…"))
+                    + theme::pill_width(ui, &crate::i18n::gettext(locale, "Delete…"))
+                    + 2.0 * ui.spacing().item_spacing.x;
+                let button = if wanted > ui.available_width() {
+                    theme::icon_button(
+                        ui,
+                        Icon::Download,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &label,
+                    )
+                } else {
+                    theme::pill_button(ui, &palette, &label, false).on_hover_text(
+                        crate::i18n::gettext(
+                            locale,
+                            "Saves them together in a folder named after your number, in your download folder",
+                        ),
+                    )
+                };
+                if button.clicked() {
+                    app.actions.push(Action::SaveSelectedFiles {
+                        chat: chat.to_owned(),
+                        messages: files.clone(),
+                    });
+                }
+            }
             // The selection stays open with nothing in it, as its check
             // boxes do; there is nothing to forward until one is ticked.
             let forward = ui

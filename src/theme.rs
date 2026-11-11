@@ -1130,6 +1130,18 @@ pub(crate) fn button_label(
     galley
 }
 
+/// Space around a [`pill_button`]'s label.
+const PILL_PADDING: Vec2 = Vec2::new(18.0, 8.0);
+
+/// The width a [`pill_button`] with this label takes, to decide before
+/// drawing whether a row of them fits.
+pub fn pill_width(ui: &egui::Ui, label: &str) -> f32 {
+    button_label(ui, label, semibold(13.0), Color32::WHITE)
+        .size()
+        .x
+        + PILL_PADDING.x * 2.0
+}
+
 /// A pill-shaped text button: filled for the primary action, outlined otherwise.
 pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: bool) -> Response {
     let font = semibold(13.0);
@@ -1139,8 +1151,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
         palette.text
     };
     let galley = button_label(ui, label, font, color);
-    let padding = Vec2::new(18.0, 8.0);
-    let size = galley.size() + padding * 2.0;
+    let size = galley.size() + PILL_PADDING * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     reveal_focus(&response);
     focus_outline_on_fill(
