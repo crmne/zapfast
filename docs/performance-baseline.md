@@ -195,3 +195,38 @@ cargo test --locked --features "nano-one-worker nano-ultra-low-resource" animati
 
 Compare it against the previous 320px/120-frame build using the same account, selected chat, UI size, window visibility, warm-up time, and media state. This profile is experimental and is not enabled by default.
 
+## WhatsNano 0.1.4 — activity-aware resource retention
+
+The 0.1.4 image cache policy releases assets according to recent use instead of retaining scrolled-away images indefinitely:
+
+| Build profile | Recent off-screen image budget |
+|---|---:|
+| Normal | 96 |
+| `nano-low-resource` | 48 |
+| `nano-ultra-low-resource` | 24 |
+
+Images drawn in the current frame are always protected, even when the number of visible images exceeds the profile budget. Images that leave the visible frame get a 30-second reuse window, then their egui image cache and texture are forgotten. A single delayed repaint is requested for the next expiry; the cache does not run a periodic polling timer while the window is otherwise idle.
+
+This bounds the retained off-screen image set and reduces idle memory after browsing image-heavy chats. It is not a hard process-memory limit: visible images, in-flight decodes, fonts, wallpaper, driver allocations and backend state are separate.
+
+### 0.1.4 build and test
+
+Build the resource-conscious release candidate:
+
+```powershell
+cargo build --locked --release --features "nano-one-worker nano-ultra-low-resource"
+```
+
+Run the image-cache tests:
+
+```powershell
+cargo test --locked --features "nano-one-worker nano-ultra-low-resource" image_cache::
+```
+
+Run the animation regression tests too:
+
+```powershell
+cargo test --locked --features "nano-one-worker nano-ultra-low-resource" animation::
+```
+
+For the memory check, launch the same account, scroll through several image-heavy chats, return to one ordinary chat, wait for the 30-second cleanup window, then take the same private-bytes and working-set samples as the 0.1.3-debug baseline. Compare like-for-like release builds. The one-worker and ultra-low-resource features remain explicit build choices; this change does not silently change the default Tokio worker count or media resolution.
