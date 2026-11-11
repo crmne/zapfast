@@ -15,11 +15,29 @@ pub(super) struct ReadSync {
     in_flight: Option<(ChatId, i64, bool)>,
     retry_at: Option<Instant>,
     failures: u32,
+    /// The archive has pending work, or its durable queue has not been checked
+    /// since the account connected. Avoid polling SQLite while this is false.
+    needs_pump: bool,
 }
 
 impl ReadSync {
     pub fn ready(&self, now: Instant) -> bool {
         self.in_flight.is_none() && self.retry_at.is_none_or(|retry| now >= retry)
+    }
+
+    /// Marks the durable queue as worth checking.
+    pub fn wake(&mut self) {
+        self.needs_pump = true;
+    }
+
+    /// Whether a queue check can make progress now.
+    pub fn should_pump(&self, now: Instant) -> bool {
+        self.needs_pump && self.ready(now)
+    }
+
+    /// The durable queue was checked and has no remaining entries.
+    pub fn drained(&mut self) {
+        self.needs_pump = false;
     }
 
     pub fn start(&mut self, chat: &str, through: i64, now: Instant) -> bool {
@@ -36,6 +54,7 @@ impl ReadSync {
             return false;
         }
         self.in_flight = Some((chat.to_owned(), position, read));
+        self.needs_pump = true;
         true
     }
 
@@ -79,6 +98,29 @@ impl ReadSync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_queue_does_not_need_periodic_database_scans() {
+        let sync = ReadSync::default();
+        assert!(!sync.should_pump(Instant::now()));
+    }
+
+    #[test]
+    fn queued_work_retries_only_when_its_backoff_is_due() {
+        let mut sync = ReadSync::default();
+        let now = Instant::now();
+        sync.wake();
+        assert!(sync.should_pump(now));
+
+        assert!(sync.start("chat", 100, now));
+        assert!(!sync.should_pump(now), "an in-flight write is already being handled");
+        assert!(sync.finish("chat", 100, false, now));
+        assert!(!sync.should_pump(now + Duration::from_secs(29)));
+        assert!(sync.should_pump(now + Duration::from_secs(30)));
+
+        sync.drained();
+        assert!(!sync.should_pump(now + Duration::from_secs(31)));
+    }
 
     #[test]
     fn one_failed_collection_holds_back_every_chat_with_capped_backoff() {
