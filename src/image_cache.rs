@@ -336,6 +336,13 @@ mod tests {
         for index in 0..RESIDENT + 2 {
             include(&ctx, &uri(index), b"image bytes");
         }
+        let same_time = Instant::now();
+        registry(&ctx)
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values_mut()
+            .for_each(|entry| entry.last_drawn = same_time);
         frame(&ctx);
         sweep(&ctx);
 
