@@ -27,7 +27,7 @@ use whatsapp_rust::prelude::{
 };
 use whatsapp_rust::send::{PinDuration, RevokeType};
 use whatsapp_rust::types::events as wa_events;
-use whatsapp_rust::types::message::{EncMediaType, MessageInfo, MessageSource};
+use whatsapp_rust::types::message::{AddressingMode, EncMediaType, MessageInfo, MessageSource};
 use whatsapp_rust::types::presence::{ChatActivity, PresenceStatus, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
@@ -11338,9 +11338,9 @@ impl Worker {
         let old = self.archive.message(&chat, &id).ok().flatten();
         // A member's message goes as an admin revoke naming its sender; the
         // server refuses it unless we administer the group.
-        let kind = match old.as_ref().filter(|old| old.admin_revocable()) {
+        let admin_sender = match old.as_ref().filter(|old| old.admin_revocable()) {
             Some(old) => match Self::jid_of(&old.sender) {
-                Some(original_sender) => RevokeType::Admin { original_sender },
+                Some(sender) => Some(sender),
                 None => {
                     self.emit(Event::Error(
                         "Could not delete the message for everyone: its sender is unknown"
@@ -11349,7 +11349,7 @@ impl Worker {
                     return;
                 }
             },
-            None => RevokeType::Sender,
+            None => None,
         };
         if let Ok(true) = self
             .archive
@@ -11361,6 +11361,12 @@ impl Worker {
         }
         let commands = self.commands.clone();
         tokio::spawn(async move {
+            let kind = match admin_sender {
+                Some(sender) => RevokeType::Admin {
+                    original_sender: original_participant(&client, &jid, sender).await,
+                },
+                None => RevokeType::Sender,
+            };
             if let Err(error) = client.revoke_message_raw(jid, id, kind).await {
                 let _ = commands.send(Command::Sent {
                     chat,
@@ -12780,6 +12786,42 @@ fn sticker_of(base: &wa::Message) -> Option<&wa::message::StickerMessage> {
 /// traffic. Takes the whole message, wrappers included: view-once media
 /// arrives wrapped, and WhatsApp keeps it for the phone, so a linked device
 /// shows a placeholder instead of an attachment that cannot be fetched.
+/// A group member as their message's own key names them, for an admin
+/// revoke. The archive files a member under their phone number once it is
+/// known, but a group that addresses its members by privacy id (LID) keyed
+/// the message with that id, and a revoke naming the number matches nothing
+/// on the other devices: WhatsApp accepts it and nobody's copy goes away.
+async fn original_participant(client: &Client, group: &Jid, sender: Jid) -> Jid {
+    if !sender.is_pn() {
+        return sender;
+    }
+    let Ok(routing) = client.groups().routing_info(group).await else {
+        return sender;
+    };
+    let mut lid = routing
+        .lid_user_for_phone_user(&sender.user)
+        .map(|lid| lid.to_string());
+    if lid.is_none() && routing.addressing_mode == AddressingMode::Lid {
+        lid = client
+            .get_lid_pn_entry(&sender)
+            .await
+            .ok()
+            .flatten()
+            .map(|entry| entry.lid.to_string());
+    }
+    keyed_participant(sender, routing.addressing_mode, lid.as_deref())
+}
+
+/// The participant a group message was keyed with: the member's privacy id
+/// in a group addressed by privacy ids, when it is known, otherwise the id
+/// the archive has.
+fn keyed_participant(sender: Jid, mode: AddressingMode, lid: Option<&str>) -> Jid {
+    match (mode, lid) {
+        (AddressingMode::Lid, Some(lid)) if sender.is_pn() => Jid::lid(lid),
+        _ => sender,
+    }
+}
+
 fn classify(message: &wa::Message) -> Option<Content> {
     let content = classify_base(message.get_base_message())?;
     // Interactive messages travel in the same wrapper, so only media turns
@@ -14658,6 +14700,31 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_admin_revoke_names_a_member_by_privacy_id_in_a_lid_group() {
+        use super::{AddressingMode, Jid, keyed_participant};
+        let number: Jid = "5511900000000@s.whatsapp.net".parse().unwrap();
+        let lid: Jid = "123456789@lid".parse().unwrap();
+        assert_eq!(
+            keyed_participant(number.clone(), AddressingMode::Lid, Some("123456789")),
+            lid
+        );
+        assert_eq!(
+            keyed_participant(number.clone(), AddressingMode::Pn, Some("123456789")),
+            number,
+            "a group addressed by numbers keyed it by number"
+        );
+        assert_eq!(
+            keyed_participant(number.clone(), AddressingMode::Lid, None),
+            number,
+            "an unknown privacy id leaves the number"
+        );
+        assert_eq!(
+            keyed_participant(lid.clone(), AddressingMode::Lid, Some("987")),
+            lid
+        );
+    }
+
     use super::*;
     use std::io::Cursor;
 
