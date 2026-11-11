@@ -5507,4 +5507,25 @@ pub(crate) mod test_offers {
             .group(Box::new(roster(1, participants)))
             .build()
     }
+
+    /// A one-to-one offer from `caller`, as it rings here.
+    pub fn direct_offer(caller: &str) -> IncomingCall {
+        let caller: Jid = caller.parse().unwrap();
+        IncomingCall::builder()
+            .from(caller.clone())
+            .stanza_id("STANZA".to_owned())
+            .offline(false)
+            .action(CallAction::Offer {
+                call_id: CALL_ID.to_owned(),
+                call_creator: caller,
+                caller_pn: None,
+                caller_country_code: None,
+                device_class: None,
+                joinable: false,
+                is_video: false,
+                audio: Vec::new(),
+                group_jid: None,
+            })
+            .build()
+    }
 }
