@@ -253,6 +253,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // How far the phone read a deleted chat past its removal point, for the
     // newer messages that file it again.
     ("chat_removals", "read_through", "INTEGER"),
+    // When the newest removal, the one `cleared` describes, was made, in
+    // milliseconds. NULL for a removal from before, a deletion no clear undoes.
+    ("chat_removals", "removed_at", "INTEGER"),
 ];
 
 /// Gives a chat's row the settings kept for it while it was deleted, in
@@ -1326,14 +1329,16 @@ impl Archive {
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through, archived, archive_updated_at, pinned,
                 pin_updated_at, pinned_at, muted_until, mute_updated_at, locked, lock_updated_at,
-                cleared, read_through)
+                cleared, read_through, removed_at)
              SELECT ?2, through, archived, archive_updated_at, pinned, pin_updated_at, pinned_at,
-                muted_until, mute_updated_at, locked, lock_updated_at, cleared, read_through
+                muted_until, mute_updated_at, locked, lock_updated_at, cleared, read_through,
+                removed_at
                 FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
-                cleared = CASE WHEN excluded.through > through THEN excluded.cleared
-                    WHEN excluded.through < through THEN cleared
+                cleared = CASE WHEN excluded.removed_at > removed_at THEN excluded.cleared
+                    WHEN excluded.removed_at < removed_at THEN cleared
                     ELSE MIN(cleared, excluded.cleared) END,
+                removed_at = MAX(removed_at, excluded.removed_at),
                 read_through = MAX(COALESCE(read_through, excluded.read_through),
                     COALESCE(excluded.read_through, read_through)),
                 archived = CASE WHEN excluded.archive_updated_at >= COALESCE(archive_updated_at, -1)
@@ -2346,21 +2351,31 @@ impl Archive {
 
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
-    pub fn remove_chat_through(&self, chat: &str, through: i64, delete: bool) -> Result<Removed> {
+    /// `at` is when the deletion or clear was made, in milliseconds.
+    pub fn remove_chat_through(
+        &self,
+        chat: &str,
+        through: i64,
+        delete: bool,
+        at: i64,
+    ) -> Result<Removed> {
         let transaction = self.connection.unchecked_transaction()?;
-        let point = through;
         let through = self
             .removal_point(chat)?
             .map_or(through, |old| old.max(through));
         // App state can send a chat's deletion and clear in either order: the
-        // newer one decides whether the chat stays listed, and a deletion
-        // wins a tie.
+        // one made later decides whether the chat stays listed, and a
+        // deletion wins a tie. Removal points cannot order them: a clear
+        // without a message range ends at its own time, past the messages a
+        // later deletion's range names.
         self.connection.execute(
-            "INSERT INTO chat_removals (chat, through, cleared) VALUES (?1, ?2, ?3)
+            "INSERT INTO chat_removals (chat, through, cleared, removed_at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
-                cleared = CASE WHEN ?4 > through OR (?4 = through AND NOT ?3)
-                    THEN ?3 ELSE cleared END",
-            params![chat, through, !delete, point],
+                cleared = CASE WHEN excluded.removed_at > removed_at THEN excluded.cleared
+                    WHEN excluded.removed_at < removed_at THEN cleared
+                    ELSE MIN(cleared, excluded.cleared) END,
+                removed_at = MAX(removed_at, excluded.removed_at)",
+            params![chat, through, !delete, at],
         )?;
         let delete = delete && self.deleted(chat)?;
         let newer: bool = self.connection.query_row(
@@ -4725,7 +4740,7 @@ pub(crate) mod tests {
                     .insert_message(&message(chat, &format!("m{at}"), at, false), None)
                     .unwrap();
             }
-            archive.remove_chat_through(chat, 200, true).unwrap();
+            archive.remove_chat_through(chat, 200, true, 0).unwrap();
             assert!(archive.chat(chat).unwrap().is_some());
             assert_eq!(
                 archive
@@ -4736,13 +4751,13 @@ pub(crate) mod tests {
                     .collect::<Vec<_>>(),
                 [300]
             );
-            archive.remove_chat_through(chat, 100, false).unwrap();
+            archive.remove_chat_through(chat, 100, false, 0).unwrap();
             assert_eq!(archive.removal_point(chat).unwrap(), Some(200));
         }
         let archive = Archive::open_with_key(&path, &key).unwrap();
         assert_eq!(archive.removal_point(chat).unwrap(), Some(200));
         assert!(archive.message(chat, "m300").unwrap().is_some());
-        archive.remove_chat_through("42@lid", 150, true).unwrap();
+        archive.remove_chat_through("42@lid", 150, true, 0).unwrap();
         archive.put_lid("42", "15550000000").unwrap();
         assert_eq!(
             archive.removal_point("15550000000@s.whatsapp.net").unwrap(),
@@ -4761,7 +4776,7 @@ pub(crate) mod tests {
             .insert_message(&message(chat, "m1", 100, false), None)
             .unwrap();
         archive.connection.execute_batch("CREATE TRIGGER refuse_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
-        assert!(archive.remove_chat_through(chat, 100, true).is_err());
+        assert!(archive.remove_chat_through(chat, 100, true, 0).is_err());
         assert!(archive.chat(chat).unwrap().is_some());
         assert!(archive.message(chat, "m1").unwrap().is_some());
         assert_eq!(archive.removal_point(chat).unwrap(), None);
@@ -4819,13 +4834,13 @@ pub(crate) mod tests {
         // Unlocked while listed and deleted again, it does not take the lock
         // kept the first time.
         archive.set_locked_at(chat, false, 3_000).unwrap();
-        archive.remove_chat_through(chat, 300, true).unwrap();
+        archive.remove_chat_through(chat, 300, true, 0).unwrap();
         archive.ensure_chat(chat, "Fixture").unwrap();
         assert!(!archive.chat(chat).unwrap().expect("filed again").locked);
 
         // History has no lock time, so its snapshot cannot undo a kept lock.
         let group = "120363000000000001@g.us";
-        archive.remove_chat_through(group, 200, true).unwrap();
+        archive.remove_chat_through(group, 200, true, 0).unwrap();
         archive.retain_locked_at(group, true, 2_000).unwrap();
         archive
             .upsert_chat(&Chat::new(group.into(), "Group".into()))
@@ -4850,10 +4865,10 @@ pub(crate) mod tests {
                 archive.ensure_chat(phone, "Fixture").unwrap();
             }
             if newer_unlock {
-                archive.remove_chat_through(phone, 150, true).unwrap();
+                archive.remove_chat_through(phone, 150, true, 0).unwrap();
                 archive.retain_locked_at(phone, false, 3_000).unwrap();
             }
-            archive.remove_chat_through("42@lid", 150, true).unwrap();
+            archive.remove_chat_through("42@lid", 150, true, 0).unwrap();
             archive.retain_locked_at("42@lid", true, 2_000).unwrap();
             // The listed chat changed, so the worker sends the chat list again.
             assert_eq!(archive.put_lid("42", "15550000000").unwrap(), listed);
@@ -4880,7 +4895,7 @@ pub(crate) mod tests {
         archive.set_muted_at(chat, Some(9_000), 2_000).unwrap();
         archive.set_pinned_at(chat, true, 2_000).unwrap();
         archive.set_archived_at(chat, true, 2_000).unwrap();
-        archive.remove_chat_through(chat, 200, true).unwrap();
+        archive.remove_chat_through(chat, 200, true, 0).unwrap();
         assert!(archive.chat(chat).unwrap().is_none());
         archive.retain_muted_at(chat, None, 3_000).unwrap();
         archive.retain_pinned_at(chat, false, 1_000).unwrap();
@@ -4895,10 +4910,10 @@ pub(crate) mod tests {
             .upsert_chat(&Chat::new(group.into(), "Group".into()))
             .unwrap();
         archive.set_locked_snapshot(group, true).unwrap();
-        archive.remove_chat_through(group, 200, true).unwrap();
+        archive.remove_chat_through(group, 200, true, 0).unwrap();
         archive.ensure_chat(group, "Group").unwrap();
         assert!(archive.chat(group).unwrap().expect("filed again").locked);
-        archive.remove_chat_through(group, 300, true).unwrap();
+        archive.remove_chat_through(group, 300, true, 0).unwrap();
         archive.retain_locked_at(group, false, 1_000).unwrap();
         archive.ensure_chat(group, "Group").unwrap();
         assert!(!archive.chat(group).unwrap().expect("filed again").locked);
@@ -4909,7 +4924,7 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(kept, "m300", 300, false), None)
             .unwrap();
-        archive.remove_chat_through(kept, 200, true).unwrap();
+        archive.remove_chat_through(kept, 200, true, 0).unwrap();
         assert!(archive.chat(kept).unwrap().expect("still listed").locked);
         let (archived, lock_kept): (Option<bool>, Option<i64>) = archive
             .connection
@@ -4937,7 +4952,7 @@ pub(crate) mod tests {
             row.pinned_at = 1_700_000_000_000;
             row.muted_until = Some(9_000);
             archive.upsert_chat(&row).unwrap();
-            archive.remove_chat_through(deleted, 200, true).unwrap();
+            archive.remove_chat_through(deleted, 200, true, 0).unwrap();
             if deleted != filed {
                 archive.put_lid("42", "15550000000").unwrap();
             }
@@ -4947,7 +4962,7 @@ pub(crate) mod tests {
             assert_eq!(chat.pinned_at, 1_700_000_000_000, "{deleted}");
             assert_eq!(chat.muted_until, Some(9_000), "{deleted}");
 
-            archive.remove_chat_through(filed, 300, true).unwrap();
+            archive.remove_chat_through(filed, 300, true, 0).unwrap();
             archive.retain_archived_at(filed, false, 1).unwrap();
             archive.retain_pinned_at(filed, true, 2_000).unwrap();
             archive.retain_muted_at(filed, None, 1).unwrap();
@@ -4959,49 +4974,67 @@ pub(crate) mod tests {
         }
     }
 
-    /// Whichever of a chat's deletion and clear arrives first, the newer one
-    /// decides whether the chat was deleted, and a deletion wins a tie, under
-    /// a privacy id too. A removal stored before the two were told apart
-    /// counts as a deletion.
+    /// Whichever of a chat's deletion and clear arrives first, the one made
+    /// later decides whether the chat was deleted, whatever their removal
+    /// points, and a deletion wins a tie, under a privacy id too. A removal
+    /// stored before the two were told apart counts as a deletion, and no
+    /// clear undoes it.
     #[test]
     fn the_newest_removal_decides_whether_a_chat_was_deleted() {
         let chat = "1@s.whatsapp.net";
         for (removals, deleted) in [
-            ([(100, true), (200, false)], false),
-            ([(200, false), (100, true)], false),
-            ([(100, false), (200, true)], true),
-            ([(200, true), (100, false)], true),
-            ([(200, false), (200, true)], true),
-            ([(200, true), (200, false)], true),
+            ([(100, true, 100_000), (200, false, 200_000)], false),
+            ([(200, false, 200_000), (100, true, 100_000)], false),
+            ([(100, false, 100_000), (200, true, 200_000)], true),
+            ([(200, true, 200_000), (100, false, 100_000)], true),
+            ([(200, false, 200_000), (200, true, 200_000)], true),
+            ([(200, true, 200_000), (200, false, 200_000)], true),
+            // A clear without a message range ends at its own time, past the
+            // messages a later deletion's range names.
+            ([(500, false, 500_000), (100, true, 600_000)], true),
+            ([(100, true, 600_000), (500, false, 500_000)], true),
         ] {
             let archive = Archive::in_memory().unwrap();
-            for (through, delete) in removals {
-                archive.remove_chat_through(chat, through, delete).unwrap();
+            for (through, delete, at) in removals {
+                archive
+                    .remove_chat_through(chat, through, delete, at)
+                    .unwrap();
             }
             assert_eq!(archive.deleted(chat).unwrap(), deleted, "{removals:?}");
         }
 
-        // A deletion older than the clear after it leaves the chat listed.
-        let archive = Archive::in_memory().unwrap();
-        archive.ensure_chat(chat, "Fixture").unwrap();
-        archive.remove_chat_through(chat, 200, false).unwrap();
-        archive.remove_chat_through(chat, 100, true).unwrap();
-        assert!(archive.chat(chat).unwrap().is_some());
+        // A deletion made before the clear after it leaves the chat listed,
+        // and one made after it does not.
+        for (at, listed) in [(400_000, true), (600_000, false)] {
+            let archive = Archive::in_memory().unwrap();
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            archive
+                .insert_message(&message(chat, "m100", 100, false), None)
+                .unwrap();
+            archive
+                .remove_chat_through(chat, 500, false, 500_000)
+                .unwrap();
+            archive.remove_chat_through(chat, 100, true, at).unwrap();
+            assert_eq!(archive.chat(chat).unwrap().is_some(), listed, "{at}");
+        }
 
         let phone = "15550000000@s.whatsapp.net";
         for (under_lid, on_phone, deleted) in [
-            ((200, false), None, false),
-            ((200, false), Some((100, true)), false),
-            ((200, false), Some((200, true)), true),
-            ((200, true), Some((100, false)), true),
+            ((200, false, 200_000), None, false),
+            ((200, false, 200_000), Some((100, true, 100_000)), false),
+            ((200, false, 200_000), Some((200, true, 200_000)), true),
+            ((200, true, 200_000), Some((100, false, 100_000)), true),
+            ((500, false, 500_000), Some((100, true, 600_000)), true),
         ] {
             let archive = Archive::in_memory().unwrap();
-            if let Some((through, delete)) = on_phone {
-                archive.remove_chat_through(phone, through, delete).unwrap();
+            if let Some((through, delete, at)) = on_phone {
+                archive
+                    .remove_chat_through(phone, through, delete, at)
+                    .unwrap();
             }
-            let (through, delete) = under_lid;
+            let (through, delete, at) = under_lid;
             archive
-                .remove_chat_through("42@lid", through, delete)
+                .remove_chat_through("42@lid", through, delete, at)
                 .unwrap();
             archive.put_lid("42", "15550000000").unwrap();
             assert_eq!(
@@ -5021,6 +5054,10 @@ pub(crate) mod tests {
             .unwrap();
         let archive = Archive::prepare(connection).unwrap();
         assert!(archive.deleted(chat).unwrap());
+        archive
+            .remove_chat_through(chat, 300, false, 300_000)
+            .unwrap();
+        assert!(archive.deleted(chat).unwrap());
     }
 
     /// How far the phone read a chat past its deletion goes to the chat when
@@ -5031,7 +5068,7 @@ pub(crate) mod tests {
         let phone = "15550000000@s.whatsapp.net";
         for deleted in [phone, "42@lid"] {
             let archive = Archive::in_memory().unwrap();
-            archive.remove_chat_through(deleted, 200, true).unwrap();
+            archive.remove_chat_through(deleted, 200, true, 0).unwrap();
             archive.retain_read_through(deleted, 300).unwrap();
             archive.retain_read_through(deleted, 250).unwrap();
             if deleted != phone {
@@ -5040,13 +5077,13 @@ pub(crate) mod tests {
             archive.ensure_chat(phone, "Fixture").unwrap();
             assert_eq!(archive.read_through(phone).unwrap(), Some(300), "{deleted}");
 
-            archive.remove_chat_through(phone, 400, true).unwrap();
+            archive.remove_chat_through(phone, 400, true, 0).unwrap();
             archive.ensure_chat(phone, "Fixture").unwrap();
             assert_eq!(archive.read_through(phone).unwrap(), None, "{deleted}");
         }
 
         let archive = Archive::in_memory().unwrap();
-        archive.remove_chat_through(phone, 200, true).unwrap();
+        archive.remove_chat_through(phone, 200, true, 0).unwrap();
         archive.retain_read_through(phone, 200).unwrap();
         archive.ensure_chat(phone, "Fixture").unwrap();
         assert_eq!(archive.read_through(phone).unwrap(), None);
@@ -5102,7 +5139,7 @@ pub(crate) mod tests {
                     archive
                         .insert_message(&message(chat, "newer", 200, false), None)
                         .unwrap();
-                    archive.remove_chat_through(chat, 100, false)
+                    archive.remove_chat_through(chat, 100, false, 0)
                 }
             }
             .expect("removes")
@@ -5218,7 +5255,7 @@ pub(crate) mod tests {
         archive
             .insert_message(&message(phone, "cleared", 100, false), None)
             .unwrap();
-        archive.remove_chat_through(phone, 100, false).unwrap();
+        archive.remove_chat_through(phone, 100, false, 0).unwrap();
         archive
             .insert_message(&message(lid, "old-lid-copy", 100, false), None)
             .unwrap();
