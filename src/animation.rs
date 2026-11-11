@@ -14,7 +14,11 @@ use std::time::{Duration, Instant};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 
-/// Maximum frame width uploaded to the GPU; low-resource builds also bound its height.
+/// Maximum frame side uploaded to the GPU in the most restrictive profile.
+#[cfg(feature = "nano-ultra-low-resource")]
+const MAX_WIDTH: u32 = 256;
+/// Maximum frame side in the standard and low-resource profiles.
+#[cfg(not(feature = "nano-ultra-low-resource"))]
 const MAX_WIDTH: u32 = 320;
 /// Maximum frames kept per animation.
 const MAX_FRAMES: usize = 150;
@@ -33,7 +37,9 @@ const MAX_IMAGE_SIDE: u32 = 4096;
 const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Global texture-frame budget. Least-recently-used animations are removed first.
-#[cfg(feature = "nano-low-resource")]
+#[cfg(feature = "nano-ultra-low-resource")]
+const MAX_RESIDENT_FRAMES: usize = 64;
+#[cfg(all(feature = "nano-low-resource", not(feature = "nano-ultra-low-resource")))]
 const MAX_RESIDENT_FRAMES: usize = 120;
 #[cfg(not(feature = "nano-low-resource"))]
 const MAX_RESIDENT_FRAMES: usize = 450;
@@ -1017,7 +1023,9 @@ mod tests {
         assert!((size[0] as f32 / size[1] as f32 - 320.0 / 4096.0).abs() < 0.005);
         let playback = decode(&path, MAX_FRAMES).unwrap();
         assert_eq!(playback.frames.len(), 2);
-        #[cfg(feature = "nano-low-resource")]
+        #[cfg(feature = "nano-ultra-low-resource")]
+        assert_eq!(playback.frames[0].0.size, [16, 256]);
+        #[cfg(all(feature = "nano-low-resource", not(feature = "nano-ultra-low-resource")))]
         assert_eq!(playback.frames[0].0.size, [25, 320]);
         #[cfg(not(feature = "nano-low-resource"))]
         assert_eq!(playback.frames[0].0.size, [320, 4096]);
