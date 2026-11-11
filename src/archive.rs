@@ -247,6 +247,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // The kept pin's place among the pins: history gives a pin one without a
     // time of its own.
     ("chat_removals", "pinned_at", "INTEGER"),
+    // Whether the chat's newest removal was a clear, which leaves it listed
+    // on the phone. A removal from before counts as a deletion.
+    ("chat_removals", "cleared", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// Gives a chat's row the settings kept for it while it was deleted, in
@@ -1302,11 +1305,15 @@ impl Archive {
         )?;
         self.connection.execute(
             "INSERT INTO chat_removals (chat, through, archived, archive_updated_at, pinned,
-                pin_updated_at, pinned_at, muted_until, mute_updated_at, locked, lock_updated_at)
+                pin_updated_at, pinned_at, muted_until, mute_updated_at, locked, lock_updated_at,
+                cleared)
              SELECT ?2, through, archived, archive_updated_at, pinned, pin_updated_at, pinned_at,
-                muted_until, mute_updated_at, locked, lock_updated_at
+                muted_until, mute_updated_at, locked, lock_updated_at, cleared
                 FROM chat_removals WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
+                cleared = CASE WHEN excluded.through > through THEN excluded.cleared
+                    WHEN excluded.through < through THEN cleared
+                    ELSE MIN(cleared, excluded.cleared) END,
                 archived = CASE WHEN excluded.archive_updated_at >= COALESCE(archive_updated_at, -1)
                     THEN excluded.archived ELSE archived END,
                 archive_updated_at = MAX(COALESCE(archive_updated_at, excluded.archive_updated_at),
@@ -2302,18 +2309,38 @@ impl Archive {
             .optional()
     }
 
+    /// Whether the chat's newest removal deleted it, rather than clearing it.
+    pub fn deleted(&self, chat: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT NOT cleared FROM chat_removals WHERE chat = ?1",
+                params![chat],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
     pub fn remove_chat_through(&self, chat: &str, through: i64, delete: bool) -> Result<Removed> {
         let transaction = self.connection.unchecked_transaction()?;
+        let point = through;
         let through = self
             .removal_point(chat)?
             .map_or(through, |old| old.max(through));
+        // App state can send a chat's deletion and clear in either order: the
+        // newer one decides whether the chat stays listed, and a deletion
+        // wins a tie.
         self.connection.execute(
-            "INSERT INTO chat_removals (chat, through) VALUES (?1, ?2)
-             ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through)",
-            params![chat, through],
+            "INSERT INTO chat_removals (chat, through, cleared) VALUES (?1, ?2, ?3)
+             ON CONFLICT(chat) DO UPDATE SET through = MAX(through, excluded.through),
+                cleared = CASE WHEN ?4 > through OR (?4 = through AND NOT ?3)
+                    THEN ?3 ELSE cleared END",
+            params![chat, through, !delete, point],
         )?;
+        let delete = delete && self.deleted(chat)?;
         let newer: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND timestamp > ?2)",
             params![chat, through],
@@ -4908,6 +4935,70 @@ pub(crate) mod tests {
             assert_eq!(chat.pinned_at, 2_000, "{deleted}");
             assert_eq!(chat.muted_until, None, "{deleted}");
         }
+    }
+
+    /// Whichever of a chat's deletion and clear arrives first, the newer one
+    /// decides whether the chat was deleted, and a deletion wins a tie, under
+    /// a privacy id too. A removal stored before the two were told apart
+    /// counts as a deletion.
+    #[test]
+    fn the_newest_removal_decides_whether_a_chat_was_deleted() {
+        let chat = "1@s.whatsapp.net";
+        for (removals, deleted) in [
+            ([(100, true), (200, false)], false),
+            ([(200, false), (100, true)], false),
+            ([(100, false), (200, true)], true),
+            ([(200, true), (100, false)], true),
+            ([(200, false), (200, true)], true),
+            ([(200, true), (200, false)], true),
+        ] {
+            let archive = Archive::in_memory().unwrap();
+            for (through, delete) in removals {
+                archive.remove_chat_through(chat, through, delete).unwrap();
+            }
+            assert_eq!(archive.deleted(chat).unwrap(), deleted, "{removals:?}");
+        }
+
+        // A deletion older than the clear after it leaves the chat listed.
+        let archive = Archive::in_memory().unwrap();
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive.remove_chat_through(chat, 200, false).unwrap();
+        archive.remove_chat_through(chat, 100, true).unwrap();
+        assert!(archive.chat(chat).unwrap().is_some());
+
+        let phone = "15550000000@s.whatsapp.net";
+        for (under_lid, on_phone, deleted) in [
+            ((200, false), None, false),
+            ((200, false), Some((100, true)), false),
+            ((200, false), Some((200, true)), true),
+            ((200, true), Some((100, false)), true),
+        ] {
+            let archive = Archive::in_memory().unwrap();
+            if let Some((through, delete)) = on_phone {
+                archive.remove_chat_through(phone, through, delete).unwrap();
+            }
+            let (through, delete) = under_lid;
+            archive
+                .remove_chat_through("42@lid", through, delete)
+                .unwrap();
+            archive.put_lid("42", "15550000000").unwrap();
+            assert_eq!(
+                archive.deleted(phone).unwrap(),
+                deleted,
+                "{under_lid:?}, {on_phone:?}"
+            );
+        }
+
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_removals (chat, through) VALUES (?1, 200)",
+                [chat],
+            )
+            .unwrap();
+        let archive = Archive::prepare(connection).unwrap();
+        assert!(archive.deleted(chat).unwrap());
     }
 
     /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.

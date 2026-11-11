@@ -2218,14 +2218,14 @@ impl Worker {
             .is_some_and(|through| timestamp <= through)
     }
 
-    /// Whether a chat was deleted and nothing newer has brought it back. The
-    /// phone's app state keeps a deleted chat's archive, pin, mute, lock and
-    /// read settings, and a newly linked device receives them after the
-    /// deletion; they must not file the chat again. All but the read state,
-    /// which covers the deleted messages, wait in the archive until a newer
-    /// message or call files it.
+    /// Whether a chat was deleted and nothing newer, a message or a clear, has
+    /// brought it back. The phone's app state keeps a deleted chat's archive,
+    /// pin, mute, lock and read settings, and a newly linked device receives
+    /// them after the deletion; they must not file the chat again. All but
+    /// the read state, which covers the deleted messages, wait in the archive
+    /// until a newer message or call files it.
     fn removed_outright(&self, chat: &str) -> bool {
-        self.archive.removal_point(chat).ok().flatten().is_some()
+        matches!(self.archive.deleted(chat), Ok(true))
             && matches!(self.archive.chat(chat), Ok(None))
     }
 
@@ -6324,8 +6324,12 @@ impl Worker {
             let existing = self.archive.chat(&id).ok().flatten();
             if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
                 chat.messages.retain(|message| message.timestamp > through);
-                // Nothing newer than the deletion: leave the chat deleted.
-                if existing.is_none() && chat.messages.is_empty() {
+                // Nothing newer than the deletion: leave the chat deleted. A
+                // cleared chat stays listed on the phone.
+                if existing.is_none()
+                    && chat.messages.is_empty()
+                    && !matches!(self.archive.deleted(&id), Ok(false))
+                {
                     continue;
                 }
             }
@@ -26344,6 +26348,32 @@ mod chat_removal_tests {
             .await;
     }
 
+    /// The phone's clear of a chat, through `through`, as app state sends it.
+    async fn phone_clears(worker: &mut Worker, chat: &str, through: i64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ClearChatUpdate(
+                wa_events::ClearChatUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .delete_starred(false)
+                    .delete_media(false)
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(300)).into())
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::ClearChatAction::default();
+                        proto.message_range = Some({
+                            let mut proto =
+                                wa::sync_action_value::SyncActionMessageRange::default();
+                            proto.last_message_timestamp = Some(through);
+                            proto
+                        })
+                        .into();
+                        proto
+                    }))
+                    .from_full_sync(true)
+                    .build(),
+            )))
+            .await;
+    }
+
     /// A chat's archive, pin, mute, lock and read settings, made at `at`, as
     /// the phone's app state hands them to a device it links.
     fn phone_settings(chat: &str, at: u64) -> Vec<wa_events::Event> {
@@ -26460,6 +26490,51 @@ mod chat_removal_tests {
             let chat = worker.archive.chat(CHAT).unwrap().expect("still listed");
             assert!(chat.archived && chat.pinned && chat.locked && chat.marked_unread);
             assert_eq!(chat.muted_until, Some(0));
+        }
+    }
+
+    /// A chat the phone cleared stays listed there, also when the clear
+    /// reaches a newly linked device before history files the chat. In
+    /// either order, a clear newer than a deletion leaves the chat listed,
+    /// and a deletion newer than the clear, or at the clear's point, does not.
+    #[tokio::test]
+    async fn a_chat_cleared_before_history_files_it_stays_listed() {
+        for (deleted, listed) in [
+            (None, true),
+            (Some(100), true),
+            (Some(200), false),
+            (Some(300), false),
+        ] {
+            for clear_first in [true, false] {
+                for settings in [true, false] {
+                    let case = format!(
+                        "deleted through {deleted:?}, clear first: {clear_first}, settings: {settings}"
+                    );
+                    let (mut worker, _events, _, _) = receipt_tests::worker();
+                    if clear_first {
+                        phone_clears(&mut worker, CHAT, 200).await;
+                    }
+                    if let Some(through) = deleted {
+                        phone_deletes(&mut worker, CHAT, through).await;
+                    }
+                    if !clear_first {
+                        phone_clears(&mut worker, CHAT, 200).await;
+                    }
+                    if settings {
+                        for event in phone_settings(CHAT, 400) {
+                            worker.handle_wa_event(Arc::new(event)).await;
+                        }
+                    } else {
+                        worker.apply_history(history(CHAT, &[100, 200]), false);
+                    }
+                    let chat = worker.archive.chat(CHAT).unwrap();
+                    assert_eq!(chat.is_some(), listed, "{case}");
+                    assert!(stored(&worker, CHAT).is_empty(), "{case}");
+                    if settings && listed {
+                        assert!(chat.expect("listed").locked, "{case}");
+                    }
+                }
+            }
         }
     }
 
