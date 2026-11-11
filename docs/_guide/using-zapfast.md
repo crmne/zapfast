@@ -809,10 +809,11 @@ the same menu also needs a connection and confirmation. A chat deleted on your
 phone stays deleted here, also when you link ZapFast later: the archive, pin,
 mute, lock or read setting your phone still keeps for it does not bring it
 back, and neither does a call from before the deletion. A message or call
-newer than the deletion does bring it back, with the archive, pin, mute and
-lock settings it had when it was deleted, on your phone or with
-**Delete chat** here, unless your phone changed them since. A locked chat
-comes back locked. A chat that an older version of
+newer than the deletion does bring it back, a call as soon as it rings. It
+comes back with the archive, pin, mute and lock settings it had when it was
+deleted, on your phone or with **Delete chat** here, unless your phone changed
+them since. A locked chat comes back locked, and a call from it waits as
+"Locked chat". A chat that an older version of
 ZapFast already brought back is not removed again: delete it with
 **Delete chat**. Groups and channels can be left from the same menu, keeping
 their history here. `Ctrl+E`

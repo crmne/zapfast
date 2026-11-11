@@ -26490,6 +26490,50 @@ mod chat_removal_tests {
         }
     }
 
+    /// A call that rings in a chat the phone deleted but keeps locked files
+    /// the chat, locked, before the window hears of the call, so the window
+    /// holds the call as "Locked chat" instead of ringing with the caller's
+    /// name and photo; the call is filed in it once, as it ends.
+    #[tokio::test]
+    async fn a_call_ringing_in_a_deleted_locked_chat_files_it_locked_first() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, direct_offer, group_offer, member};
+        // A group's offer rings on the phone only, a person's here.
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, chat, 200).await;
+            for event in phone_settings(chat, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(chat).unwrap().is_none(), "{chat}");
+            events.try_iter().for_each(drop);
+
+            let offer = if chat == GROUP {
+                group_offer(vec![member("200000000000001", true)])
+            } else {
+                direct_offer(CHAT)
+            };
+            worker.call_signaling(&offer).await;
+            let told: Vec<Event> = events.try_iter().collect();
+            let filed = told.iter().position(|event| {
+                matches!(event, Event::ChatUpdated(listed) if listed.id == chat && listed.locked)
+            });
+            let rang = told
+                .iter()
+                .position(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_)));
+            assert!(rang.is_some(), "{chat} rings");
+            assert!(
+                filed < rang && filed.is_some(),
+                "{chat} is filed locked first"
+            );
+
+            assert!(worker.call_resolved(CALL_ID, None), "{chat}");
+            assert_eq!(worker.archive.call_log(10).unwrap().len(), 1, "{chat}");
+            assert_eq!(stored(&worker, chat).len(), 1, "{chat}");
+            assert!(worker.archive.chat(chat).unwrap().expect("filed").locked);
+        }
+    }
+
     /// A lock the phone keeps for a chat deleted under its privacy id reaches
     /// the phone number's chat listed here as soon as the two are known to be
     /// one, not at the next unrelated update.

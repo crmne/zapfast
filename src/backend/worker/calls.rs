@@ -795,6 +795,7 @@ impl Worker {
         }
         let video = calls::offer_is_video(action);
         let call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        self.file_ringing_chat(&call);
         let update = call.update();
         self.call = Some(CallRuntime::new(call, None));
         self.emit_call_devices().await;
@@ -829,12 +830,25 @@ impl Worker {
             "[CALL] a group call rings on the phone only, group calls are off call_id={}",
             call.call_id()
         );
+        self.file_ringing_chat(&call);
         let update = self.canonical_call(call.update());
         if self.phone_only_calls.len() >= MAX_PHONE_ONLY_CALLS {
             self.phone_only_calls.remove(0);
         }
         self.phone_only_calls.push(call);
         self.emit(Event::PhoneOnlyCall(Box::new(update)));
+    }
+
+    /// Files a deleted chat again for a call that rings in it, before the window hears of the
+    /// call. The call is newer than the deletion and files the chat as it ends anyway; filing it
+    /// now gives it the lock, mute and archive kept for it, so a locked chat's call does not ring
+    /// with the caller's name and photo.
+    fn file_ringing_chat(&mut self, call: &Call) {
+        let chat = call.chat();
+        if self.removed_outright(chat) && !self.predates_removal(chat, call.began()) {
+            self.ensure_chat(chat, None);
+            self.emit_chat(chat);
+        }
     }
 
     /// Where the call `call_id` is among the group calls ringing on the phone only.
