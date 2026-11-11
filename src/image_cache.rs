@@ -156,7 +156,11 @@ fn sweep_at(ctx: &egui::Context, now: Instant) {
                 .filter(|(_, entry)| entry.frame < frame)
                 .map(|(uri, entry)| (entry.last_drawn, uri.clone()))
                 .collect();
-            idle.sort_unstable_by_key(|(last_drawn, _)| *last_drawn);
+            idle.sort_unstable_by(|(left_time, left_uri), (right_time, right_uri)| {
+                left_time
+                    .cmp(right_time)
+                    .then_with(|| left_uri.cmp(right_uri))
+            });
             let remove_count = over.min(idle.len());
             for (_, uri) in idle.iter().take(remove_count) {
                 entries.remove(uri);
@@ -324,6 +328,20 @@ mod tests {
             .filter(|index| registered(&ctx, &uri(*index)))
             .count();
         assert_eq!(kept, RESIDENT, "the window should hold exactly its budget");
+    }
+
+    #[test]
+    fn cache_budget_evicts_the_oldest_uri_first_when_draw_times_tie() {
+        let ctx = context();
+        for index in 0..RESIDENT + 2 {
+            include(&ctx, &uri(index), b"image bytes");
+        }
+        frame(&ctx);
+        sweep(&ctx);
+
+        assert!(!registered(&ctx, &uri(0)));
+        assert!(!registered(&ctx, &uri(1)));
+        assert!(registered(&ctx, &uri(2)));
     }
 
     #[test]
