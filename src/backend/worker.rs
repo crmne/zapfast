@@ -4109,6 +4109,7 @@ impl Worker {
                 self.older_warned.clear();
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
+                self.read_sync.wake();
                 self.pump_read_sync();
                 self.pump_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
@@ -7328,6 +7329,7 @@ impl Worker {
                 Ok(marked) => {
                     self.emit_chat(&chat);
                     if marked {
+                        self.read_sync.wake();
                         self.pump_read_sync();
                     }
                 }
@@ -9976,19 +9978,30 @@ impl Worker {
             return;
         }
         let _ = self.archive.queue_read_sync(&chat);
+        self.read_sync.wake();
         self.pump_read_sync();
         self.send_read_receipts(chat, ids);
     }
 
     fn pump_read_sync(&mut self) {
-        if !matches!(self.status, LinkStatus::Connected) || !self.read_sync.ready(Instant::now()) {
+        let now = Instant::now();
+        if !matches!(self.status, LinkStatus::Connected) || !self.read_sync.should_pump(now) {
             return;
         }
         let Some(client) = self.client.clone() else {
             return;
         };
-        for (chat, through) in self.archive.pending_reads().unwrap_or_default() {
+        let pending_reads = match self.archive.pending_reads() {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::warn!("could not load pending read-state sync: {error}");
+                return;
+            }
+        };
+        let mut unmapped = false;
+        for (chat, through) in pending_reads {
             let Some(jid) = Self::jid_of(&chat) else {
+                unmapped = true;
                 continue;
             };
             if !self.read_sync.start(&chat, through, Instant::now()) {
@@ -10020,8 +10033,16 @@ impl Worker {
         }
         // Reads go first: a chat read here and then marked unread again ends
         // unread on the phone too.
-        for (chat, marked_at, through) in self.archive.pending_unreads().unwrap_or_default() {
+        let pending_unreads = match self.archive.pending_unreads() {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::warn!("could not load pending unread-state sync: {error}");
+                return;
+            }
+        };
+        for (chat, marked_at, through) in pending_unreads {
             let Some(jid) = Self::jid_of(&chat) else {
+                unmapped = true;
                 continue;
             };
             if !self
@@ -10048,6 +10069,9 @@ impl Worker {
                 });
             });
             break;
+        }
+        if !unmapped {
+            self.read_sync.drained();
         }
     }
 
