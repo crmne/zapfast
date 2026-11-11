@@ -233,8 +233,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
-    // The settings the phone keeps for a chat it deleted, each with when it
-    // was made, until something files the chat again (`restore_kept`).
+    // A deleted chat's archive, pin, mute and lock settings, its own and the
+    // ones the phone still keeps for it, each with when it was made, until
+    // something files the chat again (`restore_kept`).
     ("chat_removals", "archived", "INTEGER"),
     ("chat_removals", "archive_updated_at", "INTEGER"),
     ("chat_removals", "pinned", "INTEGER"),
@@ -2303,12 +2304,53 @@ impl Archive {
                 media,
             }
         } else if delete {
+            self.keep_settings(chat)?;
             self.delete_chat(chat)?
         } else {
             self.clear_chat(chat)?
         };
         transaction.commit()?;
         Ok(removed)
+    }
+
+    /// Keeps the archive, pin, mute and lock settings of a chat about to be
+    /// deleted beside its removal point, in timestamp order like
+    /// `retain_archived_at`: app state keeps them after a deletion made on
+    /// any device and does not send them again. A lock known only from
+    /// history is kept too, older than any the phone sends.
+    fn keep_settings(&self, chat: &str) -> Result<()> {
+        for (columns, updated_at, at) in [
+            (
+                "archived = listed.archived",
+                "archive_updated_at",
+                "listed.archive_updated_at",
+            ),
+            (
+                "pinned = listed.pinned",
+                "pin_updated_at",
+                "listed.pin_updated_at",
+            ),
+            (
+                "muted_until = listed.muted_until",
+                "mute_updated_at",
+                "listed.mute_updated_at",
+            ),
+            (
+                "locked = listed.locked",
+                "lock_updated_at",
+                "COALESCE(listed.lock_updated_at, CASE WHEN listed.locked THEN 0 END)",
+            ),
+        ] {
+            self.connection.execute(
+                &format!(
+                    "UPDATE chat_removals SET {columns}, {updated_at} = {at}
+                     FROM chats listed WHERE chat_removals.chat = ?1 AND listed.id = ?1
+                     AND {at} >= COALESCE(chat_removals.{updated_at}, -1)"
+                ),
+                params![chat],
+            )?;
+        }
+        Ok(())
     }
 
     /// Removes a chat with everything stored for it.
@@ -4716,6 +4758,61 @@ pub(crate) mod tests {
                 "listed: {listed}, newer unlock: {newer_unlock}"
             );
         }
+    }
+
+    /// A chat deleted with its own archive, pin, mute and lock takes them
+    /// back when it is filed again, unless the phone kept a newer setting
+    /// meanwhile. A lock known only from history is kept below any the
+    /// phone sends. A chat that newer messages keep listed keeps them as is.
+    #[test]
+    fn a_deleted_chats_own_settings_go_to_it_when_it_is_filed_again() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        archive.set_locked_at(chat, true, 2_000).unwrap();
+        archive.set_muted_at(chat, Some(9_000), 2_000).unwrap();
+        archive.set_pinned_at(chat, true, 2_000).unwrap();
+        archive.set_archived_at(chat, true, 2_000).unwrap();
+        archive.remove_chat_through(chat, 200, true).unwrap();
+        assert!(archive.chat(chat).unwrap().is_none());
+        archive.retain_muted_at(chat, None, 3_000).unwrap();
+        archive.retain_pinned_at(chat, false, 1_000).unwrap();
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let filed = archive.chat(chat).unwrap().expect("filed again");
+        assert!(filed.locked && filed.pinned && filed.archived);
+        assert_eq!(filed.pinned_at, 2_000);
+        assert_eq!(filed.muted_until, None);
+
+        let group = "120363000000000001@g.us";
+        archive
+            .upsert_chat(&Chat::new(group.into(), "Group".into()))
+            .unwrap();
+        archive.set_locked_snapshot(group, true).unwrap();
+        archive.remove_chat_through(group, 200, true).unwrap();
+        archive.ensure_chat(group, "Group").unwrap();
+        assert!(archive.chat(group).unwrap().expect("filed again").locked);
+        archive.remove_chat_through(group, 300, true).unwrap();
+        archive.retain_locked_at(group, false, 1_000).unwrap();
+        archive.ensure_chat(group, "Group").unwrap();
+        assert!(!archive.chat(group).unwrap().expect("filed again").locked);
+
+        let kept = "2@s.whatsapp.net";
+        archive.ensure_chat(kept, "Fixture").unwrap();
+        archive.set_locked_at(kept, true, 2_000).unwrap();
+        archive
+            .insert_message(&message(kept, "m300", 300, false), None)
+            .unwrap();
+        archive.remove_chat_through(kept, 200, true).unwrap();
+        assert!(archive.chat(kept).unwrap().expect("still listed").locked);
+        let (archived, lock_kept): (Option<bool>, Option<i64>) = archive
+            .connection
+            .query_row(
+                "SELECT archived, lock_updated_at FROM chat_removals WHERE chat = ?1",
+                [kept],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((archived, lock_kept), (None, None));
     }
 
     /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
