@@ -5182,6 +5182,8 @@ impl Worker {
             }
             _ => chat,
         };
+        // A message older than its chat's deletion is not filed, so its timer
+        // does not file the chat either.
         if let Some(expiration) = base.get_ephemeral_expiration()
             && list.is_none()
             && self
@@ -5190,6 +5192,8 @@ impl Worker {
                 .ok()
                 .flatten()
                 .is_none()
+            && (self.archive.chat(&chat).ok().flatten().is_some()
+                || !self.predates_removal(&chat, info.timestamp.timestamp()))
         {
             self.ensure_chat(&chat, push_name.as_deref());
             let _ = self.archive.set_ephemeral(&chat, expiration, 0);
@@ -26693,6 +26697,42 @@ mod chat_removal_tests {
                 );
             }
         }
+    }
+
+    /// A message older than a chat's deletion that carries a disappearing
+    /// timer does not file the chat for its timer; a newer one does.
+    #[tokio::test]
+    async fn an_older_message_with_a_timer_leaves_a_deleted_chat_deleted() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        phone_deletes(&mut worker, CHAT, 200).await;
+        for (at, listed) in [(150, false), (250, true)] {
+            let message = wa::Message::text_with_context(format!("sent at {at}"), {
+                let mut proto = wa::ContextInfo::default();
+                proto.expiration = Some(86_400);
+                proto
+            });
+            let info = MessageInfo {
+                id: format!("m{at}").into(),
+                source: MessageSource {
+                    chat: CHAT.parse().unwrap(),
+                    sender: CHAT.parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest(&Arc::new(message), &info);
+            assert_eq!(
+                worker.archive.chat(CHAT).unwrap().is_some(),
+                listed,
+                "message at {at}"
+            );
+        }
+        assert_eq!(stored(&worker, CHAT), ["m250"]);
+        assert_eq!(
+            worker.archive.ephemeral_expiration(CHAT).unwrap(),
+            Some(86_400)
+        );
     }
 
     /// A deleted chat that a newer message, call or history files again
