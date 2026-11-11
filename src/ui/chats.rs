@@ -739,6 +739,16 @@ fn starred_stamp(locale: crate::i18n::Locale, message_timestamp: i64) -> String 
     crate::util::day_label(locale, message_timestamp)
 }
 
+/// What a screen reader announces for a starred row: the chat, the day the
+/// message was sent when known, then its words.
+fn starred_label(name: &str, stamp: &str, words: &str) -> String {
+    if stamp.is_empty() {
+        format!("{name}, {words}")
+    } else {
+        format!("{name}, {stamp}, {words}")
+    }
+}
+
 /// The width left for a starred row's chat name once its date is placed: the
 /// row's side margins and a gap come off, so a long date never overlaps it.
 fn starred_name_width(row_width: f32, date_width: f32) -> f32 {
@@ -789,7 +799,8 @@ fn starred_row(
     // The chat's own title, as the chat list writes it: a group without a
     // subject is named after its members, never "Unknown".
     let name = app.chat_title_of(&message.chat);
-    let label = format!("{name}, {words}");
+    let when = starred_stamp(app.locale, message.timestamp);
+    let label = starred_label(&name, &when, &words);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
     });
@@ -800,7 +811,6 @@ fn starred_row(
         ui.painter()
             .rect_filled(rect, 6.0, palette.surface_hover.gamma_multiply(0.5));
     }
-    let when = starred_stamp(app.locale, message.timestamp);
     // The date is measured first; the name takes what is left of the row.
     let date = (!when.is_empty()).then(|| {
         ui.painter()
@@ -2446,6 +2456,16 @@ mod tests {
         let locale = crate::i18n::Locale::English;
         assert_eq!(starred_stamp(locale, 0), "");
         assert!(!starred_stamp(locale, 86_400 * 400).is_empty());
+    }
+
+    /// The row's accessible label carries the sent day, with no dangling
+    /// separator when the day is unknown.
+    #[test]
+    fn starred_label_announces_the_sent_day() {
+        assert_eq!(starred_label("Ana", "Mar 3", "hello"), "Ana, Mar 3, hello");
+        let unknown = starred_label("Ana", "", "hello");
+        assert_eq!(unknown, "Ana, hello");
+        assert!(!unknown.contains(", ,"), "{unknown}");
     }
 
     /// The chat name never reaches under the date, however long the date is.
