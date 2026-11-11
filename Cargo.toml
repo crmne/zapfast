@@ -336,6 +336,8 @@ demo = []
 nano-one-worker = []
 # Experimental profile for low-RAM and older-CPU systems; not enabled by default.
 nano-low-resource = []
+# More aggressive animation profile; includes nano-low-resource.
+nano-ultra-low-resource = ["nano-low-resource"]
 
 [profile.release]
 lto = "thin"
