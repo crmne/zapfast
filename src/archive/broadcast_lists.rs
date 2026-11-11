@@ -456,7 +456,7 @@ mod tests {
             ],
         );
         archive.ensure_chat(PEER, "Peer").unwrap();
-        archive.remove_chat_through(PEER, 150, false).unwrap();
+        archive.remove_chat_through(PEER, 150, false, 0).unwrap();
         archive
             .confirm_message_removal("fixture-account", &[PEER.to_owned()], "deleted")
             .unwrap();
@@ -475,7 +475,7 @@ mod tests {
     fn a_chat_removed_past_every_message_is_not_made_again() {
         let archive = Archive::in_memory().unwrap();
         list_with(&archive, &[received(LIST, "m", 100)]);
-        archive.remove_chat_through(PEER, 500, true).unwrap();
+        archive.remove_chat_through(PEER, 500, true, 0).unwrap();
 
         let adopted = archive.adopt_broadcast_list(LIST, &moves()).unwrap();
 
@@ -493,7 +493,7 @@ mod tests {
             &[received(LIST, "old", 100), received(LIST, "poll", 200)],
         );
         archive.ensure_chat(PEER, "Peer").unwrap();
-        archive.remove_chat_through(PEER, 150, false).unwrap();
+        archive.remove_chat_through(PEER, 150, false, 0).unwrap();
         for id in ["old", "poll"] {
             archive
                 .save_poll(LIST, id, PEER, b"fixture secret")
