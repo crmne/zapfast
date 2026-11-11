@@ -2229,6 +2229,19 @@ impl Worker {
             && matches!(self.archive.chat(chat), Ok(None))
     }
 
+    /// When a deletion or clear the phone confirmed for us was made, in
+    /// milliseconds. The phone removes whatever the clocks say, so it is never
+    /// older than a removal already stored, which a phone whose clock runs
+    /// ahead can date after now.
+    fn removal_made_here(&self, chat: &str) -> i64 {
+        self.archive
+            .removed_at(chat)
+            .ok()
+            .flatten()
+            .map_or(i64::MIN, |made| made.saturating_add(1))
+            .max(jiff::Timestamp::now().as_millisecond())
+    }
+
     /// Blocks a deleted message's replay, failing closed if the barrier cannot be read.
     fn message_was_removed(&self, chat: &str, id: &str) -> bool {
         match self.archive.message_removed(chat, id) {
@@ -8619,15 +8632,7 @@ impl Worker {
                 through,
             } => {
                 if deleted {
-                    // The phone deletes whatever the clocks say, so a deletion
-                    // made here is never older than a removal it reported.
-                    let at = self
-                        .archive
-                        .removed_at(&chat)
-                        .ok()
-                        .flatten()
-                        .map_or(i64::MIN, |made| made.saturating_add(1))
-                        .max(jiff::Timestamp::now().as_millisecond());
+                    let at = self.removal_made_here(&chat);
                     self.remove_chat(&chat, through, true, at);
                 } else {
                     log::warn!("the phone did not delete a chat");
@@ -8684,12 +8689,8 @@ impl Worker {
                 through,
             } => {
                 if cleared {
-                    if !self.empty_chat(
-                        &chat,
-                        through,
-                        true,
-                        jiff::Timestamp::now().as_millisecond(),
-                    ) {
+                    let at = self.removal_made_here(&chat);
+                    if !self.empty_chat(&chat, through, true, at) {
                         // The phone has cleared it; say so rather than leave
                         // the messages here looking as if nothing happened.
                         self.emit(Event::Error(
@@ -26989,6 +26990,28 @@ mod chat_removal_tests {
             .await;
         assert!(worker.archive.chat(CHAT).expect("chat").is_none());
         assert!(worker.archive.deleted(CHAT).expect("removal"));
+    }
+
+    /// A chat the phone deleted with its clock ahead, then cleared here once a
+    /// newer message filed it again, stays listed when that deletion replays.
+    #[tokio::test]
+    async fn a_chat_cleared_here_goes_after_a_deletion_stamped_by_a_clock_ahead() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let ahead = u64::try_from(jiff::Timestamp::now().as_second()).expect("time") + 3600;
+        phone_deletes_at(&mut worker, CHAT, 200, ahead).await;
+        worker.apply_history(history(CHAT, &[300]), false);
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
+
+        worker
+            .handle_command(Command::ChatCleared {
+                chat: CHAT.into(),
+                cleared: true,
+                through: 300,
+            })
+            .await;
+        assert!(!worker.archive.deleted(CHAT).expect("removal"));
+        phone_deletes_at(&mut worker, CHAT, 200, ahead).await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
     }
 
     #[tokio::test]
