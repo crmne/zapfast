@@ -40,9 +40,7 @@ pub fn show_in_folder(path: &Path) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn explorer_command(path: &Path) -> std::process::Command {
     let mut command = std::process::Command::new("explorer.exe");
-    let mut argument = std::ffi::OsString::from("/select,");
-    argument.push(path.as_os_str());
-    command.arg(argument);
+    command.arg("/select,").arg(path);
     command
 }
 
@@ -238,12 +236,7 @@ mod tests {
         let command = explorer_command(path);
         assert_eq!(command.get_program(), "explorer.exe");
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(
-            args,
-            [std::ffi::OsStr::new(
-                r"/select,C:\Users\Example User\Documents\lesson, 1.pptx"
-            )]
-        );
+        assert_eq!(args, [std::ffi::OsStr::new("/select,"), path.as_os_str()]);
     }
 
     #[test]
