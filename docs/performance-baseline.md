@@ -230,3 +230,7 @@ cargo test --locked --features "nano-one-worker nano-ultra-low-resource" animati
 ```
 
 For the memory check, launch the same account, scroll through several image-heavy chats, return to one ordinary chat, wait for the 30-second cleanup window, then take the same private-bytes and working-set samples as the 0.1.3-debug baseline. Compare like-for-like release builds. The one-worker and ultra-low-resource features remain explicit build choices; this change does not silently change the default Tokio worker count or media resolution.
+
+### Idle background work
+
+The worker keeps its five-second connection-health and retry watchdog: this is intentionally unchanged so a dropped or silent connection is still detected promptly. Private read/unread state synchronization is now event-driven between those checks. A durable queue check is requested when the account connects or a read/unread state changes, and retries retain their existing backoff. Once both archive queues are confirmed empty, the worker skips further SQLite queue scans until new work or a reconnect occurs.
