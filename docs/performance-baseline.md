@@ -239,3 +239,6 @@ The worker keeps its five-second connection-health and retry watchdog: this is i
 Poll-vote recovery is event-driven as well. The five-second watchdog no longer queries SQLite while the pending poll-vote queue is idle. Reconnects, new vote events, poll creation or history updates, and decryption completions wake the queue; the existing batch limit and reconnect retry behaviour remain in place. Database errors keep the queue armed for a later retry.
 
 Favorite-chat synchronization now uses the same event-driven idle policy. The five-second maintenance tick skips favorite-list SQLite checks when no change is queued. Connections, local favorite changes, phone list updates, and completed sync operations wake it; failed operations retain the existing bounded retry backoff.
+
+
+The UI's expired-pin cache is now swept at most once per Unix timestamp second, matching the second-level precision of pin expiry. A fresh phone pin-list or pin-change event invalidates the sweep marker so new data is checked immediately. This avoids walking every cached pinned chat and row on every UI frame.

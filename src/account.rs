@@ -126,6 +126,8 @@ pub struct Account {
     pub pins: HashMap<ChatId, HashSet<String>>,
     /// Active pins of each chat, for the line under its header.
     pub chat_pins: HashMap<ChatId, Vec<crate::archive::Pinned>>,
+    /// Timestamp second in which expired pins were last pruned.
+    pub(crate) pins_expiry_checked_at: Option<i64>,
     /// A starred row asked to reply: the quote starts once the message it
     /// points at is loaded, because the composer drops a quote whose message
     /// has not arrived yet.
@@ -249,6 +251,7 @@ impl Account {
             stars: HashMap::new(),
             pins: HashMap::new(),
             chat_pins: HashMap::new(),
+            pins_expiry_checked_at: None,
             reply_when_loaded: None,
             account_privacy: crate::privacy::Snapshot::default(),
             blocklist: Default::default(),
