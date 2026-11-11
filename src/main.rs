@@ -696,7 +696,9 @@ impl GuiProfilePhase {
 #[cfg(feature = "nano-gui-profile")]
 impl GuiProfile {
     fn start(&mut self) {
-        self.started.get_or_insert_with(std::time::Instant::now);
+        if self.started.is_none() {
+            self.started = Some(std::time::Instant::now());
+        }
     }
 
     fn record_background(&mut self, elapsed: std::time::Duration) {
@@ -722,7 +724,7 @@ impl GuiProfile {
     }
 
     fn report_if_due(&mut self) {
-        let Some(started) = self.started else {
+        let Some(started) = self.started.as_ref() else {
             return;
         };
         let interval = started.elapsed();
