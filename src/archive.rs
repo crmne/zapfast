@@ -1361,6 +1361,14 @@ impl Archive {
                     COALESCE(excluded.lock_updated_at, lock_updated_at))",
             params![lid_chat, phone_chat],
         )?;
+        let kept_read: Option<i64> = transaction
+            .query_row(
+                "SELECT read_through FROM chat_removals WHERE chat = ?1",
+                params![phone_chat],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
         // The trigger covers a phone-number chat filed later, not one listed already.
         let [kept @ .., forget] = restore_kept("?1");
         let mut restored = 0;
@@ -1539,6 +1547,11 @@ impl Archive {
              WHERE id = ?4 AND EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
             params![lid_chat, pn, phone_chat, phone_chat],
         )?;
+        // A read kept while the chat was deleted covers messages that the
+        // count, the listed chat's or the one the merge keeps, still holds.
+        if let Some(read) = kept_read {
+            self.mark_read_through(&phone_chat, read)?;
+        }
         self.purge_chat_rows(&lid_chat)?;
         transaction.execute("DELETE FROM chats WHERE id = ?1", params![lid_chat])?;
         transaction.commit()?;
@@ -5105,6 +5118,33 @@ pub(crate) mod tests {
         archive.retain_read_through(phone, 200).unwrap();
         archive.ensure_chat(phone, "Fixture").unwrap();
         assert_eq!(archive.read_through(phone).unwrap(), None);
+    }
+
+    /// A read kept for a chat deleted under one id reads the messages it
+    /// covers once a privacy id's mapping joins it to the chat listed under
+    /// the other, whichever of the two was deleted.
+    #[test]
+    fn a_read_kept_under_another_id_reads_the_listed_chats_messages() {
+        let phone = "15550000000@s.whatsapp.net";
+        for (deleted, listed) in [("42@lid", phone), (phone, "42@lid")] {
+            let archive = Archive::in_memory().unwrap();
+            archive.remove_chat_through(deleted, 200, true, 0).unwrap();
+            archive.retain_read_through(deleted, 300).unwrap();
+            archive.ensure_chat(listed, "Fixture").unwrap();
+            for at in [300, 350] {
+                archive
+                    .insert_message(&message(listed, &format!("m{at}"), at, false), None)
+                    .unwrap();
+                archive.bump_unread(listed).unwrap();
+            }
+            archive.put_lid("42", "15550000000").unwrap();
+            assert_eq!(archive.read_through(phone).unwrap(), Some(300), "{deleted}");
+            assert_eq!(
+                archive.chat(phone).unwrap().expect("listed").unread,
+                1,
+                "{deleted}"
+            );
+        }
     }
 
     /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
