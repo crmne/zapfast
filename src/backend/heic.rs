@@ -55,11 +55,19 @@ pub fn to_jpeg(path: &Path) -> Result<Vec<u8>, String> {
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
+    // An iPhone shoots in Display P3: the pixels mean what the profile says,
+    // so the JPEG carries it on, or a viewer reads them as sRGB.
+    let profile = decoder.icc_profile().ok().flatten();
     let mut picture = image::DynamicImage::from_decoder(decoder)
         .map_err(|error| format!("This picture could not be read: {error}"))?;
     picture.apply_orientation(orientation);
     let mut jpeg = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, QUALITY)
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, QUALITY);
+    if let Some(profile) = profile {
+        image::ImageEncoder::set_icc_profile(&mut encoder, profile)
+            .map_err(|error| format!("Could not write the picture: {error}"))?;
+    }
+    encoder
         .encode_image(&picture.to_rgb8())
         .map_err(|error| format!("Could not write the picture: {error}"))?;
     Ok(jpeg)
