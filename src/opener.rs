@@ -19,7 +19,9 @@ pub enum RevealError {
 /// Opens the containing folder, selecting the file when the platform supports it.
 pub fn show_in_folder(path: &Path) -> Result<(), RevealError> {
     match path.metadata() {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(RevealError::Missing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RevealError::Missing);
+        }
         Err(error) => return Err(RevealError::Other(error.to_string())),
         Ok(metadata) if !metadata.is_file() => {
             return Err(RevealError::Other("The file is unavailable".into()));

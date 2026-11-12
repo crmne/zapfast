@@ -26539,14 +26539,20 @@ mod missing_attachment_tests {
         let (mut worker, _events, mut commands, _) = receipt_tests::worker();
         let gone = worker.dirs.media_cache_dir().join("gone.jpg");
         let row = stored(&worker, &gone);
-        worker.handle_command(Command::ShowFileInFolder {
-            chat: row.chat.clone(),
-            message: row.id.clone(),
-            path: gone.clone(),
-        }).await;
+        worker
+            .handle_command(Command::ShowFileInFolder {
+                chat: row.chat.clone(),
+                message: row.id.clone(),
+                path: gone.clone(),
+            })
+            .await;
         let command = tokio::time::timeout(std::time::Duration::from_secs(2), commands.recv())
-            .await.unwrap().unwrap();
-        assert!(matches!(&command, Command::AttachmentMissing { chat, message, card: None, path } if chat == &row.chat && message == &row.id && path == &gone));
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&command, Command::AttachmentMissing { chat, message, card: None, path } if chat == &row.chat && message == &row.id && path == &gone)
+        );
         worker.handle_command(command).await;
         assert_eq!(path_of(&worker, &row), None);
     }
