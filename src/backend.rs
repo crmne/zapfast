@@ -140,6 +140,16 @@ pub struct SendTurn {
     pub gate: crate::model::UploadGate,
 }
 
+/// What a delete for everyone sent from here took from its message while
+/// it waited for WhatsApp, to put back on a refusal.
+#[derive(Debug)]
+pub struct RevokeUndo {
+    pub content: crate::model::Content,
+    pub edited: bool,
+    /// Its active pin, which the deleted copy lost.
+    pub pin: Option<crate::archive::Pinned>,
+}
+
 #[derive(Debug)]
 pub enum Command {
     FetchBlocklist,
@@ -1005,8 +1015,8 @@ pub enum Command {
         id: String,
         /// The account session that sent it; a later one ignores it.
         session: u64,
-        /// The content and edited flag before the revoke, when known.
-        previous: Option<(crate::model::Content, bool)>,
+        /// What the revoke took from the message, when known.
+        previous: Option<RevokeUndo>,
         error: Option<String>,
     },
     /// Internal attachment-download result.

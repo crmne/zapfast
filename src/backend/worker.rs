@@ -65,8 +65,8 @@ mod sticker_pace;
 mod stickers;
 
 use super::{
-    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
-    read_sync::ReadSync,
+    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, RevokeUndo, SendTurn,
+    Unsent, Waker, read_sync::ReadSync,
 };
 use crate::app::PAGE;
 use crate::archive::Archive;
@@ -11352,6 +11352,11 @@ impl Worker {
     }
 
     fn revoke(&mut self, chat: ChatId, id: String) {
+        // One answer settles a message's pending delete: a second request
+        // (two in one input batch) would race it and could undo the other.
+        if self.revokes.contains(&(chat.clone(), id.clone())) {
+            return;
+        }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
@@ -11364,13 +11369,8 @@ impl Worker {
                 // The privacy id this worker learned for the member, which
                 // the library may not know (history imports teach only us).
                 Some(sender) => {
-                    let known_lid = sender.is_pn().then(|| {
-                        self.lid_to_pn
-                            .iter()
-                            .find(|(_, pn)| **pn == sender.user)
-                            .map(|(lid, _)| lid.clone())
-                    });
-                    Some((sender, known_lid.flatten()))
+                    let known_lid = self.known_lid(&sender);
+                    Some((sender, known_lid))
                 }
                 None => {
                     self.emit(Event::Error(
@@ -11382,6 +11382,12 @@ impl Worker {
             },
             None => None,
         };
+        // The deleted copy loses its pin; keep it to put back on a refusal.
+        let pin = self
+            .archive
+            .chat_pins(&chat, crate::util::now())
+            .ok()
+            .and_then(|pins| pins.into_iter().find(|pin| pin.id == id));
         if let Ok(true) = self
             .archive
             .set_content(&chat, &id, &Content::Revoked, false)
@@ -11389,23 +11395,34 @@ impl Worker {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
             self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
+            if pin.is_some() {
+                self.emit_pins(&chat);
+            }
         }
         self.revokes.insert((chat.clone(), id.clone()));
-        let previous = old.map(|old| (old.content, old.edited));
+        let previous = old.map(|old| RevokeUndo {
+            content: old.content,
+            edited: old.edited,
+            pin,
+        });
         let commands = self.commands.clone();
         let session = self.account_session;
         tokio::spawn(async move {
             let kind = match admin_sender {
-                Some((sender, known_lid)) => RevokeType::Admin {
-                    original_sender: original_participant(&client, &jid, sender, known_lid).await,
-                },
-                None => RevokeType::Sender,
+                Some((sender, known_lid)) => original_participant(&client, &jid, sender, known_lid)
+                    .await
+                    .map(|original_sender| RevokeType::Admin { original_sender }),
+                None => Ok(RevokeType::Sender),
             };
-            let error = client
-                .revoke_message_raw(jid, id.clone(), kind)
-                .await
-                .err()
-                .map(|error| format!("Could not delete the message for everyone: {error}"));
+            let error = match kind {
+                Ok(kind) => client
+                    .revoke_message_raw(jid, id.clone(), kind)
+                    .await
+                    .err()
+                    .map(|error| error.to_string()),
+                Err(error) => Some(error),
+            }
+            .map(|error| format!("Could not delete the message for everyone: {error}"));
             let _ = commands.send(Command::RevokeAnswered {
                 chat,
                 id,
@@ -11424,7 +11441,7 @@ impl Worker {
         &mut self,
         chat: &str,
         id: &str,
-        previous: Option<(Content, bool)>,
+        previous: Option<RevokeUndo>,
         error: Option<String>,
     ) {
         let pending = self.revokes.remove(&(chat.to_owned(), id.to_owned()));
@@ -11438,15 +11455,44 @@ impl Worker {
                 .ok()
                 .flatten()
                 .is_some_and(|message| matches!(message.content, Content::Revoked));
-        if let Some((content, edited)) = previous.filter(|_| still_ours)
-            && !matches!(content, Content::Revoked)
-            && let Ok(true) = self.archive.set_content(chat, id, &content, edited)
+        if let Some(undo) = previous.filter(|_| still_ours)
+            && !matches!(undo.content, Content::Revoked)
+            && let Ok(true) = self
+                .archive
+                .set_content(chat, id, &undo.content, undo.edited)
         {
             self.emit_message(chat, id);
             self.emit_chat(chat);
-            self.media_changed(chat, None, Some(&content));
+            self.media_changed(chat, None, Some(&undo.content));
+            // The app let go of the star and the pin with the deleted copy.
+            // The star rows stayed; the pin goes back as it was.
+            if let Some(pin) = &undo.pin {
+                let _ = self.archive.set_pin(
+                    chat,
+                    id,
+                    true,
+                    pin.pinned_at,
+                    pin.expires_at,
+                    &pin.pinner,
+                );
+                self.emit_pins(chat);
+            }
+            self.emit_starred();
         }
         self.emit(Event::Error(error));
+    }
+
+    /// The privacy id this worker learned for a member it files under their
+    /// phone number, which the library may not know: history imports teach
+    /// only this worker.
+    fn known_lid(&self, sender: &Jid) -> Option<String> {
+        if !sender.is_pn() {
+            return None;
+        }
+        self.lid_to_pn
+            .iter()
+            .find(|(_, pn)| **pn == sender.user)
+            .map(|(lid, _)| lid.clone())
     }
 
     /// Takes the chat's next place for an attachment: the first value resolves
@@ -12866,13 +12912,17 @@ async fn original_participant(
     group: &Jid,
     sender: Jid,
     known_lid: Option<String>,
-) -> Jid {
+) -> Result<Jid, String> {
     if !sender.is_pn() {
-        return sender;
+        return Ok(sender);
     }
-    let Ok(routing) = client.groups().routing_info(group).await else {
-        return sender;
-    };
+    // Without the group's addressing mode the number might name nobody, and
+    // WhatsApp would accept a revoke that deletes nothing: better to say so.
+    let routing = client
+        .groups()
+        .routing_info(group)
+        .await
+        .map_err(|error| format!("could not read the group: {error}"))?;
     let mut lid = routing
         .lid_user_for_phone_user(&sender.user)
         .map(|lid| lid.to_string());
@@ -12885,7 +12935,11 @@ async fn original_participant(
             .map(|entry| entry.lid.to_string())
             .or(known_lid);
     }
-    keyed_participant(sender, routing.addressing_mode, lid.as_deref())
+    Ok(keyed_participant(
+        sender,
+        routing.addressing_mode,
+        lid.as_deref(),
+    ))
 }
 
 /// The participant a group message was keyed with: the member's privacy id
@@ -25616,8 +25670,9 @@ mod receipt_tests {
     }
 
     /// A delete for everyone that WhatsApp refuses (an admin who lost the
-    /// role meanwhile) puts the message back as it was. Without the earlier
-    /// content, or once the message changed, nothing is put back.
+    /// role meanwhile) puts the message back as it was, its pin with it.
+    /// Without the earlier content, or once the message changed, nothing is
+    /// put back.
     #[test]
     fn a_refused_delete_for_everyone_puts_the_message_back() {
         const GROUP: &str = "120363000000000000@g.us";
@@ -25625,6 +25680,18 @@ mod receipt_tests {
         worker.archive.ensure_chat(GROUP, "Group").unwrap();
         let original = received_from(GROUP, "member", 100, PEER);
         worker.archive.insert_message(&original, None).unwrap();
+        let now = crate::util::now();
+        worker
+            .archive
+            .pin(GROUP, "member", now, now + 7 * 24 * 60 * 60)
+            .unwrap();
+        let pin = worker
+            .archive
+            .chat_pins(GROUP, now)
+            .unwrap()
+            .into_iter()
+            .find(|pin| pin.id == "member");
+        assert!(pin.is_some());
         let content = |worker: &Worker| {
             worker
                 .archive
@@ -25642,29 +25709,32 @@ mod receipt_tests {
                 .revokes
                 .insert((GROUP.to_owned(), "member".to_owned()));
         };
+        let undo = |pin: Option<crate::archive::Pinned>| {
+            Some(RevokeUndo {
+                content: original.content.clone(),
+                edited: false,
+                pin,
+            })
+        };
         let refused = Some("refused".to_owned());
 
         pending(&mut worker);
-        worker.revoke_answered(
-            GROUP,
-            "member",
-            Some((original.content.clone(), false)),
-            refused.clone(),
-        );
+        assert!(worker.archive.chat_pins(GROUP, now).unwrap().is_empty());
+        worker.revoke_answered(GROUP, "member", undo(pin), refused.clone());
         assert_eq!(content(&worker), original.content);
         assert!(worker.revokes.is_empty());
+        assert_eq!(
+            worker.archive.chat_pins(GROUP, now).unwrap().len(),
+            1,
+            "the pin is back"
+        );
 
         pending(&mut worker);
         worker.revoke_answered(GROUP, "member", None, refused.clone());
         assert_eq!(content(&worker), Content::Revoked, "nothing to put back");
 
         pending(&mut worker);
-        worker.revoke_answered(
-            GROUP,
-            "member",
-            Some((original.content.clone(), false)),
-            None,
-        );
+        worker.revoke_answered(GROUP, "member", undo(None), None);
         assert_eq!(content(&worker), Content::Revoked, "accepted");
         assert!(worker.revokes.is_empty());
 
@@ -25674,13 +25744,46 @@ mod receipt_tests {
             .archive
             .set_content(GROUP, "member", &edited, true)
             .unwrap();
-        worker.revoke_answered(
-            GROUP,
-            "member",
-            Some((original.content.clone(), false)),
-            refused,
-        );
+        worker.revoke_answered(GROUP, "member", undo(None), refused);
         assert_eq!(content(&worker), edited, "only a deleted copy is restored");
+    }
+
+    /// A second delete for everyone of a message whose first one is still
+    /// out is dropped, so only the first answer settles it.
+    #[test]
+    fn a_second_delete_for_everyone_waits_for_the_first() {
+        const GROUP: &str = "120363000000000000@g.us";
+        let (mut worker, events, _i, _w) = worker();
+        worker
+            .revokes
+            .insert((GROUP.to_owned(), "member".to_owned()));
+        worker.revoke(GROUP.to_owned(), "member".to_owned());
+        assert!(events.try_recv().is_err(), "nothing happened");
+        worker.revokes.clear();
+        worker.revoke(GROUP.to_owned(), "member".to_owned());
+        assert!(
+            matches!(events.try_recv(), Ok(Event::Error(_))),
+            "without one pending, it goes ahead (here, to say it is offline)"
+        );
+    }
+
+    /// The privacy id a member's message was keyed with can be one only
+    /// this worker learned, from a history import.
+    #[test]
+    fn an_admin_revoke_can_use_a_privacy_id_only_the_worker_knows() {
+        let (mut worker, _e, _i, _w) = worker();
+        worker.learn_lid("167650256810092", "4917663430455");
+        let number: Jid = "4917663430455@s.whatsapp.net".parse().unwrap();
+        let known = worker.known_lid(&number);
+        assert_eq!(known.as_deref(), Some("167650256810092"));
+        assert_eq!(
+            keyed_participant(number, AddressingMode::Lid, known.as_deref()),
+            "167650256810092@lid".parse::<Jid>().unwrap()
+        );
+        let lid: Jid = "167650256810092@lid".parse().unwrap();
+        assert_eq!(worker.known_lid(&lid), None, "already a privacy id");
+        let stranger: Jid = "4917600000000@s.whatsapp.net".parse().unwrap();
+        assert_eq!(worker.known_lid(&stranger), None);
     }
 
     /// The author or another admin deleted the message while our delete for
@@ -25707,7 +25810,11 @@ mod receipt_tests {
         worker.revoke_answered(
             LIST,
             "old",
-            Some((original.content.clone(), false)),
+            Some(RevokeUndo {
+                content: original.content.clone(),
+                edited: false,
+                pin: None,
+            }),
             Some("refused".to_owned()),
         );
         assert_eq!(
