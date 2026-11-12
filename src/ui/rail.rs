@@ -1,5 +1,6 @@
 //! The navigation rail on the left of the chat list, as WhatsApp's desktop
-//! clients have it: Chats and Calls at the top; Starred, Archived and Locked
+//! clients have it: Chats and Calls at the top; Groups and Channels, each
+//! opening a list of its own, then Starred, Archived and Locked
 //! chats (while there are any), Settings and our own avatar (the account
 //! switcher) at the bottom. While the chat list is hidden, the chats'
 //! avatars fill the rail between the two, so every chat is still one click
@@ -9,7 +10,7 @@ use egui::{Frame, Margin, Rect, Sense, Vec2, vec2};
 
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{Action, Page};
+use crate::model::{Action, ChatFilter, Page};
 use crate::theme::{self, Icon, Palette};
 
 use super::focus::{Stop, TabStop};
@@ -64,6 +65,10 @@ pub fn lights_overhang(ctx: &egui::Context) -> f32 {
 pub enum Destination {
     Chats,
     Calls,
+    /// The group chats, in a list of their own.
+    Groups,
+    /// The followed channels, in a list of their own.
+    Channels,
     Starred,
     Archived,
     Locked,
@@ -75,8 +80,24 @@ impl Destination {
     pub fn lit(self, app: &App) -> bool {
         let chats = app.page == Page::Chats && !app.show_starred;
         match self {
-            Self::Chats => chats && !app.show_archived && !app.locked_folder_open(),
+            Self::Chats => {
+                chats && !app.show_archived && !app.locked_folder_open() && !app.rail_list_open()
+            }
             Self::Calls => app.page == Page::Calls,
+            Self::Groups => {
+                chats
+                    && !app.show_archived
+                    && !app.locked_folder_open()
+                    && app.rail_list_open()
+                    && app.chat_filter == ChatFilter::Groups
+            }
+            Self::Channels => {
+                chats
+                    && !app.show_archived
+                    && !app.locked_folder_open()
+                    && app.rail_list_open()
+                    && app.chat_filter == ChatFilter::Channels
+            }
             Self::Starred => app.page == Page::Chats && app.show_starred,
             Self::Archived => chats && app.show_archived,
             Self::Locked => chats && app.locked_folder_open(),
@@ -85,11 +106,14 @@ impl Destination {
     }
 
     /// Whether the rail offers this destination: Archived while chats are
-    /// archived and Locked while chats are locked, as their chips used to.
+    /// archived and Locked while chats are locked, as their chips used to,
+    /// and Groups and Channels while the account has such chats.
     pub fn offered(self, app: &App) -> bool {
         match self {
             Self::Archived => app.archived_count() > 0 || app.show_archived,
             Self::Locked => app.locked_count() > 0 || app.locked_folder_open(),
+            Self::Groups => app.group_count() > 0,
+            Self::Channels => app.channel_count() > 0,
             _ => true,
         }
     }
@@ -115,11 +139,35 @@ impl Destination {
                 if app.locked_folder {
                     actions.push(Action::CloseLockedFolder);
                 }
+                // The Groups and Channels lists are left through Chats.
+                if app.rail_list_open() {
+                    actions.push(Action::SetChatFilter(ChatFilter::All));
+                }
             }
             Self::Calls => {
                 if app.page != Page::Calls {
                     actions.push(Action::Open(Page::Calls));
                 }
+            }
+            Self::Groups | Self::Channels => {
+                let filter = if self == Self::Groups {
+                    ChatFilter::Groups
+                } else {
+                    ChatFilter::Channels
+                };
+                to_chats(&mut actions);
+                // The list comes back, as it does for the archive: the
+                // destination names a list of its own.
+                if !app.sidebar_visible {
+                    actions.push(Action::ToggleSidebar);
+                }
+                // The search lists every match, so it would keep the other
+                // chats in the list this destination opens.
+                if !app.search.is_empty() {
+                    actions.push(Action::Search(String::new()));
+                }
+                // Always: it leaves the archive and the label filter too.
+                actions.push(Action::SetChatFilter(filter));
             }
             Self::Starred => {
                 if app.page != Page::Chats {
@@ -184,6 +232,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             ui.add_space(GAP);
         }
         let bottom: Vec<Destination> = [
+            Destination::Groups,
+            Destination::Channels,
             Destination::Starred,
             Destination::Archived,
             Destination::Locked,
@@ -193,7 +243,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         .filter(|destination| destination.offered(app))
         .collect();
         let foot = bottom.len() as f32 * (PLATE + GAP) + GAP + AVATAR + GAP;
-        let minimum = 2.0 * CELL
+        // Chats and Calls fill a cell each, level with the list header's
+        // title; the rest of the rail is a plate.
+        let top: Vec<(Destination, f32)> = [(Destination::Chats, CELL), (Destination::Calls, CELL)]
+            .into_iter()
+            .filter(|(destination, _)| destination.offered(app))
+            .collect();
+        let minimum = top.iter().map(|(_, height)| *height).sum::<f32>()
             + foot
             + if hidden {
                 CELL + GAP + MIN_AVATARS
@@ -210,8 +266,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 // the content keeps its minimum height and scrolls instead
                 // of leaving the bottom buttons beyond the window.
                 ui.set_height(height);
-                for destination in [Destination::Chats, Destination::Calls] {
-                    destination_button(app, ui, &palette, destination, CELL);
+                for (destination, cell) in top {
+                    destination_button(app, ui, &palette, destination, cell);
                 }
                 if hidden {
                     // A cell of its own under Calls: nothing above it moves
@@ -308,6 +364,16 @@ fn destination_button(
                 gettext(app.locale, "Calls"),
                 super::keys::label("Ctrl+Shift+2")
             ),
+        ),
+        Destination::Groups => (
+            Icon::Users,
+            Stop::GroupsTab,
+            gettext(app.locale, "Groups").into_owned(),
+        ),
+        Destination::Channels => (
+            Icon::Rss,
+            Stop::ChannelsTab,
+            gettext(app.locale, "Channels").into_owned(),
         ),
         Destination::Starred => (
             Icon::Star,
@@ -415,6 +481,8 @@ mod tests {
             [
                 Destination::Chats,
                 Destination::Calls,
+                Destination::Groups,
+                Destination::Channels,
                 Destination::Starred,
                 Destination::Archived,
                 Destination::Locked,
@@ -434,6 +502,78 @@ mod tests {
         assert_eq!(lit(&app), [Destination::Calls]);
         app.page = Page::Wallpaper;
         assert_eq!(lit(&app), [Destination::Settings]);
+    }
+
+    /// The group chats and the channels each get a list of their own, and
+    /// Chats leaves them.
+    #[test]
+    fn groups_and_channels_have_their_own_lists() {
+        let (_root, mut app) = app();
+        assert!(!Destination::Groups.offered(&app));
+        assert!(!Destination::Channels.offered(&app));
+        let mut group = crate::model::Chat::new("1@g.us".into(), "Team".into());
+        group.kind = crate::model::ChatKind::Group;
+        app.chats.push(group);
+        app.chats.push(crate::model::Chat::new(
+            "2@newsletter".into(),
+            "News".into(),
+        ));
+        assert!(Destination::Groups.offered(&app));
+        assert!(Destination::Channels.offered(&app));
+        assert!(Destination::Chats.lit(&app));
+        app.chat_filter = ChatFilter::Groups;
+        assert!(Destination::Groups.lit(&app));
+        assert!(!Destination::Chats.lit(&app));
+        // The list is left through Chats.
+        assert!(matches!(
+            Destination::Chats.actions(&app).as_slice(),
+            [Action::SetChatFilter(ChatFilter::All)]
+        ));
+    }
+
+    /// A locked chat stays out of the counts, so it cannot bring a rail
+    /// destination on screen by itself.
+    #[test]
+    fn a_locked_chat_brings_no_destination() {
+        let (_root, mut app) = app();
+        let mut group = crate::model::Chat::new("1@g.us".into(), "Team".into());
+        group.kind = crate::model::ChatKind::Group;
+        group.locked = true;
+        app.chats.push(group);
+        assert!(!Destination::Groups.offered(&app));
+        assert!(app.group_count() == 0);
+    }
+
+    /// The rail's lists come with the chat list, without the search, and out
+    /// of the archive: a search lists every match, and the archive is a list
+    /// of its own.
+    #[test]
+    fn the_rail_lists_come_with_the_list_and_leave_the_archive() {
+        let (_root, mut app) = app();
+        let mut group = crate::model::Chat::new("1@g.us".into(), "Team".into());
+        group.kind = crate::model::ChatKind::Group;
+        app.chats.push(group);
+        app.sidebar_visible = false;
+        app.show_archived = true;
+        app.search = "ada".into();
+        let actions = Destination::Groups.actions(&app);
+        assert!(
+            actions.contains(&Action::ToggleSidebar),
+            "the list comes back: {actions:?}"
+        );
+        assert!(
+            actions.contains(&Action::Search(String::new())),
+            "the search goes: {actions:?}"
+        );
+        assert!(
+            actions.contains(&Action::SetChatFilter(ChatFilter::Groups)),
+            "the list is the groups: {actions:?}"
+        );
+        // The archive and the list are never both on screen.
+        app.chat_filter = ChatFilter::Groups;
+        app.show_archived = true;
+        assert!(!Destination::Groups.lit(&app));
+        assert!(Destination::Archived.lit(&app));
     }
 
     #[test]

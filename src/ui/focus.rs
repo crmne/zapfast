@@ -37,6 +37,9 @@ pub enum Stop {
     /// list is hidden, and keeps Hide the chat list's place in the order.
     Chats,
     Calls,
+    /// The rail's Groups and Channels tabs, each its own list.
+    GroupsTab,
+    ChannelsTab,
     Starred,
     Archived,
     Locked,

@@ -13,9 +13,9 @@ use crate::backend::{Backend, Command, Event, LinkStatus, Refusal, Unsent, Waker
 use crate::i18n::Locale;
 use crate::image_preview::PreviewState;
 use crate::model::{
-    AccountId, Action, Chat, ChatFilter, ChatId, ChatMedia, Contact, Content, Delivery, Dialog,
-    Gif, GifError, InfoPanel, InfoView, Label, Media, MediaState, Message, Page, PickerTab, Scroll,
-    SidebarDisplayMode, StickerPack, StickerShelf, Toast, ToastKind,
+    AccountId, Action, Chat, ChatFilter, ChatId, ChatKind, ChatMedia, Contact, Content, Delivery,
+    Dialog, Gif, GifError, InfoPanel, InfoView, Label, Media, MediaState, Message, Page, PickerTab,
+    Scroll, SidebarDisplayMode, StickerPack, StickerShelf, Toast, ToastKind,
 };
 use crate::nav::{History, Location};
 use crate::paths::AppDirs;
@@ -3517,6 +3517,29 @@ impl App {
             .iter()
             .filter(|chat| chat.archived && !chat.locked && !self.unlisted_stranger(chat))
             .count()
+    }
+
+    /// The group chats of this account, for the rail's Groups list. A
+    /// locked chat stays out of it, as it stays out of the chat list.
+    pub fn group_count(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| chat.kind == ChatKind::Group && !chat.locked)
+            .count()
+    }
+
+    /// The followed channels of this account, for the rail's Channels list.
+    pub fn channel_count(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| chat.is_channel() && !chat.locked)
+            .count()
+    }
+
+    /// Whether the chat list shows the rail's Groups or Channels list
+    /// instead of the chats.
+    pub fn rail_list_open(&self) -> bool {
+        matches!(self.chat_filter, ChatFilter::Groups | ChatFilter::Channels)
     }
 
     /// Unarchived chats with unread messages that a filter would list.
