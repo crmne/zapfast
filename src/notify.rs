@@ -310,13 +310,13 @@ impl Notifications {
     }
 }
 
-/// Pidgin's message and alert sounds (GPL-2.0, see `assets/sounds/README.md`).
+/// Apple's Tri-Tone and Note (see `assets/sounds/README.md`).
 const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
 const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
 
 /// Whether the notification itself plays the sound, instead of ZapFast. On
 /// macOS a sound the notification plays is silenced along with the banner by
-/// Do Not Disturb, Focus, and the app's notification settings, so Pidgin's
+/// Do Not Disturb, Focus, and the app's notification settings, so the bundled
 /// sounds go with it when the application bundle carries them.
 fn sound_file(sound: &NotificationSound) -> Option<&'static str> {
     match sound {
