@@ -2208,6 +2208,7 @@ impl App {
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
+            doodle_opacity: f32::from(self.settings.doodle_opacity.min(100)) / 100.0,
             image: self
                 .account()
                 .settings
@@ -9653,6 +9654,10 @@ impl App {
             }
             Action::SetWallpaperDoodles(show) => {
                 self.settings.show_wallpaper = show;
+                self.mark_settings_dirty();
+            }
+            Action::SetWallpaperDoodleOpacity(opacity) => {
+                self.settings.doodle_opacity = opacity.min(100);
                 self.mark_settings_dirty();
             }
             Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),

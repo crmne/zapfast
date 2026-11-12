@@ -458,6 +458,8 @@ pub struct Settings {
     pub auto_download: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
+    /// Strength of the wallpaper doodles as a percentage of their original ink.
+    pub doodle_opacity: u8,
     /// Colour selected in the wallpaper picker.
     pub wallpaper_color: WallpaperColor,
     /// Colour selected for the dark wallpaper picker.
@@ -571,6 +573,7 @@ impl Default for Settings {
             send_typing: true,
             auto_download: true,
             show_wallpaper: true,
+            doodle_opacity: 100,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
@@ -1085,6 +1088,7 @@ mod tests {
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
         assert!(parsed.show_wallpaper);
+        assert_eq!(parsed.doodle_opacity, 100);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Theme);
         assert!(parsed.pause_other_media);
         assert_eq!(parsed.window_width, None);
@@ -1092,6 +1096,18 @@ mod tests {
         assert_eq!(parsed.window_x, None);
         assert_eq!(parsed.window_y, None);
         assert!(!parsed.window_maximized);
+    }
+
+    #[test]
+    fn doodle_opacity_is_saved_and_read_as_a_percentage() {
+        let settings = Settings {
+            doodle_opacity: 35,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert_eq!(saved["doodle_opacity"], 35);
+        let restored: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.doodle_opacity, 35);
     }
 
     #[test]
