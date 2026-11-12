@@ -575,7 +575,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             false,
             None,
         ),
-        LinkStatus::Connected if update.is_some() => {
+        LinkStatus::Connected if app.update_banner_shows() => {
             let update = update.as_ref().expect("checked above");
             (
                 Icon::Info,
@@ -641,6 +641,20 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(room.right);
                         if download.is_some() {
+                            // The banner is a notice, not a demand: it can be
+                            // closed, and stays closed for that version.
+                            if theme::icon_button(
+                                ui,
+                                Icon::X,
+                                16.0,
+                                palette.secondary,
+                                palette.text,
+                                &crate::i18n::gettext(app.locale, "Dismiss this update"),
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::DismissUpdate);
+                            }
                             if theme::soft_button(
                                 ui,
                                 &palette,

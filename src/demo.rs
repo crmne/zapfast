@@ -2878,14 +2878,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings.custom_theme_cache = Some(theme);
                 app.page = Page::Settings;
             }
-            "update" | "update-downloading" | "update-ready" | "update-failed"
-            | "update-managed" => {
+            "update" | "update-banner" | "update-downloading" | "update-ready"
+            | "update-failed" | "update-managed" => {
                 use crate::updates::{DownloadState, Installation, Kind, Prepared};
                 app.update = Some(crate::updates::Release {
                     version: "99.0.0".to_owned(),
                     url: "https://github.com/crmne/zapfast/releases/latest".to_owned(),
                 });
-                app.show_update = true;
+                // The banner, not the dialog: the notice under the header.
+                app.show_update = part != "update-banner";
                 let installation = Installation {
                     executable: "/demo/zapfast".into(),
                     kind: Kind::Portable,
@@ -9705,6 +9706,8 @@ mod tests {
             "wallpaper,theme=Nord.json",
             "wallpaper-image",
             "update",
+            "update-banner",
+            "update-banner,light",
             "update-downloading",
             "update-ready",
             "update-failed",

@@ -507,6 +507,9 @@ pub struct Settings {
     pub check_for_updates: bool,
     /// Download verified updates in the background; restarting remains explicit.
     pub download_updates_automatically: bool,
+    /// The update the user closed in the banner, so it does not come back
+    /// for that version. A newer release shows its banner again.
+    pub dismissed_update: Option<String>,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
     /// Pause other apps' media while recording, or while a voice message,
@@ -590,6 +593,7 @@ impl Default for Settings {
             proxy: String::new(),
             check_for_updates: true,
             download_updates_automatically: false,
+            dismissed_update: None,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
             pause_other_media: true,
