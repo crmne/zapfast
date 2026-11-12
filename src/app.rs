@@ -4926,6 +4926,10 @@ impl App {
                 // accepts a static key, so unknown errors stay as the worker
                 // wrote them.
                 let shown = match message.as_str() {
+                    "This file is no longer on this computer. Download it again." => crate::i18n::gettext(
+                        self.locale,
+                        "This file is no longer on this computer. Download it again.",
+                    ).into_owned(),
                     "This chat already has three pinned messages" => crate::i18n::gettext(
                         self.locale,
                         "This chat already has three pinned messages",
@@ -8054,8 +8058,8 @@ impl App {
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
             }
-            Action::ShowFileInFolder(path) => {
-                self.backend.send(Command::ShowFileInFolder(path));
+            Action::ShowFileInFolder { chat, message, path } => {
+                self.backend.send(Command::ShowFileInFolder { chat, message, path });
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {

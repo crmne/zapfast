@@ -10,10 +10,19 @@
 
 use std::path::Path;
 
+#[derive(Debug, PartialEq)]
+pub enum RevealError {
+    Missing,
+    Other(String),
+}
+
 /// Opens the containing folder, selecting the file when the platform supports it.
-pub fn show_in_folder(path: &Path) -> Result<(), String> {
-    if !path.is_file() {
-        return Err("The file is unavailable".into());
+pub fn show_in_folder(path: &Path) -> Result<(), RevealError> {
+    match path.try_exists() {
+        Ok(false) => return Err(RevealError::Missing),
+        Err(error) => return Err(RevealError::Other(error.to_string())),
+        Ok(true) if !path.is_file() => return Err(RevealError::Other("The file is unavailable".into())),
+        Ok(true) => {}
     }
     #[cfg(target_os = "windows")]
     let result = explorer_command(path)
@@ -24,17 +33,21 @@ pub fn show_in_folder(path: &Path) -> Result<(), String> {
     let result = std::process::Command::new("open")
         .arg("-R")
         .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string());
+        .status()
+        .map_err(|error| error.to_string())
+        .and_then(|status| if status.success() { Ok(()) } else { Err(format!("open failed ({status})")) });
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = linux::show_items(path);
     #[cfg(not(any(unix, target_os = "windows")))]
     let result: Result<(), String> = Err("Unsupported platform".into());
     result.or_else(|error| {
         let folder = path.parent().ok_or(error)?;
-        open::that_detached(folder).map_err(|error| error.to_string())
-    })
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let result = open::that_detached_with_timeout(folder, linux::LAUNCH_GRACE);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let result = open::that_detached(folder);
+        result.map_err(|error| error.to_string())
+    }).map_err(RevealError::Other)
 }
 
 #[cfg(target_os = "windows")]
@@ -191,8 +204,11 @@ mod linux {
     /// Asks the file manager to show the file selected in its folder.
     pub(super) fn show_items(path: &Path) -> Result<(), String> {
         let uri = file_uri(path);
-        let connection =
-            zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
+        let connection = zbus::blocking::connection::Builder::session()
+            .map_err(|error| error.to_string())?
+            .method_timeout(LAUNCH_GRACE)
+            .build()
+            .map_err(|error| error.to_string())?;
         connection
             .call_method(
                 Some("org.freedesktop.FileManager1"),
@@ -244,7 +260,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             show_in_folder(&dir.path().join("missing.pdf")),
-            Err("The file is unavailable".into())
+            Err(RevealError::Missing)
         );
     }
 

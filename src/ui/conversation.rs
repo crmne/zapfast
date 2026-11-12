@@ -7607,7 +7607,11 @@ fn context_menu(
                     Some(Icon::FileText),
                     &crate::i18n::gettext(view.locale, "Show in folder"),
                 ) {
-                    actions.push(Action::ShowFileInFolder(path.clone()));
+                    actions.push(Action::ShowFileInFolder {
+                        chat: chat.clone(),
+                        message: message.id.clone(),
+                        path: path.clone(),
+                    });
                 }
             }
             None => {
