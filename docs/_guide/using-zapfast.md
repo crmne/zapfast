@@ -148,7 +148,9 @@ archive.
 
 Choose **Select messages** in the chat's menu (the three dots at the top),
 **Select** in a message's menu, or Ctrl-click (Command-click on macOS) a
-message. As in WhatsApp Web, every message then gets a check box on the left.
+message. Holding the mouse button still for half a second on a message's empty
+space, beside its bubble or around its text, selects it too, as a long press
+does on the phone. As in WhatsApp Web, every message then gets a check box on the left.
 Click anywhere on a message's row, its box included, to add or remove it.
 Shift-click adds every message up to the one you click, and a drag adds every
 message it passes, scrolling when you hold the pointer at the top or bottom

@@ -3172,6 +3172,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     }
     let sweep = sweep.filter(|_| ui.input(|input| input.pointer.primary_down()));
     let sweep_pointer = ui.input(|input| input.pointer.latest_pos());
+    forget_long_press(ui.ctx());
     // The row under the pointer: the last laid-out row whose top it is
     // below, or the first one when it is above them all.
     let mut swept_to: Option<&str> = None;
@@ -3898,6 +3899,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     if selectable
                                         && !keyboard_clicked
                                         && (response.clicked() || pick.clicked())
+                                        && !held_for_selection(ui.ctx())
                                     {
                                         let shift = ui.input(|input| input.modifiers.shift);
                                         actions.push(if shift {
@@ -4905,9 +4907,10 @@ fn bubble(
     if let Some(rect) = previous {
         let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
         let strip = ui.interact(strip, id.with("row"), Sense::click_and_drag());
-        if strip.clicked() {
+        if strip.clicked() && !held_for_selection(ui.ctx()) {
             actions.push(Action::FocusComposer);
         }
+        select_on_long_press(ui, view, message, &strip, actions);
         if strip.drag_started() {
             actions.push(Action::SweepMessages {
                 anchor: message.id.clone(),
@@ -5006,7 +5009,82 @@ fn bubble(
             }
         },
     );
+    if let Some(bubble) = &response {
+        select_on_long_press(ui, view, message, bubble, actions);
+    }
     response
+}
+
+/// How long a still press on a message's empty space, beside or inside its
+/// bubble, takes to select it, as a long press does on the phone.
+const LONG_PRESS: f64 = 0.5;
+
+fn long_press_id() -> egui::Id {
+    egui::Id::new("message-long-press")
+}
+
+/// Starts a selection with `message` once `target`, empty space of its row,
+/// has been held still for [`LONG_PRESS`], and asks for the frame that will
+/// see it: egui wakes for a held mouse button only when it moves.
+fn select_on_long_press(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    target: &egui::Response,
+    actions: &mut Vec<Action>,
+) {
+    if view.selecting
+        || !target.is_pointer_button_down_on()
+        || !crate::app::can_select(&message.content)
+    {
+        return;
+    }
+    let (start, now, still) = ui.input(|input| {
+        (
+            input.pointer.press_start_time(),
+            input.time,
+            input.pointer.primary_down() && input.pointer.could_any_button_be_click(),
+        )
+    });
+    let Some(start) = start.filter(|_| still) else {
+        return;
+    };
+    let held = now - start;
+    if held < LONG_PRESS {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(LONG_PRESS - held));
+        return;
+    }
+    let ctx = ui.ctx();
+    if ctx.data(|data| data.get_temp::<f64>(long_press_id())) == Some(start) {
+        return;
+    }
+    ctx.data_mut(|data| data.insert_temp(long_press_id(), start));
+    actions.push(Action::SelectMessage(message.id.clone()));
+}
+
+/// Whether the press held now, or released this frame, already selected its
+/// message by being held, so its release is no click.
+fn held_for_selection(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<f64>(long_press_id()))
+        .is_some_and(|fired| {
+            ctx.input(|input| {
+                input
+                    .pointer
+                    .press_start_time()
+                    .is_none_or(|start| start == fired)
+            })
+        })
+}
+
+/// Forgets a long press once a new press begins or its release has passed.
+fn forget_long_press(ctx: &egui::Context) {
+    let done = ctx.input(|input| {
+        input.pointer.any_pressed() || !(input.pointer.any_down() || input.pointer.any_released())
+    });
+    if done {
+        ctx.data_mut(|data| data.remove::<f64>(long_press_id()));
+    }
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -9749,9 +9827,16 @@ fn rich_body(
     let padding = response
         .interact_pointer_pos()
         .is_some_and(|pointer| !rect.contains(pointer));
+    // Held still there, off the text itself, it selects the message.
+    if ui
+        .input(|input| input.pointer.press_origin())
+        .is_some_and(|origin| !rect.contains(origin))
+    {
+        select_on_long_press(ui, view, message, &response, actions);
+    }
     if padding {
         reply_on_double_click(&response, message, actions);
-        if response.clicked() && !response.double_clicked() {
+        if response.clicked() && !response.double_clicked() && !held_for_selection(ui.ctx()) {
             let modifiers = ui.input(|input| input.modifiers);
             if view.selecting {
                 actions.push(if modifiers.shift {

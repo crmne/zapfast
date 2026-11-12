@@ -15990,6 +15990,83 @@ mod tests {
         assert_eq!(selected_ids(&app), ["m003", "m005"]);
     }
 
+    /// Holding the button still on a message's empty space, beside its bubble
+    /// or in the padding around its text, selects it, as a long press does on
+    /// the phone, and the release that follows does not toggle it off again.
+    /// Held on the text itself, it stays a text press.
+    #[test]
+    fn holding_still_on_a_message_selects_it() {
+        let (mut app, ctx, chat) = sweep_chat(8);
+        let mut now = ctx.input(|input| input.time) + 1.0;
+        // Presses at `pos`, then frames at each delay in seconds after it,
+        // releasing with the last.
+        let mut hold = |app: &mut App, pos: egui::Pos2, delays: &[f64]| {
+            let start = now;
+            let at = |time: f64, events: Vec<egui::Event>| egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let frame = |app: &mut App, input| {
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+            };
+            frame(
+                app,
+                at(
+                    start,
+                    vec![egui::Event::PointerMoved(pos), primary(pos, true)],
+                ),
+            );
+            let mut selected = Vec::new();
+            for (index, delay) in delays.iter().enumerate() {
+                let events = if index + 1 == delays.len() {
+                    vec![primary(pos, false)]
+                } else {
+                    Vec::new()
+                };
+                frame(app, at(start + delay, events));
+                selected.push(selected_ids(app));
+            }
+            now = start + delays.last().copied().unwrap_or_default() + 1.0;
+            frame(app, at(now, Vec::new()));
+            selected
+        };
+        let beside_m003 = beside(&ctx, &chat, "m003", false);
+        let seen = hold(&mut app, beside_m003, &[0.3, 0.6, 0.65]);
+        assert!(seen[0].is_empty(), "not yet held long enough");
+        assert_eq!(seen[1], ["m003"], "held still beside the bubble");
+        assert_eq!(seen[2], ["m003"], "the release does not toggle it off");
+        render(&mut app, &ctx);
+        assert_eq!(selected_ids(&app), ["m003"]);
+
+        app.actions.push(crate::model::Action::CancelSelection);
+        render(&mut app, &ctx);
+        let body = drawn_rect(&ctx, &chat, "m005", "body");
+        let bubble = drawn_rect(&ctx, &chat, "m005", "rect");
+        let padding = egui::pos2(body.left() - 4.0, body.center().y);
+        assert!(bubble.contains(padding), "inside the bubble, off the text");
+        let seen = hold(&mut app, padding, &[0.6, 0.7]);
+        assert_eq!(seen[0], ["m005"], "held still in the bubble's padding");
+        assert_eq!(seen[1], ["m005"]);
+
+        app.actions.push(crate::model::Action::CancelSelection);
+        render(&mut app, &ctx);
+        let seen = hold(&mut app, body.center(), &[0.6, 0.7]);
+        assert!(
+            seen.iter().all(Vec::is_empty),
+            "held on the text, nothing is selected"
+        );
+    }
+
     /// #246: a sweep held at the top edge scrolls the list, and takes every
     /// message it passes, rows the list only estimated included.
     #[test]
