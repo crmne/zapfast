@@ -196,7 +196,7 @@ impl Worker {
     /// Ends the call ringing here if its ring lapsed with no word of its end (see
     /// [`calls::Call::ring_lapsed`]), filing it as missed, so it no longer holds the call slot.
     pub(super) fn let_lapsed_ring_go(&mut self) {
-        let now = crate::util::now();
+        let now = std::time::Instant::now();
         let update = self
             .call
             .as_mut()
@@ -1429,27 +1429,23 @@ mod tests {
     #[test]
     fn a_ring_whose_end_never_came_does_not_refuse_the_next_call() {
         use crate::calls::test_offers::{GROUP, group_offer};
-        use crate::util::fixed_clock::{Clock, set};
-        let clock = |now| Clock {
-            now,
-            zone: jiff::tz::TimeZone::UTC,
-            twelve_hour: false,
-        };
-        let rang = 1_773_237_600;
-        let _ringing = set(clock(rang));
         let (mut worker, events, _, _) = super::super::receipt_tests::worker();
-        let call = Call::ringing(GROUP.to_owned(), Box::new(group_offer(Vec::new())), false);
+        let mut call = Call::ringing(GROUP.to_owned(), Box::new(group_offer(Vec::new())), false);
+        call.rang_ago(calls::RING_LIMIT - std::time::Duration::from_secs(5));
         worker.call = Some(CallRuntime::new(call, None));
 
         // Still ringing: a second offer meets a busy account.
-        let _within = set(clock(rang + calls::RING_LIMIT));
         assert!(
             worker.call_busy(),
             "a call that is still ringing holds the slot"
         );
 
         // Rung past any offer with no word of its end: the slot is free again.
-        let _lapsed = set(clock(rang + calls::RING_LIMIT + 1));
+        if let Some(runtime) = worker.call.as_mut() {
+            runtime
+                .call
+                .rang_ago(calls::RING_LIMIT + std::time::Duration::from_secs(1));
+        }
         assert!(!worker.call_busy(), "a lapsed ring frees the slot");
         assert!(worker.call.is_none());
         let ended = events
