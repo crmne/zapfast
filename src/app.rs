@@ -4865,6 +4865,22 @@ impl App {
                         }
                         None => {
                             self.picture_applying.remove(&target);
+                            // A HEIC photo's JPEG that lands after its chat
+                            // was left waits in that chat's draft, or the
+                            // photo comes back unconverted, as a document.
+                            // Only the conversion goes there: a crop belongs
+                            // to the editor that was open in this composer.
+                            let parked = self.accounts[self.active]
+                                .attachment_drafts
+                                .values_mut()
+                                .flat_map(|draft| &mut draft.pending)
+                                .find(|staged| staged.id == target);
+                            if let Some(staged) = parked
+                                && matches!(&staged.item, Pending::File(source) if crate::backend::heic::is_heic(source))
+                            {
+                                staged.item = Pending::File(path);
+                                staged.preview = None;
+                            }
                         }
                     },
                     Err(error) => {
@@ -22611,7 +22627,7 @@ mod tests {
             assert!(asked.is_empty(), "nothing here can decode it");
             return;
         }
-        assert_eq!(asked, [(target, photo)]);
+        assert_eq!(asked, [(target, photo.clone())]);
         let jpeg = std::path::PathBuf::from("/fixture/converted.jpg");
         app.apply_backend_event(
             Event::PictureEdited {
@@ -22625,6 +22641,31 @@ mod tests {
             "the JPEG is what is reviewed and sent"
         );
         assert!(Pending::is_view_once_photo_file(&jpeg));
+
+        // A conversion that lands after its chat was left reaches the draft
+        // waiting there, so the photo comes back converted.
+        let parked_target = app.stage(Pending::File(photo.clone()));
+        let pending = std::mem::take(&mut app.pending);
+        app.account_mut().attachment_drafts.insert(
+            "parked".into(),
+            AttachmentDraft {
+                pending,
+                ..Default::default()
+            },
+        );
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target: parked_target,
+                result: Ok(jpeg.clone()),
+            },
+            true,
+        );
+        let parked = &app.attachment_drafts["parked"].pending;
+        assert!(
+            parked.iter().any(|staged| staged.id == parked_target
+                && matches!(&staged.item, Pending::File(path) if *path == jpeg)),
+            "the parked photo is converted"
+        );
     }
 
     #[test]

@@ -71,15 +71,43 @@ pub fn to_jpeg(_path: &Path) -> Result<Vec<u8>, String> {
     Err("HEIC pictures cannot be converted on this system".to_owned())
 }
 
+/// How many photos convert at once. Each conversion runs `sips` and holds a
+/// full-size picture in memory, so a large batch dropped on the composer
+/// waits its turn instead of starting them all together.
+const CONVERSIONS_AT_ONCE: usize = 2;
+
+static CONVERSIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(CONVERSIONS_AT_ONCE);
+
+/// Waits for a turn to convert a photo, held until the permit is dropped.
+pub async fn turn() -> tokio::sync::SemaphorePermit<'static> {
+    CONVERSIONS
+        .acquire()
+        .await
+        .expect("the conversion limit is never closed")
+}
+
 /// Converts a staged HEIC photo and writes the JPEG in `dir` beside the
 /// other media, answering with the file to stage in its place. The name
-/// comes from the JPEG's bytes, so the same photo is written once.
+/// comes from the JPEG's bytes, so the same photo is written once: a file
+/// already there is the finished JPEG, since it only ever appears whole.
 pub fn write(path: &Path, dir: &Path) -> Result<PathBuf, String> {
+    use std::io::Write;
     let jpeg = to_jpeg(path)?;
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let name = super::sticker_store::content_hash(&jpeg);
     let converted = dir.join(format!("{name}.jpg"));
-    std::fs::write(&converted, jpeg).map_err(|error| error.to_string())?;
+    if converted.is_file() {
+        return Ok(converted);
+    }
+    // Written aside and renamed into place, so an attachment already using
+    // this JPEG never reads it half written.
+    let mut partial = tempfile::NamedTempFile::new_in(dir).map_err(|error| error.to_string())?;
+    partial
+        .write_all(&jpeg)
+        .map_err(|error| error.to_string())?;
+    partial
+        .persist(&converted)
+        .map_err(|error| error.error.to_string())?;
     Ok(converted)
 }
 

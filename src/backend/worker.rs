@@ -8059,9 +8059,12 @@ impl Worker {
             Command::ConvertPicture { target, path } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.media_cache_dir().join("edited");
-                tokio::task::spawn_blocking(move || {
-                    match super::heic::write(&path, &dir) {
-                        Ok(converted) => {
+                tokio::spawn(async move {
+                    let _turn = super::heic::turn().await;
+                    let written =
+                        tokio::task::spawn_blocking(move || super::heic::write(&path, &dir)).await;
+                    match written {
+                        Ok(Ok(converted)) => {
                             let _ = commands.send(Command::PictureEdited {
                                 target,
                                 result: Ok(converted),
@@ -8069,7 +8072,8 @@ impl Worker {
                         }
                         // It stays staged as it is and goes as a document.
                         // Only the reason: never the path.
-                        Err(error) => log::warn!("could not convert a HEIC photo: {error}"),
+                        Ok(Err(error)) => log::warn!("could not convert a HEIC photo: {error}"),
+                        Err(error) => log::warn!("the HEIC conversion stopped: {error}"),
                     }
                 });
             }
@@ -13496,6 +13500,7 @@ async fn heic_as_jpeg(path: &Path, documents: bool) -> Option<Vec<u8>> {
         return None;
     }
     let path = path.to_owned();
+    let _turn = super::heic::turn().await;
     tokio::task::spawn_blocking(move || super::heic::to_jpeg(&path))
         .await
         .ok()?
