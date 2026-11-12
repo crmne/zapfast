@@ -7906,24 +7906,31 @@ impl Worker {
                 card,
                 path,
             } => self.attachment_missing(&chat, &message, card, &path),
-            Command::ShowFileInFolder { chat, message, path } => {
+            Command::ShowFileInFolder {
+                chat,
+                message,
+                path,
+            } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 let commands = self.commands.clone();
-                tokio::task::spawn_blocking(move || {
-                    match crate::opener::show_in_folder(&path) {
-                        Ok(()) => {}
-                        Err(crate::opener::RevealError::Missing) => {
-                            let _ = commands.send(Command::AttachmentMissing {
-                                chat, message, card: None, path,
-                            });
-                            let _ = events.send(Event::Error("This file is no longer on this computer. Download it again.".into()));
-                            waker.wake();
-                        }
-                        Err(crate::opener::RevealError::Other(error)) => {
-                            let _ = events.send(Event::Error(error));
-                            waker.wake();
-                        }
+                tokio::task::spawn_blocking(move || match crate::opener::show_in_folder(&path) {
+                    Ok(()) => {}
+                    Err(crate::opener::RevealError::Missing) => {
+                        let _ = commands.send(Command::AttachmentMissing {
+                            chat,
+                            message,
+                            card: None,
+                            path,
+                        });
+                        let _ = events.send(Event::Error(
+                            "This file is no longer on this computer. Download it again.".into(),
+                        ));
+                        waker.wake();
+                    }
+                    Err(crate::opener::RevealError::Other(error)) => {
+                        let _ = events.send(Event::Error(error));
+                        waker.wake();
                     }
                 });
             }

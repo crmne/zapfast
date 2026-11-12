@@ -8058,8 +8058,16 @@ impl App {
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
             }
-            Action::ShowFileInFolder { chat, message, path } => {
-                self.backend.send(Command::ShowFileInFolder { chat, message, path });
+            Action::ShowFileInFolder {
+                chat,
+                message,
+                path,
+            } => {
+                self.backend.send(Command::ShowFileInFolder {
+                    chat,
+                    message,
+                    path,
+                });
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {

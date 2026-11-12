@@ -21,7 +21,9 @@ pub fn show_in_folder(path: &Path) -> Result<(), RevealError> {
     match path.try_exists() {
         Ok(false) => return Err(RevealError::Missing),
         Err(error) => return Err(RevealError::Other(error.to_string())),
-        Ok(true) if !path.is_file() => return Err(RevealError::Other("The file is unavailable".into())),
+        Ok(true) if !path.is_file() => {
+            return Err(RevealError::Other("The file is unavailable".into()));
+        }
         Ok(true) => {}
     }
     #[cfg(target_os = "windows")]
@@ -35,19 +37,27 @@ pub fn show_in_folder(path: &Path) -> Result<(), RevealError> {
         .arg(path)
         .status()
         .map_err(|error| error.to_string())
-        .and_then(|status| if status.success() { Ok(()) } else { Err(format!("open failed ({status})")) });
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("open failed ({status})"))
+            }
+        });
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = linux::show_items(path);
     #[cfg(not(any(unix, target_os = "windows")))]
     let result: Result<(), String> = Err("Unsupported platform".into());
-    result.or_else(|error| {
-        let folder = path.parent().ok_or(error)?;
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let result = open::that_detached_with_timeout(folder, linux::LAUNCH_GRACE);
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        let result = open::that_detached(folder);
-        result.map_err(|error| error.to_string())
-    }).map_err(RevealError::Other)
+    result
+        .or_else(|error| {
+            let folder = path.parent().ok_or(error)?;
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let result = open::that_detached_with_timeout(folder, linux::LAUNCH_GRACE);
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            let result = open::that_detached(folder);
+            result.map_err(|error| error.to_string())
+        })
+        .map_err(RevealError::Other)
 }
 
 #[cfg(target_os = "windows")]
