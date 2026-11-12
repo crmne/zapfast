@@ -4757,6 +4757,8 @@ impl App {
                 }
             }
             Event::Info(message) => self.toast(message),
+            // The reader asked for these files, so show where they went.
+            Event::FilesSaved(folder) => self.actions.push(Action::OpenFolder(folder)),
             Event::ClipboardImage(result) => {
                 self.handle_clipboard_image(result, write_clipboard_image);
             }
@@ -14950,6 +14952,19 @@ mod tests {
             !std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::MarkRead { .. })),
             "no read receipt for a chat nobody is looking at"
+        );
+    }
+
+    /// Files saved together from a selection open their folder.
+    #[test]
+    fn saved_files_open_their_folder() {
+        let mut app = app();
+        let folder = std::path::PathBuf::from("/fixture/+15550001111/Alice");
+        app.apply_backend_event(Event::FilesSaved(folder.clone()), false);
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenFolder(path) if *path == folder))
         );
     }
 

@@ -244,6 +244,9 @@ impl Worker {
                 ))
             };
             let _ = events.send(event);
+            if saved > 0 {
+                let _ = events.send(Event::FilesSaved(folder));
+            }
             waker.wake();
         });
     }
@@ -467,6 +470,11 @@ mod tests {
         assert_eq!(names(&folder), ["Report.pdf", "x-pic.jpg"]);
         assert_eq!(std::fs::read(folder.join("Report.pdf")).unwrap(), b"report");
         assert_eq!(std::fs::read(folder.join("x-pic.jpg")).unwrap(), b"photo");
+        // Then the window is asked to open the folder.
+        match events.recv_timeout(Duration::from_secs(10)) {
+            Ok(Event::FilesSaved(opened)) => assert_eq!(opened, folder),
+            other => panic!("expected the folder to open, got {other:?}"),
+        }
     }
 
     /// A file still downloading holds the whole run back, and once it

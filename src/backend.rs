@@ -1576,6 +1576,9 @@ pub enum Event {
     },
     /// Informational toast message.
     Info(String),
+    /// Selected messages' files were saved together into this folder, which
+    /// the window opens in the file manager.
+    FilesSaved(PathBuf),
     /// A decoded image ready to be written to the clipboard on the interface thread.
     ClipboardImage(Result<crate::model::DecodedImage, String>),
     /// A newer release than this build exists.

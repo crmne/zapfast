@@ -166,7 +166,8 @@ number, `+15550001111/<chat name>`, inside the download folder from
 **Settings > Files**, or your Downloads folder if you have not chosen one. Text
 and stickers are left out. A file saved there before is not copied twice,
 another file with the same name is never replaced, and a file that cannot be
-downloaded is named in the message that reports the result. Unticking the last message keeps the selection open; Escape or the
+downloaded is named in the message that reports the result. Once the files are
+saved, the folder opens in your file manager. Unticking the last message keeps the selection open; Escape or the
 close button ends it. A batch goes out one message at a time, each starting
 once the one before it reached WhatsApp, so a picture cannot overtake the
 text that came before it. Deleted or unsupported messages, phone-only content,
