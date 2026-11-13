@@ -17,7 +17,10 @@ use crate::theme::{self, Icon};
 use super::conversation::thumbnail_uri;
 
 /// Height of the header across the top.
-const HEADER: f32 = 56.0;
+pub(crate) const HEADER: f32 = 56.0;
+/// What the viewer's header needs beside the caption buttons: the title and
+/// the row of actions.
+const HEADER_MIN_CONTENT: f32 = 400.0;
 /// Height of the album strip along the bottom.
 const STRIP: f32 = 78.0;
 const THUMB: f32 = 56.0;
@@ -86,17 +89,27 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             // viewer, as it does on the phone. It only takes clicks: focusable,
             // it would be a nameless first stop, before Close.
             let (_, backdrop) = ui.allocate_exact_size(window.size(), Sense::CLICK);
-            let (header_rect, stage, strip_rect) = panes(window, strip);
+            let top = Rect::from_min_max(window.min, pos2(window.max.x, window.min.y + HEADER));
+            // A narrow header moves its controls under the caption buttons
+            // rather than letting the action row run into them. The right-hand
+            // buttons already have their room beside the actions, so only a
+            // left-hand layout needs the taller header.
+            let room = super::caption_room(ui.ctx(), top, 0.0);
+            let room = if room.left > 0.0 {
+                super::caption_room(ui.ctx(), top, HEADER_MIN_CONTENT)
+            } else {
+                room
+            };
+            let (header_rect, stage, strip_rect) = panes(window, strip, HEADER + room.top);
 
             // Inset from the window's edges, so the title does not touch the
             // left one and the close button keeps clear of the right.
             // The header drags the window, and its actions stay clear of the
             // caption buttons ZapFast draws over the window's corners.
             super::caption_drag(ui, header_rect);
-            let room = super::caption_room(ui.ctx(), header_rect, 0.0);
             let inset = header_rect.shrink2(vec2(14.0, 0.0));
             let inset = Rect::from_min_max(
-                inset.min + vec2(room.left, 0.0),
+                inset.min + vec2(room.left, room.top),
                 inset.max - vec2(room.right, 0.0),
             );
             let mut head = ui.new_child(UiBuilder::new().max_rect(inset));
@@ -178,8 +191,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
 /// Header, stage and album strip across the window, top to bottom. Without an
 /// album the strip is empty and the stage runs to the bottom edge.
-fn panes(window: Rect, strip: bool) -> (Rect, Rect, Rect) {
-    let header = Rect::from_min_max(window.min, pos2(window.max.x, window.min.y + HEADER));
+fn panes(window: Rect, strip: bool, header_height: f32) -> (Rect, Rect, Rect) {
+    let header = Rect::from_min_max(window.min, pos2(window.max.x, window.min.y + header_height));
     let strip_rect = if strip {
         Rect::from_min_max(pos2(window.min.x, window.max.y - STRIP), window.max)
     } else {
@@ -267,7 +280,9 @@ fn header(
             } => Some(motion.clone()),
             _ => None,
         });
-    ui.horizontal(|ui| {
+    // The header's full height, so its controls are centred in it instead of
+    // sitting along the window's top edge.
+    ui.horizontal_centered(|ui| {
         // The actions are laid out from the right edge first, and the title
         // takes what is left of the row, truncated: a long chat name used to
         // run under the icons.
@@ -1698,7 +1713,7 @@ mod tests {
     #[test]
     fn the_panes_fill_the_window_top_to_bottom() {
         let window = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 900.0));
-        let (header, stage, strip) = panes(window, true);
+        let (header, stage, strip) = panes(window, true, HEADER);
         assert_eq!(header.min, window.min, "the header starts at the top edge");
         assert_eq!(header.height(), HEADER);
         assert_eq!(strip.max, window.max, "the strip ends at the bottom edge");
@@ -1707,9 +1722,14 @@ mod tests {
         assert_eq!(stage.max.y, strip.min.y, "no gap over the strip");
         assert_eq!(stage.width(), window.width(), "the stage is full width");
         // Without an album the stage keeps the room the strip would have taken.
-        let (_, stage, strip) = panes(window, false);
+        let (_, stage, strip) = panes(window, false, HEADER);
         assert!(strip.height() < f32::EPSILON);
         assert_eq!(stage.max.y, window.max.y);
+        // A header pushed under the caption buttons takes its extra height
+        // from the stage.
+        let (header, stage, _) = panes(window, false, HEADER + 41.0);
+        assert_eq!(header.height(), HEADER + 41.0);
+        assert_eq!(stage.min.y, header.max.y);
     }
 
     #[test]
