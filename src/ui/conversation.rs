@@ -26,6 +26,11 @@ use super::widgets;
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
 const BODY_SIZE: f32 = widgets::MESSAGE_TEXT_SIZE;
+/// Room between the end of a text's last line and the time beside it.
+const FOOTER_GAP: f32 = 6.0;
+/// How far below a text's last line WhatsApp sets the time beside it: the
+/// time sits low in the bubble, under the text's baseline, not level with it.
+const FOOTER_DROP: f32 = 5.0;
 /// Extra space above the first message of a run from one side. With the
 /// list's 3 points between rows, runs stand 8 points apart and a run's
 /// bubbles 3, Messages' own spacing on the Mac
@@ -5547,8 +5552,8 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         Margin {
             left: 10,
             right: 10,
-            top: 6,
-            bottom: if over_picture { 6 } else { 5 },
+            top: 5,
+            bottom: if over_picture { 6 } else { 4 },
         }
     }
 }
@@ -6109,8 +6114,8 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
     let reserve = footer_width(ui, message, starred, pinned);
-    Some(if last + 8.0 + reserve <= cap {
-        widest.max(last + 8.0 + reserve)
+    Some(if last + FOOTER_GAP + reserve <= cap {
+        widest.max(last + FOOTER_GAP + reserve)
     } else {
         widest
     })
@@ -9649,10 +9654,17 @@ fn rich_body(
     // Right-aligned text ends at the block's edge. Like official WhatsApp,
     // only a single line keeps the time beside it; otherwise it gets a row.
     let single = laid.galley.rows.len() == 1 && span.is_none();
-    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width && (!rtl || single));
+    let inline =
+        reserve.filter(|reserve| last_row + FOOTER_GAP + reserve <= width && (!rtl || single));
     let size = laid.galley.size();
+    // WhatsApp lowers the time beside the last line, and the bubble with it.
+    let drop = if palette.bubbles == theme::BubbleStyle::Messages {
+        0.0
+    } else {
+        FOOTER_DROP
+    };
     let mut allocation = match inline {
-        Some(reserve) => vec2(size.x.max(last_row + 8.0 + reserve), size.y),
+        Some(reserve) => vec2(size.x.max(last_row + FOOTER_GAP + reserve), size.y + drop),
         None => size,
     };
     if let Some(span) = span {
