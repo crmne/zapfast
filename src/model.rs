@@ -421,6 +421,11 @@ impl Chat {
         !self.read_only && !self.left && self.kind != ChatKind::Broadcast
     }
 
+    /// Posting restrictions in an announcement group do not forbid reactions.
+    pub fn can_react(&self) -> bool {
+        !self.left && (self.can_send() || self.is_group())
+    }
+
     /// A followed WhatsApp channel (newsletter).
     pub fn is_channel(&self) -> bool {
         self.id.ends_with("@newsletter")

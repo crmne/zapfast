@@ -23,6 +23,10 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+
+/// Worker error keys the window translates.
+pub const REACTION_FAILED: &str = "Could not send the reaction.";
+pub const REACTION_FAILED_ANNOUNCEMENT: &str = "Could not send the reaction. If this is an old announcement, reload its history and try again.";
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
@@ -1084,6 +1088,25 @@ pub enum Command {
         recipients: Vec<String>,
         lids: Vec<(String, String)>,
         stored: tokio::sync::mpsc::UnboundedSender<bool>,
+    },
+    /// Internal protocol fallback, scoped to the connection that requested it.
+    ResolveMessageSecret {
+        session: u64,
+        chat: ChatId,
+        sender: String,
+        message: String,
+        reply: tokio::sync::oneshot::Sender<
+            Option<whatsapp_rust::wacore::msg_secret::ResolvedMessageSecret>,
+        >,
+    },
+    /// Result of an explicit reaction send; no optimistic success is filed.
+    ReactionSent {
+        session: u64,
+        generation: u64,
+        chat: ChatId,
+        message: String,
+        emoji: String,
+        succeeded: bool,
     },
     /// Internal group metadata result.
     GroupInfo {

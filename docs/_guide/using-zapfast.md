@@ -1066,3 +1066,15 @@ reactions and chat rows are not stops. The React, Reply and Forward buttons
 that appear beside a hovered message are for the pointer only; keyboard and
 screen-reader users reach them from the message menu. Alt+Up/Down switches
 conversations.
+
+### Reactions in announcement groups
+
+Members may add, change or remove reactions even when only admins can post
+messages. Reaction sends use whatsapp-rust's encrypted announcement protocol.
+If the session store no longer retains an older announcement's key, the library
+can recover it from this account's encrypted message archive. Deleted messages,
+a different author, and a previous account session never supply a key.
+
+A failed send reports an error and keeps the previous reaction. When the
+original announcement was never received with its message secret, reload its
+history before trying again; the client cannot invent that key.
