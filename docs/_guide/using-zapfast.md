@@ -686,6 +686,11 @@ any caption; their files are not copied. Copying keeps the selection open.
 
 ## Chats
 
+Ctrl+Tab switches between the two most recently opened chats (Control+Tab,
+not Command+Tab, on macOS). It preserves each chat's draft and does not open
+locked chats outside their unlocked folder. Recent-chat history is cleared
+when you switch accounts or restart ZapFast. Ordinary Tab still moves focus.
+
 Someone without a saved contact or profile name shows as their phone number. In
 a group that hides numbers, WhatsApp sends only a masked one such as
 `+233∙∙∙∙∙∙42`, and ZapFast shows that until WhatsApp reveals the whole number.

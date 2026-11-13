@@ -2719,6 +2719,7 @@ pub enum Action {
     /// Steps back to the previously visited page, chat, or dialog, as a
     /// browser's back button does.
     NavigateBack,
+    SwitchRecentChat,
     /// Steps forward again after a back step.
     NavigateForward,
     OpenChat(ChatId),

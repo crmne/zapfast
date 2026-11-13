@@ -7522,6 +7522,18 @@ impl App {
                 self.new_call_search.clear();
             }
             Action::NavigateBack => self.navigate_back(ctx),
+            Action::SwitchRecentChat => {
+                if let Some(chat) = self
+                    .nav_history
+                    .recent_chat(self.open_chat.as_deref())
+                    .map(str::to_owned)
+                    && self
+                        .chat(&chat)
+                        .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+                {
+                    self.apply(Action::OpenChat(chat), ctx);
+                }
+            }
             Action::NavigateForward => self.navigate_forward(ctx),
             Action::StartChat {
                 id,
@@ -12918,6 +12930,37 @@ mod tests {
     }
 
     #[test]
+    fn recent_chat_switching_toggles_and_preserves_drafts_and_locked_chats() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        for id in ["a@s.whatsapp.net", "b@s.whatsapp.net", "c@s.whatsapp.net"] {
+            app.chats
+                .push(Chat::new(id.into(), "Synthetic chat".into()));
+            app.actions.push(Action::OpenChat(id.into()));
+            app.apply_actions(&ctx);
+        }
+        app.composer = "draft for c".into();
+        app.actions.push(Action::SwitchRecentChat);
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some("b@s.whatsapp.net"));
+        app.composer = "draft for b".into();
+        app.actions.push(Action::SwitchRecentChat);
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some("c@s.whatsapp.net"));
+        assert_eq!(app.composer, "draft for c");
+        app.chat_mut("b@s.whatsapp.net").unwrap().locked = true;
+        app.actions.push(Action::SwitchRecentChat);
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some("c@s.whatsapp.net"));
+        assert_eq!(app.composer, "draft for c");
+        app.forget_chat("b@s.whatsapp.net");
+        app.actions.push(Action::SwitchRecentChat);
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some("c@s.whatsapp.net"));
+        assert_eq!(app.nav_history.recent_chat(Some("c@s.whatsapp.net")), None);
+    }
+
+    #[test]
     fn back_and_forward_walk_between_chats_and_settings() {
         let ctx = egui::Context::default();
         let mut app = app();
@@ -13213,7 +13256,10 @@ mod tests {
         app.apply_actions(&ctx);
         app.actions.push(Action::OpenChat(chat.into()));
         app.apply_actions(&ctx);
+        assert_eq!(app.nav_history.recent_chat(None), Some(chat));
         app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        assert_eq!(app.nav_history.recent_chat(None), None);
+        app.apply(Action::SwitchRecentChat, &ctx);
         assert_eq!(app.open_chat, None, "the other account has no chat open");
         app.apply(Action::NavigateBack, &ctx);
         assert_eq!(
