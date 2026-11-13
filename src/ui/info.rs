@@ -748,7 +748,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             .max_height(120.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                theme::selectable_text(ui, description, theme::regular(13.5), palette.text);
+                description_body(app, ui, description);
             });
     }
     // A locked chat's media stays in the locked folder: the section is not
@@ -2218,6 +2218,72 @@ fn group_photo(
             }
         });
     chosen
+}
+
+/// The group's description with WhatsApp's markup: `*bold*`, `_italic_`,
+/// `~struck~` and `mono`, and the links under it, which open in a browser.
+/// The text stays selectable, and a copied emoji comes back whole.
+fn description_body(app: &mut App, ui: &mut egui::Ui, description: &str) {
+    let palette = app.palette;
+    let style = crate::markup::Style {
+        size: 13.5,
+        color: palette.text,
+        secondary: palette.secondary,
+        link: palette.link,
+        mention: palette.accent,
+    };
+    let laid = crate::markup::layout(ui, description, &[], &style, ui.available_width());
+    let size = laid.galley.size();
+    let (_, rect) = ui.allocate_space(size);
+    let response = ui.interact(
+        rect,
+        ui.make_persistent_id("group-description-text"),
+        Sense::CLICK | Sense::DRAG,
+    );
+    crate::markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, true);
+    // The emoji are placeholders in the galley: the copy puts them back.
+    app.copy_rows
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(crate::transcript::Row {
+            body: laid.galley.text().to_owned(),
+            placements: laid.placements().to_vec(),
+            ..Default::default()
+        });
+    // A link opens in a browser, as it does in a message.
+    if !laid.links.is_empty()
+        && let Some(pos) = response.hover_pos()
+        && laid.galley.rows.iter().any(|row| {
+            Rect::from_min_size(rect.min + row.pos.to_vec2(), row.row.size).contains(pos)
+        })
+    {
+        let cursor = laid.galley.cursor_from_pos(pos - rect.min);
+        if let Some(url) = laid.link_at(cursor.index.0) {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                app.actions.push(Action::OpenUrl(url.to_owned()));
+            }
+        }
+    }
+    // Where the links are, for interaction tests.
+    #[cfg(any(test, feature = "demo"))]
+    {
+        let mut links = Vec::new();
+        for (range, url) in &laid.links {
+            for (_, bounds) in crate::bidi::char_bounds_by_row(&laid.galley, range.start, range.end)
+            {
+                links.push((url.clone(), bounds.translate(rect.min.to_vec2())));
+            }
+        }
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(group_description_links_id(), links));
+    }
+}
+
+/// Where the description's links were drawn, for interaction tests.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) fn group_description_links_id() -> egui::Id {
+    egui::Id::new("group-description-links")
 }
 
 /// The group name being typed. Returns `Some(true)` when Enter or the check
