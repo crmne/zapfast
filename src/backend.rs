@@ -1332,6 +1332,18 @@ pub enum Event {
         chat: ChatId,
         message: Box<Message>,
     },
+    /// Someone reacted live to one of our messages, for a desktop
+    /// notification. History and removed reactions send none.
+    Reacted {
+        chat: ChatId,
+        /// Our message, with the reaction already on it.
+        message: Box<Message>,
+        /// Who reacted, by canonical id.
+        sender: String,
+        emoji: String,
+        /// When the reaction was sent, in Unix seconds.
+        sent_at: i64,
+    },
     Contacts(Vec<Contact>),
     /// Message search results with their query, newest first.
     SearchHits {
