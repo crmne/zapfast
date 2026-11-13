@@ -2622,6 +2622,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
             }
+            // Text in the first chat's composer, `\n` for a new line (no commas).
+            choice if choice.starts_with("composer=") => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.composer = choice["composer=".len()..].replace("\\n", "\n");
+                app.focus_composer = true;
+            }
             "wallpaper" => app.page = Page::Wallpaper,
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes.
@@ -9697,6 +9703,7 @@ mod tests {
             "settings-search=Notifications",
             "settings-search=System",
             "settings-search=Storage",
+            "composer=• Milk\\n• Eggs\\n• ",
             "clear-media",
             "wallpaper",
             "wallpaper,light",
