@@ -784,6 +784,38 @@ fn device_name() -> String {
     }
 }
 
+fn device_props(user_agent: &crate::settings::UserAgent) -> DevicePropsOverride {
+    use crate::settings::UserAgent;
+    use wa::device_props::PlatformType;
+
+    match user_agent {
+        UserAgent::ZapFast => DevicePropsOverride::new()
+            .with_os(device_name())
+            .with_version(app_version())
+            .with_platform_type(PlatformType::DESKTOP),
+        UserAgent::Chrome | UserAgent::Firefox => {
+            let os = if cfg!(target_os = "macos") {
+                "macOS"
+            } else if cfg!(target_os = "windows") {
+                "Windows"
+            } else {
+                "Linux"
+            };
+            let platform = if matches!(user_agent, UserAgent::Chrome) {
+                PlatformType::CHROME
+            } else {
+                PlatformType::FIREFOX
+            };
+            DevicePropsOverride::new()
+                .with_os(os)
+                .with_platform_type(platform)
+        }
+        UserAgent::Custom(name) => DevicePropsOverride::new()
+            .with_os(name.trim())
+            .with_platform_type(PlatformType::DESKTOP),
+    }
+}
+
 /// App version in WhatsApp device-property format.
 fn app_version() -> wa::device_props::AppVersion {
     let mut parts = env!("CARGO_PKG_VERSION")
@@ -858,6 +890,7 @@ pub async fn run(
     commands: mpsc::UnboundedSender<Command>,
     mut inbox: mpsc::UnboundedReceiver<Command>,
     waker: Waker,
+    user_agent: crate::settings::UserAgent,
 ) {
     let archive = loop {
         let path = dirs.archive_db();
@@ -1024,6 +1057,7 @@ pub async fn run(
         group_info_retry: Vec::new(),
         presence_subscribed: HashSet::new(),
         download_folder: None,
+        user_agent,
         cleaned_download_folders: HashSet::new(),
         keep_chats_archived: true,
         phone_unarchive_chats,
@@ -1560,6 +1594,7 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
+    user_agent: crate::settings::UserAgent,
     /// Clean each chosen root once, before this worker can start downloads there.
     cleaned_download_folders: HashSet<PathBuf>,
     /// Settings' "Keep chats archived", for an account whose phone has not
@@ -3142,13 +3177,7 @@ impl Worker {
                 .with_transport_factory(crate::transport::HappyEyeballsTransportFactory::new()),
         };
         let bot = builder
-            // WhatsApp reads the linked-device name, version, and icon at pairing.
-            .with_device_props(
-                DevicePropsOverride::new()
-                    .with_os(device_name())
-                    .with_version(app_version())
-                    .with_platform_type(wa::device_props::PlatformType::DESKTOP),
-            )
+            .with_device_props(device_props(&self.user_agent))
             .with_event_handler(UiEvents {
                 sender,
                 generation: self.privacy_generation,
@@ -7623,6 +7652,7 @@ impl Worker {
                     let _ = commands.send(Command::StickerPackImported { result });
                 });
             }
+            Command::SetUserAgent(user_agent) => self.user_agent = user_agent,
             Command::SetProxy(setting) => {
                 crate::proxy::configure(&setting);
                 // Reconnect so the WhatsApp connection uses the new route.
@@ -14671,6 +14701,51 @@ mod tests {
         assert!(events.try_recv().is_err(), "only one recovery is requested");
     }
 
+    #[test]
+    fn companion_identity_preserves_default_and_omits_branding_for_alternatives() {
+        use crate::settings::UserAgent;
+        use wa::device_props::PlatformType;
+
+        let default = device_props(&UserAgent::ZapFast);
+        assert_eq!(default.os, Some(device_name()));
+        assert_eq!(default.version, Some(app_version()));
+        assert_eq!(default.platform_type, Some(PlatformType::DESKTOP));
+        for (agent, platform) in [
+            (UserAgent::Chrome, PlatformType::CHROME),
+            (UserAgent::Firefox, PlatformType::FIREFOX),
+        ] {
+            let props = device_props(&agent);
+            assert!(matches!(
+                props.os.as_deref(),
+                Some("Linux" | "macOS" | "Windows")
+            ));
+            assert!(props.version.is_none());
+            assert_eq!(props.platform_type, Some(platform));
+            assert!(props.require_full_sync.is_none());
+            assert!(props.history_sync_config.is_none());
+        }
+        let custom = device_props(&UserAgent::Custom("My companion".into()));
+        assert_eq!(custom.os.as_deref(), Some("My companion"));
+        assert_eq!(custom.platform_type, Some(PlatformType::DESKTOP));
+        assert!(custom.version.is_none());
+    }
+
+    #[tokio::test]
+    async fn changing_user_agent_keeps_the_existing_session_and_archive() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let session = worker.account_session;
+        worker.archive.set_meta("identity-test", "kept").unwrap();
+        worker
+            .handle_command(Command::SetUserAgent(crate::settings::UserAgent::Chrome))
+            .await;
+        assert_eq!(worker.user_agent, crate::settings::UserAgent::Chrome);
+        assert_eq!(worker.account_session, session);
+        assert_eq!(
+            worker.archive.meta("identity-test").unwrap().as_deref(),
+            Some("kept")
+        );
+    }
+
     /// A shutdown queued behind a search keeps the commands before it, which
     /// is how an unsent draft survives quitting while the search was scanning.
     #[test]
@@ -20087,6 +20162,7 @@ mod receipt_tests {
             group_info_retry: Vec::new(),
             presence_subscribed: HashSet::new(),
             download_folder: None,
+            user_agent: Default::default(),
             cleaned_download_folders: HashSet::new(),
             keep_chats_archived: true,
             phone_unarchive_chats: None,

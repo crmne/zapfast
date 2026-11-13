@@ -9913,6 +9913,23 @@ impl App {
                     account.backend.send(Command::SetKeepChatsArchived(keep));
                 }
             }
+            Action::SetUserAgent(value) => {
+                let value = match value.validated() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.toast_error(error);
+                        return;
+                    }
+                };
+                if value == self.settings.user_agent {
+                    return;
+                }
+                self.settings.user_agent = value.clone();
+                self.mark_settings_dirty();
+                for account in &self.accounts {
+                    account.backend.send(Command::SetUserAgent(value.clone()));
+                }
+            }
             Action::SetProxy(value) => {
                 let value = value.trim().to_owned();
                 if value == self.settings.proxy {
@@ -15139,6 +15156,23 @@ mod tests {
             )),
             "the hidden account downloads there too"
         );
+        app.apply(
+            Action::SetUserAgent(crate::settings::UserAgent::Firefox),
+            &ctx,
+        );
+        assert_eq!(app.settings.user_agent, crate::settings::UserAgent::Firefox);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SetUserAgent(crate::settings::UserAgent::Firefox)
+            )),
+            "the hidden account receives the user agent too"
+        );
+        app.apply(
+            Action::SetUserAgent(crate::settings::UserAgent::Custom("  ".into())),
+            &ctx,
+        );
+        assert_eq!(app.settings.user_agent, crate::settings::UserAgent::Firefox);
         app.apply(Action::SetKeepChatsArchived(false), &ctx);
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok())
