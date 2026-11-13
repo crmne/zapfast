@@ -327,6 +327,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         labels: Vec::new(),
         ephemeral_expiration: row.get::<_, Option<u32>>(16)?,
         unread_mention: None,
+        unread_mentions: 0,
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
@@ -849,6 +850,7 @@ impl Archive {
             "UPDATE chats SET read_through = MAX(COALESCE(read_through, 0), ?2),
              unread = MIN(unread, (SELECT COUNT(*) FROM messages
                  WHERE chat = ?1 AND from_me = 0 AND id NOT LIKE 'zapfast-timer-%'
+                 AND id NOT LIKE 'zapfast-call-%'
                  AND timestamp > MAX(COALESCE(read_through, 0), ?2))) WHERE id = ?1",
             params![id, timestamp],
         )?;
@@ -865,6 +867,7 @@ impl Archive {
              unread = MIN(unread, (SELECT COUNT(*) FROM messages m
                  JOIN messages boundary ON boundary.chat = m.chat AND boundary.id = ?2
                  WHERE m.chat = ?1 AND m.from_me = 0 AND m.id NOT LIKE 'zapfast-timer-%'
+                 AND m.id NOT LIKE 'zapfast-call-%'
                  AND (m.timestamp > boundary.timestamp
                       OR (m.timestamp = boundary.timestamp AND
                           (COALESCE(m.history_order, 9223372036854775807), m.rowid) >
@@ -2454,12 +2457,23 @@ impl Archive {
     /// The oldest of a chat's `unread` newest incoming messages that mentions
     /// us (under any id in `ours`) or everyone.
     pub fn unread_mention(&self, chat: &str, unread: u32, ours: &[&str]) -> Result<Option<String>> {
+        Ok(self.unread_mentions(chat, unread, ours)?.0)
+    }
+
+    /// The oldest of a chat's `unread` newest incoming messages that mentions
+    /// us (under any id in `ours`) or everyone, and how many of them do.
+    pub fn unread_mentions(
+        &self,
+        chat: &str,
+        unread: u32,
+        ours: &[&str],
+    ) -> Result<(Option<String>, u32)> {
         if unread == 0 {
-            return Ok(None);
+            return Ok((None, 0));
         }
         let mut statement = self.connection.prepare(
             "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
-             AND id NOT LIKE 'zapfast-timer-%'
+             AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC,
                       rowid DESC
              LIMIT ?2",
@@ -2468,6 +2482,7 @@ impl Archive {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         let mut oldest = None;
+        let mut count = 0u32;
         for row in rows {
             let (id, mentions) = row?;
             let mentions: Vec<crate::model::MentionRef> =
@@ -2477,9 +2492,10 @@ impl Archive {
                 .any(|mention| crate::mentions::names_us(mention, ours))
             {
                 oldest = Some(id);
+                count = count.saturating_add(1);
             }
         }
-        Ok(oldest)
+        Ok((oldest, count))
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
@@ -4080,6 +4096,39 @@ pub(crate) mod tests {
         archive.bump_unread(chat).expect("bump");
         archive.mark_read_through(chat, 100).expect("read through");
         assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+    }
+
+    /// A call entry is never unread: a read on another device that covers an
+    /// older mention leaves only the newer message, and the mention is gone.
+    #[test]
+    fn a_call_entry_does_not_keep_a_read_mention_unread() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1-2@g.us";
+        archive.ensure_chat(chat, "Club").expect("chat");
+        let me = "15550001111@s.whatsapp.net";
+        let mut tagged = message(chat, "tagged", 100, false);
+        tagged.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: me.into(),
+        }];
+        archive.insert_message(&tagged, None).expect("insert");
+        archive
+            .insert_message(&message(chat, "later", 200, false), None)
+            .expect("insert");
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 300, false), None)
+            .expect("insert");
+        let unread = |archive: &Archive| archive.chat(chat).expect("chat").expect("exists").unread;
+
+        archive.bump_unread(chat).expect("bump");
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_to(chat, "tagged").expect("read");
+        assert_eq!(unread(&archive), 1);
+        assert_eq!(archive.unread_mentions(chat, 1, &[me]).unwrap(), (None, 0));
+
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_through(chat, 100).expect("read through");
+        assert_eq!(unread(&archive), 1);
     }
 
     /// An archive from before group editing learns who may edit a group's
@@ -5835,6 +5884,19 @@ pub(crate) mod tests {
             "the oldest unread one, not one already read"
         );
         assert_eq!(archive.unread_mention(chat, 4, &[]).unwrap(), None);
+        assert_eq!(
+            archive.unread_mentions(chat, 4, &ours).unwrap(),
+            (Some("first".to_owned()), 2),
+            "the badge counts each unread mention"
+        );
+        // A call entry is never unread, so it takes no place in the window.
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 700, false), None)
+            .expect("insert");
+        assert_eq!(
+            archive.unread_mentions(chat, 2, &ours).unwrap(),
+            (Some("lid".to_owned()), 1)
+        );
     }
 
     #[test]

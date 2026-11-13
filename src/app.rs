@@ -970,7 +970,7 @@ pub struct App {
     notifications: crate::notify::Notifications,
     /// Unread count on the taskbar icon, where the desktop reads it. `None`
     /// for demo and test runs, which must not touch the real taskbar.
-    badge: Option<crate::notify::Badge>,
+    badge: Option<crate::notify::AppBadge>,
     /// The app lock: whether the window shows only the lock screen, the
     /// inactivity count, and the Settings password form.
     pub app_lock: crate::app_lock::AppLock,
@@ -1425,9 +1425,11 @@ impl App {
         let mut app = Self::with_accounts(dirs, settings, roster, accounts, active, waker.clone());
         app.pauses_media = true;
         app.call_tones = crate::call_tones::Tones::new(true);
-        app.badge = Some(crate::notify::Badge::new(fastframe_desktop::desktop_entry(
-            "zapfast",
-        )));
+        app.badge = Some(crate::notify::AppBadge::new(
+            fastframe_desktop::desktop_entry("zapfast"),
+        ));
+        #[cfg(target_os = "macos")]
+        crate::macos::request_badge_permission();
         app.custom_themes
             .enable_desktop_themes(crate::theme::DESKTOP_THEMES);
         app.load_custom_themes();
@@ -1831,7 +1833,7 @@ impl App {
         self.accounts.len() >= 2
     }
 
-    /// Unread chats across every account, for the taskbar and the tray. A
+    /// Unread chats across every account, for the tray icon. A
     /// muted account is left out, as a muted chat is.
     pub fn unread_chat_count_everywhere(&self) -> u32 {
         self.accounts
@@ -1839,6 +1841,18 @@ impl App {
             .filter(|account| account.settings.notifications)
             .map(Account::unread_chat_count)
             .fold(0, u32::saturating_add)
+    }
+
+    /// The app badge across accounts whose notifications are on.
+    pub fn badge_mark_everywhere(&self) -> crate::notify::BadgeMark {
+        self.accounts
+            .iter()
+            .filter(|account| account.settings.notifications)
+            .map(Account::badge_mark)
+            .fold(
+                crate::notify::BadgeMark::default(),
+                crate::notify::BadgeMark::combine,
+            )
     }
 
     /// Unread chats in the accounts that are not on screen and not muted, for
@@ -1975,6 +1989,21 @@ impl App {
         // Chats belong to the account that owns them; another account's chat
         // cannot be restored into this one.
         self.nav_history.clear();
+        // The remembered chat is on screen again: what arrived while another
+        // account was shown is read now, as when the window regains focus.
+        // The Calls tab shows it only when picked from the history: a narrow
+        // window shows the history otherwise, so a chat merely remembered
+        // there is not being read.
+        if (self.page == Page::Chats || self.call_picked())
+            && self.window_focused
+            && !self.window_hidden
+            && let Some(open) = self.open_chat.clone()
+            && self
+                .chat(&open)
+                .is_some_and(|chat| chat.unread > 0 && (!chat.locked || self.locked_folder_open()))
+        {
+            self.mark_read(&open);
+        }
     }
 
     /// Drops App-owned pointers into the previous account's chats and media.
@@ -3529,8 +3558,8 @@ impl App {
             .count()
     }
 
-    /// The taskbar count: unarchived, unmuted, unlocked chats that look
-    /// unread. WhatsApp counts chats here, not the messages inside them.
+    /// The tray's count: unarchived, unmuted, unlocked chats that look
+    /// unread. The app badge counts as Slack does instead (`badge_mark`).
     pub fn unread_chat_count(&self) -> u32 {
         self.account().unread_chat_count()
     }
@@ -5224,6 +5253,7 @@ impl App {
         {
             chat.unread = 0;
             chat.unread_mention = None;
+            chat.unread_mentions = 0;
             self.mark_read(&chat.id);
         }
         // Inside the authenticated folder the chat stays open; otherwise a
@@ -6134,6 +6164,7 @@ impl App {
             known.unread = 0;
             known.marked_unread = false;
             known.unread_mention = None;
+            known.unread_mentions = 0;
         }
         // Clear local unread state regardless of receipt settings.
         self.backend.send(Command::MarkRead {
@@ -10717,12 +10748,12 @@ impl App {
         }
     }
 
-    /// Mirrors the unread chat count onto the taskbar icon, where the desktop
-    /// reads it. The badge ignores repeats, so calling this each frame is cheap.
+    /// Mirrors the unread mark onto the taskbar icon, where the desktop reads
+    /// it. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
-        let count = self.unread_chat_count_everywhere();
+        let mark = self.badge_mark_everywhere();
         if let Some(badge) = &mut self.badge {
-            badge.set(count);
+            badge.set(mark);
         }
     }
 
@@ -13219,6 +13250,39 @@ mod tests {
         assert_eq!(
             app.open_chat, None,
             "the first account's chat is not restored"
+        );
+    }
+
+    /// A message that reached the chat left open in another account is read
+    /// once that account is shown again, without opening the chat anew.
+    #[test]
+    fn switching_back_reads_the_chat_left_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        app.window_focused = true;
+        let chat = "15550003333@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.apply(Action::OpenChat(chat.into()), &ctx);
+        app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        app.accounts[0].chats[0].unread = 1;
+        app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(chat));
+        assert_eq!(app.chat(chat).unwrap().unread, 0);
+
+        // On the Calls tab with no call picked, the chat is only remembered.
+        app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        app.apply(Action::Open(Page::Calls), &ctx);
+        app.accounts[0].chats[0].unread = 1;
+        while commands.try_recv().is_ok() {}
+        app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
+        assert_eq!(app.page, Page::Calls);
+        assert_eq!(app.open_chat.as_deref(), Some(chat));
+        assert_eq!(app.chat(chat).unwrap().unread, 1);
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::MarkRead { .. })),
+            "no receipt for a chat nobody sees"
         );
     }
 
@@ -24749,6 +24813,73 @@ mod tests {
         let read = Chat::new("5@s.whatsapp.net".into(), "Done".into());
         app.chats = vec![busy, quiet, archived, muted, read];
         assert_eq!(app.unread_chat_count(), 2);
+    }
+
+    /// The app badge counts as Slack does: direct messages by the message,
+    /// group mentions by the mention, and any other activity as a dot.
+    #[test]
+    fn the_app_badge_counts_direct_messages_and_mentions_and_dots_the_rest() {
+        use crate::notify::BadgeMark;
+        let mut app = app();
+        assert_eq!(app.badge_mark_everywhere(), BadgeMark::default());
+
+        let mut quiet_group = Chat::new("1-1@g.us".into(), "Club".into());
+        quiet_group.unread = 5;
+        app.chats = vec![quiet_group];
+        assert_eq!(
+            app.badge_mark_everywhere(),
+            BadgeMark {
+                count: 0,
+                dot: true
+            },
+            "a group that does not name us only lights the dot"
+        );
+
+        let mut ada = Chat::new("2@s.whatsapp.net".into(), "Ada".into());
+        ada.unread = 3;
+        let mut marked = Chat::new("3@s.whatsapp.net".into(), "Grace".into());
+        marked.marked_unread = true;
+        let mut tagged = Chat::new("4-1@g.us".into(), "Team".into());
+        tagged.unread = 6;
+        tagged.unread_mentions = 2;
+        let mut muted_group = Chat::new("5-1@g.us".into(), "Loud".into());
+        muted_group.muted_until = Some(i64::MAX);
+        muted_group.unread = 9;
+        muted_group.unread_mentions = 1;
+        let mut muted_friend = Chat::new("6@s.whatsapp.net".into(), "Hush".into());
+        muted_friend.muted_until = Some(i64::MAX);
+        muted_friend.unread = 4;
+        let mut archived = Chat::new("7@s.whatsapp.net".into(), "Old".into());
+        archived.archived = true;
+        archived.unread = 4;
+        let mut channel = Chat::new("8@newsletter".into(), "News".into());
+        channel.unread = 3;
+        app.chats.extend([
+            ada,
+            marked,
+            tagged,
+            muted_group,
+            muted_friend,
+            archived,
+            channel,
+        ]);
+        // 3 from Ada, 1 marked by hand, 2 mentions in Team, 1 in the muted group.
+        assert_eq!(
+            app.badge_mark_everywhere(),
+            BadgeMark {
+                count: 7,
+                dot: true
+            }
+        );
+
+        app.account_mut().settings.notifications = false;
+        assert_eq!(app.badge_mark_everywhere(), BadgeMark::default());
+
+        // Reading the tagged group takes its mentions off the badge.
+        app.account_mut().settings.notifications = true;
+        app.mark_read("4-1@g.us");
+        assert_eq!(app.chat("4-1@g.us").unwrap().unread_mentions, 0);
+        assert_eq!(app.badge_mark_everywhere().count, 5);
     }
 
     #[test]

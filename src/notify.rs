@@ -20,6 +20,93 @@ pub fn badge_description(count: u32, locale: crate::i18n::Locale) -> String {
         .replace("{}", &count.to_string())
 }
 
+/// What the app icon shows, the way Slack's does: a number for what was
+/// said to us (every unread message in a direct chat, every unread mention
+/// in a group), and an empty dot when only other activity waits (group or
+/// channel messages that do not name us).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BadgeMark {
+    pub count: u32,
+    pub dot: bool,
+}
+
+impl BadgeMark {
+    pub fn combine(self, other: Self) -> Self {
+        Self {
+            count: self.count.saturating_add(other.count),
+            dot: self.dot || other.dot,
+        }
+    }
+
+    /// The Dock label: the number, a bullet for activity alone, else none.
+    #[cfg(any(target_os = "macos", test))]
+    fn label(self) -> Option<String> {
+        match (self.count, self.dot) {
+            (0, false) => None,
+            (0, true) => Some("\u{2022}".to_owned()),
+            (count, _) => Some(count.to_string()),
+        }
+    }
+}
+
+/// The application-wide badge. macOS draws the mark's label on the Dock tile
+/// itself, since only it can show a dot without a number; Linux launchers and
+/// the Windows overlay take a count, so they show the number and leave the
+/// dot to the tray icon, which already marks any unread chat.
+pub struct AppBadge {
+    #[cfg(not(target_os = "macos"))]
+    badge: Badge,
+    #[cfg(target_os = "macos")]
+    shown: Option<BadgeMark>,
+}
+
+impl AppBadge {
+    pub fn new(desktop_entry: impl Into<String>) -> Self {
+        #[cfg(target_os = "macos")]
+        let _ = desktop_entry.into();
+        Self {
+            #[cfg(not(target_os = "macos"))]
+            badge: Badge::new(desktop_entry),
+            #[cfg(target_os = "macos")]
+            shown: None,
+        }
+    }
+
+    /// Shows the mark. A repeat is not applied, so calling this every frame
+    /// costs nothing. Call on the UI thread.
+    pub fn set(&mut self, mark: BadgeMark) {
+        #[cfg(target_os = "macos")]
+        {
+            if self.shown == Some(mark) {
+                return;
+            }
+            // AppKit is main-thread only; the interface always calls from there.
+            let Some(main) = objc2::MainThreadMarker::new() else {
+                log::debug!("app badge: not on the main thread");
+                return;
+            };
+            log::debug!("app badge: {mark:?}");
+            let tile = objc2_app_kit::NSApplication::sharedApplication(main).dockTile();
+            let label = mark
+                .label()
+                .map(|label| objc2_foundation::NSString::from_str(&label));
+            tile.setBadgeLabel(label.as_deref());
+            self.shown = Some(mark);
+        }
+        #[cfg(not(target_os = "macos"))]
+        self.badge.set(mark.count);
+    }
+
+    /// The number shown, or `None` before the first update.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub fn count(&self) -> Option<u32> {
+        #[cfg(target_os = "macos")]
+        return self.shown.map(|mark| mark.count);
+        #[cfg(not(target_os = "macos"))]
+        self.badge.count()
+    }
+}
+
 /// Chat and message a clicked notification opens. The message id travels with
 /// the click, so the reader lands on what was announced instead of on the end
 /// of the chat. An incoming call has no message: its click only brings the
@@ -531,6 +618,39 @@ fn deliver(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_dock_shows_a_number_a_dot_or_nothing() {
+        use super::BadgeMark;
+        assert_eq!(BadgeMark::default().label(), None);
+        assert_eq!(
+            BadgeMark {
+                count: 0,
+                dot: true
+            }
+            .label()
+            .as_deref(),
+            Some("\u{2022}")
+        );
+        assert_eq!(
+            BadgeMark {
+                count: 4,
+                dot: true
+            }
+            .label()
+            .as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            BadgeMark {
+                count: 12,
+                dot: false
+            }
+            .label()
+            .as_deref(),
+            Some("12")
+        );
+    }
+
     /// Notifications on macOS need the bundle's own identifier, or the
     /// system never asks for permission.
     #[test]
