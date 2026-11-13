@@ -782,7 +782,11 @@ if it is unavailable, try again or block the person on your phone.
 
 The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
-Followed channels have their own **Channels** chip. **Archived**, in the rail
+Followed channels have their own **Channels** chip. The rail on the left has
+**Groups** and **Channels** as well, below **Chats** and **Calls**: each opens
+a list of its own, the group chats or the followed channels, and the list's
+title says which one it is. They show only while the account has such chats,
+and **Chats** leaves them again. **Archived**, in the rail
 on the left above **Settings**, opens the archived chats in the list, and
 shows how many of them are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The

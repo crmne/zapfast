@@ -17952,7 +17952,14 @@ mod tests {
             .filter(|node| node.label() == Some("Mute notifications"))
             .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
             .collect();
-        assert_eq!(bells, [false, true], "one bell per account, the second on");
+        // The tree is a hash map: the accounts' bells come in no order, so
+        // only the one that is on is counted.
+        assert_eq!(bells.len(), 2, "one bell per account");
+        assert_eq!(
+            bells.iter().filter(|on| **on).count(),
+            1,
+            "the muted account's bell is on: {bells:?}"
+        );
         // Only the muted account's row says so, not the one on screen.
         let said: Vec<_> = nodes
             .iter()
@@ -21713,6 +21720,40 @@ mod tests {
         }
     }
 
+    /// The rail's Groups and Channels lists hold only their own chats.
+    #[test]
+    fn the_rail_opens_the_groups_and_the_channels_apart() {
+        use crate::model::ChatFilter;
+        use crate::ui::rail::{Destination, destination_id};
+        let mut app = app();
+        app.search.clear();
+        app.show_archived = false;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let calls = ctx
+            .read_response(destination_id(Destination::Calls))
+            .expect("Calls is in the rail")
+            .rect;
+        let groups = ctx
+            .read_response(destination_id(Destination::Groups))
+            .expect("the demo has group chats")
+            .rect;
+        let channels = ctx
+            .read_response(destination_id(Destination::Channels))
+            .expect("the demo has a channel")
+            .rect;
+        assert!(calls.bottom() <= groups.top());
+        assert!(groups.bottom() <= channels.top());
+        // Each list holds only its own chats.
+        app.chat_filter = ChatFilter::Groups;
+        render(&mut app, &ctx);
+        assert!(app.visible_chats().iter().all(|chat| chat.is_group()));
+        app.chat_filter = ChatFilter::Channels;
+        render(&mut app, &ctx);
+        assert!(app.visible_chats().iter().all(|chat| chat.is_channel()));
+    }
+
     #[test]
     fn tab_after_record_does_not_focus_a_group_sender_or_passive_message() {
         let mut app = app();
@@ -22779,6 +22820,8 @@ mod tests {
                 Stop::Messages,
                 Stop::Chats,
                 Stop::Calls,
+                Stop::GroupsTab,
+                Stop::ChannelsTab,
                 Stop::Starred,
                 Stop::Archived,
                 Stop::Locked,
@@ -22896,6 +22939,8 @@ mod tests {
                         Stop::Messages,
                         Stop::Chats,
                         Stop::Calls,
+                        Stop::GroupsTab,
+                        Stop::ChannelsTab,
                         Stop::Starred,
                         Stop::Archived,
                         Stop::Locked,

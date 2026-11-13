@@ -955,6 +955,7 @@ fastframe_icons::icons! {
         RotateLeft => "rotate-ccw",
         RotateRight => "rotate-cw",
         Reply => "reply",
+        Rss => "rss",
         Search => lucide "search",
         Send => "send",
         Settings => lucide "settings",
