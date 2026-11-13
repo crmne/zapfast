@@ -8990,6 +8990,7 @@ dependencies = [
  "fastframe-titlebar",
  "fastframe-tray",
  "fastframe-update",
+ "flate2",
  "gethostname",
  "getrandom 0.4.3",
  "hkdf",

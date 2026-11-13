@@ -63,6 +63,7 @@ mod prefetch;
 mod star_recovery;
 mod sticker_pace;
 mod stickers;
+mod storage;
 
 use super::{
     Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
@@ -986,6 +987,7 @@ pub async fn run(
         account_session: 0,
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
+        smart_storage: Default::default(),
         withheld_pages: Vec::new(),
         dirs,
         events,
@@ -1162,7 +1164,9 @@ pub async fn run(
                     Some(command) => worker.handle_command(command).await,
                 }
             }
-            Some(event) = wa_events.recv() => match event {
+            Some(event) = wa_events.recv() => {
+                worker.storage_foreground_work();
+                match event {
                 RuntimeEvent::WhatsApp { session, event } => {
                     worker.whatsapp_event(session, event).await;
                 }
@@ -1187,30 +1191,35 @@ pub async fn run(
                     online,
                     succeeded,
                 } => worker.presence_sent(generation, online, succeeded),
+                }
             },
             Some(event) = async {
                 match call_events.as_mut() {
                     Some(events) => events.recv().await.ok(),
                     None => std::future::pending().await,
                 }
-            } => worker.call_runtime(event),
+            } => { worker.storage_foreground_work(); worker.call_runtime(event); },
             Some(tick) = async {
                 match call_frames.as_mut() {
                     Some(frames) => frames.recv().await.ok(),
                     None => std::future::pending().await,
                 }
-            } => worker.call_frame(tick),
+            } => { worker.storage_foreground_work(); worker.call_frame(tick); },
             _ = async {
                 match deadline {
                     Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
                     None => std::future::pending::<()>().await,
                 }
             } => {
+                worker.storage_foreground_work();
                 worker.sync_deadline = None;
                 worker.set_syncing(false);
                 worker.emit_chats();
             }
             _ = tick.tick() => {
+                // Idle VACUUM holds SQLite's writer lock. Incoming events and
+                // commands cancel it; postpone periodic archive maintenance.
+                if worker.storage_compacting() { continue; }
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -1225,12 +1234,15 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.pump_storage();
                 worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
             }
         }
     }
+    worker.stop_storage();
+    worker.wait_storage_compaction().await;
     worker.stop_chat_export().await;
     worker.shutdown_call().await;
     worker.stop_bot().await;
@@ -1458,6 +1470,7 @@ struct Worker {
     /// Latest pin or unpin attempt per message. A finished request whose
     /// generation is older than this is dropped.
     pin_generation: HashMap<(String, String), u64>,
+    smart_storage: storage::State,
     /// Transcript pages asked for while private content was withheld. Their
     /// answers never reached the interface, which still waits for them, so
     /// they are read again once content is shown (#180).
@@ -4652,6 +4665,8 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.stop_storage();
+        self.wait_storage_compaction().await;
         self.stop_chat_export().await;
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
@@ -7148,6 +7163,9 @@ impl Worker {
 
     /// Applies a UI or task command after checking current send permissions.
     async fn handle_command(&mut self, command: Command) {
+        if !matches!(&command, Command::StorageCompacted { .. }) {
+            self.storage_foreground_work();
+        }
         let destination = match &command {
             Command::SendText { chat, .. }
             | Command::ReplyInteractive { chat, .. }
@@ -7195,6 +7213,27 @@ impl Worker {
             return;
         }
         match command {
+            Command::StorageCompacted {
+                session,
+                generation,
+                saved,
+            } => self.storage_compacted(session, generation, saved),
+            Command::SetSmartStorage(enabled) => self.configure_storage(enabled),
+            Command::OptimizeStorage => self.start_storage(),
+            Command::CancelStorageOptimization => self.stop_storage(),
+            Command::StorageRawDone {
+                session,
+                generation,
+                packed,
+                failed,
+            } => self.storage_raw_done(session, generation, packed, failed),
+            Command::StorageVideoDone {
+                session,
+                generation,
+                path,
+                stamp,
+                result,
+            } => self.storage_video_done(session, generation, path, stamp, result),
             Command::FetchBlocklist => self.fetch_blocklist(),
             Command::SetBlocked { chat, blocked } => self.set_blocked(chat, blocked),
             Command::BlocklistFetched { generation, result } => {
@@ -20049,6 +20088,7 @@ mod receipt_tests {
             account_session: 0,
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
+            smart_storage: Default::default(),
             withheld_pages: Vec::new(),
             dirs: crate::paths::AppDirs::under(&root).as_account(),
             events,
