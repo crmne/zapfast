@@ -684,6 +684,12 @@ only the selected messages, in chat order, using the same sharing format,
 even if some have scrolled off-screen. Attachments contribute a text label and
 any caption; their files are not copied. Copying keeps the selection open.
 
+On Wayland, copied text stays on the clipboard after the window closes to the
+tray, so it can be pasted into other apps while ZapFast keeps running in the
+background. This needs a desktop that supports clipboard data-control
+(Hyprland, wlroots desktops, KDE, sway). Where it is missing, GNOME among them,
+the clipboard is only available while the window is open.
+
 ## Chats
 
 Someone without a saved contact or profile name shows as their phone number. In

@@ -9048,6 +9048,7 @@ dependencies = [
  "windows-sys 0.60.2",
  "winit",
  "winresource",
+ "wl-clipboard-rs",
  "zbus",
  "zbus-secret-service-keyring-store",
  "zeroize",

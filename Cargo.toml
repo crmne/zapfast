@@ -274,6 +274,11 @@ linuxvideo = "0.3.5"
 # Tells a Wayland window, which the compositor can blur behind the Messages
 # theme, from an X11 one. Already in the tree through eframe.
 raw-window-handle = "0.6"
+# Keeps the clipboard pasteable once the window closes to the tray: the
+# selection belongs to winit's event loop, which eframe keeps for the next
+# window without dispatching it (see src/clipboard.rs). Pure Rust, no native
+# library.
+wl-clipboard-rs = "0.9"
 # winit draws the window's frame itself where the compositor will not, as
 # GNOME on Wayland does not: Adwaita-style rounded corners, title and
 # buttons. eframe without its default features leaves winit with only a
