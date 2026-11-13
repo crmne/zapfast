@@ -358,7 +358,7 @@ fn run() -> eframe::Result<()> {
 
     #[allow(unused_mut)]
     let mut app = if demo {
-        app::App::headless(dirs, settings).0
+        demo_app(&waker, dirs, settings)
     } else {
         app::App::new(&waker, dirs, settings, app::AppOptions { tray: true })
             .map_err(|error| eframe::Error::AppCreation(error.into()))?
@@ -598,6 +598,26 @@ fn demo_size_arg() -> Option<[f32; 2]> {
         .nth(1)?;
     let (w, h) = value.split_once('x')?;
     Some([w.parse::<f32>().ok()?, h.parse::<f32>().ok()?])
+}
+
+/// The offline app of a demo run, repainting through the shell's waker.
+#[cfg(feature = "demo")]
+fn demo_app(
+    waker: &backend::Waker,
+    dirs: paths::AppDirs,
+    settings: settings::Settings,
+) -> app::App {
+    app::App::demo(waker, dirs, settings)
+}
+
+/// Without the `demo` feature no run is a demo.
+#[cfg(not(feature = "demo"))]
+fn demo_app(
+    _waker: &backend::Waker,
+    dirs: paths::AppDirs,
+    settings: settings::Settings,
+) -> app::App {
+    app::App::headless(dirs, settings).0
 }
 
 /// The tour `--demo-tour-script` names; clap has already checked the name.
