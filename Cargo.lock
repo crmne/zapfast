@@ -9035,6 +9035,7 @@ dependencies = [
  "sonora-aec3",
  "symphonia",
  "tempfile",
+ "tiny-skia 0.12.0",
  "tokio",
  "tokio-websockets",
  "tray-icon",

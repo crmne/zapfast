@@ -320,21 +320,37 @@ and shows how much has been sent and, after the first second, about how long
 the rest takes; it leaves when the file has gone, or if the send fails. Its
 close button cancels the send, and nothing reaches the chat.
 
-Select a picture in the review area and click **Edit picture** to crop it
-before sending. The picture opens over the window with the region to keep marked, and you can drag that
-region by its edges and corners or move it whole. **Turn left** and **Turn
-right** turn the picture a quarter at a time, and **Reset** puts it back the way
-it started. Press Enter or click the check to keep the crop, or Escape or the
-close button to leave the picture as it was. Opened from the keyboard, the
-cropper puts focus on the check (**Keep this crop**), Tab moves between its
-buttons, and Enter or Space presses the focused one, so Enter on the close
-button cancels. The region itself moves and resizes with the pointer only.
+Select a picture in the review area and click **Edit picture** to draw on it,
+crop it or turn it before sending. The picture opens over the window with the
+tools along the top: **Crop**, **Pen**, **Highlighter**, **Arrow**,
+**Rectangle** and **Pixelate**. The first time the editor opens, the pen is
+picked, so a drag across the picture draws a line. The pen, highlighter, arrow
+and rectangle draw in one of seven colours and three thicknesses, picked under
+the picture. Until ZapFast quits, the editor opens with the tool, colour and
+thickness you used last. **Pixelate** turns the
+region you drag over into coarse blocks, to hide a name or a number. The
+blocks show in the colours the sent picture will have; a large picture shows
+them in a plain colour for a moment while ZapFast reads it. **Undo**
+and **Redo** step through the marks, also with Ctrl+Z and Ctrl+Shift+Z or
+Ctrl+Y (Command on macOS).
 
-Keeping a crop does not change the file you picked. ZapFast writes the cropped
-picture beside its other media and sends that one, keeping any see-through
-parts of it. Opening the cropper again
-starts from your original with the crop you chose, so you can widen it back out
-without a second pass over the picture.
+With **Crop** picked, the region to keep is marked, and you can drag it by its
+edges and corners or move it whole. **Turn left** and **Turn right** turn the
+picture a quarter at a time, marks included, and **Reset** puts it back the way
+it started, without marks. Press Enter or click the check to keep the changes,
+or Escape or the close button to leave the picture as it was. If the changes
+cannot be saved, ZapFast says why. Unless the editor is already busy with
+another picture, it also opens again with them, so you can try once more
+without redrawing them. Opened from the keyboard, the editor puts focus on the check (**Keep changes**), Tab moves
+between its buttons, and Enter or Space presses the focused one, so Enter on
+the close button cancels. Drawing and the crop region work with the pointer
+only.
+
+Keeping the changes does not change the file you picked. ZapFast draws the
+marks, writes the result beside its other media and sends that one, keeping
+any see-through parts of it. Opening the editor again starts from your
+original with the marks and the crop you chose, so you can still undo a mark or
+widen the crop back out without a second pass over the picture.
 
 Pictures and videos sent as a WhatsApp album appear together in a grid, and so
 do four or more photos in a row from one person on one day, without captions.

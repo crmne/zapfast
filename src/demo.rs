@@ -419,6 +419,61 @@ fn tint(hue: f32, saturation: f32, value: f32) -> image::Rgb<u8> {
     ])
 }
 
+/// One mark of each kind on a picture this big, placed by share of its sides.
+/// A synthetic screenshot: lines of black "words" on white, as text reads
+/// from afar.
+fn print_screenshot(width: u32, height: u32) -> Vec<u8> {
+    image::RgbaImage::from_fn(width, height, |x, y| {
+        let (line, row) = (y / 30, y % 30);
+        let word = (x / 9 + line * 7) % 11;
+        let ink = x >= 40 && x < width - 40 && (8..20).contains(&row) && word < 8 && x % 9 > 1;
+        image::Rgba(if ink { [20, 20, 20, 255] } else { [255; 4] })
+    })
+    .into_raw()
+}
+
+fn picture_marks(width: f32, height: f32) -> Vec<crate::model::Mark> {
+    use crate::model::{Ink, Mark, Thickness};
+    let at = |x: f32, y: f32| [x * width, y * height];
+    let line = |thickness: Thickness| thickness.pixels(width as u32, height as u32);
+    let squiggle = (0..=24)
+        .map(|step| {
+            let t = step as f32 / 24.0;
+            at(0.12 + 0.3 * t, 0.7 + 0.06 * (t * 12.0).sin())
+        })
+        .collect();
+    vec![
+        Mark::Pixelate {
+            from: at(0.62, 0.12),
+            to: at(0.9, 0.34),
+        },
+        // A zigzag over itself, so the crossings show the highlighter is one
+        // even wash, as it is written.
+        Mark::Highlighter {
+            points: vec![at(0.1, 0.16), at(0.45, 0.28), at(0.45, 0.16), at(0.1, 0.28)],
+            ink: Ink::Yellow,
+            width: line(Thickness::Thick) * crate::model::HIGHLIGHTER_SPREAD,
+        },
+        Mark::Rectangle {
+            from: at(0.55, 0.45),
+            to: at(0.88, 0.85),
+            ink: Ink::Blue,
+            width: line(Thickness::Medium),
+        },
+        Mark::Arrow {
+            from: at(0.3, 0.45),
+            to: at(0.53, 0.6),
+            ink: Ink::Red,
+            width: line(Thickness::Medium),
+        },
+        Mark::Pen {
+            points: squiggle,
+            ink: Ink::Green,
+            width: line(Thickness::Thick),
+        },
+    ]
+}
+
 fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
     let dir = app.dirs.media_cache_dir();
     let photo = stock::save_photo(&dir, stock::SPACEWALK);
@@ -3873,12 +3928,57 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 // The photo is named by the strip, so another page having
                 // staged pictures already cannot point this at the wrong one.
                 let target = app.stage(crate::app::Pending::File(photo.clone()));
-                app.picture_edit = Some(crate::model::PictureEdit::new(
+                app.open_picture_edit(crate::model::PictureEdit::new(
                     target,
                     crate::model::PictureSource::File(photo),
                     width,
                     height,
                 ));
+                app.picture_brush.tool = crate::model::PictureTool::Crop;
+            }
+            // The editor on the same picture, already drawn on with each
+            // tool, the highlighter picked.
+            "picture-marks" => {
+                let (photo, _) = sample_files(app);
+                let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                let target = app.stage(crate::app::Pending::File(photo.clone()));
+                let mut edit = crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::File(photo),
+                    width,
+                    height,
+                );
+                edit.marks = picture_marks(width as f32, height as f32);
+                app.open_picture_edit(edit);
+                app.picture_brush = crate::model::Brush {
+                    tool: crate::model::PictureTool::Highlighter,
+                    ink: crate::model::Ink::Yellow,
+                    thickness: crate::model::Thickness::Thick,
+                };
+            }
+            // A pasted screenshot of text with a line of it pixelated, the
+            // pixelate tool picked.
+            "picture-pixelate" => {
+                let (width, height) = (720u32, 420u32);
+                let rgba = print_screenshot(width, height);
+                let target = app.stage(crate::app::Pending::Picture {
+                    width: width as usize,
+                    height: height as usize,
+                    rgba: std::sync::Arc::new(rgba.clone()),
+                    texture: None,
+                });
+                let mut edit = crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::Pasted(std::sync::Arc::new(rgba)),
+                    width,
+                    height,
+                );
+                edit.marks = vec![crate::model::Mark::Pixelate {
+                    from: [40.0, 130.0],
+                    to: [520.0, 190.0],
+                }];
+                app.open_picture_edit(edit);
+                app.picture_brush.tool = crate::model::PictureTool::Pixelate;
             }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
@@ -9346,6 +9446,108 @@ mod tests {
         assert!(app.picture_edit.is_none(), "keeping the crop closes it");
     }
 
+    /// Keeping a drawn-on picture writes the marks into the staged file and
+    /// remembers them apart, so opening the editor again can still take
+    /// them back.
+    #[test]
+    fn keeping_marks_draws_them_and_reopening_finds_them_editable() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("picture-marks"));
+        render(&mut app, &ctx);
+        let edit = app.picture_edit.clone().expect("the editor is open");
+        let (target, marks) = (edit.target, edit.marks.clone());
+        assert_eq!(marks.len(), 5);
+        let plain = crate::backend::picture_edit::write(
+            &crate::model::PictureOrigin {
+                marks: Vec::new(),
+                ..edit.origin()
+            },
+            &app.dirs.media_cache_dir().join("plain"),
+        )
+        .expect("writes the picture without marks");
+        app.actions.push(crate::model::Action::ApplyPictureEdit);
+        render(&mut app, &ctx);
+        crate::demo::tour::respond(&mut app);
+        let at = app.staged_at(target).expect("still staged");
+        let path = match &app.pending[at].item {
+            crate::app::Pending::File(path) => path.clone(),
+            _ => panic!("the edit leaves a file staged"),
+        };
+        assert_ne!(
+            std::fs::read(&path).unwrap(),
+            std::fs::read(&plain).unwrap(),
+            "the marks are in the written picture"
+        );
+        app.actions.push(crate::model::Action::EditPicture(target));
+        render(&mut app, &ctx);
+        let again = app.picture_edit.as_ref().expect("the editor opened again");
+        assert_eq!(again.marks, marks, "each mark can still be undone");
+        assert!(
+            matches!(&again.source, crate::model::PictureSource::File(source) if *source != path),
+            "drawn from the original, not the written copy"
+        );
+    }
+
+    /// The editor's controls stay inside the window and clear of each other,
+    /// from the smallest window ZapFast allows to a wide one, with the inks
+    /// shown and without them.
+    #[test]
+    fn the_picture_editors_controls_fit_every_window() {
+        let editor =
+            egui::LayerId::new(egui::Order::Foreground, crate::ui::image_editor::area_id());
+        for size in [
+            egui::vec2(400.0, 300.0),
+            egui::vec2(480.0, 720.0),
+            egui::vec2(700.0, 500.0),
+            egui::vec2(1180.0, 780.0),
+        ] {
+            for page in ["picture-marks", "crop"] {
+                let mut app = self::app();
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                apply_flags(&mut app, Some(page));
+                render_sized(&mut app, &ctx, size);
+                let window = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                let buttons: Vec<egui::Rect> = ctx.viewport(|viewport| {
+                    viewport
+                        .prev_pass
+                        .widgets
+                        .layers()
+                        .filter(|(layer, _)| **layer == editor)
+                        .flat_map(|(_, widgets)| widgets.iter())
+                        // The area itself senses the window's whole size.
+                        .filter(|widget| {
+                            widget.visible
+                                && widget.sense.senses_click()
+                                && widget.interact_rect != window
+                        })
+                        .map(|widget| widget.interact_rect)
+                        .collect()
+                });
+                let least = if page == "crop" { 10 } else { 20 };
+                assert!(
+                    buttons.len() >= least,
+                    "{page} at {size:?}: {} buttons",
+                    buttons.len()
+                );
+                for (at, button) in buttons.iter().enumerate() {
+                    assert!(
+                        window.contains_rect(*button),
+                        "{page} at {size:?}: {button:?} leaves the window"
+                    );
+                    for other in &buttons[at + 1..] {
+                        assert!(
+                            !button.shrink(0.5).intersects(other.shrink(0.5)),
+                            "{page} at {size:?}: {button:?} overlaps {other:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn reopening_a_cropped_pasted_picture_finds_its_pixels_again() {
         let mut app = app();
@@ -9379,6 +9581,7 @@ mod tests {
                 height,
                 crop: crate::model::PictureCrop::full(width, height),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         app.actions.push(crate::model::Action::EditPicture(target));
@@ -9824,6 +10027,9 @@ mod tests {
             "attachment-draft-away",
             "attachment-draft-return",
             "crop",
+            "picture-marks",
+            "picture-marks,light",
+            "picture-pixelate",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

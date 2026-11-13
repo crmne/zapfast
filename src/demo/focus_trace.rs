@@ -1018,7 +1018,7 @@ fn open_cropper(trace: &mut Trace, target: crate::app::AttachmentId, photo: &std
     trace.settle("open the cropper", 4);
 }
 
-/// The cropper, opened from the keys, takes focus on "Keep this crop" and
+/// The cropper, opened from the keys, takes focus on "Keep changes" and
 /// keeps Tab among its own controls, never the chat under it. Enter presses
 /// the focused button: Cancel leaves the picture as it was and gives focus
 /// back to the attachment review, Turn left turns it, and Keep keeps the crop.
@@ -1038,7 +1038,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
     trace.assert_clean(from, "the cropper opened");
     assert_eq!(
         trace.last().name,
-        "Button \"Keep this crop\"",
+        "Button \"Keep changes\"",
         "{}",
         trace.dump(from)
     );
@@ -1059,7 +1059,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
     }
     // Enter on Cancel cancels: nothing is kept, and the reader is back on
     // the attachment review.
-    for _ in 0..8 {
+    for _ in 0..40 {
         if trace.last().name.contains("Cancel") {
             break;
         }
@@ -1082,7 +1082,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
     );
     // Enter on Turn left turns the picture and stays.
     open_cropper(&mut trace, target, &photo);
-    for _ in 0..8 {
+    for _ in 0..40 {
         if trace.last().name.contains("Turn left") {
             break;
         }
@@ -1109,7 +1109,7 @@ fn the_cropper_takes_focus_and_enter_presses_the_focused_button() {
 /// A file's cropper opens frames after it was asked for, once the
 /// picture's size is read. Asked for with the pointer, it leaves focus
 /// where it was even with a screen reader attached; asked for from the
-/// keys, it takes it on "Keep this crop".
+/// keys, it takes it on "Keep changes".
 #[test]
 fn the_cropper_follows_focus_as_it_was_asked_for() {
     for pointer in [true, false] {
@@ -1151,7 +1151,7 @@ fn the_cropper_follows_focus_as_it_was_asked_for() {
         } else {
             assert_eq!(
                 trace.last().name,
-                "Button \"Keep this crop\"",
+                "Button \"Keep changes\"",
                 "{}",
                 trace.dump(1)
             );
