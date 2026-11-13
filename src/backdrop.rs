@@ -28,7 +28,12 @@ pub fn active() -> bool {
 /// theme changes this choice.
 pub fn transparent_window(messages: bool, see_through: bool) -> bool {
     (messages && platform::may_show_through())
-        || (see_through && cfg!(any(target_os = "macos", target_os = "linux")))
+        || (see_through
+            && cfg!(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "freebsd"
+            )))
 }
 
 /// Whether the window on screen was made transparent, so a frame may clear
@@ -154,7 +159,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod platform {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -208,7 +213,12 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    windows,
+    target_os = "linux",
+    target_os = "freebsd"
+)))]
 mod platform {
     pub fn may_show_through() -> bool {
         false
@@ -240,7 +250,11 @@ mod tests {
     fn a_see_through_theme_gets_a_transparent_window_on_linux() {
         assert_eq!(
             transparent_window(false, true),
-            cfg!(any(target_os = "macos", target_os = "linux"))
+            cfg!(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "freebsd"
+            ))
         );
         let glass = egui::Color32::from_rgba_premultiplied(0, 0, 0, 0);
         set_window_transparent(false);
