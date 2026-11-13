@@ -9386,6 +9386,20 @@ impl App {
             Action::FocusComposer => {
                 self.focus_search = false;
                 self.focus_composer = true;
+                // A click on the chat's empty space comes from a widget drawn
+                // after the message field, which egui has already unfocused for
+                // clicking elsewhere and painted without its caret and ring.
+                // Shown as is, the field blinks off for a frame before the
+                // request above takes focus back. When it held focus coming
+                // into this frame, give it back now and redraw the pass, so it
+                // stays focused throughout.
+                let composer = crate::ui::conversation::composer_id();
+                if ctx.memory(|memory| {
+                    memory.had_focus_last_frame(composer) && memory.focused().is_none()
+                }) {
+                    ctx.memory_mut(|memory| memory.request_focus(composer));
+                    ctx.request_discard("keep the message field focused on a background click");
+                }
             }
             Action::ScrollToBottom => {
                 self.scroll_to_bottom = true;

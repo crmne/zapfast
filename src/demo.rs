@@ -12505,6 +12505,55 @@ mod tests {
         assert!(ctx.memory(|memory| memory.has_focus(composer)));
     }
 
+    /// A focused message field stays focused through a click on the chat's
+    /// empty space: it is never drawn unfocused for a frame, which blinks.
+    #[test]
+    fn clicking_beside_a_message_keeps_the_composer_focused_throughout() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = app.open_chat.clone().expect("the demo opens a chat");
+        app.focus_composer = true;
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let composer = egui::Id::new("composer-text");
+        assert!(ctx.memory(|memory| memory.has_focus(composer)));
+        let viewport = app
+            .selection_view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .expect("the message viewport is on screen");
+        let bubble = app.conversations[&chat]
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| {
+                let id = crate::ui::conversation::bubble_id(&chat, &message.id).with("rect");
+                let rect = ctx.data(|data| data.get_temp::<egui::Rect>(id))?;
+                (viewport.contains_rect(rect) && rect.right() < viewport.right() - 60.0)
+                    .then_some(rect)
+            })
+            .expect("an incoming bubble with room beside it");
+        let at = egui::pos2(viewport.right() - 20.0, bubble.center().y);
+        let pointer = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), pointer(true)],
+        );
+        assert!(ctx.memory(|memory| memory.has_focus(composer)), "pressed");
+        frame_with(&mut app, &ctx, vec![pointer(false)]);
+        assert!(
+            ctx.memory(|memory| memory.has_focus(composer)),
+            "the frame of the click shows the field focused"
+        );
+    }
+
     /// Our time or ticks open "Message info"; an incoming time opens nothing.
     #[test]
     fn clicking_the_time_or_ticks_opens_message_info() {
