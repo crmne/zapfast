@@ -2902,6 +2902,17 @@ const STICKY_DATE_HOLD: f64 = 1.0;
 /// How long the sticky date takes to fade out.
 const STICKY_DATE_FADE: f32 = 0.25;
 
+/// The date belongs below the vibrant header's entire frosted tail. The
+/// transcript itself still scrolls behind that header.
+fn date_viewport(viewport: Rect, under: f32) -> Rect {
+    let covered = if under > 0.0 {
+        under + HEADER_TAIL
+    } else {
+        0.0
+    };
+    viewport.with_min_y((viewport.top() + covered).min(viewport.bottom()))
+}
+
 /// Keeps the first visible message's date at the top of the transcript once
 /// its day separator has scrolled away, while the reader scrolls: it fades
 /// out a moment after the transcript stops moving, as on the phone.
@@ -2913,13 +2924,14 @@ fn sticky_date<R>(
     chat: &Chat,
     output: &egui::scroll_area::ScrollAreaOutput<R>,
     visible_day: Option<(i64, f32)>,
+    under: f32,
 ) {
     let id = egui::Id::new(("visible-message-date", &chat.id));
     let ctx = ui.ctx().clone();
     let now = ui.input(|input| input.time);
     let offset = output.state.offset.y;
-    let viewport = output.inner_rect;
-    let at_bottom = offset + viewport.height() >= output.content_size.y - 24.0;
+    let at_bottom = offset + output.inner_rect.height() >= output.content_size.y - 24.0;
+    let viewport = date_viewport(output.inner_rect, under);
     let (last_offset, was_at_bottom, mut moved_at) = ctx
         .data(|data| data.get_temp::<(f32, bool, f64)>(id))
         .unwrap_or((offset, at_bottom, f64::NEG_INFINITY));
@@ -4085,7 +4097,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             );
                         });
                         if visible_day.is_none()
-                            && before + measured > viewport.top()
+                            && before + measured > date_viewport(viewport, under).top()
                             && before < viewport.bottom()
                         {
                             visible_day = Some((message.timestamp, day_separator_top));
@@ -4210,7 +4222,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
             data.remove::<TextSelectionRows>(text_selection_id);
         }
     });
-    sticky_date(ui, &palette, app.locale, chat, &output, visible_day);
+    sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
     ui.ctx().data_mut(|data| {
@@ -11794,6 +11806,81 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sticky_date_clears_the_entire_vibrant_header() {
+        use super::*;
+        for palette in [
+            Palette::messages(),
+            Palette::messages_light(),
+            Palette::dark(),
+            Palette::light(),
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let chat = Chat::new("synthetic@s.whatsapp.net".into(), "Demo".into());
+            let under = if palette.vibrant() { 80.0 } else { 0.0 };
+            let mut clear_top = 0.0;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let scroll = egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        ui.allocate_space(vec2(400.0, 2000.0));
+                    });
+                let viewport = date_viewport(scroll.inner_rect, under);
+                clear_top = scroll.inner_rect.top()
+                    + if under > 0.0 {
+                        under + HEADER_TAIL
+                    } else {
+                        0.0
+                    };
+                assert_eq!(viewport.top(), clear_top);
+                assert_eq!(viewport.bottom(), scroll.inner_rect.bottom());
+                // A prior offset makes this frame a reader's scroll, so the
+                // date appears immediately instead of waiting for a fade.
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new(("visible-message-date", &chat.id)),
+                        (10.0_f32, false, f64::NEG_INFINITY),
+                    )
+                });
+                sticky_date(
+                    ui,
+                    &palette,
+                    crate::i18n::Locale::English,
+                    &chat,
+                    &scroll,
+                    Some((1, scroll.inner_rect.top() - 100.0)),
+                    under,
+                );
+            });
+            output.textures_delta.clear();
+            let dates: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((shape.clip_rect, text.pos))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert!(!dates.is_empty(), "the sticky date must actually paint");
+            for (clip, pos) in dates {
+                assert!(clip.top() >= clear_top);
+                assert!(pos.y >= clear_top, "date must not sit behind the blur");
+            }
+        }
+    }
+
+    #[test]
+    fn sticky_date_viewport_stays_valid_in_a_short_window() {
+        let viewport = egui::Rect::from_min_max(egui::pos2(0.0, 10.0), egui::pos2(400.0, 40.0));
+        let clear = super::date_viewport(viewport, 80.0);
+        assert_eq!(clear.top(), clear.bottom());
+        assert_eq!(super::date_viewport(viewport, 0.0), viewport);
+    }
+
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]
     fn a_vibrant_header_folds_its_buttons_rather_than_cover_the_name() {
