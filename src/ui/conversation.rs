@@ -4536,14 +4536,14 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String, 
                 let typing = typers
                     .iter()
                     .any(|(_, _, activity)| *activity == ChatActivity::Typing);
-                ui.horizontal(|ui| {
-                    if recording {
-                        theme::icon(ui, Icon::Mic, 18.0, palette.secondary);
-                    }
-                    if typing {
-                        typing_dots(ui, &palette);
-                    }
-                });
+                // The frame already lays out in the row's direction; a row of
+                // its own would be a button tall, twice the dots (#830).
+                if recording {
+                    theme::icon(ui, Icon::Mic, 18.0, palette.secondary);
+                }
+                if typing {
+                    typing_dots(ui, &palette);
+                }
             })
             .response
             .rect;
@@ -13063,6 +13063,48 @@ mod tests {
         seen.sort();
         seen.dedup();
         assert!(seen.len() >= 9, "{} different steps", seen.len());
+    }
+
+    /// The activity bubble is as tall as what it shows plus its margins, not
+    /// a row nested inside it (#830).
+    #[test]
+    fn the_activity_bubble_fits_its_dots_and_microphone() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        crate::theme::apply(&ctx, &Palette::dark());
+        with_still_view(|view| {
+            let height = |activities: &[ChatActivity]| {
+                let typers: Vec<_> = activities
+                    .iter()
+                    .map(|activity| ("2@s.whatsapp.net".to_owned(), "Bo".to_owned(), *activity))
+                    .collect();
+                let mut height = 0.0;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(400.0, 200.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let top = ui.cursor().top();
+                        typing_bubble(ui, view, &typers);
+                        height = ui.min_rect().bottom() - top;
+                    },
+                );
+                output.textures_delta.clear();
+                height
+            };
+            // The dots' bubble keeps the row's own height, as before 0.21;
+            // the 18-point microphone sits inside 9-point margins.
+            assert_eq!(height(&[ChatActivity::Typing]), 28.0);
+            assert_eq!(height(&[ChatActivity::RecordingAudio]), 36.0);
+            assert_eq!(
+                height(&[ChatActivity::Typing, ChatActivity::RecordingAudio]),
+                36.0
+            );
+        });
     }
 
     #[test]
