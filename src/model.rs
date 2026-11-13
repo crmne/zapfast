@@ -3301,6 +3301,7 @@ pub enum Action {
     /// (`true`) or the desktop's. Decorations are fixed when a window is
     /// made, so the window is replaced.
     SetCustomTitlebar(bool),
+    SetTrayIcon(crate::settings::TrayIcon),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

@@ -19,7 +19,7 @@ use crate::model::{
 };
 use crate::nav::{History, Location};
 use crate::paths::AppDirs;
-use crate::settings::{AccountRoster, NotificationSound, Settings, ThemeChoice};
+use crate::settings::{AccountRoster, NotificationSound, Settings, ThemeChoice, TrayIcon};
 use crate::single_instance::{ControlCommand, Guard};
 use crate::theme::{self, Palette};
 
@@ -938,6 +938,10 @@ pub struct App {
     /// its command line tool.
     #[cfg(test)]
     test_raised: bool,
+    /// Stands in for the colour a panel paints the tray icon in, which tests
+    /// cannot spawn.
+    #[cfg(all(test, target_os = "linux"))]
+    test_tray_colour: Option<fastframe_tray::IconColour>,
     /// Whether the tray menu offers "Lock ZapFast": whether an app lock
     /// password was set when it last changed.
     tray_lockable: bool,
@@ -1357,12 +1361,17 @@ const TRAY_COLOUR_EVERY: Duration = Duration::from_secs(3);
 /// The tray icon's colour on a panel that is dark or light. An unknown panel
 /// keeps the app's own full-colour icon, which reads on either; so does the
 /// macOS menu bar, where it is the template the bar recolours.
-fn tray_colour(panel_dark: Option<bool>) -> fastframe_tray::IconColour {
+fn tray_colour(choice: TrayIcon, panel_dark: Option<bool>) -> fastframe_tray::IconColour {
     use fastframe_tray::IconColour;
-    match panel_dark {
-        Some(true) => IconColour::White,
-        Some(false) => IconColour::Black,
-        None => IconColour::Original,
+    match choice {
+        TrayIcon::Automatic => match panel_dark {
+            Some(true) => IconColour::White,
+            Some(false) => IconColour::Black,
+            None => IconColour::Original,
+        },
+        TrayIcon::LightPanel => IconColour::Black,
+        TrayIcon::DarkPanel => IconColour::White,
+        TrayIcon::Original => IconColour::Original,
     }
 }
 
@@ -1786,6 +1795,8 @@ impl App {
             test_tray_shown: None,
             #[cfg(test)]
             test_raised: false,
+            #[cfg(all(test, target_os = "linux"))]
+            test_tray_colour: None,
             tray_lockable,
             window_hidden: false,
             hide_intent: false,
@@ -2403,10 +2414,27 @@ impl App {
             return;
         }
         self.tray_colour_checked = Some(now);
-        let colour = tray_colour(self.panel_is_dark());
+        let colour = tray_colour(self.tray_icon_choice(), self.panel_is_dark());
+        #[cfg(all(test, target_os = "linux"))]
+        {
+            self.test_tray_colour = Some(colour);
+        }
         if let Some(tray) = &mut self.tray {
             tray.set_icon_colour(colour);
         }
+    }
+
+    /// The tray choice in force. It is a setting on Linux alone, where a
+    /// custom panel can differ from the apps' own colour scheme; every other
+    /// platform keeps the automatic behaviour of its panel or menu bar.
+    #[cfg(target_os = "linux")]
+    fn tray_icon_choice(&self) -> TrayIcon {
+        self.settings.tray_icon
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn tray_icon_choice(&self) -> TrayIcon {
+        TrayIcon::Automatic
     }
 
     /// Whether the desktop's panel is dark, where that can be known. GNOME's
@@ -9630,6 +9658,14 @@ impl App {
                     }
                 }
             }
+            Action::SetTrayIcon(choice) => {
+                if self.settings.tray_icon != choice {
+                    self.settings.tray_icon = choice;
+                    self.mark_settings_dirty();
+                    self.tray_colour_checked = None;
+                    self.sync_tray_colour(Instant::now());
+                }
+            }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
@@ -15717,9 +15753,44 @@ mod tests {
     #[test]
     fn the_tray_icon_is_monochrome_against_a_known_panel() {
         use fastframe_tray::IconColour;
-        assert_eq!(super::tray_colour(Some(true)), IconColour::White);
-        assert_eq!(super::tray_colour(Some(false)), IconColour::Black);
-        assert_eq!(super::tray_colour(None), IconColour::Original);
+        assert_eq!(
+            super::tray_colour(TrayIcon::Automatic, Some(true)),
+            IconColour::White
+        );
+        assert_eq!(
+            super::tray_colour(TrayIcon::Automatic, Some(false)),
+            IconColour::Black
+        );
+        assert_eq!(
+            super::tray_colour(TrayIcon::Automatic, None),
+            IconColour::Original
+        );
+        assert_eq!(
+            super::tray_colour(TrayIcon::LightPanel, Some(true)),
+            IconColour::Black
+        );
+        assert_eq!(
+            super::tray_colour(TrayIcon::DarkPanel, Some(false)),
+            IconColour::White
+        );
+        assert_eq!(
+            super::tray_colour(TrayIcon::Original, Some(true)),
+            IconColour::Original
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn choosing_a_tray_icon_repaints_the_existing_item_at_once() {
+        use fastframe_tray::IconColour;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.settings.tray_icon = TrayIcon::LightPanel;
+        // Inside the refresh window, so only the action's own reset repaints.
+        app.tray_colour_checked = Some(Instant::now());
+        app.apply(Action::SetTrayIcon(TrayIcon::DarkPanel), &ctx);
+        assert_eq!(app.settings.tray_icon, TrayIcon::DarkPanel);
+        assert_eq!(app.test_tray_colour, Some(IconColour::White));
     }
 
     #[test]
