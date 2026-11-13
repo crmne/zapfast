@@ -23,6 +23,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let status = app.player.status(&message);
     let palette = app.palette;
     let title = app.voice_chat_title(&chat);
+    // Without a chat header, keep the full-width player below any caption
+    // buttons at the window's top corners.
+    let room = super::caption_room(
+        ui.ctx(),
+        ui.available_rect_before_wrap(),
+        ui.available_width(),
+    );
+    ui.add_space(room.top);
     let (bar, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT), Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

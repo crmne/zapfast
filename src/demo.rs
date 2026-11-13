@@ -10057,6 +10057,44 @@ mod tests {
         assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x)).is_empty());
     }
 
+    /// Closing the chat while a clip plays must leave its controls clear of
+    /// the caption buttons, even without a chat header above the voice bar.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "macOS has the traffic lights, never the drawn caption buttons"
+    )]
+    fn the_voice_bar_without_a_chat_keeps_clear_of_caption_buttons() {
+        for footprint in [
+            fastframe_titlebar::Footprint {
+                left: 0.0,
+                right: 113.0,
+                height: crate::theme::TOP_BAR_HEIGHT,
+            },
+            fastframe_titlebar::Footprint {
+                left: 122.0,
+                right: 0.0,
+                height: 41.0,
+            },
+        ] {
+            for page in ["empty", "empty,nosidebar", "offline,empty"] {
+                let mut app = self::app();
+                let chat = app.open_chat.clone().unwrap();
+                app.player.hold_paused("clip");
+                app.play_clip_from(&chat);
+                apply_flags(&mut app, Some(page));
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                crate::theme::preview_titlebar(&ctx, footprint);
+                let size = egui::vec2(700.0, 600.0);
+                render_sized(&mut app, &ctx, size);
+                assert!(app.voice_elsewhere().is_some());
+                let under = widgets_under(&ctx, &caption_rects(footprint, size.x));
+                assert!(under.is_empty(), "{page} with {footprint:?}: {under:?}");
+            }
+        }
+    }
+
     /// A header shares the caption row only at a corner it reaches: beside
     /// the buttons when its content fits, under them otherwise, and not at
     /// all below the row or away from the edge.
