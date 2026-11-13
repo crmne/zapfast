@@ -30,6 +30,10 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   reactions, forwards, pictures, files, stickers, GIFs, and recorded voice
   messages. You can add captions to attachments and send one photo as a
   WhatsApp view-once message.
+- **Views and publishes Status updates.** Open text, photos and videos in the
+  Status tab, reply or react, and publish text, photos or MP4 videos to an
+  explicitly chosen audience. Received updates expire after 24 hours.
+  [Scope and limits](/using-zapfast/#status).
 - **Makes calls.** Place and answer one-to-one voice and video calls, with
   mute, camera and a choice of microphone, speaker and camera, and see every
   call, group calls included, in its chat and on the Calls page.
@@ -63,8 +67,8 @@ Feature requests can be discussed within the project's
 [product boundaries](https://github.com/crmne/zapfast/blob/main/CONTRIBUTING.md#before-opening-an-issue).
 ZapFast does not currently support:
 
-- Creating call links and screen sharing; status posts, communities and
-  publishing to channels. Group calls work, as an experiment (see the guide).
+- Creating call links and screen sharing; fetching the
+  complete phone Status list, communities and publishing to channels. Group calls work, as an experiment (see the guide).
 - Playing videos outside the supported H.264 MP4 format in the app; they open
   in your system player. Attachments over 64 MiB download only when you click
   them, never automatically.

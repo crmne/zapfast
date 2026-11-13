@@ -184,7 +184,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) -> bool {
 }
 
 /// The tile after the files, the same size, that adds another.
-fn add_tile(ui: &mut egui::Ui, palette: &theme::Palette) -> egui::Response {
+pub(super) fn add_tile(ui: &mut egui::Ui, palette: &theme::Palette) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(TILE), Sense::click());
     let response = response.tab_stop(Stop::ReviewAdd);
     theme::reveal_focus(&response);
@@ -217,7 +217,7 @@ fn add_tile(ui: &mut egui::Ui, palette: &theme::Palette) -> egui::Response {
 }
 
 /// A visible tile selects its file; its corner button removes only that file.
-fn tile(
+pub(super) fn tile(
     ui: &mut egui::Ui,
     palette: &theme::Palette,
     item: &mut Staged,

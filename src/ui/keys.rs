@@ -251,6 +251,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let escape = (!menu_open || app.reaction_target.is_some())
         && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     if escape {
+        // The Status page covers the chat: what the hidden composer, list
+        // or selection holds waits for the chat to come back.
+        let on_status = app.page == Page::Status;
         if app.show_update {
             actions.push(Action::CloseUpdate);
         } else if app.dialog.is_some() {
@@ -259,26 +262,26 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CancelRecording);
         } else if app.picker.is_some() || app.reaction_target.is_some() {
             actions.push(Action::ClosePicker);
-        } else if app.selection.is_some() {
+        } else if !on_status && app.selection.is_some() {
             // Taken here, the key never reaches the selection bar, and
             // would otherwise fall through to closing the chat.
             actions.push(Action::CancelSelection);
-        } else if app.show_starred {
+        } else if !on_status && app.show_starred {
             actions.push(Action::ToggleStarred);
         } else if app.chat_search_visible() && app.chat_search_calendar {
             // The day filter first, then the pane it hangs from.
             app.chat_search_calendar = false;
         } else if app.chat_search_visible() && !composer_focused {
             actions.push(Action::CloseChatSearch);
-        } else if app.emoji_start.is_some() {
+        } else if !on_status && app.emoji_start.is_some() {
             actions.push(Action::CloseEmojiSuggestions);
-        } else if app.mention_start.is_some() {
+        } else if !on_status && app.mention_start.is_some() {
             actions.push(Action::CloseMentions);
-        } else if !app.pending.is_empty() {
+        } else if !on_status && !app.pending.is_empty() {
             actions.push(Action::ClearPending);
-        } else if app.editing.is_some() {
+        } else if !on_status && app.editing.is_some() {
             actions.push(Action::CancelEdit);
-        } else if app.reply_to.is_some() {
+        } else if !on_status && app.reply_to.is_some() {
             actions.push(Action::CancelReply);
         } else if app.call_fullscreen {
             // The window shrinks back first, and only then does the next Escape put the surface
@@ -307,6 +310,35 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             } else {
                 Action::CloseInfo
             });
+        } else if app.page == Page::Status && app.status_privacy_open {
+            if app.status_privacy_picker.take().is_none() {
+                app.status_privacy_open = false;
+            }
+        } else if app.page == Page::Status && app.status_delete_confirm.take().is_some() {
+        } else if app.page == Page::Status && app.status_viewers_open {
+            app.status_viewers_open = false;
+        } else if app.page == Page::Status && app.status_picker.take().is_some() {
+        } else if app.page == Page::Status
+            && app
+                .status_draft
+                .as_ref()
+                .is_some_and(|draft| draft.editor.is_some())
+        {
+            if !app.status_picture_busy()
+                && let Some(draft) = app.status_draft.as_mut()
+            {
+                draft.editor = None;
+            }
+        } else if app.page == Page::Status && app.status_draft.is_some() {
+            if !app.status_draft.as_ref().is_some_and(|draft| draft.busy) {
+                app.status_draft = None;
+            }
+        } else if app.page == Page::Status && app.status_selected.is_some() {
+            actions.push(Action::CloseStatus {
+                account: app.account().id.clone(),
+            });
+        } else if app.page == Page::Status {
+            actions.push(Action::Open(Page::Chats));
         } else if app.page == Page::Wallpaper {
             actions.push(Action::Open(Page::Settings));
         } else if app.page == Page::Settings && !app.settings_search.is_empty() {
@@ -1923,6 +1955,43 @@ mod tests {
             "the panel, not the chat: {:?}",
             app.actions
         );
+    }
+
+    /// The Status page covers the chat, so Escape there closes the Status
+    /// and then the page, leaving the hidden chat's unsent work alone.
+    #[test]
+    fn escape_on_the_status_page_keeps_the_hidden_composer_state() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Status;
+        app.open_chat = Some("fixture".into());
+        app.reply_to = Some("reply".into());
+        app.editing = Some("edit".into());
+        app.emoji_start = Some(0);
+        app.stage(crate::app::Pending::File("unsent.png".into()));
+        app.status_selected = Some(("1@s.whatsapp.net".into(), "story".into()));
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::CloseStatus { .. }]),
+            "{:?}",
+            app.actions
+        );
+        app.actions.clear();
+        app.status_selected = None;
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::Open(Page::Chats)]),
+            "{:?}",
+            app.actions
+        );
+        assert_eq!(app.pending.len(), 1, "the staged file stays");
+        assert!(app.reply_to.is_some() && app.editing.is_some());
+        assert_eq!(app.emoji_start, Some(0));
     }
 
     #[test]

@@ -24,6 +24,29 @@ const CELL: f32 = 48.0;
 const PLATE: f32 = 36.0;
 /// A destination's icon.
 const ICON: f32 = 20.0;
+
+/// Where the Status dot sits: on the icon's top right corner.
+fn badge_anchor(plate: egui::Rect) -> egui::Pos2 {
+    plate.center() + vec2(ICON * 0.5 + 1.0, -ICON * 0.5 + 1.0)
+}
+
+/// Whether someone else's viewable update is still unseen. The seen set is
+/// borrowed once, so the rail allocates nothing per update each frame.
+fn unseen_status(app: &App) -> bool {
+    if app.statuses.is_empty() {
+        return false;
+    }
+    let seen: std::collections::HashSet<(&str, &str)> = app
+        .status_seen
+        .iter()
+        .map(|(sender, id)| (sender.as_str(), id.as_str()))
+        .collect();
+    app.statuses.iter().any(|item| {
+        !app.is_own_status(item)
+            && app.can_view_status(item)
+            && !seen.contains(&(item.sender.as_str(), item.id.as_str()))
+    })
+}
 /// Our avatar at the foot of the rail.
 const AVATAR: f32 = 32.0;
 /// Space above the first destination, as the list header's own margin, and
@@ -64,6 +87,7 @@ pub fn lights_overhang(ctx: &egui::Context) -> f32 {
 pub enum Destination {
     Chats,
     Calls,
+    Status,
     Starred,
     Archived,
     Locked,
@@ -77,6 +101,7 @@ impl Destination {
         match self {
             Self::Chats => chats && !app.show_archived && !app.locked_folder_open(),
             Self::Calls => app.page == Page::Calls,
+            Self::Status => app.page == Page::Status,
             Self::Starred => app.page == Page::Chats && app.show_starred,
             Self::Archived => chats && app.show_archived,
             Self::Locked => chats && app.locked_folder_open(),
@@ -119,6 +144,11 @@ impl Destination {
             Self::Calls => {
                 if app.page != Page::Calls {
                     actions.push(Action::Open(Page::Calls));
+                }
+            }
+            Self::Status => {
+                if app.page != Page::Status {
+                    actions.push(Action::Open(Page::Status));
                 }
             }
             Self::Starred => {
@@ -193,7 +223,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         .filter(|destination| destination.offered(app))
         .collect();
         let foot = bottom.len() as f32 * (PLATE + GAP) + GAP + AVATAR + GAP;
-        let minimum = 2.0 * CELL
+        let minimum = 3.0 * CELL
             + foot
             + if hidden {
                 CELL + GAP + MIN_AVATARS
@@ -210,11 +240,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 // the content keeps its minimum height and scrolls instead
                 // of leaving the bottom buttons beyond the window.
                 ui.set_height(height);
-                for destination in [Destination::Chats, Destination::Calls] {
+                for destination in [Destination::Chats, Destination::Calls, Destination::Status] {
                     destination_button(app, ui, &palette, destination, CELL);
                 }
                 if hidden {
-                    // A cell of its own under Calls: nothing above it moves
+                    // A cell of its own under the destinations: nothing above it moves
                     // when the list comes and goes.
                     show_list_button(app, ui, &palette);
                     ui.add_space(GAP / 2.0);
@@ -309,6 +339,11 @@ fn destination_button(
                 super::keys::label("Ctrl+Shift+2")
             ),
         ),
+        Destination::Status => (
+            Icon::Status,
+            Stop::Status,
+            gettext(app.locale, "Status").into_owned(),
+        ),
         Destination::Starred => (
             Icon::Star,
             Stop::Starred,
@@ -376,6 +411,10 @@ fn destination_button(
             1.0
         };
         theme::paint_icon(ui, icon, plate, ICON * scale, tint);
+        if destination == Destination::Status && unseen_status(app) {
+            ui.painter()
+                .circle_filled(badge_anchor(plate), 4.0, palette.accent);
+        }
         if badge > 0 {
             widgets::unread_indicator(
                 ui,
@@ -415,6 +454,7 @@ mod tests {
             [
                 Destination::Chats,
                 Destination::Calls,
+                Destination::Status,
                 Destination::Starred,
                 Destination::Archived,
                 Destination::Locked,
@@ -432,6 +472,8 @@ mod tests {
         assert_eq!(lit(&app), [Destination::Starred]);
         app.page = Page::Calls;
         assert_eq!(lit(&app), [Destination::Calls]);
+        app.page = Page::Status;
+        assert_eq!(lit(&app), [Destination::Status]);
         app.page = Page::Wallpaper;
         assert_eq!(lit(&app), [Destination::Settings]);
     }

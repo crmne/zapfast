@@ -1140,7 +1140,7 @@ impl App {
 
     /// The identity for the next attachment, whether it lands in the composer
     /// or in a chat's draft.
-    fn next_attachment_id(&mut self) -> AttachmentId {
+    pub(crate) fn next_attachment_id(&mut self) -> AttachmentId {
         let id = self.next_pending_id;
         self.next_pending_id += 1;
         id
@@ -1164,6 +1164,13 @@ impl App {
     pub fn forget_unstaged_pictures(&mut self) {
         let mut live: Vec<AttachmentId> = self.pending.iter().map(|staged| staged.id).collect();
         for account in &self.accounts {
+            if let Some(target) = account
+                .status_draft
+                .as_ref()
+                .and_then(|draft| draft.edit_target)
+            {
+                live.push(target);
+            }
             for draft in account.attachment_drafts.values() {
                 live.extend(draft.pending.iter().map(|staged| staged.id));
             }
@@ -1963,10 +1970,10 @@ impl App {
         self.restore_composer();
         // Labels belong to their account: show the one this account showed.
         self.label_filter = self.remembered_label();
-        // The Calls tab stays open on the other account's calls.
+        // Account-owned lists stay on their own tab when switching numbers.
         if self.page == Page::Calls {
             self.backend.send(Command::LoadCallLog);
-        } else {
+        } else if self.page != Page::Status {
             self.page = Page::Chats;
         }
         self.save_roster();
@@ -1979,6 +1986,7 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        self.status_playback = None;
         self.invalidate_composer_undo();
         self.gif_request = self.gif_request.wrapping_add(1);
         self.gif_query.clear();
@@ -2886,8 +2894,19 @@ impl App {
         }
     }
 
-    /// Whether the main pane can show the open chat: on the chat list's
-    /// page, and on the Calls tab beside its history.
+    pub fn is_own_status(&self, item: &crate::status::Item) -> bool {
+        self.me.as_ref() == Some(&item.sender) || self.me_lid.as_ref() == Some(&item.sender)
+    }
+
+    /// Status follows the account's blocks and locked-chat visibility.
+    pub fn can_view_status(&self, item: &crate::status::Item) -> bool {
+        item.alive(crate::util::now())
+            && !self.status_hidden.contains(&item.sender)
+            && !self.blocklist.contains(&item.sender)
+            && self.chat(&item.sender).is_none_or(|chat| !chat.locked)
+    }
+
+    /// Whether the main pane can show the open chat.
     pub fn chat_view(&self) -> bool {
         matches!(self.page, Page::Chats | Page::Calls)
     }
@@ -3706,6 +3725,14 @@ impl App {
                             message.content.forget_files_in(&dir);
                         }
                     }
+                    for item in &mut self.statuses {
+                        item.content.forget_files_in(&dir);
+                    }
+                    if live && self.page == Page::Status {
+                        self.video.stop();
+                        self.player.stop();
+                        self.status_playback = None;
+                    }
                     if live {
                         let done = crate::i18n::gettext(self.locale, "Media cache cleared");
                         self.toast(done.into_owned());
@@ -3722,6 +3749,7 @@ impl App {
                 }
             }
             Event::Blocklist { state, error } => {
+                self.status_privacy_contacts = None;
                 self.blocklist = state;
                 if !self.events_hidden
                     && let Some(error) = error
@@ -3735,6 +3763,44 @@ impl App {
                 chats,
                 state,
             } => {
+                self.status_privacy_contacts = None;
+                self.status_audiences.remap(&from, &to);
+                let account = self.account_mut();
+                for audience in [
+                    &mut account.status_audience,
+                    &mut account.status_privacy_picker,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if audience.selected.remove(&from) {
+                        audience.selected.insert(to.clone());
+                    }
+                }
+                // The backend moves its Statuses to the new id, so what we
+                // know about them follows.
+                account.status_seen = std::mem::take(&mut account.status_seen)
+                    .into_iter()
+                    .map(|(sender, id)| (if sender == from { to.clone() } else { sender }, id))
+                    .collect();
+                if let Some((sender, _)) = &mut account.status_selected
+                    && *sender == from
+                {
+                    *sender = to.clone();
+                }
+                if account.status_hidden.remove(&from) {
+                    account.status_hidden.insert(to.clone());
+                }
+                for views in self.status_views.values_mut() {
+                    let views = std::sync::Arc::make_mut(views);
+                    for view in views.iter_mut() {
+                        if view.contact == from {
+                            view.contact = to.clone();
+                        }
+                    }
+                    let mut seen = HashSet::new();
+                    views.retain(|view| seen.insert(view.contact.clone()));
+                }
                 if !self.events_hidden
                     && let Some(Dialog::ConfirmBlock { chat, .. }) = &mut self.dialog
                     && chat == &from
@@ -3790,6 +3856,189 @@ impl App {
                 remote,
                 from,
             } => self.handle_call_video(local, remote, from),
+            Event::StatusLocalState { seen, viewers } => {
+                self.status_seen.extend(seen);
+                self.status_views = viewers
+                    .into_iter()
+                    .map(|(id, views)| (id, std::sync::Arc::new(views)))
+                    .collect();
+            }
+            Event::StatusViews { id, viewers } => {
+                if self.statuses.iter().any(|item| {
+                    item.id == id && self.is_own_status(item) && self.can_view_status(item)
+                }) {
+                    std::sync::Arc::make_mut(self.status_views.entry(id).or_default())
+                        .extend(viewers);
+                }
+            }
+            Event::StatusDeletable(ids) => {
+                self.status_deletable = ids.into_iter().collect();
+            }
+            Event::StatusDeleted { id, result } => {
+                if self.status_delete_pending.as_deref() == Some(&id) {
+                    self.status_delete_pending = None;
+                }
+                match result {
+                    Ok(()) => {
+                        self.status_views.remove(&id);
+                        self.status_deletable.remove(&id);
+                        if self
+                            .status_selected
+                            .as_ref()
+                            .is_some_and(|(_, selected)| selected == &id)
+                        {
+                            if self.events_hidden {
+                                // The players are the window's, and play
+                                // the account on screen.
+                                let account = self.account_mut();
+                                account.status_picker = None;
+                                account.status_viewers_open = false;
+                                account.status_delete_confirm = None;
+                                account.status_selected = None;
+                                account.status_playback = None;
+                            } else {
+                                self.close_status();
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if !self.events_hidden {
+                            self.toast_error(error);
+                        }
+                    }
+                }
+            }
+            Event::StatusAudiences(lists) => {
+                self.status_audience = lists.current.clone();
+                self.status_audiences = lists;
+            }
+            Event::StatusAudienceSaved(result) => {
+                if result.is_err() {
+                    self.toast_error(
+                        "Could not save the status audience. This draft still keeps your selection",
+                    );
+                }
+            }
+            Event::StatusPhotoPreview {
+                target,
+                revision,
+                result,
+            } => {
+                if let Some(draft) = self.status_draft.as_mut()
+                    && let Some(editor) = draft.editor.as_mut().filter(|editor| {
+                        editor.target == target && editor.requested == Some(revision)
+                    })
+                {
+                    editor.requested = None;
+                    if revision == editor.revision {
+                        editor.preview_revision = Some(revision);
+                        match result {
+                            Ok(preview) => {
+                                editor.preview = Some(preview.image);
+                                editor.dimensions = Some(preview.dimensions);
+                                draft.error = None;
+                            }
+                            Err(error) => draft.error = Some(error),
+                        }
+                    }
+                }
+            }
+            Event::Statuses(items) => {
+                // `tick_video` stops a Status video that is no longer viewable,
+                // and leaves the composer's preview alone.
+                let stale: Vec<_> = self
+                    .statuses
+                    .iter()
+                    .filter(|item| {
+                        !items
+                            .iter()
+                            .any(|next| next.sender == item.sender && next.id == item.id)
+                    })
+                    .filter_map(|item| {
+                        item.content
+                            .media()
+                            .and_then(|media| media.path.as_ref())
+                            .map(|path| crate::util::image_uri(path))
+                    })
+                    .collect();
+                self.stale_images.extend(stale);
+                self.account_mut().status_seen.retain(|(sender, id)| {
+                    items
+                        .iter()
+                        .any(|item| item.sender == *sender && item.id == *id)
+                });
+                self.status_views
+                    .retain(|id, _| items.iter().any(|item| item.id == *id));
+                self.statuses = items;
+            }
+            Event::StatusPicked { token, path } => {
+                let mut preview = None;
+                if let (Some(path), Some(draft)) = (path, self.status_draft.as_mut())
+                    && draft.token == token
+                {
+                    if path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4"))
+                    {
+                        preview = Some(path.clone());
+                    }
+                    draft.media = Some(path);
+                    draft.edit_target = None;
+                    draft.picture_origin = None;
+                    draft.undo.clear();
+                    draft.redo.clear();
+                    draft.editor = None;
+                    draft.error = None;
+                }
+                if !self.events_hidden
+                    && let Some(path) = preview
+                {
+                    self.video.set_expanded(true);
+                    self.video.toggle(&format!("status:compose:{token}"), &path);
+                    self.video_chat = None;
+                }
+            }
+            Event::StatusPublished(result) => match result {
+                Ok(()) => {
+                    self.status_draft = None;
+                    if !self.events_hidden {
+                        self.toast(crate::i18n::gettext(self.locale, "Status published"));
+                    }
+                }
+                Err(error) => {
+                    if let Some(draft) = self.status_draft.as_mut() {
+                        draft.busy = false;
+                        draft.error = Some(error);
+                    }
+                }
+            },
+            Event::StatusReplied {
+                sender,
+                id,
+                text,
+                reaction,
+                result,
+            } => {
+                self.status_reply_busy = false;
+                match result {
+                    Ok(()) => {
+                        if !reaction
+                            && self.status_selected.as_ref() == Some(&(sender, id))
+                            && self.status_reply == text
+                        {
+                            self.status_reply.clear();
+                        }
+                        if !self.events_hidden {
+                            self.toast(crate::i18n::gettext(self.locale, "Reply sent"));
+                        }
+                    }
+                    Err(error) => {
+                        if !self.events_hidden {
+                            self.toast_error(error);
+                        }
+                    }
+                }
+            }
             Event::CallLog(entries) => {
                 self.call_log = entries;
                 self.call_log_loaded = true;
@@ -4255,6 +4504,7 @@ impl App {
                 }
             }
             Event::Contacts(contacts) => {
+                self.status_privacy_contacts = None;
                 if live {
                     self.info_members = None;
                 }
@@ -4805,6 +5055,36 @@ impl App {
             }
 
             Event::PictureInspected { target, result } => {
+                if self
+                    .status_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.edit_target == Some(target))
+                {
+                    if self.picture_inspecting == Some(target) {
+                        self.picture_inspecting = None;
+                        if self.events_hidden || self.page != Page::Status {
+                            return;
+                        }
+                        match result {
+                            Ok((width, height)) => {
+                                if let Some(path) = self
+                                    .status_draft
+                                    .as_ref()
+                                    .and_then(|draft| draft.media.clone())
+                                {
+                                    self.picture_edit = Some(crate::model::PictureEdit::new(
+                                        target,
+                                        crate::model::PictureSource::File(path),
+                                        width,
+                                        height,
+                                    ));
+                                }
+                            }
+                            Err(error) => self.toast_error(error),
+                        }
+                    }
+                    return;
+                }
                 // Only the picture still being waited for may open the cropper.
                 // Anything else was cancelled or overtaken while its size was
                 // being read, and opening on it would take the window off
@@ -4836,6 +5116,42 @@ impl App {
                 }
             }
             Event::PictureEdited { target, result } => {
+                if self
+                    .status_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.edit_target == Some(target))
+                {
+                    let origin = self.picture_applying.remove(&target);
+                    let mut crop_after = false;
+                    if let Some(draft) = self.status_draft.as_mut() {
+                        match result {
+                            Ok(path) => {
+                                if let Some(previous) = draft.media.replace(path) {
+                                    draft.undo.push(previous);
+                                }
+                                draft.redo.clear();
+                                draft.picture_origin = origin;
+                                draft.error = None;
+                                crop_after = draft
+                                    .editor
+                                    .as_ref()
+                                    .is_some_and(|editor| editor.crop_after);
+                                draft.editor = None;
+                            }
+                            Err(error) => {
+                                draft.error = Some(error);
+                                if let Some(editor) = draft.editor.as_mut() {
+                                    editor.applying = false;
+                                    editor.crop_after = false;
+                                }
+                            }
+                        }
+                    }
+                    if crop_after && !self.events_hidden && self.page == Page::Status {
+                        self.edit_status_picture();
+                    }
+                    return;
+                }
                 // The window is left alone: applying a crop takes the editor
                 // with it, so an editor open here belongs to another picture
                 // and closing it would throw away a crop nobody finished.
@@ -5146,6 +5462,29 @@ impl App {
                 self.poll_creating = false;
                 self.poll_draft = Default::default();
                 self.notifications.clear_account(&account);
+                self.statuses.clear();
+                self.status_selected = None;
+                self.status_seen.clear();
+                self.status_playback = None;
+                self.status_draft = None;
+                self.status_audience = None;
+                self.status_audiences = Default::default();
+                self.status_views.clear();
+                self.status_deletable.clear();
+                self.status_viewers_open = false;
+                self.status_delete_confirm = None;
+                self.status_delete_pending = None;
+                self.status_privacy_contacts = None;
+                self.status_hidden.clear();
+                self.status_search.clear();
+                self.status_search_open = false;
+                self.status_step = 0;
+                self.status_reply.clear();
+                self.status_reply_busy = false;
+                self.status_picker = None;
+                self.status_privacy_open = false;
+                self.status_privacy_picker = None;
+                self.status_privacy_search.clear();
                 self.chats.clear();
                 self.conversations.clear();
                 self.contacts.clear();
@@ -7409,13 +7748,157 @@ impl App {
             return;
         }
         match action {
+            Action::RemoveStatusMedia { account } => {
+                if account == self.account().id
+                    && !self.status_draft.as_ref().is_some_and(|draft| draft.busy)
+                {
+                    if let Some(draft) = self.status_draft.as_mut() {
+                        draft.media = None;
+                        draft.picture_origin = None;
+                        draft.edit_target = None;
+                        draft.undo.clear();
+                        draft.redo.clear();
+                    }
+                    self.video.stop();
+                }
+            }
+            Action::DeleteStatus { account, id } => {
+                if account == self.account().id
+                    && self.status_delete_pending.is_none()
+                    && self.status_deletable.contains(&id)
+                    && self.statuses.iter().any(|item| {
+                        item.id == id && self.is_own_status(item) && self.can_view_status(item)
+                    })
+                {
+                    self.status_delete_pending = Some(id.clone());
+                    self.backend.send(Command::DeleteStatus(id));
+                }
+            }
+            Action::SetStatusAudience { account, audience } => {
+                if account == self.account().id {
+                    self.status_audience = Some(audience.clone());
+                    self.status_audiences.choose(audience.clone());
+                    self.backend.send(Command::SaveStatusAudience(audience));
+                }
+            }
+            Action::StatusPhotoTool { account, tool } => {
+                if account == self.account().id {
+                    self.status_photo_tool(tool);
+                }
+            }
+            Action::StatusPhotoPreview { account } => {
+                if account == self.account().id {
+                    self.preview_status_photo();
+                }
+            }
+            Action::ApplyStatusPhoto { account, crop } => {
+                if account == self.account().id {
+                    self.apply_status_photo(crop);
+                }
+            }
+            Action::EditStatusPicture { account } if account == self.account().id => {
+                self.edit_status_picture()
+            }
+            Action::StatusPictureHistory { account, redo } if account == self.account().id => {
+                self.status_picture_history(redo)
+            }
+            Action::EditStatusPicture { .. } | Action::StatusPictureHistory { .. } => {}
+            Action::ComposeStatus { account, media } if account == self.account().id => {
+                if self.status_draft.as_ref().is_some_and(|draft| draft.busy) {
+                    return;
+                }
+                if media && let Some(draft) = &self.status_draft {
+                    self.backend
+                        .send(Command::PickStatusMedia { token: draft.token });
+                    return;
+                }
+                self.status_privacy_open = false;
+                self.status_privacy_picker = None;
+                self.close_status();
+                self.status_draft = Some(Default::default());
+                if media {
+                    let token = self
+                        .status_draft
+                        .as_ref()
+                        .expect("a new draft exists")
+                        .token;
+                    self.backend.send(Command::PickStatusMedia { token });
+                }
+            }
+            Action::PublishStatus { account } if account == self.account().id => {
+                self.publish_status()
+            }
+            Action::FetchStatusStickers { account } => {
+                if account == self.account().id {
+                    self.request_stickers();
+                }
+            }
+            Action::ReplyStatusSticker { account, path } => {
+                if account == self.account().id {
+                    self.reply_status_sticker(path);
+                }
+            }
+            Action::ReplyStatus { account, reaction } if account == self.account().id => {
+                self.reply_status(reaction)
+            }
+            Action::HideStatus { account, sender } if account == self.account().id => {
+                self.status_hidden.insert(sender);
+                self.close_status();
+            }
+            Action::ComposeStatus { .. }
+            | Action::PublishStatus { .. }
+            | Action::ReplyStatus { .. }
+            | Action::HideStatus { .. } => {}
             Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
             Action::SetBlocked { chat, blocked } => {
                 if self.is_connected() && self.blocklist.editable() {
                     self.backend.send(Command::SetBlocked { chat, blocked });
                 }
             }
+            Action::SelectStatus {
+                account,
+                sender,
+                id,
+            } => {
+                if account != self.account().id {
+                    return;
+                }
+                self.select_status(sender, id);
+            }
+            Action::DownloadStatus {
+                account,
+                sender,
+                id,
+            } => {
+                if account == self.account().id
+                    && self.statuses.iter().any(|item| {
+                        item.sender == sender && item.id == id && self.can_view_status(item)
+                    })
+                {
+                    self.backend.send(Command::DownloadStatus { sender, id });
+                }
+            }
+            Action::CloseStatus { account } => {
+                if account == self.account().id {
+                    self.close_status();
+                }
+            }
+            Action::StepStatus { account, direction } => {
+                if account == self.account().id {
+                    self.step_status(direction);
+                }
+            }
+            Action::ToggleStatusPlayback { account } => {
+                if account == self.account().id
+                    && let Some(clock) = &mut self.status_playback
+                {
+                    clock.paused = !clock.paused;
+                }
+            }
             Action::Open(page) => {
+                if self.page == Page::Status && page != Page::Status {
+                    self.close_status();
+                }
                 let opens_chats = page == Page::Chats;
                 // Privacy can change on the phone at any time, and nothing
                 // announces it: read it again whenever Settings opens.
@@ -8688,10 +9171,7 @@ impl App {
                     self.emoji_selected = 0;
                     self.emoji_jump = None;
                     if tab == PickerTab::Stickers {
-                        self.stickers_pending = self.stickers.is_empty()
-                            && self.stickers_saved.is_empty()
-                            && self.sticker_packs.is_empty();
-                        self.backend.send(Command::RecentStickers);
+                        self.request_stickers();
                     }
                     if tab == PickerTab::Gifs && self.gif_results.is_empty() {
                         self.actions.push(Action::SearchGifs(String::new()));
@@ -10462,6 +10942,7 @@ impl App {
         self.tick(ctx);
         self.tick_audio(ctx);
         self.tick_video(ctx);
+        self.tick_status(ctx);
         self.apply_actions(ctx);
         self.sync_chat_export_permission();
         self.sync_prefetch();
@@ -10812,10 +11293,35 @@ impl App {
         }
     }
 
+    /// Asks for the sticker shelves, showing a wait only while none is known.
+    fn request_stickers(&mut self) {
+        self.stickers_pending = self.stickers.is_empty()
+            && self.stickers_saved.is_empty()
+            && self.sticker_packs.is_empty();
+        self.backend.send(Command::RecentStickers);
+    }
+
     /// Shows the playing video's frames, stops it once its chat is left, and
     /// hands a video it cannot decode to the system player.
     fn tick_video(&mut self, ctx: &egui::Context) {
-        if self.video.message().is_some() && self.video_chat != self.open_chat {
+        let status_video = self
+            .video
+            .message()
+            .is_some_and(|id| id.starts_with("status:"));
+        let draft_video = self.status_draft.as_ref().is_some_and(|draft| {
+            self.video.message() == Some(format!("status:compose:{}", draft.token).as_str())
+        });
+        if status_video
+            && (self.page != Page::Status
+                || !draft_video
+                    && !self.statuses.iter().any(|item| {
+                        self.can_view_status(item)
+                            && self.video.message() == Some(item.playback_id().as_str())
+                    }))
+        {
+            self.video.stop();
+        }
+        if !status_video && self.video.message().is_some() && self.video_chat != self.open_chat {
             self.video.stop();
         }
         // The viewer shows the open chat's media, and leaves with it.
@@ -10831,8 +11337,13 @@ impl App {
         }
         // Larger frames while the viewer shows the clip, the bubble's size
         // otherwise. Only a clip on the viewer plays while it is open.
-        self.video.set_expanded(self.image_preview.is_some());
+        self.video.set_expanded(
+            self.image_preview.is_some() || status_video && self.page == Page::Status,
+        );
         if let Some(crate::video::Notice::Unsupported(path)) = self.video.poll(ctx) {
+            if status_video {
+                self.close_status();
+            }
             self.toast(crate::i18n::gettext(
                 self.locale,
                 "This video opens in your system player",
@@ -12369,6 +12880,7 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 }
 
 mod calls;
+mod status;
 pub use calls::CallPerson;
 
 /// The character ranges of `text` to wrap in `format`'s markers for a
@@ -13201,6 +13713,35 @@ mod tests {
         assert_ne!(app.active, active);
         app.cycle_account(1, now + super::ACCOUNT_WHEEL_REST);
         assert_eq!(app.active, active);
+    }
+
+    #[test]
+    fn status_updates_and_selection_stay_with_their_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let item = crate::status::Item {
+            id: "one".into(),
+            sender: "15550002222@s.whatsapp.net".into(),
+            name: None,
+            timestamp: crate::util::now(),
+            content: Content::Text {
+                text: "A day outside".into(),
+                preview: None,
+            },
+            background: None,
+            backdrop: None,
+        };
+        app.statuses.push(item.clone());
+        app.status_selected = Some((item.sender.clone(), item.id.clone()));
+        app.apply(Action::Open(Page::Status), &ctx);
+        app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
+        assert_eq!(app.page, Page::Status);
+        assert!(app.statuses.is_empty());
+        assert!(app.status_selected.is_none());
+        app.apply(Action::SwitchAccount(AccountId::parse("1").unwrap()), &ctx);
+        assert_eq!(app.statuses, vec![item]);
+        assert!(app.status_selected.is_some());
     }
 
     #[test]
@@ -27172,5 +27713,552 @@ mod app_lock_tests {
         assert!(!actions.contains(&Action::FocusComposer));
         let mut app = app_with(settings(None));
         assert!(!press(&mut app).contains(&Action::LockApp));
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn status_photo_previews_are_coalesced_and_failed_edits_keep_the_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        app.page = Page::Status;
+        let original = root.path().join("source.png");
+        app.status_draft = Some(crate::status::Draft {
+            media: Some(original.clone()),
+            ..Default::default()
+        });
+        app.status_photo_tool(crate::photo::Tool::Text);
+        let target = app
+            .status_draft
+            .as_ref()
+            .unwrap()
+            .editor
+            .as_ref()
+            .unwrap()
+            .target;
+        app.preview_status_photo();
+        app.preview_status_photo();
+        assert_eq!(
+            app.backend.take_demo_commands().len(),
+            1,
+            "one preview job at a time"
+        );
+        app.status_draft
+            .as_mut()
+            .unwrap()
+            .editor
+            .as_mut()
+            .unwrap()
+            .add(crate::photo::Mark::Text {
+                at: egui::pos2(0.5, 0.5),
+                text: "A caption".into(),
+                font: 0,
+                size: 0.05,
+                color: egui::Color32::WHITE,
+                boxed: true,
+            });
+        app.apply_backend_event(
+            Event::StatusPhotoPreview {
+                target,
+                revision: 0,
+                result: Err("stale".into()),
+            },
+            true,
+        );
+        assert!(
+            app.status_draft.as_ref().unwrap().error.is_none(),
+            "old preview cannot replace current draft"
+        );
+        app.apply_status_photo(false);
+        assert!(app.status_picture_busy());
+        assert!(matches!(
+            app.backend.take_demo_commands().as_slice(),
+            [Command::RenderStatusPhoto { apply: true, .. }]
+        ));
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Err("disk full".into()),
+            },
+            true,
+        );
+        assert!(!app.status_picture_busy());
+        let draft = app.status_draft.as_ref().unwrap();
+        assert_eq!(draft.media.as_ref(), Some(&original));
+        assert_eq!(draft.editor.as_ref().unwrap().scene.marks.len(), 1);
+        app.apply_status_photo(false);
+        let edited = root.path().join("edited.png");
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(edited.clone()),
+            },
+            true,
+        );
+        assert!(app.status_draft.as_ref().unwrap().editor.is_none());
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&edited)
+        );
+        app.status_picture_history(false);
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&original)
+        );
+    }
+
+    #[test]
+    fn status_audience_lists_are_independent_and_account_bound() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let ctx = egui::Context::default();
+        for mode in [
+            crate::status::AudienceMode::Only,
+            crate::status::AudienceMode::Except,
+        ] {
+            let audience = crate::status::Audience {
+                mode,
+                selected: ["15550002222@s.whatsapp.net".to_owned()].into(),
+            };
+            app.apply(
+                Action::SetStatusAudience {
+                    account: AccountId::parse("999").unwrap(),
+                    audience: audience.clone(),
+                },
+                &ctx,
+            );
+            assert!(app.backend.take_demo_commands().is_empty());
+            app.apply(
+                Action::SetStatusAudience {
+                    account: app.account().id.clone(),
+                    audience,
+                },
+                &ctx,
+            );
+            assert!(matches!(
+                app.backend.take_demo_commands().as_slice(),
+                [Command::SaveStatusAudience(_)]
+            ));
+        }
+        assert_eq!(app.status_audiences.only.len(), 1);
+        assert_eq!(app.status_audiences.except.len(), 1);
+        let mut own = item();
+        app.me = Some("15550009999@s.whatsapp.net".into());
+        app.me_lid = Some("123456789@lid".into());
+        own.sender = app.me_lid.clone().unwrap();
+        assert!(app.is_own_status(&own));
+    }
+
+    fn item() -> crate::status::Item {
+        crate::status::Item {
+            id: "post".into(),
+            sender: "15550002222@s.whatsapp.net".into(),
+            name: Some("Ada".into()),
+            timestamp: crate::util::now(),
+            content: Content::Text {
+                text: "A day outside".into(),
+                preview: None,
+            },
+            background: None,
+            backdrop: None,
+        }
+    }
+
+    #[test]
+    fn status_stickers_reply_to_the_author_and_keep_the_typed_text() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        app.statuses.push(item.clone());
+        app.status_selected = Some((item.sender.clone(), item.id.clone()));
+        app.open_chat = Some("15550003333@s.whatsapp.net".into());
+        app.status_reply = "Keep this draft".into();
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::ReplyStatusSticker {
+                account: AccountId::parse("999").unwrap(),
+                path: "sticker.webp".into(),
+            },
+            &ctx,
+        );
+        assert!(app.backend.take_demo_commands().is_empty());
+        let account = app.account().id.clone();
+        app.apply(
+            Action::ReplyStatusSticker {
+                account,
+                path: "sticker.webp".into(),
+            },
+            &ctx,
+        );
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::ReplyStatusSticker { sender, id, .. }] if sender == &item.sender && id == &item.id)
+        );
+        app.apply_backend_event(
+            Event::StatusReplied {
+                sender: item.sender,
+                id: item.id,
+                text: String::new(),
+                reaction: false,
+                result: Ok(()),
+            },
+            true,
+        );
+        assert_eq!(app.status_reply, "Keep this draft");
+        assert!(!app.status_reply_busy);
+        assert_eq!(app.open_chat.as_deref(), Some("15550003333@s.whatsapp.net"));
+    }
+
+    #[test]
+    fn status_cropping_reuses_the_picture_editor_without_changing_chat_attachments() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        app.page = Page::Status;
+        let chat_path = root.path().join("chat.png");
+        let original = root.path().join("status.png");
+        let edited = root.path().join("edited.jpg");
+        let chat = app.stage(Pending::File(chat_path.clone()));
+        app.status_draft = Some(crate::status::Draft {
+            media: Some(original.clone()),
+            ..Default::default()
+        });
+        app.edit_status_picture();
+        let target = app.status_draft.as_ref().unwrap().edit_target.unwrap();
+        assert_ne!(target, chat);
+        assert!(app.status_picture_busy());
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::InspectPicture { target: id, path }] if *id == target && path == &original)
+        );
+        app.apply_backend_event(
+            Event::PictureInspected {
+                target,
+                result: Ok((800, 600)),
+            },
+            true,
+        );
+        assert!(!app.status_picture_busy());
+        let edit = app.picture_edit.as_mut().unwrap();
+        assert_eq!(edit.target, target);
+        edit.turns = 1;
+        let ctx = egui::Context::default();
+        app.apply(Action::ApplyPictureEdit, &ctx);
+        app.forget_unstaged_pictures();
+        assert!(app.picture_applying.contains_key(&target));
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::ApplyPictureEdit { target: id, turns: 1, .. }] if *id == target)
+        );
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(edited.clone()),
+            },
+            true,
+        );
+        assert!(!app.status_picture_busy());
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&edited)
+        );
+        assert_eq!(
+            app.status_draft
+                .as_ref()
+                .unwrap()
+                .picture_origin
+                .as_ref()
+                .unwrap()
+                .turns,
+            1
+        );
+        assert!(matches!(&app.pending[0].item, Pending::File(path) if path == &chat_path));
+        app.status_picture_history(false);
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&original)
+        );
+        app.status_picture_history(true);
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&edited)
+        );
+        app.status_draft = Some(crate::status::Draft {
+            media: Some(original.clone()),
+            ..Default::default()
+        });
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(root.path().join("late.jpg")),
+            },
+            true,
+        );
+        assert_eq!(
+            app.status_draft.as_ref().unwrap().media.as_ref(),
+            Some(&original)
+        );
+        assert!(matches!(&app.pending[0].item, Pending::File(path) if path == &chat_path));
+    }
+
+    #[test]
+    fn opening_status_keeps_chat_unread_and_never_sends_read_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        let mut chat = Chat::new(item.sender.clone(), "Ada".into());
+        chat.unread = 3;
+        app.chats.push(chat);
+        app.statuses.push(item.clone());
+        app.page = Page::Status;
+        app.apply(
+            Action::SelectStatus {
+                account: app.account().id.clone(),
+                sender: item.sender.clone(),
+                id: item.id.clone(),
+            },
+            &egui::Context::default(),
+        );
+        assert_eq!(app.chats[0].unread, 3);
+        assert_eq!(app.status_selected, Some((item.sender, item.id)));
+        let commands = app.backend.take_demo_commands();
+        assert!(matches!(
+            commands.as_slice(),
+            [Command::DownloadStatus { .. }]
+        ));
+        assert!(app.open_chat.is_none());
+    }
+
+    #[test]
+    fn status_controls_ignore_actions_from_another_account() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        app.statuses.push(item.clone());
+        app.page = Page::Status;
+        let other = AccountId::parse("999").unwrap();
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::SelectStatus {
+                account: other.clone(),
+                sender: item.sender.clone(),
+                id: item.id.clone(),
+            },
+            &ctx,
+        );
+        app.apply(
+            Action::DownloadStatus {
+                account: other,
+                sender: item.sender,
+                id: item.id,
+            },
+            &ctx,
+        );
+        assert!(app.status_selected.is_none());
+        assert!(app.backend.take_demo_commands().is_empty());
+    }
+
+    #[test]
+    fn blocked_locked_and_expired_statuses_cannot_be_viewed() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let mut item = item();
+        assert!(app.can_view_status(&item));
+        app.blocklist.ids = Some([item.sender.clone()].into());
+        assert!(!app.can_view_status(&item));
+        app.blocklist.ids = Some(Default::default());
+        let mut chat = Chat::new(item.sender.clone(), "Ada".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        assert!(!app.can_view_status(&item));
+        app.chats.clear();
+        item.timestamp -= crate::status::LIFETIME;
+        assert!(!app.can_view_status(&item));
+    }
+
+    #[test]
+    fn publishing_requires_an_explicit_audience_and_failure_keeps_the_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        app.status_draft = Some(crate::status::Draft {
+            text: "A day outside".into(),
+            ..Default::default()
+        });
+        app.publish_status();
+        assert!(app.status_privacy_open);
+        assert!(app.backend.take_demo_commands().is_empty());
+        app.status_audience = Some(crate::status::Audience {
+            mode: crate::status::AudienceMode::Only,
+            selected: [item().sender].into(),
+        });
+        app.publish_status();
+        assert!(app.status_draft.as_ref().unwrap().busy);
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::PublishStatus { draft, .. }] if draft.text == "A day outside")
+        );
+        app.apply_backend_event(Event::StatusPublished(Err("Offline".into())), true);
+        let draft = app.status_draft.as_ref().unwrap();
+        assert!(!draft.busy);
+        assert_eq!(draft.text, "A day outside");
+        assert_eq!(draft.error.as_deref(), Some("Offline"));
+    }
+
+    #[test]
+    fn a_late_file_picker_cannot_replace_a_new_status_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let old = crate::status::Draft::default();
+        let current = crate::status::Draft::default();
+        assert_ne!(old.token, current.token);
+        app.status_draft = Some(current);
+        app.apply_backend_event(
+            Event::StatusPicked {
+                token: old.token,
+                path: Some("old.jpg".into()),
+            },
+            true,
+        );
+        assert!(app.status_draft.as_ref().unwrap().media.is_none());
+    }
+
+    #[test]
+    fn clearing_the_media_cache_leaves_status_ready_to_download_again() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let mut item = item();
+        item.content = Content::Image {
+            motion: None,
+            caption: None,
+            media: Media {
+                mime: "image/jpeg".into(),
+                size: 42,
+                width: None,
+                height: None,
+                album: None,
+                path: Some(
+                    app.account()
+                        .dirs
+                        .media_cache_dir()
+                        .join("status/photo.jpg"),
+                ),
+                state: Default::default(),
+            },
+        };
+        app.page = Page::Status;
+        app.statuses.push(item);
+        app.status_playback = Some(Default::default());
+        app.apply_backend_event(
+            Event::StorageStats {
+                stats: None,
+                token: 0,
+                cleared: true,
+            },
+            true,
+        );
+        assert!(app.statuses[0].content.media().unwrap().path.is_none());
+        assert!(app.status_playback.is_none());
+    }
+
+    #[test]
+    fn failed_status_replies_keep_text_and_do_not_open_the_authors_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        app.statuses.push(item.clone());
+        app.status_selected = Some((item.sender.clone(), item.id.clone()));
+        app.status_reply = "Wonderful!".into();
+        app.reply_status(None);
+        assert!(app.status_reply_busy);
+        assert!(app.open_chat.is_none());
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::ReplyStatus { text, reaction: false, .. }] if text == "Wonderful!")
+        );
+        app.apply_backend_event(
+            Event::StatusReplied {
+                sender: item.sender,
+                id: item.id,
+                text: "Wonderful!".into(),
+                reaction: false,
+                result: Err("Offline".into()),
+            },
+            true,
+        );
+        assert_eq!(app.status_reply, "Wonderful!");
+        assert!(!app.status_reply_busy);
+    }
+
+    #[test]
+    fn status_replies_follow_the_accounts_read_receipts() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        app.statuses.push(item.clone());
+        app.status_selected = Some((item.sender.clone(), item.id.clone()));
+        app.status_reply = "Wonderful!".into();
+        assert!(app.status_replies_allowed());
+        app.account_receipts_off = true;
+        assert!(!app.status_replies_allowed());
+        app.reply_status(None);
+        app.reply_status(Some("❤️".into()));
+        app.reply_status_sticker("sticker.webp".into());
+        assert!(app.backend.take_demo_commands().is_empty());
+        assert!(!app.status_reply_busy);
+        assert_eq!(app.status_reply, "Wonderful!");
+        app.account_receipts_off = false;
+        app.reply_status(None);
+        assert!(matches!(
+            app.backend.take_demo_commands().as_slice(),
+            [Command::ReplyStatus { .. }]
+        ));
+    }
+
+    #[test]
+    fn advancing_status_skips_contacts_that_cannot_be_viewed() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let first = item();
+        let mut hidden = first.clone();
+        hidden.sender = "blocked@s.whatsapp.net".into();
+        let mut last = first.clone();
+        last.sender = "next@s.whatsapp.net".into();
+        app.blocklist.ids = Some([hidden.sender.clone()].into());
+        app.statuses = vec![first.clone(), hidden, last.clone()];
+        app.status_selected = Some((first.sender, first.id));
+
+        app.step_status(1);
+        assert_eq!(app.status_selected, Some((last.sender, last.id)));
+        app.step_status(1);
+        assert!(app.status_selected.is_none());
+        assert!(app.status_playback.is_none());
+    }
+
+    #[test]
+    fn leaving_status_or_losing_visibility_closes_playback() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let item = item();
+        app.statuses.push(item.clone());
+        app.page = Page::Status;
+        app.select_status(item.sender.clone(), item.id.clone());
+        let ctx = egui::Context::default();
+        app.apply(Action::Open(Page::Chats), &ctx);
+        assert!(app.status_selected.is_none());
+        assert!(app.status_playback.is_none());
+
+        app.page = Page::Status;
+        app.select_status(item.sender.clone(), item.id.clone());
+        app.blocklist.ids = Some([item.sender].into());
+        app.tick_status(&ctx);
+        assert!(app.status_selected.is_none());
+        assert!(app.status_playback.is_none());
     }
 }

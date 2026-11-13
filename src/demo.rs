@@ -2617,6 +2617,207 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.typing.clear();
                 app.scroll_to_bottom = true;
             }
+            "status"
+            | "status-stickers"
+            | "status-emoji"
+            | "status-text"
+            | "status-photo"
+            | "status-video"
+            | "status-empty"
+            | "status-compose"
+            | "status-compose-photo"
+            | "status-editor"
+            | "status-mine"
+            | "status-mine-list"
+            | "status-privacy"
+            | "status-contacts"
+            | "status-contacts-many"
+            | "status-contacts-inline"
+            | "status-privacy-inline" => {
+                app.page = Page::Status;
+                for sample in SAMPLES
+                    .iter()
+                    .filter(|sample| sample.id.ends_with("@s.whatsapp.net") && !sample.locked)
+                {
+                    app.contacts.insert(
+                        sample.id.into(),
+                        Contact {
+                            id: sample.id.into(),
+                            full_name: Some(sample.name.into()),
+                            ..Default::default()
+                        },
+                    );
+                }
+                app.statuses.clear();
+                app.status_selected = None;
+                app.status_draft = None;
+                app.status_privacy_open = false;
+                app.status_privacy_contacts = None;
+                app.status_viewers_open = false;
+                // A page combined after another Status page starts afresh.
+                app.status_picker = None;
+                app.status_privacy_picker = None;
+                app.status_views.clear();
+                app.status_deletable.clear();
+                if part != "status-empty" {
+                    let now = crate::util::now();
+                    let photo = sample_files(app).0;
+                    app.statuses = vec![
+                        crate::status::Item { id: "photo-status".into(), sender: SAMPLES[0].id.into(), name: None,
+                            timestamp: now - 120, backdrop: crate::status::blurred_backdrop(stock::SPACEWALK.bytes), background: None,
+                            content: Content::Image { caption: Some("A different perspective 🌍".into()),
+                                media: Media { mime: "image/jpeg".into(), size: 1000, width: Some(900), height: Some(1200), album: None, path: Some(photo.clone()), state: Default::default() }, motion: None } },
+                        crate::status::Item { id: "text-status".into(), sender: SAMPLES[2].id.into(), name: None,
+                            timestamp: now - 300, backdrop: None, background: Some(0xff325c51),
+                            content: Content::Text { text: "A little fresh air, a good book, and no plans for the afternoon. 🌿\n\nSee you outside!".into(), preview: None } },
+                        crate::status::Item { id: "video-status".into(), sender: SAMPLES[0].id.into(), name: None,
+                            timestamp: now - 600, backdrop: crate::status::blurred_backdrop(&sample_thumbnail(0)), background: None,
+                            content: Content::Video { caption: Some("A short walk".into()), seconds: Some(5), gif: false, note: false,
+                                media: Media { mime: "video/mp4".into(), size: 1000, width: Some(640), height: Some(360), album: None,
+                                    path: Some(stock::save(&app.dirs.media_cache_dir(), "status-demo.mp4", stock::VIDEO)), state: Default::default() } } },
+                    ];
+                    for (index, sample) in SAMPLES
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, sample)| {
+                            *index != 0
+                                && *index != 2
+                                && sample.id.ends_with("@s.whatsapp.net")
+                                && !sample.locked
+                        })
+                        .take(4)
+                    {
+                        let mut item = app.statuses[1].clone();
+                        item.id = format!("sample-status-{index}");
+                        item.sender = sample.id.into();
+                        item.timestamp = now - 1200 - index as i64 * 300;
+                        if index != 3 {
+                            app.status_seen
+                                .insert((item.sender.clone(), item.id.clone()));
+                        }
+                        app.statuses.push(item);
+                    }
+                    let selected = &app.statuses[match part {
+                        "status-photo" | "status-stickers" | "status-emoji" => 0,
+                        "status-video" => 2,
+                        _ => 1,
+                    }];
+                    if part != "status" && part != "status-mine-list" {
+                        app.status_selected = Some((selected.sender.clone(), selected.id.clone()));
+                    }
+                    if matches!(part, "status-photo" | "status-stickers" | "status-emoji") {
+                        sticker_sample(app, crate::model::StickerShelf::Recent, "");
+                        app.picker = None;
+                    }
+                    if part == "status-stickers" || part == "status-emoji" {
+                        app.status_picker = Some(if part == "status-stickers" {
+                            crate::model::PickerTab::Stickers
+                        } else {
+                            crate::model::PickerTab::Emoji
+                        });
+                    }
+                    if part.starts_with("status-mine") {
+                        let mut mine = app.statuses[0].clone();
+                        mine.id = "own-status-demo".into();
+                        mine.sender = ME.into();
+                        mine.timestamp = now - 60;
+                        app.status_deletable.insert(mine.id.clone());
+                        app.status_views.insert(
+                            mine.id.clone(),
+                            std::sync::Arc::new(vec![
+                                crate::status::Viewer {
+                                    contact: SAMPLES[0].id.into(),
+                                    timestamp: now - 30,
+                                },
+                                crate::status::Viewer {
+                                    contact: SAMPLES[1].id.into(),
+                                    timestamp: now - 20,
+                                },
+                            ]),
+                        );
+                        if part == "status-mine" {
+                            app.status_selected = Some((mine.sender.clone(), mine.id.clone()));
+                        }
+                        app.statuses.insert(0, mine);
+                    }
+                    if part.starts_with("status-compose")
+                        || part == "status-editor"
+                        || part == "status-privacy"
+                        || part == "status-contacts"
+                    {
+                        app.status_selected = None;
+                        app.status_draft = Some(crate::status::Draft {
+                            media: (part == "status-compose-photo" || part == "status-editor")
+                                .then_some(photo.clone()),
+                            ..Default::default()
+                        });
+                        app.status_privacy_open =
+                            part == "status-privacy" || part == "status-contacts";
+                    }
+                    if part == "status-editor" {
+                        let target = app.next_attachment_id();
+                        let mut editor = crate::photo::Editor::new(target, crate::photo::Tool::Pen);
+                        editor.add(crate::photo::Mark::Text {
+                            at: egui::pos2(0.5, 0.3),
+                            text: "A different perspective".into(),
+                            font: 1,
+                            size: 0.065,
+                            color: egui::Color32::WHITE,
+                            boxed: true,
+                        });
+                        editor.add(crate::photo::Mark::Shape {
+                            tool: crate::photo::Tool::Arrow,
+                            from: egui::pos2(0.25, 0.65),
+                            to: egui::pos2(0.5, 0.45),
+                            color: egui::Color32::from_rgb(255, 204, 0),
+                            width: 0.008,
+                            filled: false,
+                        });
+                        let preview = crate::photo::preview(&photo, &editor.scene)
+                            .expect("the synthetic photo renders");
+                        editor.preview = Some(preview.image);
+                        editor.dimensions = Some(preview.dimensions);
+                        editor.preview_revision = Some(editor.revision);
+                        app.status_draft
+                            .as_mut()
+                            .expect("a demo draft exists")
+                            .editor = Some(Box::new(editor));
+                    }
+                    if part == "status-contacts-many" {
+                        app.status_selected = None;
+                        app.status_privacy_open = true;
+                        let mut selected = std::collections::HashSet::new();
+                        for index in 0..1000 {
+                            let id = format!("1555{:07}@s.whatsapp.net", index);
+                            if index < 24 {
+                                selected.insert(id.clone());
+                            }
+                            app.contacts.insert(
+                                id.clone(),
+                                Contact {
+                                    id,
+                                    full_name: Some(format!("Sample contact {index:04}")),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        app.status_privacy_picker = Some(crate::status::Audience {
+                            mode: crate::status::AudienceMode::Only,
+                            selected,
+                        });
+                    }
+                    if part.ends_with("-inline") {
+                        app.status_selected = None;
+                        app.status_privacy_open = true;
+                    }
+                    if part.starts_with("status-contacts") && part != "status-contacts-many" {
+                        app.status_privacy_picker = Some(crate::status::Audience {
+                            mode: crate::status::AudienceMode::Only,
+                            selected: [SAMPLES[0].id.to_owned()].into(),
+                        });
+                    }
+                }
+            }
             "settings" => app.page = Page::Settings,
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
@@ -9838,6 +10039,22 @@ mod tests {
             "react-picker-empty",
             "react-custom",
             "react-other",
+            "status",
+            "status,light",
+            "status-text",
+            "status-text,light",
+            "status-photo",
+            "status-photo,light",
+            "status-video",
+            "status-empty",
+            "status-compose",
+            "status-compose-photo",
+            "status-mine",
+            "status-contacts",
+            "status-contacts-inline",
+            "status-privacy-inline",
+            "status-stickers",
+            "status-emoji",
             "calls",
             "calls-chat",
             "calls-info",
@@ -9992,6 +10209,18 @@ mod tests {
         let wide = egui::vec2(1180.0, 780.0);
         let narrow = egui::vec2(480.0, 720.0);
         let pages = [
+            ("status", wide),
+            ("status-photo", wide),
+            ("status", narrow),
+            ("status-empty", narrow),
+            ("status-compose", wide),
+            ("status-compose-photo", wide),
+            ("status-mine", wide),
+            ("status-contacts", wide),
+            ("status-contacts-inline", wide),
+            ("status-privacy-inline", wide),
+            ("status-stickers", wide),
+            ("status-emoji", wide),
             ("chat", wide),
             ("info", wide),
             ("chat-search", wide),
@@ -12671,9 +12900,18 @@ mod tests {
 
     /// Activate a named review control through real pointer events.
     fn click_review_button(app: &mut App, ctx: &egui::Context, label: &str) {
+        click_review_control(app, ctx, label, egui::accesskit::Role::Button);
+    }
+
+    fn click_review_control(
+        app: &mut App,
+        ctx: &egui::Context,
+        label: &str,
+        role: egui::accesskit::Role,
+    ) {
         let at = accessible_nodes(app, ctx, Vec::new())
             .into_iter()
-            .find(|(text, role, _)| text == label && *role == egui::accesskit::Role::Button)
+            .find(|(text, found_role, _)| text == label && *found_role == role)
             .unwrap_or_else(|| panic!("missing {label}"))
             .2;
         frame_sized(app, ctx, 780.0, vec![egui::Event::PointerMoved(at)]);
@@ -12691,6 +12929,364 @@ mod tests {
             );
         }
         render(app, ctx);
+    }
+
+    #[test]
+    fn status_contact_scroll_uses_the_modal_width_and_keeps_visible_checks_aligned() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("status-contacts-many"));
+        let hidden = "15559999999@s.whatsapp.net";
+        let mut locked = Chat::new(hidden.into(), "Hidden saved contact".into());
+        locked.locked = true;
+        app.chats.push(locked);
+        app.contacts.insert(
+            hidden.into(),
+            Contact {
+                id: hidden.into(),
+                full_name: Some("Hidden saved contact".into()),
+                ..Default::default()
+            },
+        );
+        app.status_privacy_picker
+            .as_mut()
+            .unwrap()
+            .selected
+            .insert(hidden.into());
+        render(&mut app, &ctx);
+        let panel = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("status-audience-panel")))
+            .unwrap();
+        let chips = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("status-chip-viewport")))
+            .unwrap();
+        assert!(
+            chips.right() > panel.right() - 12.0,
+            "selected-contact scroll fills the modal instead of following the last chip"
+        );
+        assert!(chips.left() >= panel.left() && chips.right() <= panel.right());
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        assert!(
+            !nodes
+                .iter()
+                .any(|(label, _, _)| label.contains("Hidden saved contact")),
+            "remembered recipients cannot reveal a locked contact in chips"
+        );
+        let checks: Vec<_> = nodes
+            .iter()
+            .filter(|(label, role, at)| {
+                *role == egui::accesskit::Role::CheckBox
+                    && label != "Select all contacts"
+                    && panel.contains(*at)
+            })
+            .collect();
+        assert!(checks.len() > 2);
+        assert!(checks.iter().all(|(_, _, at)| at.x - panel.left() >= 16.0));
+        let pointer = egui::pos2(panel.center().x, panel.bottom() - 180.0);
+        for _ in 0..12 {
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -80.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+            );
+        }
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let after: Vec<_> = nodes
+            .iter()
+            .filter(|(label, role, at)| {
+                *role == egui::accesskit::Role::CheckBox
+                    && label != "Select all contacts"
+                    && panel.contains(*at)
+            })
+            .collect();
+        assert!(after.len() > 2);
+        assert_ne!(
+            checks[0].0, after[0].0,
+            "the contact list scrolls to different rows"
+        );
+        assert!(
+            after
+                .iter()
+                .all(|(_, _, at)| (at.x - checks[0].2.x).abs() < 0.5)
+        );
+    }
+
+    #[test]
+    fn status_photo_tools_and_own_posts_are_real_navigation_flows() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("status-editor"));
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        for label in [
+            "Undo", "Redo", "Effects", "Draw", "Text", "Shapes", "Blur", "Done",
+        ] {
+            assert!(
+                nodes
+                    .iter()
+                    .any(|(name, role, _)| name == label && *role == egui::accesskit::Role::Button),
+                "{label} is accessible"
+            );
+        }
+        click_review_control(
+            &mut app,
+            &ctx,
+            "Highlighter",
+            egui::accesskit::Role::CheckBox,
+        );
+        assert!(
+            app.status_draft
+                .as_ref()
+                .unwrap()
+                .editor
+                .as_ref()
+                .unwrap()
+                .highlighter
+        );
+        click_review_button(&mut app, &ctx, "Cancel photo edits");
+        assert!(app.status_draft.as_ref().unwrap().editor.is_none());
+        assert!(app.status_draft.as_ref().unwrap().media.is_some());
+        apply_flags(&mut app, Some("status-mine-list"));
+        render(&mut app, &ctx);
+        click_review_button(&mut app, &ctx, "My status");
+        assert!(
+            app.status_selected
+                .as_ref()
+                .is_some_and(|(_, id)| id == "own-status-demo")
+        );
+        click_review_button(&mut app, &ctx, "Show status viewers");
+        assert!(app.status_viewers_open);
+    }
+
+    #[test]
+    fn status_sticker_picker_uses_the_shared_tiles_and_keeps_its_recipient() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("status-photo"));
+        app.backend.record_demo_commands();
+        app.status_reply = "A separate text draft".into();
+        let selected = app.status_selected.clone().unwrap();
+        render(&mut app, &ctx);
+        click_review_button(&mut app, &ctx, "Stickers");
+        assert_eq!(app.status_picker, Some(crate::model::PickerTab::Stickers));
+        assert!(app.picker.is_none());
+        render(&mut app, &ctx);
+        let tile = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::picker::first_tile_id()))
+            .expect("the shared picker draws a sticker");
+        frame_sized(
+            &mut app,
+            &ctx,
+            780.0,
+            vec![egui::Event::PointerMoved(tile.center())],
+        );
+        for pressed in [true, false] {
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![egui::Event::PointerButton {
+                    pos: tile.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        render(&mut app, &ctx);
+        assert!(app.status_picker.is_none());
+        assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command, crate::backend::Command::ReplyStatusSticker { sender, id, .. } if sender == &selected.0 && id == &selected.1)));
+        assert_eq!(app.status_reply, "A separate text draft");
+    }
+
+    #[test]
+    fn status_composer_flow_requires_an_audience_and_keeps_an_offline_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("status"));
+        render(&mut app, &ctx);
+        click_review_button(&mut app, &ctx, "My status");
+        assert!(app.status_draft.is_some());
+        app.status_draft.as_mut().unwrap().text = "Offline status smoke".into();
+        render(&mut app, &ctx);
+        click_review_button(&mut app, &ctx, "Publish status");
+        assert!(app.status_privacy_open);
+        let at = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .find(|(text, _, _)| text == "My contacts")
+            .expect("the audience choice is accessible")
+            .2;
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        render(&mut app, &ctx);
+        assert!(app.status_audience.is_some());
+        click_review_button(&mut app, &ctx, "Close status privacy");
+        assert!(!app.status_privacy_open);
+        click_review_button(&mut app, &ctx, "Publish status");
+        render(&mut app, &ctx);
+        let draft = app.status_draft.as_ref().unwrap();
+        assert_eq!(draft.text, "Offline status smoke");
+        assert!(!draft.busy);
+        assert!(
+            draft
+                .error
+                .as_ref()
+                .is_some_and(|error| error.starts_with("Offline demo:"))
+        );
+    }
+
+    #[test]
+    fn status_audience_picker_stages_searches_confirms_and_cancels_in_one_modal() {
+        use crate::status::{Audience, AudienceMode};
+        use egui::accesskit::Role;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("status-privacy"));
+        app.status_audience = Some(Audience {
+            mode: AudienceMode::Contacts,
+            selected: Default::default(),
+        });
+        render(&mut app, &ctx);
+        let panel = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("status-audience-panel")))
+            .unwrap();
+        click_review_control(&mut app, &ctx, "Only share with…", Role::RadioButton);
+        render(&mut app, &ctx);
+        assert_eq!(
+            app.status_audience.as_ref().unwrap().mode,
+            AudienceMode::Contacts
+        );
+        assert!(
+            app.status_privacy_picker
+                .as_ref()
+                .unwrap()
+                .selected
+                .is_empty()
+        );
+        assert_eq!(
+            panel,
+            ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("status-audience-panel")))
+                .unwrap()
+        );
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let back = nodes
+            .iter()
+            .find(|(label, role, _)| label == "Back to status privacy" && *role == Role::Button)
+            .unwrap()
+            .2;
+        assert!(
+            panel.contains(back),
+            "the contact header stays inside the modal after the transition"
+        );
+        let checks: Vec<_> = nodes
+            .iter()
+            .filter(|(label, role, _)| *role == Role::CheckBox && label != "Select all contacts")
+            .collect();
+        assert!(checks.len() > 1);
+        assert!(
+            checks
+                .iter()
+                .all(|(_, _, at)| (at.x - checks[0].2.x).abs() < 0.5),
+            "contact checks stay aligned"
+        );
+        let confirm = nodes
+            .iter()
+            .find(|(label, role, _)| label == "Confirm audience" && *role == Role::Button)
+            .unwrap()
+            .2;
+        assert!(
+            panel
+                .expand(16.0)
+                .contains(confirm - egui::vec2(20.0, 20.0))
+                && panel
+                    .expand(16.0)
+                    .contains(confirm + egui::vec2(20.0, 20.0)),
+            "the confirmation button fits inside the modal"
+        );
+        click_review_button(&mut app, &ctx, "Confirm audience");
+        assert!(
+            app.status_privacy_picker.is_some(),
+            "an empty only-share audience cannot be confirmed"
+        );
+        app.status_privacy_search = "Ada".into();
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        assert!(
+            nodes
+                .iter()
+                .any(|(label, role, _)| label == SAMPLES[0].name && *role == Role::CheckBox)
+        );
+        assert!(
+            !nodes
+                .iter()
+                .any(|(label, role, _)| label == SAMPLES[2].name && *role == Role::CheckBox)
+        );
+        click_review_control(&mut app, &ctx, SAMPLES[0].name, Role::CheckBox);
+        assert!(
+            app.status_privacy_picker
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(SAMPLES[0].id)
+        );
+        assert_eq!(
+            app.status_audience.as_ref().unwrap().mode,
+            AudienceMode::Contacts
+        );
+        click_review_button(&mut app, &ctx, "Confirm audience");
+        assert!(app.status_privacy_picker.is_none());
+        assert_eq!(
+            app.status_audience.as_ref().unwrap().mode,
+            AudienceMode::Only
+        );
+        render(&mut app, &ctx);
+        click_review_control(&mut app, &ctx, "My contacts except…", Role::RadioButton);
+        render(&mut app, &ctx);
+        click_review_control(&mut app, &ctx, "Select all contacts", Role::CheckBox);
+        assert!(
+            !app.status_privacy_picker
+                .as_ref()
+                .unwrap()
+                .selected
+                .is_empty()
+        );
+        click_review_button(&mut app, &ctx, "Back to status privacy");
+        assert!(app.status_privacy_picker.is_none());
+        assert_eq!(
+            app.status_audience.as_ref().unwrap().mode,
+            AudienceMode::Only
+        );
+        assert_eq!(app.status_audience.as_ref().unwrap().selected.len(), 1);
     }
 
     /// File selection keeps cropping bound to the chosen photo; cancellation drops the complete draft.
@@ -17947,11 +18543,20 @@ mod tests {
                 .map(|(_, node)| node)
                 .collect();
         }
-        let bells: Vec<_> = nodes
+        // In screen order: the tree's own order follows widget ids, which
+        // any new button elsewhere in the window can reshuffle.
+        let mut bells: Vec<_> = nodes
             .iter()
             .filter(|node| node.label() == Some("Mute notifications"))
-            .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
+            .map(|node| {
+                (
+                    node.bounds().map_or(0.0, |bounds| bounds.y0),
+                    node.toggled() == Some(egui::accesskit::Toggled::True),
+                )
+            })
             .collect();
+        bells.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let bells: Vec<_> = bells.into_iter().map(|(_, on)| on).collect();
         assert_eq!(bells, [false, true], "one bell per account, the second on");
         // Only the muted account's row says so, not the one on screen.
         let said: Vec<_> = nodes
@@ -22779,6 +23384,7 @@ mod tests {
                 Stop::Messages,
                 Stop::Chats,
                 Stop::Calls,
+                Stop::Status,
                 Stop::Starred,
                 Stop::Archived,
                 Stop::Locked,
@@ -22896,6 +23502,7 @@ mod tests {
                         Stop::Messages,
                         Stop::Chats,
                         Stop::Calls,
+                        Stop::Status,
                         Stop::Starred,
                         Stop::Archived,
                         Stop::Locked,
@@ -25792,6 +26399,7 @@ mod rail_tests {
                     let mut expected = vec![
                         Stop::Chats,
                         Stop::Calls,
+                        Stop::Status,
                         Stop::Starred,
                         Stop::Archived,
                         Stop::Locked,
