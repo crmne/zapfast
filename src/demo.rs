@@ -2622,6 +2622,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
             }
+            // Text in the first chat's composer, `\n` for a new line (no commas).
+            choice if choice.starts_with("composer=") => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.composer = choice["composer=".len()..].replace("\\n", "\n");
+                app.focus_composer = true;
+            }
             "wallpaper" => app.page = Page::Wallpaper,
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes.
@@ -9697,6 +9703,7 @@ mod tests {
             "settings-search=Notifications",
             "settings-search=System",
             "settings-search=Storage",
+            "composer=• Milk\\n• Eggs\\n• ",
             "clear-media",
             "wallpaper",
             "wallpaper,light",
@@ -12332,6 +12339,130 @@ mod tests {
             vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
         );
         assert_eq!(app.composer, "", "Enter sends");
+    }
+
+    #[test]
+    fn typed_lists_continue_without_sending_and_empty_items_exit() {
+        for (marker, prefix, next) in [("*", "• ", "• "), ("-", "• ", "• "), ("1.", "1. ", "2. ")]
+        {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(marker.into())]);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(" ".into())]);
+            assert_eq!(app.composer, prefix);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text("milk".into())]);
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(app.composer, format!("{prefix}milk\n{next}"));
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert_eq!(app.composer, format!("{prefix}milk\n"));
+        }
+    }
+
+    #[test]
+    fn enter_at_a_list_start_or_selection_does_not_send_the_draft() {
+        for selection in [false, true] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text("• milk".into())]);
+            let id = crate::ui::conversation::composer_id();
+            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+            let range = if selection {
+                egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(2),
+                    egui::text::CCursor::new(4),
+                )
+            } else {
+                egui::text::CCursorRange::one(egui::text::CCursor::new(0))
+            };
+            state.cursor.set_char_range(Some(range));
+            egui::TextEdit::store_state(&ctx, id, state);
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert!(!app.composer.is_empty(), "Enter must not send a list draft");
+            if !selection {
+                assert_eq!(app.composer, "\n• milk");
+            }
+        }
+    }
+
+    #[test]
+    fn list_conversion_can_be_undone_and_modified_enter_sends() {
+        for modifier in [egui::Modifiers::COMMAND, egui::Modifiers::CTRL] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text("*".into())]);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(" ".into())]);
+            assert_eq!(app.composer, "• ");
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+            );
+            assert!(
+                !app.composer.contains('•'),
+                "undo includes the automatic conversion"
+            );
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Y, egui::Modifiers::COMMAND)],
+            );
+            // Start a fresh list through typing, independently of redo bindings.
+            app.composer.clear();
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text("1. milk".into())]);
+            frame_with(&mut app, &ctx, vec![key(egui::Key::Enter, modifier)]);
+            assert_eq!(app.composer, "", "modified Enter sends the list");
+        }
+    }
+
+    #[test]
+    fn number_leading_prose_is_sent_without_list_conversion() {
+        for (number, rest) in [
+            ("2", "tickets please"),
+            ("10", "min late"),
+            ("2024", "was a good year"),
+        ] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            app.focus_composer = true;
+            render(&mut app, &ctx);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(number.into())]);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(" ".into())]);
+            frame_with(&mut app, &ctx, vec![egui::Event::Text(rest.into())]);
+            let expected = format!("{number} {rest}");
+            assert_eq!(app.composer, expected);
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            assert!(app.composer.is_empty());
+            assert!(app.backend.take_demo_commands().iter().any(|command| matches!(command, crate::backend::Command::SendText { text, .. } if text == &expected)));
+        }
     }
 
     #[test]

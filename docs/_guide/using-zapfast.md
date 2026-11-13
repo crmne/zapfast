@@ -1066,3 +1066,12 @@ reactions and chat rows are not stops. The React, Reply and Forward buttons
 that appear beside a hovered message are for the pointer only; keyboard and
 screen-reader users reach them from the message menu. Alt+Up/Down switches
 conversations.
+
+### Typing lists
+
+At the beginning of a line in the composer, type `* ` or `- ` to start a
+bulleted list. A number followed by a period and a space, such as `1. `,
+starts a numbered list. A bare number and space stay ordinary text. Enter continues the list and increments a numbered item. Enter
+on an empty item ends the list. While editing a list, use the send button
+or Command+Enter (Control+Enter on other platforms) to send. Pasted text
+is left unchanged.
