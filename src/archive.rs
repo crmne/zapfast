@@ -68,6 +68,57 @@ pub struct Archive {
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
+/// A transaction that nests. On its own it begins and commits like any
+/// other; inside an open one it is a savepoint, so the writes that open their
+/// own still work while history filing holds one for a whole chunk.
+struct Scope<'a> {
+    connection: &'a Connection,
+    open: bool,
+    /// Began outside any transaction, so it rolls back with `ROLLBACK`:
+    /// `RELEASE` after `ROLLBACK TO` commits, and a commit that fails leaves
+    /// the connection inside the transaction for every later write.
+    outermost: bool,
+}
+
+impl<'a> Scope<'a> {
+    fn begin(connection: &'a Connection) -> Result<Self> {
+        let outermost = connection.is_autocommit();
+        connection.execute_batch("SAVEPOINT scope")?;
+        Ok(Self {
+            connection,
+            open: true,
+            outermost,
+        })
+    }
+
+    fn commit(mut self) -> Result<()> {
+        self.connection.execute_batch("RELEASE scope")?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl std::ops::Deref for Scope<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.connection
+    }
+}
+
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        if !self.open {
+            return;
+        }
+        let _ = self.connection.execute_batch(if self.outermost {
+            "ROLLBACK"
+        } else {
+            "ROLLBACK TO scope; RELEASE scope"
+        });
+    }
+}
+
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
@@ -480,6 +531,43 @@ impl Archive {
 
     fn open_with_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(Self::prepare(encryption::open(path, key)?)?)
+    }
+
+    /// Holds the writes that follow in one transaction until
+    /// [`Archive::end_batch`]. Without it each statement commits on its own,
+    /// and a history chunk rewrites the same log pages for every message.
+    pub fn begin_batch(&self) -> Result<()> {
+        self.roll_back_leftover()?;
+        self.connection.execute_batch("SAVEPOINT batch")
+    }
+
+    /// Ends a transaction that a rollback which failed left open. Nothing
+    /// would ever commit it, since every later release is nested inside it,
+    /// so each write made in it would be lost when the connection closes.
+    /// Call it only where none of the archive's own transactions can be open:
+    /// between the worker's turns and commands, and when a batch begins.
+    pub fn roll_back_leftover(&self) -> Result<()> {
+        if self.connection.is_autocommit() {
+            return Ok(());
+        }
+        log::warn!("rolling back a transaction left open");
+        self.connection.execute_batch("ROLLBACK")
+    }
+
+    /// Whether a write would join an open transaction rather than commit.
+    pub fn in_transaction(&self) -> bool {
+        !self.connection.is_autocommit()
+    }
+
+    /// Commits the batch. One that cannot commit is rolled back, since every
+    /// later write would join it and never commit. If that rollback fails
+    /// too, [`Archive::roll_back_leftover`] ends the transaction later.
+    pub fn end_batch(&self) -> Result<()> {
+        let committed = self.connection.execute_batch("RELEASE batch");
+        if committed.is_err() && !self.connection.is_autocommit() {
+            let _ = self.connection.execute_batch("ROLLBACK");
+        }
+        committed
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -1167,7 +1255,7 @@ impl Archive {
     /// Stores a privacy id mapping and reconciles history already filed under
     /// the privacy id with the canonical phone-number chat.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let lid_chat = format!("{lid}@lid");
         let phone_chat = format!("{pn}@s.whatsapp.net");
         Self::merge_group_recipient(&transaction, &lid_chat, &phone_chat)?;
@@ -2023,7 +2111,7 @@ impl Archive {
 
     /// Commits removal, barriers, and pending cleanup for every known identity.
     pub fn delete_message_aliases(&self, chats: &[String], id: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let mut deleted = 0;
         for chat in chats {
             transaction.execute(
@@ -2070,7 +2158,7 @@ impl Archive {
 
     /// Saves authoritative acceptance separately from fallible physical cleanup.
     pub fn confirm_message_removal(&self, account: &str, chats: &[String], id: &str) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         // The caller supplies the current protocol account, including before its
         // Connected event. Bind replay checks to that same persisted identity.
         transaction.execute(
@@ -2151,7 +2239,7 @@ impl Archive {
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
     pub fn remove_chat_through(&self, chat: &str, through: i64, delete: bool) -> Result<Removed> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let through = self
             .removal_point(chat)?
             .map_or(through, |old| old.max(through));
@@ -2581,7 +2669,7 @@ impl Archive {
     /// The chat's activity follows: an activity time this message set moves
     /// to the chat's newest message, and later activity stays.
     pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Scope::begin(&self.connection)?;
         let Some(old) = transaction
             .query_row(
                 "SELECT timestamp FROM messages
@@ -2882,6 +2970,25 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// An encrypted archive on disk whose log starts empty and is never
+    /// checkpointed on its own, so [`wal_frames`] counts every page the
+    /// test's writes put in it.
+    pub(crate) fn on_disk(path: &std::path::Path) -> super::Archive {
+        let archive = super::Archive::open_with_key(path, &[7; 32]).unwrap();
+        archive
+            .connection
+            .execute_batch("PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        archive
+    }
+
+    pub(crate) fn wal_frames(archive: &super::Archive) -> i64 {
+        archive
+            .connection
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| row.get(1))
+            .unwrap()
+    }
+
     pub(crate) fn reject_archive_updates(archive: &super::Archive) {
         archive.connection.execute_batch(
             "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
@@ -2902,6 +3009,163 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
+    }
+
+    /// Makes the commit of any transaction that files a new message or poll
+    /// vote fail: each leaves a deferred foreign key unmet, which SQLite
+    /// checks only when the outermost transaction commits.
+    pub(crate) fn set_commit_failure(archive: &super::Archive, fail: bool) {
+        archive.connection.execute_batch(if fail {
+            "PRAGMA foreign_keys = ON;
+             CREATE TEMP TABLE IF NOT EXISTS commit_gate (id INTEGER PRIMARY KEY);
+             CREATE TEMP TABLE IF NOT EXISTS commit_blocker (gate INTEGER REFERENCES commit_gate (id) DEFERRABLE INITIALLY DEFERRED);
+             CREATE TEMP TRIGGER block_message_commit AFTER INSERT ON main.messages BEGIN INSERT INTO commit_blocker VALUES (1); END;
+             CREATE TEMP TRIGGER block_vote_commit AFTER INSERT ON main.poll_votes BEGIN INSERT INTO commit_blocker VALUES (1); END;"
+        } else {
+            "DROP TRIGGER temp.block_message_commit; DROP TRIGGER temp.block_vote_commit;"
+        }).unwrap();
+    }
+
+    /// Makes every `ROLLBACK` fail, as one that cannot reach the disk would,
+    /// by refusing to prepare it. `ROLLBACK TO` a savepoint still works.
+    pub(crate) fn set_rollback_failure(archive: &super::Archive, fail: bool) {
+        unsafe extern "C" fn refuse_rollback(
+            _: *mut std::ffi::c_void,
+            action: std::ffi::c_int,
+            operation: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+        ) -> std::ffi::c_int {
+            let rollback = action == rusqlite::ffi::SQLITE_TRANSACTION
+                && !operation.is_null()
+                // SAFETY: SQLite passes this operation as a NUL-terminated string.
+                && unsafe { std::ffi::CStr::from_ptr(operation) }.to_bytes() == b"ROLLBACK";
+            if rollback {
+                rusqlite::ffi::SQLITE_DENY
+            } else {
+                rusqlite::ffi::SQLITE_OK
+            }
+        }
+        // SAFETY: the handle is the archive's open connection, used on this
+        // thread only, and the callback keeps no state.
+        unsafe {
+            rusqlite::ffi::sqlite3_set_authorizer(
+                archive.connection.handle(),
+                if fail { Some(refuse_rollback) } else { None },
+                std::ptr::null_mut(),
+            );
+        }
+    }
+
+    #[test]
+    fn a_batch_that_cannot_roll_back_is_ended_by_the_next_recovery() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        set_rollback_failure(&archive, true);
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "undone").unwrap();
+        archive
+            .connection
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(archive.end_batch().is_err());
+        assert!(archive.in_transaction(), "the rollback failed");
+        assert!(
+            archive.begin_batch().is_err(),
+            "a batch never starts inside the transaction left open"
+        );
+        set_rollback_failure(&archive, false);
+        archive.roll_back_leftover().unwrap();
+        assert!(!archive.in_transaction());
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(!archive.in_transaction(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_scope_whose_commit_fails_rolls_back_and_later_writes_commit() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        let scope = Scope::begin(&archive.connection).unwrap();
+        scope
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('inside', 'undone')",
+                [],
+            )
+            .unwrap();
+        scope
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(scope.commit().is_err());
+        assert!(archive.connection.is_autocommit(), "the scope rolled back");
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(archive.connection.is_autocommit(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_batch_whose_commit_fails_rolls_back_and_later_writes_commit() {
+        let archive = Archive::in_memory().unwrap();
+        set_commit_failure(&archive, true);
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "undone").unwrap();
+        archive
+            .connection
+            .execute("INSERT INTO commit_blocker VALUES (1)", [])
+            .unwrap();
+        assert!(archive.end_batch().is_err());
+        assert!(archive.connection.is_autocommit(), "the batch rolled back");
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        archive.set_meta("after", "kept").unwrap();
+        assert!(archive.connection.is_autocommit(), "a later write commits");
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_batch_rolls_back_a_transaction_left_open_and_commits() {
+        let archive = Archive::in_memory().unwrap();
+        archive.connection.execute_batch("BEGIN").unwrap();
+        archive.set_meta("stuck", "undone").unwrap();
+        archive.begin_batch().unwrap();
+        archive.set_meta("inside", "kept").unwrap();
+        archive.end_batch().unwrap();
+        assert!(archive.connection.is_autocommit(), "the batch committed");
+        assert_eq!(archive.meta("stuck").unwrap(), None);
+        assert_eq!(archive.meta("inside").unwrap().as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn a_scope_that_fails_inside_a_batch_undoes_only_its_own_writes() {
+        let archive = Archive::in_memory().unwrap();
+        archive.begin_batch().unwrap();
+        archive.set_meta("before", "kept").unwrap();
+        {
+            let scope = Scope::begin(&archive.connection).unwrap();
+            scope
+                .execute(
+                    "INSERT INTO meta (key, value) VALUES ('inside', 'undone')",
+                    [],
+                )
+                .unwrap();
+        }
+        let scope = Scope::begin(&archive.connection).unwrap();
+        scope
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('committed', 'kept')",
+                [],
+            )
+            .unwrap();
+        scope.commit().unwrap();
+        archive.set_meta("after", "kept").unwrap();
+        archive.end_batch().unwrap();
+        assert!(archive.connection.is_autocommit(), "the batch is closed");
+        assert_eq!(archive.meta("before").unwrap().as_deref(), Some("kept"));
+        assert_eq!(archive.meta("inside").unwrap(), None);
+        assert_eq!(archive.meta("committed").unwrap().as_deref(), Some("kept"));
+        assert_eq!(archive.meta("after").unwrap().as_deref(), Some("kept"));
     }
 
     /// Failed unlink cannot apply the previous account's terminal barriers.

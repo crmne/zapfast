@@ -116,7 +116,7 @@ impl Archive {
         list: &str,
         moves: &[(String, String, String)],
     ) -> Result<Adopted> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         let (any, ours): (bool, bool) = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1),
                 EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND from_me)",
