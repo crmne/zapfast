@@ -1058,11 +1058,36 @@ says why.
 These keys wait while the chat selects messages. A call in the chat has only a
 menu to call back, which Space and Enter open too.
 
-In the chat view, Tab moves through the message input and its buttons, phone
-numbers in messages, chat search, the chat info panel, the message list, the
-rail, the chat list's header, search and the chat filters, then returns to the
-input. Shift+Tab goes back; hidden controls are skipped. Single messages,
-reactions and chat rows are not stops. The React, Reply and Forward buttons
-that appear beside a hovered message are for the pointer only; keyboard and
-screen-reader users reach them from the message menu. Alt+Up/Down switches
-conversations.
+Space or Enter does what clicking the message does: it plays or pauses a voice
+message or video, opens a photo in the viewer, a sticker on its own card or a
+document, or opens a link, a link preview, a location's map, a shared contact's
+chat or a carousel card's picture, or votes for a poll option. On a file that
+is not downloaded yet it starts the download, or retries one that failed, and
+says why if that download fails while its chat is open. As with a click, a
+video with a picture then plays once it arrives, if its chat is still open;
+anything else, including a video shown as a file card, plays or opens with the
+next press.
+Where clicking does nothing, as on a plain text message, Space and Enter do
+nothing either. On a phone number, Space or Enter opens the number's menu
+(Message, Copy number) with focus on its first item, as clicking the number
+does; Tab, Up and Down move through it, and Escape closes it and returns to the
+list. A message with several of these (a file, links, phone numbers, cards,
+poll options) says how many at the end of its label ("1 link and 2 phone
+numbers"); Left and Right move between the message's items, its file, links,
+phone numbers, cards or poll options, and say each one ("Link 2 of 3,
+example.com", "Phone number 3 of 3, +1 (555) 010-2040"), and Space or Enter
+plays or pauses, opens or votes for the selected one. On a carousel card
+without a picture, Space or Enter opens the message menu on that card's
+buttons. An album is one message whose items are its photos and videos, each
+followed by the links and phone numbers in its caption. On a photo or video,
+Space or Enter opens it in the viewer; on a link it opens the link, and on a
+phone number its menu. Shift+F10 and the other keys act on the selected item.
+
+In the chat view, Tab moves through the message input and its buttons, chat
+search, the chat info panel, the message list, the rail, the chat list's
+header, search and the chat filters, then returns to the input. Shift+Tab goes
+back; hidden controls are skipped. Single messages, their links and phone
+numbers, reactions and chat rows are not stops. The React, Reply and Forward
+buttons that appear beside a hovered message are for the pointer only;
+keyboard and screen-reader users reach them from the message menu. Alt+Up/Down
+switches conversations.

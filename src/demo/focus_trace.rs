@@ -1319,3 +1319,139 @@ fn g_lands_on_the_replied_message_in_the_next_frame() {
         }
     }
 }
+
+/// Space on a photo in the message list opens the preview with the reader
+/// on its Close button, in the first pass that shows it and never by way of
+/// the window; Escape closes it, and the reader is back on the photo's
+/// message, not in the message field.
+#[test]
+fn the_image_preview_takes_focus_and_gives_it_back() {
+    let mut trace = Trace::new(photo_chat());
+    focus_stop(&mut trace, Stop::Messages);
+    let row = trace.last().clone();
+    assert!(row.spoken.contains("Photo"), "{}", row.spoken);
+    let press = tap(&mut trace, "Space", egui::Key::Space, egui::Modifiers::NONE);
+    assert!(trace.app.image_preview.is_some());
+    trace.assert_clean(press, "the image preview opened");
+    assert_eq!(
+        trace.frames[press + 1].name,
+        "Button \"Close preview (Esc)\"",
+        "on Close in the frame after the key\n{}",
+        trace.dump(press)
+    );
+    escape_back_to_the_list(&mut trace, &row, "the image preview");
+    assert!(trace.app.image_preview.is_none());
+}
+
+/// A screen reader's own activation of the preview's Close, an AccessKit
+/// action rather than a pointer click, closes it and puts the reader back
+/// on the message it was opened from, with no keyboard navigation noted.
+#[test]
+fn a_screen_readers_activation_of_close_gives_focus_back() {
+    let mut trace = Trace::new(photo_chat());
+    focus_stop(&mut trace, Stop::Messages);
+    let row = trace.last().clone();
+    tap(&mut trace, "Space", egui::Key::Space, egui::Modifiers::NONE);
+    let close = trace.last().clone();
+    assert_eq!(close.name, "Button \"Close preview (Esc)\"");
+    trace
+        .ctx
+        .data_mut(|data| data.insert_temp(crate::theme::keyboard_focus_id(), false));
+    let from = trace.mark();
+    trace.action += 1;
+    trace.frame(
+        "activate Close",
+        vec![egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: close.effective,
+                data: None,
+            },
+        )],
+    );
+    trace.settle("activate Close", 4);
+    assert!(trace.app.image_preview.is_none(), "the action closes it");
+    trace.assert_clean(from, "Close activated by the screen reader");
+    assert_eq!(trace.last().effective, row.effective, "back on the message");
+}
+
+/// The media viewer shows the open chat's media and closes as the reader
+/// moves to another chat, with no key: focus goes to that chat's message
+/// field rather than back to the old chat's list.
+#[test]
+fn the_viewer_closed_by_a_chat_switch_leaves_focus_to_the_new_chat() {
+    let mut trace = Trace::new(photo_chat());
+    focus_stop(&mut trace, Stop::Messages);
+    let old = trace.app.open_chat.clone().expect("the demo opens a chat");
+    tap(&mut trace, "Space", egui::Key::Space, egui::Modifiers::NONE);
+    assert!(trace.app.image_preview.is_some(), "Space opens the viewer");
+    trace.action += 1;
+    trace
+        .app
+        .actions
+        .push(Action::OpenChat(super::SAMPLES[1].id.into()));
+    trace.settle("another chat", 3);
+    assert_eq!(trace.app.open_chat.as_deref(), Some(super::SAMPLES[1].id));
+    assert!(
+        trace.app.image_preview.is_none(),
+        "the chat switch closes the viewer"
+    );
+    assert_ne!(
+        trace.last().egui,
+        Some(crate::ui::conversation::messages_list_id(&old)),
+        "not the old chat's list"
+    );
+    assert_eq!(
+        trace.last().egui,
+        Some(crate::ui::conversation::composer_id()),
+        "the new chat's message field"
+    );
+}
+
+/// A dialog stays open as the reader moves to another chat, such as from a
+/// notification. Escape closes it there, and focus goes to that chat's
+/// message field rather than back to the old chat's list it opened from.
+#[test]
+fn a_dialog_closed_in_another_chat_leaves_focus_to_it() {
+    let mut trace = Trace::new(app());
+    focus_stop(&mut trace, Stop::Messages);
+    let old = trace.app.open_chat.clone().expect("the demo opens a chat");
+    tap(
+        &mut trace,
+        "Ctrl+/",
+        egui::Key::Slash,
+        egui::Modifiers::COMMAND,
+    );
+    assert!(trace.app.dialog.is_some(), "Ctrl+/ opens the shortcuts");
+    trace.action += 1;
+    trace
+        .app
+        .actions
+        .push(Action::OpenChat(super::SAMPLES[1].id.into()));
+    trace.settle("another chat", 3);
+    assert_eq!(trace.app.open_chat.as_deref(), Some(super::SAMPLES[1].id));
+    assert!(
+        trace.app.dialog.is_some(),
+        "the dialog is still open after the chat switch"
+    );
+    let from = tap(
+        &mut trace,
+        "Escape",
+        egui::Key::Escape,
+        egui::Modifiers::NONE,
+    );
+    assert!(trace.app.dialog.is_none(), "Escape closes the dialog");
+    assert_ne!(
+        trace.last().egui,
+        Some(crate::ui::conversation::messages_list_id(&old)),
+        "not the old chat's list\n{}",
+        trace.dump(from)
+    );
+    assert_eq!(
+        trace.last().egui,
+        Some(crate::ui::conversation::composer_id()),
+        "the new chat's message field\n{}",
+        trace.dump(from)
+    );
+}
