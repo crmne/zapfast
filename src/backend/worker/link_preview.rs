@@ -10,7 +10,12 @@ use crate::model::{ComposedPreview, LinkPreview};
 const USER_AGENT: &str = concat!("ZapFast/", env!("CARGO_PKG_VERSION"));
 /// Page and picture together.
 const TOTAL_TIME: Duration = Duration::from_secs(5);
-const MAX_PAGE: usize = 512 * 1024;
+/// The end of `TOTAL_TIME` kept for parsing the page, a head of at most
+/// `MAX_PAGE` bytes, after reading stops.
+const PARSE_TIME: Duration = Duration::from_millis(500);
+/// Reading stops where the head ends; this bounds a page whose head does not.
+/// Some heads are long: YouTube's tags start about 760 KiB in.
+const MAX_PAGE: usize = 2 * 1024 * 1024;
 const MAX_IMAGE: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 5;
 const THUMB_SIDE: u32 = 300;
@@ -408,6 +413,142 @@ impl reqwest::dns::Resolve for GuardedResolver {
     }
 }
 
+/// The page up to where its head ends, which is all `parse_page` reads, or
+/// `MAX_PAGE` bytes. A head cut short, by the cap, at `deadline` or by a failed
+/// read, keeps only its whole tags, so a page that stalls or breaks off still
+/// gives what its head named. A page that simply ends loses only a tag it left
+/// unfinished, so the text of a title it never closed stays.
+async fn read_head(mut response: reqwest::Response, deadline: tokio::time::Instant) -> Vec<u8> {
+    let mut body = Vec::new();
+    loop {
+        let chunk = match tokio::time::timeout_at(deadline, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => chunk,
+            Ok(Ok(None)) => {
+                if let Some(start) = scan_tags(&body).open_tag {
+                    body.truncate(start);
+                }
+                break;
+            }
+            Ok(Err(_)) | Err(_) => {
+                body.truncate(whole_tags_end(&body));
+                break;
+            }
+        };
+        let scanned = body.len();
+        body.extend_from_slice(&chunk);
+        if let Some(end) = head_end_after(&body, scanned).filter(|&end| end <= MAX_PAGE) {
+            body.truncate(end);
+            break;
+        }
+        if body.len() >= MAX_PAGE {
+            body.truncate(MAX_PAGE);
+            body.truncate(whole_tags_end(&body));
+            break;
+        }
+    }
+    body
+}
+
+/// Where `</head>` or `<body` first starts in `body` after its first `scanned`
+/// bytes, including a marker split across that point.
+fn head_end_after(body: &[u8], scanned: usize) -> Option<usize> {
+    const MARKERS: [&[u8]; 2] = [b"</head>", b"<body"];
+    let from = scanned.saturating_sub(b"</head>".len() - 1);
+    (from..body.len()).find(|&at| {
+        MARKERS.iter().any(|marker| {
+            body.get(at..at + marker.len())
+                .is_some_and(|found| found.eq_ignore_ascii_case(marker))
+        })
+    })
+}
+
+/// How much of `head` runs through the last `>` that closes a tag. A `>`
+/// inside a quoted attribute value closes nothing, so a cut there cannot leave
+/// half a value for `parse_page` to read as a title. The text of a script, a
+/// style or a title is not markup, so its `<` and quotes open nothing either.
+fn whole_tags_end(head: &[u8]) -> usize {
+    scan_tags(head).whole
+}
+
+/// Where a head's markup stands at its last byte.
+struct TagScan {
+    /// How much runs through the last `>` that closes a tag.
+    whole: usize,
+    /// Where a tag still open at the end starts.
+    open_tag: Option<usize>,
+}
+
+fn scan_tags(head: &[u8]) -> TagScan {
+    let mut whole = 0;
+    let mut tag_start = None;
+    // As `attributes` reads them: a quote opens a value only right after `=`.
+    let mut after_equals = false;
+    let mut quote = None;
+    let mut at = 0;
+    while let Some(&byte) = head.get(at) {
+        if let Some(open) = quote {
+            if byte == open {
+                quote = None;
+            }
+        } else if let Some(start) = tag_start {
+            if byte == b'>' {
+                tag_start = None;
+                after_equals = false;
+                whole = at + 1;
+                if let Some(name) = text_element(&head[start..]) {
+                    match end_tag_in(&head[at + 1..], name) {
+                        // Resume at the closing tag's `<`.
+                        Some(length) => at += length,
+                        // The rest is that element's text, not a tag.
+                        None => break,
+                    }
+                }
+            } else if after_equals && matches!(byte, b'"' | b'\'') {
+                quote = Some(byte);
+                after_equals = false;
+            } else if byte == b'=' {
+                after_equals = true;
+            } else if !byte.is_ascii_whitespace() {
+                after_equals = false;
+            }
+        } else if byte == b'<' {
+            tag_start = Some(at);
+        }
+        at += 1;
+    }
+    TagScan {
+        whole,
+        open_tag: tag_start,
+    }
+}
+
+/// The name of the element `tag`, from its `<`, starts if its text is not
+/// markup: `script` and `style` (raw text) and `title` (escapable raw text).
+fn text_element(tag: &[u8]) -> Option<&'static [u8]> {
+    [&b"script"[..], b"style", b"title"]
+        .into_iter()
+        .find(|name| {
+            tag.get(1..1 + name.len())
+                .is_some_and(|found| found.eq_ignore_ascii_case(name))
+                && tag.get(1 + name.len()).copied().is_some_and(ends_name)
+        })
+}
+
+/// Where the end tag `</name`, followed by the end of its name, first starts
+/// in `text`; `</scripture` does not end a script.
+fn end_tag_in(text: &[u8], name: &[u8]) -> Option<usize> {
+    let length = name.len() + 3;
+    text.windows(length).position(|found| {
+        found.starts_with(b"</")
+            && found[2..2 + name.len()].eq_ignore_ascii_case(name)
+            && ends_name(found[length - 1])
+    })
+}
+
+fn ends_name(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/')
+}
+
 /// The body up to `limit` bytes, and whether more followed.
 async fn read_body(mut response: reqwest::Response, limit: usize) -> Option<(Vec<u8>, bool)> {
     let mut body = Vec::new();
@@ -463,13 +604,11 @@ fn client(url: &reqwest::Url) -> Option<reqwest::Client> {
 /// linked site is contacted. Gives `None` on any failure or when the page says
 /// nothing; nothing about the link is logged.
 pub(super) async fn fetch(url: String) -> Option<ComposedPreview> {
-    tokio::time::timeout(TOTAL_TIME, fetch_inner(url))
-        .await
-        .ok()
-        .flatten()
+    fetch_inner(url, tokio::time::Instant::now() + TOTAL_TIME).await
 }
 
-async fn fetch_inner(url: String) -> Option<ComposedPreview> {
+/// Every wait is bounded by `deadline`; a head cut short by it is still read.
+async fn fetch_inner(url: String, deadline: tokio::time::Instant) -> Option<ComposedPreview> {
     // The preview names the address that was asked for, not where it led.
     let requested = crate::safety::preview_url(&url)?;
     let parsed = reqwest::Url::parse(&requested).ok()?;
@@ -477,8 +616,24 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
         return None;
     }
     let client = client(&parsed)?;
+    preview_from(&client, requested, parsed, deadline).await
+}
 
-    let response = client.get(parsed).send().await.ok()?;
+/// The preview from an address that passed the checks above. Tests run it
+/// against a page on this machine, which `fetch_inner` would refuse.
+async fn preview_from(
+    client: &reqwest::Client,
+    requested: String,
+    parsed: reqwest::Url,
+    deadline: tokio::time::Instant,
+) -> Option<ComposedPreview> {
+    // Reading stops early enough to leave parsing its time before `deadline`,
+    // so a head cut short by the time still gives its title.
+    let read_by = deadline.checked_sub(PARSE_TIME).unwrap_or(deadline);
+    let response = tokio::time::timeout_at(read_by, client.get(parsed).send())
+        .await
+        .ok()?
+        .ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -496,19 +651,25 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
         return None;
     }
     let base = response.url().clone();
-    let (bytes, _) = read_body(response, MAX_PAGE).await?;
-    // Parsing a large page is CPU work no timeout or abort can interrupt.
-    let meta =
-        tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base))
-            .await
-            .ok()?;
+    let bytes = read_head(response, read_by).await;
+    // Parsing a large page is CPU work no timeout or abort can interrupt, so it
+    // runs on its own thread and is waited for only until `deadline`.
+    let parse =
+        tokio::task::spawn_blocking(move || parse_page(&String::from_utf8_lossy(&bytes), &base));
+    let meta = tokio::time::timeout_at(deadline, parse).await.ok()?.ok()?;
     if meta.title.is_none() && meta.description.is_none() && meta.image.is_none() {
         return None;
     }
 
+    // A head that took all the time leaves none for its picture.
     let thumbnail = match meta.image.as_deref() {
-        Some(image) => fetch_image(&client, image).await,
-        None => None,
+        Some(image) if tokio::time::Instant::now() < deadline => {
+            tokio::time::timeout_at(deadline, fetch_image(client, image))
+                .await
+                .ok()
+                .flatten()
+        }
+        _ => None,
     };
     Some(ComposedPreview {
         preview: LinkPreview {
@@ -553,6 +714,254 @@ mod tests {
         assert_eq!(decode(&text), text);
         let wide = "&é".repeat(1024);
         assert_eq!(decode(&wide), wide);
+    }
+
+    #[test]
+    fn the_head_end_is_found_across_chunks() {
+        let first = b"<head><title>t</title></HE".to_vec();
+        assert_eq!(head_end_after(&first, 0), None);
+        let mut both = first.clone();
+        both.extend_from_slice(b"AD><p>");
+        assert_eq!(head_end_after(&both, first.len()), Some(22));
+        assert_eq!(head_end_after(b"<head></head>", 0), Some(6));
+        assert_eq!(head_end_after(b"<title>t</title><BODY>", 0), Some(16));
+        assert_eq!(
+            head_end_after(b"<head><meta name=\"a\" content=\"b\">", 0),
+            None
+        );
+    }
+
+    /// A page served on this machine: `sent`, under a length of `length`
+    /// bytes. A length past `sent` leaves the page stalled after it.
+    async fn local_page(sent: String, length: usize) -> reqwest::Url {
+        serve(sent, length, false).await
+    }
+
+    /// `local_page`, but the connection closes after `sent`, short of `length`.
+    async fn broken_page(sent: String, length: usize) -> reqwest::Url {
+        serve(sent, length, true).await
+    }
+
+    async fn serve(sent: String, length: usize, close: bool) -> reqwest::Url {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // Read the whole request first: closing on an unread one resets the
+            // connection before the client has its answer.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            while !request.windows(4).any(|found| found == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {length}\r\n\r\n"
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            // The reader may stop before the end; that is not this server's failure.
+            let _ = socket.write_all(sent.as_bytes()).await;
+            if !close {
+                std::future::pending::<()>().await;
+            }
+        });
+        reqwest::Url::parse(&format!("http://{address}/")).unwrap()
+    }
+
+    async fn read_url(url: reqwest::Url, wait: Duration) -> String {
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+        let body = read_head(response, tokio::time::Instant::now() + wait).await;
+        String::from_utf8(body).unwrap()
+    }
+
+    async fn read_local(sent: String, length: usize, wait: Duration) -> String {
+        read_url(local_page(sent, length).await, wait).await
+    }
+
+    /// A connection that breaks off mid-head keeps the whole tags that came.
+    #[tokio::test]
+    async fn a_head_cut_short_by_a_failed_read_is_still_read() {
+        let url = broken_page(STALLED.to_owned(), 100_000).await;
+        let html = read_url(url, Duration::from_secs(5)).await;
+        assert!(html.ends_with("content=\"Slow\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Slow"));
+        assert_eq!(meta.description, None);
+    }
+
+    const STALLED: &str = "<html><head><meta property=\"og:title\" content=\"Slow\">\
+        <meta property=\"og:description\" content=\"Half a desc";
+
+    #[tokio::test]
+    async fn a_head_cut_short_by_the_deadline_is_still_read() {
+        let html = read_local(STALLED.to_owned(), 100_000, Duration::from_millis(300)).await;
+        assert!(html.ends_with("content=\"Slow\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Slow"));
+        assert_eq!(meta.description, None);
+    }
+
+    /// Through the whole preview, a stalled page still gives its title, and its
+    /// picture is skipped because no time is left.
+    #[tokio::test]
+    async fn a_stalled_page_still_gives_a_preview() {
+        let sent = format!(
+            "<html><head><meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">{STALLED}"
+        );
+        let url = local_page(sent, 100_000).await;
+        // Reading stops `PARSE_TIME` before this, 300 ms from now.
+        let deadline = tokio::time::Instant::now() + PARSE_TIME + Duration::from_millis(300);
+        let preview = preview_from(
+            &reqwest::Client::new(),
+            url.to_string(),
+            url.clone(),
+            deadline,
+        )
+        .await
+        .expect("a preview from what came");
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "parsed within the time"
+        );
+        assert_eq!(preview.preview.url, url.to_string());
+        assert_eq!(preview.preview.title.as_deref(), Some("Slow"));
+        assert_eq!(preview.preview.description, None);
+        assert_eq!(preview.thumbnail, None);
+    }
+
+    /// YouTube's tags start about 760 KiB into the page; a head like that is
+    /// read whole, and the read stops where it ends.
+    #[tokio::test]
+    async fn a_head_as_long_as_youtubes_is_read_whole() {
+        let sent = format!(
+            "<html><head><script>{}</script>\
+             <meta property=\"og:title\" content=\"A video\">\
+             <meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">\
+             </head><body>{}",
+            "x".repeat(800 * 1024),
+            "y".repeat(64 * 1024)
+        );
+        // The rest of the page is never sent, so only a read that stops at the
+        // head's end returns before its far deadline; socket buffering cannot
+        // make bytes that were never written arrive.
+        let length = sent.len() + MAX_PAGE;
+        let html = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_local(sent, length, Duration::from_secs(60)),
+        )
+        .await
+        .expect("the read stopped at the head's end, not waiting for the rest");
+        assert!(html.ends_with("content=\"https://i.example.com/v.jpg\">"));
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("A video"));
+        assert_eq!(meta.image.as_deref(), Some("https://i.example.com/v.jpg"));
+    }
+
+    /// A head with no end is cut at the cap, back to its last whole tag, even
+    /// when the cap falls inside a quoted value holding a `>`.
+    #[tokio::test]
+    async fn the_cap_keeps_only_whole_tags() {
+        let sent = format!(
+            "<head><meta property=\"og:title\" content=\"Kept\">\
+             <meta property=\"og:description\" content=\"Tom > {}",
+            "x".repeat(MAX_PAGE)
+        );
+        let length = sent.len() + 1000;
+        let html = read_local(sent, length, Duration::from_secs(5)).await;
+        assert!(html.ends_with("content=\"Kept\">"), "{}", html.len());
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Kept"));
+        assert_eq!(meta.description, None);
+    }
+
+    #[test]
+    fn whole_tags_end_ignores_a_quoted_close() {
+        fn end(html: &str) -> &str {
+            &html[..whole_tags_end(html.as_bytes())]
+        }
+        assert_eq!(end("<a><meta content=\"Tom > Jer"), "<a>");
+        assert_eq!(end("<a><meta content='Tom > Jer"), "<a>");
+        assert_eq!(end("<title>Tom > Jer"), "<title>");
+        assert_eq!(end("<meta content=it's><b"), "<meta content=it's>");
+        assert_eq!(end("<meta content = \"a>b\">x"), "<meta content = \"a>b\">");
+        assert_eq!(end("no tags"), "");
+    }
+
+    #[test]
+    fn whole_tags_end_reads_script_text_as_text() {
+        fn end(html: &str) -> &str {
+            &html[..whole_tags_end(html.as_bytes())]
+        }
+        // In script, `<b` and an escaped quote would open a value that never closes.
+        let page = "<script>if (a<b) c = 'it\\'s';</script>\
+                    <meta content=\"ok\"><meta content=\"cut";
+        assert_eq!(
+            end(page),
+            &page[..page.find("<meta content=\"cut").unwrap()]
+        );
+        assert_eq!(
+            end("<SCRIPT type=\"x\">a<b='</Script><a><b"),
+            "<SCRIPT type=\"x\">a<b='</Script><a>"
+        );
+        assert_eq!(end("<script>a<b='<meta>"), "<script>");
+        assert_eq!(
+            end("<script>a</scripture><b c='</script><meta>"),
+            "<script>a</scripture><b c='</script><meta>"
+        );
+        assert_eq!(end("<scripts><a x='>"), "<scripts>");
+        assert_eq!(end("<script>a</script ><b c='"), "<script>a</script >");
+    }
+
+    #[test]
+    fn whole_tags_end_reads_style_and_title_text_as_text() {
+        fn end(html: &str) -> &str {
+            &html[..whole_tags_end(html.as_bytes())]
+        }
+        let page = "<style>a[href='x</style><meta content=\"ok\"><meta content=\"cut";
+        assert_eq!(
+            end(page),
+            &page[..page.find("<meta content=\"cut").unwrap()]
+        );
+        assert_eq!(
+            end("<STYLE>a<b='</Style ><a><b"),
+            "<STYLE>a<b='</Style ><a>"
+        );
+        assert_eq!(
+            end("<title>a<b c='</title><a><b"),
+            "<title>a<b c='</title><a>"
+        );
+        assert_eq!(end("<styles><a x='>"), "<styles>");
+    }
+
+    /// A page that simply ends mid-tag loses only that tag; the text of a title
+    /// it never closed stays for the title.
+    #[tokio::test]
+    async fn a_page_that_ends_keeps_all_but_an_unfinished_tag() {
+        let read_whole = |sent: &str| {
+            let sent = sent.to_owned();
+            async move {
+                let length = sent.len();
+                read_local(sent, length, Duration::from_secs(5)).await
+            }
+        };
+        let html = read_whole(
+            "<head><meta property=\"og:title\" content=\"Kept\">\
+             <meta property=\"og:description\" content=\"Partial",
+        )
+        .await;
+        assert!(html.ends_with("content=\"Kept\">"), "{html}");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Kept"));
+        assert_eq!(meta.description, None);
+
+        let html = read_whole("<head><title>Fast > slow, a<b").await;
+        assert_eq!(html, "<head><title>Fast > slow, a<b");
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Fast > slow, a<b"));
     }
 
     #[test]
