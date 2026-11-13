@@ -721,6 +721,11 @@ add someone, ZapFast names them after the group is created, and you can send
 them the group's invite link from its details. **Back** steps back, unchecking everyone returns to the
 contact list, and Escape closes the dialog.
 
+**Leave group**, at the bottom of a group's details, leaves it once you
+confirm. A group you left, or one an admin removed you from, stays in your
+chats with its messages, and says **You left this group** where the composer
+was.
+
 The search bar finds chats by name, number, or latest message; searches all
 messages stored on this computer; and finds contacts without an existing chat.
 Names match as they do in **New chat**: each word you type can start a word of

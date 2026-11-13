@@ -4383,6 +4383,22 @@ impl Worker {
                 {
                     self.emit_chat(&chat);
                 }
+                // An admin removing us is a leave, as our own is: the notice
+                // names us, and nothing else marks the group left.
+                if let GroupNotificationAction::Remove { participants, .. } = &*update.action
+                    && participants.iter().any(|participant| {
+                        [
+                            Some(&participant.jid),
+                            participant.phone_number.as_ref(),
+                            participant.lid.as_ref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|jid| self.is_me(&self.canonical(jid)))
+                    })
+                {
+                    self.finish_leave(&chat, false);
+                }
                 self.request_group_info(&chat, true);
             }
             E::ArchiveUpdate(update) => {
@@ -18899,6 +18915,68 @@ mod receipt_tests {
                 Some(group),
                 "the metadata is refreshed too"
             );
+        }
+    }
+
+    /// An admin removing us leaves the group as our own leave does, whether
+    /// the notice names us by our id, our phone number or our privacy id; a
+    /// notice removing someone else does not.
+    #[tokio::test]
+    async fn a_remove_notice_naming_us_leaves_the_group() {
+        use whatsapp_rust::wacore::stanza::groups::{
+            GroupNotificationAction, GroupParticipantInfo,
+        };
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let our_lid = "15550009999@lid";
+        worker.me_pn = Some(ME.into());
+        worker.me_lid = Some(our_lid.into());
+        let members = [PEER.to_owned(), ME.to_owned()];
+        let member = |jid: &str, phone_number: Option<&str>, lid: Option<&str>| {
+            let parse = |jid: &str| jid.parse().unwrap();
+            GroupParticipantInfo::builder()
+                .jid(parse(jid))
+                .maybe_phone_number(phone_number.map(parse))
+                .maybe_lid(lid.map(parse))
+                .build()
+        };
+        let removed = |group: &str, participant: GroupParticipantInfo, at: i64| {
+            wa_events::Event::GroupUpdate(
+                wa_events::GroupUpdate::builder()
+                    .group_jid(group.parse().unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                    .is_lid_addressing_mode(false)
+                    .action(Box::new(
+                        GroupNotificationAction::remove()
+                            .participants(vec![participant])
+                            .build(),
+                    ))
+                    .build(),
+            )
+        };
+
+        // Named by our id, by our phone number beside a privacy id, and by our
+        // privacy id beside a phone number.
+        for (group, us) in [
+            ("123-654@g.us", member(ME, None, None)),
+            ("123-655@g.us", member(PEER_LID, Some(ME), None)),
+            ("123-656@g.us", member(PEER, None, Some(our_lid))),
+        ] {
+            worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+            worker
+                .archive
+                .set_group_info(group, None, &members, false)
+                .unwrap();
+            worker
+                .handle_wa_event(Arc::new(removed(group, member(PEER, None, None), 100)))
+                .await;
+            assert!(!worker.archive.chat(group).unwrap().unwrap().left);
+            worker
+                .handle_wa_event(Arc::new(removed(group, us, 100)))
+                .await;
+            let chat = worker.archive.chat(group).unwrap().unwrap();
+            assert!(chat.left, "{group}");
+            assert!(chat.read_only, "{group}");
+            assert_eq!(chat.participants, [PEER], "{group}");
         }
     }
 
