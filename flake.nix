@@ -150,7 +150,14 @@
                 libx11
               ]
             );
+
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
+
+            # Prevent cargoSetupHook (Nixpkgs PR #537108) from setting OPENSSL_NO_VENDOR
+            # and LIBSQLITE3_SYS_USE_PKG_CONFIG, so rusqlite builds its bundled SQLCipher
+            # and vendored OpenSSL instead of expecting system libraries.
+            dontCargoUseSystemLibs = true;
+
 
             # The vendored OpenSSL (through rusqlite's bundled SQLCipher) embeds
             # its build line, compiler path included, in the binary. The app
@@ -205,7 +212,10 @@
             meta = {
               description = "Fast native WhatsApp client";
               homepage = "https://zapfast.rocks";
-              license = with pkgs.lib.licenses; [ mit gpl2Only ];
+              license = with pkgs.lib.licenses; [
+                mit
+                gpl2Only
+              ];
               mainProgram = "zapfast";
               # The flake publishes only aarch64-darwin. Older nixpkgs, for
               # example through follows, still list x86_64-darwin.
