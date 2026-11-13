@@ -4916,8 +4916,15 @@ fn bubble(
         }
         reply_on_double_click(&strip, message, actions);
     }
+    // A carousel scrolls sideways itself, so it keeps the swipe.
+    let swipe = previous.filter(|_| !carousel).map_or(0.0, |rect| {
+        let strip = Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
+        let over = ui.rect_contains_pointer(strip);
+        swipe_to_reply(ui, view, id, over, message, actions)
+    });
+    let first_shape = ui.painter().add(egui::Shape::Noop);
     let mut response = None;
-    ui.with_layout(
+    let row = ui.with_layout(
         Layout::top_down(if own { Align::Max } else { Align::Min }),
         |ui| {
             if with_avatar {
@@ -5006,7 +5013,178 @@ fn bubble(
             }
         },
     );
+    if swipe > 0.5 {
+        // The row slides with the fingers; its click targets stay put until
+        // the swipe lets go, a fraction of a second later.
+        let end_shape = ui.painter().add(egui::Shape::Noop);
+        let layer = ui.layer_id();
+        ui.ctx().graphics_mut(|graphics| {
+            graphics.entry(layer).transform_range(
+                first_shape,
+                end_shape,
+                egui::emath::TSTransform::from_translation(vec2(swipe, 0.0)),
+            );
+        });
+        paint_swipe_reply(ui, view, row.response.rect, swipe);
+    }
     response
+}
+
+/// How far a two-finger swipe drags a bubble before letting go replies.
+const SWIPE_REPLY: f32 = 64.0;
+/// How far a bubble follows the swipe at most.
+const SWIPE_MAX: f32 = 96.0;
+/// Seconds without swipe events that count as letting go, for touchpads that
+/// report no end phase.
+const SWIPE_QUIET: f64 = 0.15;
+
+/// One message's horizontal swipe, kept between frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Swipe {
+    offset: f32,
+    last: f64,
+    /// Let go already: the rest of this gesture (a glide included) is ignored.
+    spent: bool,
+}
+
+impl Swipe {
+    /// Feeds one frame's horizontal travel; true when it lets go far enough
+    /// to reply.
+    fn step(&mut self, dx: f32, ended: bool, now: f64) -> bool {
+        if dx != 0.0 {
+            self.last = now;
+            if !self.spent {
+                self.offset = (self.offset + dx).clamp(0.0, SWIPE_MAX);
+            }
+        }
+        let quiet = now - self.last > SWIPE_QUIET;
+        let mut reply = false;
+        if (ended || quiet) && !self.spent && self.offset > 0.0 {
+            reply = self.offset >= SWIPE_REPLY;
+            self.offset = 0.0;
+            self.spent = true;
+        }
+        if quiet {
+            self.spent = false;
+        }
+        reply
+    }
+}
+
+/// Follows a rightward touchpad swipe over the message's row, as the phone's
+/// swipe to reply does, and returns how far to draw the row moved. Only
+/// trackpad travel (points) counts; a mouse wheel never swipes.
+fn swipe_to_reply(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    id: egui::Id,
+    over: bool,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) -> f32 {
+    let key = id.with("swipe");
+    let mut swipe: Swipe = ui.ctx().data(|data| data.get_temp(key)).unwrap_or_default();
+    // While selecting, the selection bar stands in for the composer, so a
+    // reply would wait unseen until the selection ends.
+    let replyable = view.chat.can_send()
+        && !view.selecting
+        && !matches!(
+            message.content,
+            Content::Revoked | Content::PhoneOnly { .. } | Content::Call { .. }
+        );
+    // A gesture belongs to the row it started on, so the rows it passes over
+    // once the list moves stay put. An owner that is no longer drawn (scrolled
+    // away, chat left) lets go after a pause.
+    let now = ui.input(|input| input.time);
+    let owner_key = egui::Id::new("message-swipe-owner");
+    let owner: Option<(egui::Id, f64)> = ui.ctx().data(|data| data.get_temp(owner_key));
+    let owner = owner.filter(|(_, seen)| now - seen <= SWIPE_QUIET * 2.0);
+    let mine = owner.is_some_and(|(owner, _)| owner == key);
+    if !(replyable && (mine || (owner.is_none() && over))) {
+        // A row that stops taking the gesture (a selection started, the
+        // message was revoked, the swipe went stale off screen) drops its
+        // swipe without replying.
+        if swipe != Swipe::default() {
+            ui.ctx().data_mut(|data| data.remove::<Swipe>(key));
+        }
+        if mine {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Id, f64)>(owner_key));
+        }
+        return 0.0;
+    }
+    let (dx, ended) = {
+        ui.input(|input| {
+            input
+                .events
+                .iter()
+                .fold((0.0, false), |(dx, ended), event| match event {
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta,
+                        phase,
+                        ..
+                    } => (
+                        // A vertical scroll's sideways wobble is not a swipe.
+                        dx + if delta.x.abs() > delta.y.abs() {
+                            delta.x
+                        } else {
+                            0.0
+                        },
+                        ended || matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel),
+                    ),
+                    _ => (dx, ended),
+                })
+        })
+    };
+    let before = swipe;
+    if swipe.step(dx, ended, now) {
+        actions.push(Action::Reply(message.id.clone()));
+    }
+    if swipe != before {
+        ui.ctx().data_mut(|data| data.insert_temp(key, swipe));
+    }
+    if swipe.offset == 0.0 && !swipe.spent {
+        if mine {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Id, f64)>(owner_key));
+        }
+        return 0.0;
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(owner_key, (key, now)));
+    if swipe.offset > 0.0 {
+        // The list holds still while a row is swiped. The transcript's
+        // scroll area reads this after its rows are drawn.
+        ui.ctx()
+            .input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+    }
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs_f64(SWIPE_QUIET));
+    ui.ctx()
+        .animate_value_with_time(key.with("shown"), swipe.offset, 0.08)
+}
+
+/// The reply arrow in the gap a swiped row leaves, filling in as the swipe
+/// nears the distance that replies.
+fn paint_swipe_reply(ui: &egui::Ui, view: &View<'_>, row: Rect, swipe: f32) {
+    let size = REACTION_AFFORDANCE_SIZE;
+    if swipe < size {
+        return;
+    }
+    let progress = (swipe / SWIPE_REPLY).min(1.0);
+    let rect = Rect::from_center_size(
+        pos2(row.left() + swipe / 2.0, row.center().y),
+        Vec2::splat(size),
+    );
+    floating_circle(ui, &view.palette, rect, progress >= 1.0);
+    theme::paint_icon(
+        ui,
+        Icon::Reply,
+        rect.shrink(5.0),
+        15.0,
+        view.palette.text.gamma_multiply(progress),
+    );
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -12324,6 +12502,111 @@ mod tests {
         }
     }
 
+    /// Runs one frame of `swipe_to_reply` for each `(row, pointer over it)`,
+    /// returning each row's drawn offset.
+    fn swipe_frame(
+        ctx: &egui::Context,
+        view: &View<'_>,
+        rows: &[(&str, bool)],
+        events: Vec<egui::Event>,
+        time: f64,
+        actions: &mut Vec<Action>,
+    ) -> Vec<f32> {
+        let mut offsets = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 300.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                for (row, over) in rows {
+                    let item = Message {
+                        id: (*row).into(),
+                        ..message(Content::Text {
+                            text: "hi".into(),
+                            preview: None,
+                        })
+                    };
+                    offsets.push(swipe_to_reply(
+                        ui,
+                        view,
+                        egui::Id::new(row),
+                        *over,
+                        &item,
+                        actions,
+                    ));
+                }
+            },
+        );
+        output.textures_delta.clear();
+        offsets
+    }
+
+    fn sideways(unit: egui::MouseWheelUnit, x: f32) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit,
+            delta: vec2(x, 0.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_swipe_stays_with_its_row_and_selection_cancels_it_without_replying() {
+        let ctx = egui::Context::default();
+        with_still_view(|view| {
+            let point = egui::MouseWheelUnit::Point;
+            let mut actions = Vec::new();
+            // The swipe starts on "a"; "b" comes under the pointer and stays put.
+            let events = vec![sideways(point, 80.0)];
+            swipe_frame(&ctx, view, &[("a", true)], events, 1.0, &mut actions);
+            let events = vec![sideways(point, 5.0)];
+            let offsets = swipe_frame(
+                &ctx,
+                view,
+                &[("a", false), ("b", true)],
+                events,
+                1.02,
+                &mut actions,
+            );
+            assert!(offsets[0] > 0.0, "the row it began on keeps the swipe");
+            assert_eq!(offsets[1], 0.0, "the row passed over stays put");
+            // Selecting starts with the swipe past the reply distance.
+            let selecting = View {
+                selecting: true,
+                ..*view
+            };
+            let offsets = swipe_frame(
+                &ctx,
+                &selecting,
+                &[("a", false)],
+                vec![],
+                1.04,
+                &mut actions,
+            );
+            assert_eq!(offsets, [0.0]);
+            swipe_frame(&ctx, view, &[("a", true)], vec![], 2.0, &mut actions);
+            assert!(actions.is_empty(), "a cancelled swipe never replies");
+            // A mouse wheel turned sideways never swipes.
+            let events = vec![sideways(egui::MouseWheelUnit::Line, 80.0)];
+            let offsets = swipe_frame(&ctx, view, &[("c", true)], events, 3.0, &mut actions);
+            assert_eq!(offsets, [0.0]);
+            // And a real swipe still replies once let go.
+            swipe_frame(
+                &ctx,
+                view,
+                &[("c", true)],
+                vec![sideways(point, 80.0)],
+                4.0,
+                &mut actions,
+            );
+            swipe_frame(&ctx, view, &[("c", true)], vec![], 4.5, &mut actions);
+            assert!(matches!(&actions[..], [Action::Reply(id)] if id == "c"));
+        });
+    }
+
     #[test]
     fn timer_notices_return_a_navigation_response_without_selection() {
         let ctx = egui::Context::default();
@@ -12434,6 +12717,31 @@ mod tests {
             Action::OpenReactionPicker { chat, message, beside_menu: false, from_list: false }
                 if chat == "chat@example" && message == "message-42"
         ));
+    }
+
+    #[test]
+    fn swipe_replies_only_past_the_distance_and_once_per_gesture() {
+        let mut swipe = Swipe::default();
+        // A short swipe springs back without replying.
+        assert!(!swipe.step(30.0, false, 1.0));
+        assert!(!swipe.step(0.0, true, 1.01));
+        assert_eq!(swipe.offset, 0.0);
+        // A long one replies when the fingers lift, and its glide is ignored.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(40.0, false, 2.0));
+        assert!(!swipe.step(40.0, false, 2.02));
+        assert_eq!(swipe.offset, 80.0);
+        assert!(swipe.step(0.0, true, 2.03));
+        assert!(!swipe.step(90.0, false, 2.05));
+        assert_eq!(swipe.offset, 0.0);
+        // Without an end phase, a pause counts as letting go.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(70.0, false, 3.0));
+        assert!(swipe.step(0.0, false, 3.0 + SWIPE_QUIET + 0.01));
+        // Leftward travel never moves the bubble.
+        let mut swipe = Swipe::default();
+        assert!(!swipe.step(-50.0, false, 4.0));
+        assert_eq!(swipe.offset, 0.0);
     }
 
     #[test]
