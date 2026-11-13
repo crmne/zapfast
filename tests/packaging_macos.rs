@@ -35,3 +35,13 @@ fn the_bundle_carries_the_agent_that_starts_in_the_tray() {
         fastframe_autostart::macos_agent_plist_name(id)
     );
 }
+
+#[test]
+fn the_bundle_follows_the_gpu_that_drives_the_screen() {
+    // Without it, a dual-GPU Intel Mac keeps ZapFast's OpenGL context on the
+    // discrete GPU, and a forced switch to the integrated one leaves every
+    // window it opens blank until a relaunch.
+    assert!(
+        packaging("Info.plist").contains("<key>NSSupportsAutomaticGraphicsSwitching</key><true/>")
+    );
+}

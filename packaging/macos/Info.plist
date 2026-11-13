@@ -14,6 +14,9 @@
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.social-networking</string>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- Draw on whichever GPU drives the screen on dual-GPU Intel Macs; without it a
+         forced switch to the integrated GPU leaves windows blank until a relaunch. -->
+    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>ZapFast uses the microphone for calls and for the voice messages you choose to send.</string>
     <key>NSCameraUsageDescription</key><string>ZapFast uses the camera for the video calls you make and answer.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Carmine Paolino. Not affiliated with WhatsApp or Meta.</string>
