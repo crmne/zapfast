@@ -32,7 +32,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 fn keys(app: &mut App, ctx: &egui::Context) {
     let confirming = app.app_lock.forgetting == Forgetting::Confirming;
     ctx.input_mut(|input| {
-        if input.consume_key(Modifiers::COMMAND, Key::Q) {
+        if super::keys::take_quit(input) {
             app.actions.push(Action::Quit);
         }
         if input.consume_key(Modifiers::COMMAND, Key::W) {
@@ -144,4 +144,62 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs the lock screen's keys on one Q press.
+    fn press_q(modifiers: Modifiers) -> (Vec<Action>, bool) {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let ctx = egui::Context::default();
+        let mut survived = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::Q,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                keys(&mut app, ui.ctx());
+                survived = ui.ctx().input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Key { key: Key::Q, .. }))
+                });
+            },
+        );
+        output.textures_delta.clear();
+        (std::mem::take(&mut app.actions), survived)
+    }
+
+    /// Ctrl+Q quits the locked app, but Ctrl+Alt+Q / AltGr+Q stays for the
+    /// password field.
+    #[test]
+    fn alt_q_types_in_the_password_but_ctrl_q_quits() {
+        for command in [
+            Modifiers::COMMAND,
+            Modifiers::CTRL | Modifiers::COMMAND,
+            Modifiers::MAC_CMD | Modifiers::COMMAND,
+        ] {
+            let (actions, survived) = press_q(command);
+            assert!(actions.iter().any(|a| matches!(a, Action::Quit)));
+            assert!(!survived);
+            let (actions, survived) = press_q(command | Modifiers::ALT);
+            assert!(!actions.iter().any(|a| matches!(a, Action::Quit)));
+            assert!(survived);
+        }
+    }
 }
