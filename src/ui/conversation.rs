@@ -2049,7 +2049,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                     app.actions.push(Action::SetPendingViewOnce(!app.pending_view_once));
                 }
                 let ready = !app.composer.trim().is_empty()
-                    || !app.pending.is_empty()
+                    || (!app.pending.is_empty() && app.editing.is_none())
                     || (unsent_voice.is_some() && app.editing.is_none());
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
@@ -2094,10 +2094,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             ui.ctx()
                 .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
             if (send_key || send_click)
-                && (!app.composer.trim().is_empty() || !app.pending.is_empty())
+                && (!app.composer.trim().is_empty()
+                    || (!app.pending.is_empty() && app.editing.is_none()))
             {
                 let text = std::mem::take(&mut app.composer);
-                if app.pending.is_empty() {
+                if app.editing.is_some() || app.pending.is_empty() {
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
                         text,
@@ -7511,7 +7512,7 @@ fn context_menu(
     }
     let age = view.now - message.timestamp;
     let can_edit = message.from_me
-        && matches!(message.content, Content::Text { .. })
+        && message.content.editable_text().is_some()
         && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
     let can_revoke = revoke_blocker(message, view.now).is_none();
     if can_edit

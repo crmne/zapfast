@@ -8990,6 +8990,40 @@ mod tests {
         );
     }
 
+    /// Our own photo's menu offers Edit for its caption, as WhatsApp does,
+    /// and offers nothing to edit on a photo sent without one.
+    #[test]
+    fn the_menu_offers_edit_for_our_photos_caption() {
+        for caption in [Some("Fixture caption"), None] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let photo = Content::Image {
+                caption: caption.map(Into::into),
+                media: media("image/jpeg", 2048, Some(640), Some(480)),
+                motion: None,
+            };
+            let chat = focus_fixture_message(&mut app, &ctx, photo);
+            let fixture = app
+                .conversations
+                .get_mut(&chat)
+                .unwrap()
+                .message_mut("key-fixture")
+                .unwrap();
+            fixture.from_me = true;
+            fixture.timestamp = crate::util::now();
+            open_menu_by_keys(&mut app, &ctx);
+            let labels = accessible_nodes(&mut app, &ctx, Vec::new());
+            assert_eq!(
+                labels.iter().any(|(text, _, _)| text == "Edit"),
+                caption.is_some(),
+                "{caption:?}: {labels:?}"
+            );
+        }
+    }
+
     #[test]
     fn e_opens_the_reaction_picker_with_focus_in_its_search() {
         let mut app = app();
@@ -20895,6 +20929,57 @@ mod tests {
             .and_then(|state| state.cursor.char_range())
             .map(|range| range.primary.index.0);
         assert_eq!(cursor, Some(0));
+    }
+
+    /// An edit begun with files staged, as from the starred list, goes out as
+    /// the edit, and the files wait in the composer for their own send.
+    #[test]
+    fn an_edit_with_files_staged_edits_and_keeps_the_files() {
+        use crate::backend::Command;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let chat = sample_ids()[0].to_owned();
+        let own = app
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| {
+                conversation.messages.iter().rev().find(|message| {
+                    message.from_me && matches!(message.content, Content::Text { .. })
+                })
+            })
+            .map(|message| message.id.clone())
+            .expect("an own text message");
+        let (photo, _) = sample_files(&app);
+        app.stage(crate::app::Pending::File(photo));
+        app.actions.push(crate::model::Action::Edit(own.clone()));
+        render(&mut app, &ctx);
+        assert_eq!(app.editing.as_deref(), Some(own.as_str()));
+        app.backend.record_demo_commands();
+        frame_with(&mut app, &ctx, vec![egui::Event::Text(" (fixed)".into())]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::EditText { id, text, .. } if *id == own && text.ends_with("(fixed)")
+            )),
+            "{commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::SendFiles { .. } | Command::SendImage { .. }
+            )),
+            "{commands:?}"
+        );
+        assert!(app.editing.is_none());
+        assert_eq!(app.pending.len(), 1, "the file stays staged");
     }
 
     #[test]

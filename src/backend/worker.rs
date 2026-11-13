@@ -11058,7 +11058,8 @@ impl Worker {
     }
 
     /// Builds the outgoing edit, and the content and mentions the archive
-    /// takes once WhatsApp accepts it. A repeated everyone mention is
+    /// takes once WhatsApp accepts it: the new text, or the photo, video or
+    /// document with its new caption. A repeated everyone mention is
     /// suppressed only in the outbound payload.
     fn prepare_text_edit(
         &mut self,
@@ -11067,18 +11068,29 @@ impl Worker {
         text: String,
         mut mentions: Vec<String>,
     ) -> crate::archive::Result<(wa::Message, Content, Vec<MentionRef>)> {
-        let already_mentioned_everyone = self
-            .archive
-            .message(chat, id)?
+        let original = self.archive.message(chat, id)?;
+        let already_mentioned_everyone = original
+            .as_ref()
             .is_some_and(|message| message.mentions.iter().any(crate::mentions::is_everyone));
         if self.wants_mention_all(chat, &text) {
             crate::mentions::push_everyone_id(&mut mentions);
         }
-        let content = Content::text(text.clone());
         let mention_rows = self.mentions_of(&mentions);
         if already_mentioned_everyone {
             mentions.retain(|id| id != crate::mentions::ALL_ID);
         }
+        if let Some(mut content) = original.map(|message| message.content)
+            && let Some(message) = outgoing_caption(
+                &content,
+                text.clone(),
+                &mentions,
+                self.ephemeral_expiration(chat),
+            )
+        {
+            content.set_edited_text(text);
+            return Ok((message, content, mention_rows));
+        }
+        let content = Content::text(text.clone());
         let mut message = outgoing_text(text, None, &mentions);
         self.apply_ephemeral(chat, &mut message);
         Ok((message, content, mention_rows))
@@ -11096,9 +11108,14 @@ impl Worker {
     ) {
         let edits = self.edits.get_mut(&(chat.clone(), id.clone()));
         match (accepted, edits) {
-            (Ok((content, mentions)), Some(edits)) if generation > edits.applied => {
+            (Ok((mut content, mentions)), Some(edits)) if generation > edits.applied => {
                 edits.applied = generation;
                 let old = self.archive.message(&chat, &id).ok().flatten();
+                // The attachment may have finished downloading while the edit
+                // was on its way.
+                if let Some(old) = &old {
+                    content.keep_local_paths(&old.content);
+                }
                 if let Ok(true) = self
                     .archive
                     .set_edited_content(&chat, &id, &content, &mentions)
@@ -12437,6 +12454,57 @@ fn outgoing_text(
         Some(context) => wa::Message::text_with_context(text, context),
         None => wa::Message::text(text),
     }
+}
+
+/// The body of a caption edit, or `None` for content that has no caption.
+///
+/// WhatsApp sends the caption and its context alone, in the original's kind,
+/// a document's inside `documentWithCaptionMessage` (WhatsApp Web's
+/// `WAWebBuildEditedMessageProto`). A text body would not be read as the
+/// caption.
+fn outgoing_caption(
+    content: &Content,
+    caption: String,
+    mentions: &[String],
+    expiration: Option<u32>,
+) -> Option<wa::Message> {
+    let mut body = wa::Message::default();
+    match content {
+        Content::Image { .. } => {
+            body.image_message = MessageField::some({
+                let mut proto = wa::message::ImageMessage::default();
+                proto.caption = Some(caption);
+                proto
+            });
+        }
+        Content::Video { note: false, .. } => {
+            body.video_message = MessageField::some({
+                let mut proto = wa::message::VideoMessage::default();
+                proto.caption = Some(caption);
+                proto
+            });
+        }
+        Content::Document { .. } => {
+            body.document_message = MessageField::some({
+                let mut proto = wa::message::DocumentMessage::default();
+                proto.caption = Some(caption);
+                proto
+            });
+        }
+        _ => return None,
+    }
+    add_mentions(&mut body, mentions);
+    apply_ephemeral_expiration(&mut body, expiration);
+    if body.document_message.is_unset() {
+        return Some(body);
+    }
+    let mut wrapped = wa::Message::default();
+    wrapped.document_with_caption_message = MessageField::some({
+        let mut proto = wa::message::FutureProofMessage::default();
+        proto.message = MessageField::some(body);
+        proto
+    });
+    Some(wrapped)
 }
 
 /// Puts a link preview on an outgoing text, keeping its quote and mentions.
@@ -18314,6 +18382,158 @@ mod tests {
             stored(&worker).content,
             Content::text("Newest"),
             "the phone's edit since stays"
+        );
+    }
+
+    /// A caption edit goes out as WhatsApp Web builds one: the caption with
+    /// its mentions and timer alone, in the original's kind, a document's
+    /// inside `documentWithCaptionMessage`. Once WhatsApp accepts it, the
+    /// archive keeps the attachment, its details and a file downloaded while
+    /// the edit was on its way.
+    #[test]
+    fn caption_edits_send_the_caption_alone_and_keep_the_attachment() {
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let chat = "123@g.us".to_owned();
+        let member = "12025550123@s.whatsapp.net".to_owned();
+        worker.archive.ensure_chat(&chat, "Group").unwrap();
+        worker
+            .archive
+            .set_group_info(&chat, None, std::slice::from_ref(&member), false)
+            .unwrap();
+        worker.archive.set_ephemeral(&chat, 86_400, 1).unwrap();
+        let media = Media {
+            mime: "image/jpeg".into(),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            album: None,
+            path: None,
+            state: Default::default(),
+        };
+        let caption = "New caption @12025550123";
+        let context = MessageField::some({
+            let mut proto = wa::ContextInfo::default();
+            proto.mentioned_jid = vec![member.clone()];
+            proto.expiration = Some(86_400);
+            proto
+        });
+        let image = Content::Image {
+            caption: Some("Old caption".into()),
+            media: media.clone(),
+            motion: None,
+        };
+        let image_body = {
+            let mut proto = wa::Message::default();
+            proto.image_message = MessageField::some({
+                let mut proto = wa::message::ImageMessage::default();
+                proto.caption = Some(caption.into());
+                proto.context_info = context.clone();
+                proto
+            });
+            proto
+        };
+        let video = Content::Video {
+            caption: Some("Old caption".into()),
+            media: media.clone(),
+            seconds: Some(4),
+            gif: false,
+            note: false,
+        };
+        let video_body = {
+            let mut proto = wa::Message::default();
+            proto.video_message = MessageField::some({
+                let mut proto = wa::message::VideoMessage::default();
+                proto.caption = Some(caption.into());
+                proto.context_info = context.clone();
+                proto
+            });
+            proto
+        };
+        let document = Content::Document {
+            media: media.clone(),
+            file_name: "notes.pdf".into(),
+            caption: Some("Old caption".into()),
+            pages: Some(3),
+        };
+        let document_body = {
+            let mut proto = wa::Message::default();
+            proto.document_with_caption_message = MessageField::some({
+                let mut proto = wa::message::FutureProofMessage::default();
+                proto.message = MessageField::some({
+                    let mut proto = wa::Message::default();
+                    proto.document_message = MessageField::some({
+                        let mut proto = wa::message::DocumentMessage::default();
+                        proto.caption = Some(caption.into());
+                        proto.context_info = context.clone();
+                        proto
+                    });
+                    proto
+                });
+                proto
+            });
+            proto
+        };
+        for (index, (original_content, body)) in [
+            (image, image_body),
+            (video, video_body),
+            (document, document_body),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut original = receipt_tests::own_message(&format!("media-{index}"), 1);
+            original.chat = chat.clone();
+            original.content = original_content.clone();
+            worker.archive.insert_message(&original, None).unwrap();
+            let (message, content, mentions) = worker
+                .prepare_text_edit(&chat, &original.id, caption.into(), vec![member.clone()])
+                .unwrap();
+            assert_eq!(message, body, "{original_content:?}");
+
+            let downloaded = std::path::PathBuf::from(format!("/synthetic/media-{index}"));
+            worker
+                .archive
+                .set_media_path(&chat, &original.id, &downloaded)
+                .unwrap();
+            let generation = worker.begin_edit(&chat, &original.id);
+            worker.edit_settled(
+                chat.clone(),
+                original.id.clone(),
+                generation,
+                Ok((content, mentions)),
+            );
+            let stored = worker
+                .archive
+                .message(&chat, &original.id)
+                .unwrap()
+                .unwrap();
+            let mut expected = original_content;
+            match &mut expected {
+                Content::Image { caption: slot, .. }
+                | Content::Video { caption: slot, .. }
+                | Content::Document { caption: slot, .. } => *slot = Some(caption.into()),
+                _ => unreachable!(),
+            }
+            expected.media_mut().unwrap().path = Some(downloaded);
+            assert_eq!(stored.content, expected);
+            assert!(stored.edited);
+            assert_eq!(
+                stored.mentions,
+                worker.mentions_of(std::slice::from_ref(&member))
+            );
+        }
+
+        let note = Content::Video {
+            caption: None,
+            media,
+            seconds: Some(4),
+            gif: false,
+            note: true,
+        };
+        assert_eq!(
+            outgoing_caption(&note, caption.into(), &[], None),
+            None,
+            "a round video message has no caption to edit"
         );
     }
 
