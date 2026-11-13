@@ -15,6 +15,8 @@ mod broadcast_lists;
 pub use broadcast_lists::Adopted;
 mod calls;
 pub mod chat_export;
+#[cfg(test)]
+mod community_tests;
 pub use calls::CALL_LOG_LIMIT;
 mod drafts;
 mod encryption;
@@ -182,10 +184,11 @@ const CHAT_COLUMNS: &str =
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
                     c.info_locked, c.group_admin, c.group_description, c.voice_speed,
-                    c.group_settings";
+                    c.group_settings, c.community";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
+    ("chats", "community", "TEXT"),
     ("message_removals", "account", "TEXT NOT NULL DEFAULT ''"),
     (
         "pending_message_removals",
@@ -342,6 +345,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         group_settings: row
             .get::<_, Option<String>>(27)?
             .and_then(|settings| serde_json::from_str(&settings).ok()),
+        community: row
+            .get::<_, Option<String>>(28)?
+            .and_then(|info| serde_json::from_str(&info).ok()),
     })
 }
 
@@ -580,6 +586,20 @@ impl Archive {
                 name,
                 serde_json::to_string(participants).unwrap_or_else(|_| "[]".into()),
                 read_only
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records a complete group metadata snapshot. An unlinked subgroup has
+    /// no parent, so this also removes relationships that no longer exist.
+    pub fn set_group_community(&self, id: &str, info: &crate::model::GroupCommunity) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET community = ?2 WHERE id = ?1",
+            params![
+                id,
+                serde_json::to_string(info)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
             ],
         )?;
         Ok(())

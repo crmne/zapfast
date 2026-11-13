@@ -773,6 +773,7 @@ mod tests {
             .unwrap_or(0);
         worker
             .handle_command(Command::GroupInfo {
+                community: Default::default(),
                 chat: GROUP.into(),
                 request_generation: generation,
                 name: Some("Club".into()),

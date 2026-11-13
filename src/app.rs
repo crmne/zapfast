@@ -3053,6 +3053,21 @@ impl App {
 
     /// Resolves the chat-list title.
     pub fn chat_title(&self, chat: &Chat) -> String {
+        if let Some(info) = chat
+            .community
+            .as_ref()
+            .filter(|info| info.is_announcement && !info.is_parent)
+            && let Some(parent) = info.parent.as_deref().and_then(|id| self.chat(id))
+            && !parent.locked
+            && !parent.name.trim().is_empty()
+        {
+            return format!(
+                "{} · {}",
+                parent.name,
+                crate::i18n::gettext(self.locale, "Announcements")
+            );
+        }
+        // Preserve the real subject when its parent is unknown or private.
         if chat.is_group()
             && (chat.name.trim().is_empty() || (chat.name == "Group" && !chat.group_subject_known))
         {
@@ -3433,6 +3448,13 @@ impl App {
                 (self.locked_folder && !self.chat_lock_authenticated())
                     || needle.is_empty()
                     || self.name_matches(&self.chat_title(chat), &needle)
+                    || chat
+                        .community
+                        .as_ref()
+                        .and_then(|info| info.parent.as_deref())
+                        .and_then(|id| self.chat(id))
+                        .filter(|parent| !parent.locked)
+                        .is_some_and(|parent| self.name_matches(&self.chat_title(parent), &needle))
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat
                         .last
@@ -3458,7 +3480,28 @@ impl App {
                 }
             })
         });
-        chats
+        crate::communities::visible(
+            chats,
+            &self.chats,
+            &self.collapsed_communities,
+            self.communities_grouped(),
+            self.open_chat.as_deref(),
+        )
+    }
+
+    /// Whether the Chats list shows communities as headings with their
+    /// groups beneath. Search, filters, archived chats and the locked folder
+    /// keep their flat lists of message destinations.
+    pub fn communities_grouped(&self) -> bool {
+        self.sidebar_visible
+            && self.search.trim().is_empty()
+            && !self.locked_folder_open()
+            && !self.show_archived
+            && self.label_filter.is_none()
+            && matches!(
+                self.chat_filter,
+                crate::model::ChatFilter::All | crate::model::ChatFilter::Groups
+            )
     }
 
     /// Whether the chat list keeps the phone's favorites order instead of the
@@ -6244,6 +6287,9 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        if self.chat(&id).is_some_and(Chat::is_community) {
+            return;
+        }
         self.reset_notification_throttle(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
             self.invalidate_composer_undo();
@@ -7472,6 +7518,12 @@ impl App {
                     Page::Settings
                 };
                 self.apply(Action::Open(page), ctx);
+            }
+            Action::ToggleCommunity(id) => {
+                if !self.collapsed_communities.remove(&id) {
+                    self.collapsed_communities.insert(id);
+                }
+                self.backend.send(Command::LoadCommunities);
             }
             Action::OpenChat(id) => {
                 // A chat where someone mentioned us opens at the mention, as
@@ -12713,6 +12765,35 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::default()).0
+    }
+
+    #[test]
+    fn announcement_titles_keep_their_community_context() {
+        let mut app = app();
+        for (parent_id, name, child_id) in [
+            ("one@g.us", "Neighborhood", "news-one@g.us"),
+            ("two@g.us", "School", "news-two@g.us"),
+        ] {
+            let mut parent = Chat::new(parent_id.into(), name.into());
+            parent.community = Some(crate::model::GroupCommunity {
+                is_parent: true,
+                parent: None,
+                is_announcement: false,
+            });
+            app.chats.push(parent);
+            let mut child = Chat::new(child_id.into(), name.into());
+            child.community = Some(crate::model::GroupCommunity {
+                is_parent: false,
+                parent: Some(parent_id.into()),
+                is_announcement: true,
+            });
+            app.chats.push(child);
+        }
+        assert_eq!(
+            app.chat_title_of("news-one@g.us"),
+            "Neighborhood · Announcements"
+        );
+        assert_eq!(app.chat_title_of("news-two@g.us"), "School · Announcements");
     }
 
     #[test]

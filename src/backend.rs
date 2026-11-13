@@ -1085,8 +1085,11 @@ pub enum Command {
         lids: Vec<(String, String)>,
         stored: tokio::sync::mpsc::UnboundedSender<bool>,
     },
+    /// Refresh unknown community relationships through the paced metadata queue.
+    LoadCommunities,
     /// Internal group metadata result.
     GroupInfo {
+        community: crate::model::GroupCommunity,
         chat: ChatId,
         /// Metadata request operation that produced this reply.
         request_generation: u64,

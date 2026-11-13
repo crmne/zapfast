@@ -306,6 +306,8 @@ pub struct Chat {
     /// Who may do what in the group, and who its admins are; `None` until
     /// the group's metadata has said.
     pub group_settings: Option<GroupSettings>,
+    /// Community membership from group metadata; unknown in older archives.
+    pub community: Option<GroupCommunity>,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
     /// Disappearing-message duration in seconds. `Some(0)` is the timer
@@ -340,6 +342,15 @@ pub struct GroupSettings {
     pub admins: Vec<String>,
     /// The creator (WhatsApp's super admin), under canonical chat ids.
     pub super_admins: Vec<String>,
+}
+
+/// A community container is not a message destination. Its announcement
+/// subgroup and ordinary groups each have their own chat id.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupCommunity {
+    pub is_parent: bool,
+    pub parent: Option<ChatId>,
+    pub is_announcement: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -407,6 +418,7 @@ impl Chat {
             info_locked: None,
             admin: false,
             group_settings: None,
+            community: None,
             locked: false,
             ephemeral_expiration: None,
             labels: Vec::new(),
@@ -418,7 +430,11 @@ impl Chat {
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
-        !self.read_only && !self.left && self.kind != ChatKind::Broadcast
+        !self.read_only && !self.left && !self.is_community() && self.kind != ChatKind::Broadcast
+    }
+
+    pub fn is_community(&self) -> bool {
+        self.is_group() && self.community.as_ref().is_some_and(|info| info.is_parent)
     }
 
     /// A followed WhatsApp channel (newsletter).
@@ -2722,6 +2738,8 @@ pub enum Action {
     /// Steps forward again after a back step.
     NavigateForward,
     OpenChat(ChatId),
+    /// Expands or collapses a community in the main chat list.
+    ToggleCommunity(ChatId),
     /// Starts a voice call with the chat: the person, or everyone in a group.
     StartCall(ChatId),
     /// Starts a video call with the chat: the person, or everyone in a group.
