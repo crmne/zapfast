@@ -498,12 +498,9 @@ fn focus_ring(app: &App, ctx: &egui::Context) {
     let ring = rect;
     let radius = custom.map_or(f32::from(theme::RADIUS_SMALL), |outline| outline.radius);
     let clip = custom.map_or(response.interact_rect, |outline| outline.clip);
-    // An inset accent border would disappear on a filled primary button.
-    let color = if custom.is_some_and(|outline| outline.fill == app.palette.accent) {
-        app.palette.on_accent
-    } else {
-        app.palette.accent
-    };
+    let color = app
+        .palette
+        .focus_ring(custom.map_or(egui::Color32::TRANSPARENT, |outline| outline.fill));
     // Standard egui editors already paint the theme's one-point focus stroke.
     // Frameless editors register their enclosing field above. Never double up.
     if custom.is_some() || !ctx.text_edit_focused() {

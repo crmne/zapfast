@@ -21613,6 +21613,41 @@ mod tests {
         assert_eq!(ring(&ctx), None, "the pointer hides the outline");
     }
 
+    /// A theme's `focus` colour draws the ring without touching its accent.
+    #[test]
+    fn the_composer_ring_uses_the_theme_focus_colour() {
+        let mut app = app();
+        let focus = egui::Color32::from_rgb(0x3c, 0x3c, 0x3c);
+        let palette: crate::theme::Palette =
+            fastframe_theme::parse_palette(r##"{"colors":{"focus":"#3c3c3c"}}"##).unwrap();
+        app.settings.custom_theme = Some("focus.json".into());
+        app.settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+            filename: "focus.json".into(),
+            palette,
+        });
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let outline = ring(&ctx).expect("the focused composer is outlined");
+        let strokes: Vec<_> = shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect)
+                    if rect.rect == outline
+                        && rect.stroke.width == crate::theme::FOCUS_STROKE_WIDTH =>
+                {
+                    Some(rect.stroke.color)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(strokes, vec![focus]);
+        assert_ne!(app.palette.accent, focus);
+    }
+
     #[test]
     fn composer_focus_uses_the_whole_field_and_tab_uses_a_circular_record_ring() {
         let mut app = app();

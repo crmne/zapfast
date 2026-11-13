@@ -69,10 +69,11 @@ from that base, so a theme can be as short as one accent colour. Colours are
 | `bubble_out` | Your messages |
 | `link` | Links in messages |
 | `read` | The ticks of read messages |
+| `focus` | The outline around focused controls and the field you are typing in |
 
 When a theme sets some colours but not the chat ones, ZapFast works them out:
 `chat` follows `window`, `bubble_in` follows `surface`, `bubble_out` is
-`surface` tinted with `accent`, `link` and `read` follow `accent`, and
+`surface` tinted with `accent`, `link`, `read` and `focus` follow `accent`, and
 `overlay` follows `panel`. That is why Spotifast palettes work as they are.
 
 ## Trying it out
