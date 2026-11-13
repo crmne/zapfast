@@ -1,32 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
 <defs>
-<linearGradient id="b" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#009676"/>
-<stop offset="1" stop-color="#006b55"/>
+<linearGradient id="f" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#5ff28a"/>
+<stop offset="1" stop-color="#1cb350"/>
 </linearGradient>
-<linearGradient id="f" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#3ed3b0"/>
-<stop offset="0.55" stop-color="#00a884"/>
-<stop offset="1" stop-color="#008e70"/>
-</linearGradient>
-<linearGradient id="r" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#d9fff5"/>
-<stop offset="0.5" stop-color="#6fe3c8" stop-opacity="0.35"/>
-<stop offset="1" stop-color="#00574a" stop-opacity="0.9"/>
+<linearGradient id="r" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+<stop offset="0.5" stop-color="#ffffff" stop-opacity="0.05"/>
+<stop offset="1" stop-color="#0b5d2a" stop-opacity="0.5"/>
 </linearGradient>
 </defs>
-<circle cx="64" cy="64" r="62" fill="url(#b)"/>
-<circle cx="64" cy="64" r="54.4" fill="url(#f)"/>
-<circle cx="64" cy="64" r="55" fill="none" stroke="url(#r)" stroke-width="1.2"/>
-<g transform="translate(0 1.6)">
-<g transform="translate(23.35 21.13) scale(3.48)" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
-<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" stroke-width="2.25" stroke-opacity="0.131"/>
-<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" stroke-width="2.997" stroke-opacity="0.029"/>
-<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" stroke-width="3.457" stroke-opacity="0.047"/>
-<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" stroke-width="3.974" stroke-opacity="0.013"/>
-</g>
-</g>
-<g transform="translate(23.35 21.13) scale(3.48)" fill="none" stroke="#0b0e0c" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+<circle cx="64" cy="64" r="62" fill="url(#f)"/>
+<circle cx="64" cy="64" r="61.4" fill="none" stroke="url(#r)" stroke-width="1.2"/>
+<g transform="translate(65.5 62) scale(3.5) translate(-12 -12)">
+<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" fill="none" stroke="#ffffff" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+<g transform="translate(12 12) scale(0.62) translate(-12 -12)"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" fill="#ffffff" stroke="#ffffff" stroke-width="1.2" stroke-linejoin="round"/></g>
 </g>
 </svg>

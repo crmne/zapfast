@@ -1,6 +1,6 @@
 [package]
 name = "zapfast"
-version = "0.21.1"
+version = "0.21.2"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -309,9 +309,6 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-msm
 windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
 # The icon and version information Windows shows for the executable.
-[target.'cfg(windows)'.build-dependencies]
-winresource = "0.1"
-
 [dev-dependencies]
 # Checks the default log filter the way fastframe-log's logger reads it.
 # Already in the tree through fastframe-log, at this version.
@@ -355,3 +352,6 @@ opt-level = 2
 # Compiles the PO catalogs to Rust, leaving out unfinished entries. Ordinary
 # builds do not need gettext tools.
 fastframe-i18n = { git = "https://github.com/crmne/fastframe", tag = "v0.16.1", features = ["build"] }
+# Embeds the icon and version information in Windows executables, also when
+# cross-building them (windres from a MinGW toolchain on the host).
+winresource = "0.1"

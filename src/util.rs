@@ -813,9 +813,9 @@ fn plain_disc(size: usize) -> Vec<u8> {
             let distance = ((px - center).powi(2) + (py - center).powi(2)).sqrt();
             let coverage = (radius - distance + 0.5).clamp(0.0, 1.0);
             let index = (y * size + x) * 4;
-            rgba[index] = 0;
-            rgba[index + 1] = 168;
-            rgba[index + 2] = 132;
+            rgba[index] = 37;
+            rgba[index + 1] = 211;
+            rgba[index + 2] = 102;
             rgba[index + 3] = (coverage * 255.0) as u8;
         }
     }
@@ -823,15 +823,16 @@ fn plain_disc(size: usize) -> Vec<u8> {
 }
 
 /// Converts the logo to a monochrome macOS menu-bar template: the disc,
-/// with the bubble cut out of it.
+/// with the bubble and its bolt cut out of it.
 pub fn tray_template_rgba(size: usize) -> Vec<u8> {
     // The flat mark at every size: a template has no room for shading.
     let mut rgba = render_mark(SMALL_MARK, size).unwrap_or_else(|| plain_disc(size));
-    // The disc's green against the ink's says how much of a pixel is disc.
-    const INK: f32 = 14.0;
-    const DISC: f32 = 168.0;
+    // The white ink's red against the green disc's says how much of a pixel
+    // is disc.
+    const INK: f32 = 255.0;
+    const DISC: f32 = 37.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        let disc = ((f32::from(pixel[1]) - INK) / (DISC - INK)).clamp(0.0, 1.0);
+        let disc = ((INK - f32::from(pixel[0])) / (INK - DISC)).clamp(0.0, 1.0);
         pixel[3] = (f32::from(pixel[3]) * disc).round() as u8;
         pixel[0] = 0;
         pixel[1] = 0;
@@ -1475,9 +1476,10 @@ mod tests {
         let template = tray_template_rgba(size);
         let alpha = |x: usize, y: usize| template[(y * size + x) * 4 + 3];
         assert_eq!(alpha(0, 0), 0);
-        assert_eq!(alpha(32, 32), 255, "inside the bubble is disc");
+        assert_eq!(alpha(32, 32), 0, "the bolt in the middle is cut out");
+        assert_eq!(alpha(24, 40), 255, "around it, inside the bubble, is disc");
         assert_eq!(alpha(32, 4), 255, "so is the rim above it");
-        let outline = (0..32).map(|y| alpha(32, y)).min().unwrap();
+        let outline = (0..20).map(|y| alpha(32, y)).min().unwrap();
         assert!(outline < 40, "the outline is cut out: {outline}");
         assert!(
             template

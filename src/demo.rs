@@ -4770,6 +4770,148 @@ mod tests {
         assert_eq!(row_outline.rect, bubble_outline.rect);
     }
 
+    /// With files among the selected messages, the selection bar offers to
+    /// download them at its bottom-right end. A click asks the worker to
+    /// save just the files together, shows the ones still to come as
+    /// downloading, and ends the selection.
+    #[test]
+    fn the_selection_bar_downloads_the_selected_files_together() {
+        use crate::model::MediaState;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        app.selection = Some((chat.into(), vec!["ada-reply".to_owned()]));
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let offered = |nodes: &[(String, egui::accesskit::Role, egui::Pos2)]| {
+            nodes
+                .iter()
+                .any(|(label, _, _)| label.starts_with("Download ") && label.contains(" file"))
+        };
+        assert!(!offered(&nodes), "text alone has nothing to download");
+
+        app.selection = Some((
+            chat.into(),
+            vec!["ada-doc".to_owned(), "ada-reply".to_owned()],
+        ));
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let at = |name: &str| {
+            nodes
+                .iter()
+                .find(|(label, _, _)| label == name)
+                .map(|(_, _, pos)| *pos)
+                .unwrap_or_else(|| panic!("{name} is offered"))
+        };
+        let download = at("Download 1 file");
+        assert!(download.x > at("Forward…").x, "it is the rightmost button");
+        assert!(download.y > 700.0, "it sits at the bottom of the window");
+        for pressed in [true, false] {
+            accessible_nodes(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(download),
+                    egui::Event::PointerButton {
+                        pos: download,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        render(&mut app, &ctx);
+        let saves: Vec<_> = app
+            .backend
+            .take_demo_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                crate::backend::Command::SaveFiles {
+                    chat: saved,
+                    messages,
+                } => Some((saved, messages)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(saves, [(chat.to_owned(), vec!["ada-doc".to_owned()])]);
+        assert_eq!(app.selection, None, "the selection ends");
+        let document = app.conversations[chat].message("ada-doc").unwrap();
+        assert_eq!(
+            document.content.media().unwrap().state,
+            MediaState::Downloading,
+            "a file not here yet shows its download"
+        );
+    }
+
+    /// In a narrow chat the download button folds to its icon, keeping its
+    /// name, so the three buttons never cover the selection's count.
+    #[test]
+    fn a_narrow_selection_bar_keeps_its_count_clear_of_the_buttons() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id;
+        app.selection = Some((
+            chat.into(),
+            vec!["ada-doc".to_owned(), "ada-reply".to_owned()],
+        ));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(760.0, 600.0));
+        let mut bounds = Vec::new();
+        for _ in 0..4 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let scale = ctx.pixels_per_point() as f64;
+            bounds = output
+                .platform_output
+                .accesskit_update
+                .map(|tree| {
+                    tree.nodes
+                        .iter()
+                        .filter_map(|(_, node)| {
+                            let label = node.label().or_else(|| node.value())?.to_owned();
+                            let b = node.bounds()?;
+                            let rect = egui::Rect::from_min_max(
+                                egui::pos2((b.x0 / scale) as f32, (b.y0 / scale) as f32),
+                                egui::pos2((b.x1 / scale) as f32, (b.y1 / scale) as f32),
+                            );
+                            Some((label, rect))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        let rect = |name: &str| {
+            bounds
+                .iter()
+                .find(|(label, _)| label == name)
+                .map(|(_, rect)| *rect)
+                .unwrap_or_else(|| panic!("{name} is shown"))
+        };
+        let count = rect("2 selected");
+        let download = rect("Download 1 file");
+        assert!(
+            count.right() <= rect("Delete…").left(),
+            "the count stays clear of the buttons"
+        );
+        assert!(download.left() >= rect("Forward…").right());
+        assert!(download.right() <= screen.right());
+    }
+
     /// A clicked notification lands on the message it announced and keeps it
     /// in view, even with the unread divider far above it.
     #[test]
@@ -15846,6 +15988,83 @@ mod tests {
         frame_with(&mut app, &ctx, vec![primary(pos, false)]);
         render(&mut app, &ctx);
         assert_eq!(selected_ids(&app), ["m003", "m005"]);
+    }
+
+    /// Holding the button still on a message's empty space, beside its bubble
+    /// or in the padding around its text, selects it, as a long press does on
+    /// the phone, and the release that follows does not toggle it off again.
+    /// Held on the text itself, it stays a text press.
+    #[test]
+    fn holding_still_on_a_message_selects_it() {
+        let (mut app, ctx, chat) = sweep_chat(8);
+        let mut now = ctx.input(|input| input.time) + 1.0;
+        // Presses at `pos`, then frames at each delay in seconds after it,
+        // releasing with the last.
+        let mut hold = |app: &mut App, pos: egui::Pos2, delays: &[f64]| {
+            let start = now;
+            let at = |time: f64, events: Vec<egui::Event>| egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let frame = |app: &mut App, input| {
+                let mut output = ctx.run_ui(input, |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+            };
+            frame(
+                app,
+                at(
+                    start,
+                    vec![egui::Event::PointerMoved(pos), primary(pos, true)],
+                ),
+            );
+            let mut selected = Vec::new();
+            for (index, delay) in delays.iter().enumerate() {
+                let events = if index + 1 == delays.len() {
+                    vec![primary(pos, false)]
+                } else {
+                    Vec::new()
+                };
+                frame(app, at(start + delay, events));
+                selected.push(selected_ids(app));
+            }
+            now = start + delays.last().copied().unwrap_or_default() + 1.0;
+            frame(app, at(now, Vec::new()));
+            selected
+        };
+        let beside_m003 = beside(&ctx, &chat, "m003", false);
+        let seen = hold(&mut app, beside_m003, &[0.3, 0.6, 0.65]);
+        assert!(seen[0].is_empty(), "not yet held long enough");
+        assert_eq!(seen[1], ["m003"], "held still beside the bubble");
+        assert_eq!(seen[2], ["m003"], "the release does not toggle it off");
+        render(&mut app, &ctx);
+        assert_eq!(selected_ids(&app), ["m003"]);
+
+        app.actions.push(crate::model::Action::CancelSelection);
+        render(&mut app, &ctx);
+        let body = drawn_rect(&ctx, &chat, "m005", "body");
+        let bubble = drawn_rect(&ctx, &chat, "m005", "rect");
+        let padding = egui::pos2(body.left() - 4.0, body.center().y);
+        assert!(bubble.contains(padding), "inside the bubble, off the text");
+        let seen = hold(&mut app, padding, &[0.6, 0.7]);
+        assert_eq!(seen[0], ["m005"], "held still in the bubble's padding");
+        assert_eq!(seen[1], ["m005"]);
+
+        app.actions.push(crate::model::Action::CancelSelection);
+        render(&mut app, &ctx);
+        let seen = hold(&mut app, body.center(), &[0.6, 0.7]);
+        assert!(
+            seen.iter().all(Vec::is_empty),
+            "held on the text, nothing is selected"
+        );
     }
 
     /// #246: a sweep held at the top edge scrolls the list, and takes every

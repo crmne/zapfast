@@ -148,14 +148,26 @@ archive.
 
 Choose **Select messages** in the chat's menu (the three dots at the top),
 **Select** in a message's menu, or Ctrl-click (Command-click on macOS) a
-message. As in WhatsApp Web, every message then gets a check box on the left.
+message. Holding the mouse button still for half a second on a message's empty
+space, beside its bubble or around its text, selects it too, as a long press
+does on the phone. As in WhatsApp Web, every message then gets a check box on the left.
 Click anywhere on a message's row, its box included, to add or remove it.
 Shift-click adds every message up to the one you click, and a drag adds every
 message it passes, scrolling when you hold the pointer at the top or bottom
 edge. A drag that starts beside the bubbles, off the text, starts a selection
 too. A drag over the text outside a selection still selects the text to copy.
 **Forward…** sends the selected messages together, in their original
-order, and **Delete…** deletes them all. Unticking the last message keeps the selection open; Escape or the
+order, and **Delete…** deletes them all. When photos, videos, audio, or
+documents are among them, **Download N files** at the bottom right (an icon in
+a narrow window) saves those files together, even ones you have not opened yet:
+it downloads what is not on this computer, whatever its size, waits until
+every file is here, then copies them all into one folder named after your
+number, `+15550001111/<chat name>`, inside the download folder from
+**Settings > Files**, or your Downloads folder if you have not chosen one. Text
+and stickers are left out. A file saved there before is not copied twice,
+another file with the same name is never replaced, and a file that cannot be
+downloaded is named in the message that reports the result. Once the files are
+saved, the folder opens in your file manager. Unticking the last message keeps the selection open; Escape or the
 close button ends it. A batch goes out one message at a time, each starting
 once the one before it reached WhatsApp, so a picture cannot overtake the
 text that came before it. Deleted or unsupported messages, phone-only content,

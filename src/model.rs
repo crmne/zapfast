@@ -1649,6 +1649,18 @@ impl Content {
         }
     }
 
+    /// The file a person can save from this message: a photo, video, audio
+    /// or document. Stickers and a card's picture are not files to keep.
+    pub fn file(&self) -> Option<&Media> {
+        match self {
+            Self::Image { media, .. }
+            | Self::Video { media, .. }
+            | Self::Audio { media, .. }
+            | Self::Document { media, .. } => Some(media),
+            _ => None,
+        }
+    }
+
     pub fn media_mut(&mut self) -> Option<&mut Media> {
         match self {
             Self::Image { media, .. }
@@ -2975,6 +2987,13 @@ pub enum Action {
     /// Saves a group of downloaded album attachments into one chosen folder.
     SaveAttachments {
         files: Vec<(PathBuf, String)>,
+    },
+    /// Saves the files of these selected messages together in the chat's
+    /// folder under the account's number, downloading those not here yet
+    /// first, and ends the selection.
+    SaveSelectedFiles {
+        chat: ChatId,
+        messages: Vec<String>,
     },
     OpenUrl(String),
     CopyText(String),
