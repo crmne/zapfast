@@ -4897,6 +4897,15 @@ impl App {
                         "This chat already has three pinned messages",
                     )
                     .into_owned(),
+                    crate::backend::REACTION_FAILED => {
+                        crate::i18n::gettext(self.locale, "Could not send the reaction.")
+                            .into_owned()
+                    }
+                    crate::backend::REACTION_FAILED_ANNOUNCEMENT => crate::i18n::gettext(
+                        self.locale,
+                        "Could not send the reaction. If this is an old announcement, reload its history and try again.",
+                    )
+                    .into_owned(),
                     crate::calls::GROUP_CALLS_NOT_ENABLED => crate::i18n::gettext(
                         self.locale,
                         "WhatsApp hasn't turned on group calls from a computer for your account yet. Ask someone in the group to call it, and answer here.",

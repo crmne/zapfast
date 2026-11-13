@@ -7249,7 +7249,22 @@ impl Worker {
                         self.emit(Event::MessageUpdated(Box::new(updated)));
                     }
                 } else {
-                    self.emit(Event::Error("Could not send the reaction. If this is an old announcement, reload its history and try again.".into()));
+                    // Only an announcement needs its original's secret; other
+                    // chats get the plain failure.
+                    let announcement = self
+                        .archive
+                        .chat(&chat)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|chat| chat.is_group() && !chat.can_send());
+                    self.emit(Event::Error(
+                        if announcement {
+                            super::REACTION_FAILED_ANNOUNCEMENT
+                        } else {
+                            super::REACTION_FAILED
+                        }
+                        .to_owned(),
+                    ));
                 }
                 if let Some(next) = self.reaction_pending.remove(&key) {
                     self.react(chat, message, next);

@@ -105,11 +105,10 @@ mod tests {
                 "👍"
             );
         }
-        assert!(
-            events
-                .try_iter()
-                .any(|event| matches!(event, Event::Error(_)))
-        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::Error(message) if message == crate::backend::REACTION_FAILED_ANNOUNCEMENT
+        )));
         worker.reaction_inflight.insert((chat.into(), id.into()));
         worker
             .handle_command(Command::ReactionSent {
