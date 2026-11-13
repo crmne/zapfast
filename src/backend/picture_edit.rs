@@ -94,6 +94,10 @@ pub fn write(
             .and_then(|bytes| edit(&bytes, crop, turns)),
         PictureSource::Pasted(rgba) => edit_pasted(rgba, width, height, crop, turns),
     }?;
+    save(picture, dir)
+}
+
+pub(crate) fn save(picture: Edited, dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let name = super::sticker_store::content_hash(&picture.bytes);
     let path = dir.join(format!("{name}.{}", picture.extension));

@@ -395,6 +395,8 @@ fn run() -> eframe::Result<()> {
     #[cfg(feature = "demo")]
     if demo {
         zapfast::demo::populate(&mut app);
+        let demo_media = app.account().dirs.media_cache_dir();
+        app.backend.set_demo_media_dir(demo_media);
         zapfast::demo::apply_flags(&mut app, cli.demo_page.as_deref());
         if cli.demo_tour {
             tour_script(&cli.demo_tour_script).prepare(&mut app);

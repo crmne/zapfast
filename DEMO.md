@@ -51,6 +51,9 @@ are stock media compiled into demo builds only, all CC0 or in the public domain
 fixtures, and the remaining stickers come from the bundled Noto emoji font. The tour makes no
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
+Use `--demo-page status`, `status-text`, `status-photo`, `status-video`, or `status-empty` to explore received
+Status with synthetic text, photos and video. Add `,light` for the light theme.
+
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 
 `--demo-tour-script whats-new` plays an 86-second tour of what ZapFast 0.16
@@ -167,3 +170,17 @@ python3 scripts/render-demo.py raw.mp4 tour.json whats-new.mp4 --scale 1.5
 
 `--demo-page export-chat` shows the synthetic export dialog;
 `--demo-page export-chat-progress` shows its saved-message and attachment counts.
+
+## Status pages
+
+`--demo-page status-compose`, `status-compose-photo` and `status-privacy` open
+the editor and the audience sheet; `status-editor` opens the photo markup
+canvas. `status-contacts` and `status-contacts-inline` show the shared contact
+picker over the composer or the list, `status-privacy-inline` the privacy
+options in the list pane, and `status-contacts-many` a thousand synthetic
+contacts with enough selected chips to scroll. `status-mine` and
+`status-mine-list` show our own published update, and `status-stickers` and
+`status-emoji` the expanded reply panels. Add `,light` to check contrast.
+
+The offline demo refuses to publish or reply with an explicit message and keeps
+the draft, rather than pretending to send it.

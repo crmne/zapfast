@@ -797,7 +797,7 @@ fn primary_font() -> fastframe_fonts::Primary {
 /// where there is none), egui's own fonts behind it, and installed fonts
 /// for the scripts it lacks, hinted as the desktop asks. Inter also draws
 /// the [`tabular`] timers.
-fn install_fonts(ctx: &egui::Context) {
+pub(crate) fn install_fonts(ctx: &egui::Context) {
     let primary = primary_font();
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
@@ -900,6 +900,19 @@ fastframe_icons::icons! {
         ChevronRight => lucide "chevron-right",
         ChevronUp => lucide "chevron-up",
         ListChecks => "list-checks",
+        Status => "status",
+        CirclePlus => "circle-plus",
+        EllipsisVertical => "ellipsis-vertical",
+        Palette => "palette",
+        Camera => "camera",
+        Crop => "crop",
+        Undo => "undo",
+        Redo => "redo",
+        Effects => "effects",
+        Shapes => "shapes",
+        Blur => "blur",
+        Type => "type",
+        Hd => "hd",
         CircleAlert => lucide "circle-alert",
         CircleCheck => lucide "circle-check",
         CircleX => lucide "circle-x",

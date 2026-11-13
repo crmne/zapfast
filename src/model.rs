@@ -2026,6 +2026,8 @@ pub enum Page {
     Chats,
     /// Every call of the account, newest first.
     Calls,
+    /// Status updates, kept in the encrypted archive for up to 24 hours.
+    Status,
     Settings,
     Wallpaper,
 }
@@ -2708,6 +2710,78 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    DeleteStatus {
+        account: AccountId,
+        id: String,
+    },
+    SetStatusAudience {
+        account: AccountId,
+        audience: crate::status::Audience,
+    },
+    StatusPhotoTool {
+        account: AccountId,
+        tool: crate::photo::Tool,
+    },
+    StatusPhotoPreview {
+        account: AccountId,
+    },
+    ApplyStatusPhoto {
+        account: AccountId,
+        crop: bool,
+    },
+    EditStatusPicture {
+        account: AccountId,
+    },
+    RemoveStatusMedia {
+        account: AccountId,
+    },
+    StatusPictureHistory {
+        account: AccountId,
+        redo: bool,
+    },
+    ComposeStatus {
+        account: AccountId,
+        media: bool,
+    },
+    PublishStatus {
+        account: AccountId,
+    },
+    FetchStatusStickers {
+        account: AccountId,
+    },
+    ReplyStatusSticker {
+        account: AccountId,
+        path: std::path::PathBuf,
+    },
+    ReplyStatus {
+        account: AccountId,
+        reaction: Option<String>,
+    },
+    HideStatus {
+        account: AccountId,
+        sender: String,
+    },
+    /// Open an update without marking it or its sender's chat as read.
+    SelectStatus {
+        account: AccountId,
+        sender: String,
+        id: String,
+    },
+    DownloadStatus {
+        account: AccountId,
+        sender: String,
+        id: String,
+    },
+    CloseStatus {
+        account: AccountId,
+    },
+    StepStatus {
+        account: AccountId,
+        direction: i8,
+    },
+    ToggleStatusPlayback {
+        account: AccountId,
+    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,
