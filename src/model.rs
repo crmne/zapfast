@@ -3389,6 +3389,9 @@ pub enum Action {
     PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),
     ResetZoom,
+    /// Changes the Linux touchpad scroll speed by this fraction of the
+    /// default.
+    TouchpadScrollSpeedBy(f32),
     /// Requests a pairing code for a phone number.
     PairWithPhone(String),
     /// Unlinks the device remotely and locally.

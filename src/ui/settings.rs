@@ -412,6 +412,53 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    // Only Linux touchpads are scaled: macOS and Windows already scroll at
+    // the system's speed.
+    if cfg!(target_os = "linux") {
+        appearance.row(
+            translated(locale, "Touchpad scroll speed"),
+            translated(
+                locale,
+                "How far a two-finger swipe scrolls, to match your other apps.",
+            ),
+            move |ui, app| {
+                if theme::icon_button(
+                    ui,
+                    Icon::Plus,
+                    16.0,
+                    palette.secondary,
+                    palette.text,
+                    &crate::i18n::gettext(app.locale, "Faster"),
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::TouchpadScrollSpeedBy(0.1));
+                }
+                theme::text(
+                    ui,
+                    format!(
+                        "{:.0}%",
+                        crate::app::touchpad_scroll_speed(app.settings.touchpad_scroll_speed)
+                            * 100.0
+                    ),
+                    theme::medium(13.5),
+                    palette.text,
+                );
+                if theme::icon_button(
+                    ui,
+                    Icon::Minus,
+                    16.0,
+                    palette.secondary,
+                    palette.text,
+                    &crate::i18n::gettext(app.locale, "Slower"),
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::TouchpadScrollSpeedBy(-0.1));
+                }
+            },
+        );
+    }
     appearance.row(translated(locale, "Language"), "", language_picker);
     // macOS keeps its own traffic lights over ZapFast's headers.
     if cfg!(any(windows, target_os = "linux")) {

@@ -744,6 +744,9 @@ pub struct App {
     /// The wheel step, and on Linux the touchpad's scale, glide and axis
     /// lock.
     pub(crate) scrolling: fastframe_scroll::Scrolling,
+    /// The touchpad scale before the touchpad scroll speed setting:
+    /// fastframe-scroll's default, or `FASTFRAME_TOUCHPAD_SCALE`.
+    touchpad_base_scale: f32,
     /// Keeps a scroll gesture with the pane it began over.
     pub scroll_route: ScrollRoute,
 
@@ -1698,6 +1701,7 @@ impl App {
             picture_origins: Default::default(),
             picture_texture: None,
             scrolling: fastframe_scroll::Scrolling::default(),
+            touchpad_base_scale: fastframe_scroll::Scrolling::default().touchpad_scale(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
             dialog: None,
@@ -9945,6 +9949,11 @@ impl App {
                 self.zoom_applied = false;
                 self.mark_settings_dirty();
             }
+            Action::TouchpadScrollSpeedBy(delta) => {
+                self.settings.touchpad_scroll_speed =
+                    touchpad_scroll_speed(self.settings.touchpad_scroll_speed + delta);
+                self.mark_settings_dirty();
+            }
             Action::PairWithPhone(phone) => {
                 let digits: String = phone.chars().filter(char::is_ascii_digit).collect();
                 if digits.len() < 7 {
@@ -11444,6 +11453,10 @@ impl App {
             // Files dropped or pasted on the lock screen go nowhere.
             self.dropping = false;
         } else {
+            self.scrolling.set_touchpad_scale(
+                self.touchpad_base_scale
+                    * touchpad_scroll_speed(self.settings.touchpad_scroll_speed),
+            );
             self.scrolling.apply(ctx);
             self.route_scroll(ctx);
             Self::paste_shift_insert(ctx);
@@ -12301,6 +12314,17 @@ fn notification_sound(
     }
 }
 
+/// The touchpad scroll speed setting, rounded to whole tenths and kept
+/// between half and four times the default; anything unreadable is the
+/// default.
+pub(crate) fn touchpad_scroll_speed(speed: f32) -> f32 {
+    if speed.is_finite() {
+        ((speed * 10.0).round() / 10.0).clamp(0.5, 4.0)
+    } else {
+        1.0
+    }
+}
+
 /// What may still happen while the app lock is on: the lock screen's own
 /// actions, the window and the tray, and settings results that show
 /// nothing. Everything else would show or change what the lock hides.
@@ -12402,6 +12426,17 @@ fn composer_format_spans(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn touchpad_scroll_speed_keeps_whole_tenths_within_its_range() {
+        use super::touchpad_scroll_speed;
+        assert_eq!(touchpad_scroll_speed(1.0), 1.0);
+        assert_eq!(touchpad_scroll_speed(1.0 + 0.1 + 0.1 + 0.1), 1.3);
+        assert_eq!(touchpad_scroll_speed(0.1), 0.5);
+        assert_eq!(touchpad_scroll_speed(9.0), 4.0);
+        assert_eq!(touchpad_scroll_speed(f32::NAN), 1.0);
+        assert_eq!(touchpad_scroll_speed(f32::INFINITY), 1.0);
+    }
+
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
 
