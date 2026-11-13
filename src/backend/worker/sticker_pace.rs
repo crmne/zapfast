@@ -73,15 +73,23 @@ impl Pace {
 
 /// Whether a download error is the server's rate limit.
 pub(super) fn rate_limited(error: &str) -> bool {
-    error.contains("rate-overlimit") || error.contains("code=429") || error.contains("status: 429")
+    error.contains("rate-overlimit") || error.contains("code=429") || names_status(error, "429")
 }
 
 /// Whether a download error means the file is gone from the servers, so
 /// asking again soon cannot help.
 pub(super) fn gone(error: &str) -> bool {
-    ["status: 403", "status: 404", "status: 410"]
+    ["403", "404", "410"]
         .iter()
-        .any(|status| error.contains(status))
+        .any(|status| names_status(error, status))
+}
+
+/// Whether a download error carries this HTTP status, written either as
+/// `status: 403` or, inside the library's `MediaFailure`, as
+/// `http_status: Some(403)`.
+fn names_status(error: &str, code: &str) -> bool {
+    error.contains(&format!("status: {code}"))
+        || error.contains(&format!("http_status: Some({code})"))
 }
 
 #[cfg(test)]
@@ -131,5 +139,30 @@ mod tests {
             "received a server error response: code=429, text='rate-overlimit'"
         ));
         assert!(!rate_limited("Download failed with status: 403"));
+    }
+
+    /// The library's `MediaFailure` prints the status as `http_status:
+    /// Some(403)`, which holds no `status: 403` (#888).
+    #[test]
+    fn a_status_inside_a_media_failure_is_read_too() {
+        let failure = |status: u16| {
+            format!(
+                "MediaFailure {{ preparation: None, iq_kind: None, iq_code: None, \
+                 http_status: Some({status}), io_kind: None, media_validation: false, .. }}"
+            )
+        };
+        let rejected =
+            |status| format!("the CDN rejected the media reference: {}", failure(status));
+        let exhausted = |status| format!("every media host failed: {}", failure(status));
+        for status in [403, 404, 410] {
+            assert!(gone(&rejected(status)), "{status}");
+            assert!(gone(&exhausted(status)), "{status}");
+            assert!(!rate_limited(&rejected(status)), "{status}");
+        }
+        assert!(!gone(&rejected(500)));
+        assert!(!gone(&rejected(429)));
+        assert!(rate_limited(&exhausted(429)));
+        assert!(rate_limited(&rejected(429)));
+        assert!(!rate_limited(&exhausted(500)));
     }
 }
