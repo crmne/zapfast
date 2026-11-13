@@ -18985,7 +18985,11 @@ mod tests {
     /// a newer release brings its banner back.
     #[test]
     fn a_closed_update_stays_away_until_a_newer_one_comes() {
-        let mut app = app();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
         let ctx = egui::Context::default();
         app.update = Some(crate::updates::Release {
             version: "99.0.0".into(),
@@ -18997,11 +19001,44 @@ mod tests {
         assert!(!app.update_banner_shows(), "the banner stays closed");
         // The update itself is still there, in Settings.
         assert!(app.update.is_some());
+        // The dismissal is written down, so it is still there next time.
+        app.save_settings();
+        assert!(app.files.flush(std::time::Duration::from_secs(10)));
+        let saved = crate::settings::Settings::load(&app.dirs.settings_file());
+        assert_eq!(saved.dismissed_update.as_deref(), Some("99.0.0"));
         app.update = Some(crate::updates::Release {
             version: "99.1.0".into(),
             url: "https://github.com/crmne/zapfast/releases/latest".into(),
         });
         assert!(app.update_banner_shows(), "a newer release says so");
+    }
+
+    /// A version the user closed says nothing: the toast stays away too.
+    #[test]
+    fn a_closed_update_says_nothing() {
+        let mut app = app();
+        app.settings.dismissed_update = Some("99.0.0".into());
+        app.apply_backend_event(
+            Event::UpdateAvailable {
+                version: "99.0.0".into(),
+                url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            },
+            true,
+        );
+        assert!(
+            app.toasts.is_empty(),
+            "the toast stays away: {:?}",
+            app.toasts
+        );
+        // A newer release does say so.
+        app.apply_backend_event(
+            Event::UpdateAvailable {
+                version: "99.1.0".into(),
+                url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            },
+            true,
+        );
+        assert_eq!(app.toasts.len(), 1, "the newer release is announced");
     }
 
     #[test]
