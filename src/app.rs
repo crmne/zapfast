@@ -2534,19 +2534,27 @@ impl App {
         if reading {
             return;
         }
-        // A limited chat notifies once, then waits; opening it ends the wait.
-        // A mention of us or a reply to us always notifies and leaves the wait alone.
+        // A chat notifies once for a burst of messages, and a limited chat
+        // once for ten minutes; opening it ends the wait. A mention of us or
+        // a reply to us always notifies and leaves the wait alone.
         let for_us = chat.is_group() && self.addresses_us(message);
-        let limited = !for_us
-            && self
-                .account()
-                .settings
-                .limit_notifications
-                .applies(chat.is_group());
+        let quiet = if for_us {
+            crate::notify::Quiet::Never
+        } else if self
+            .account()
+            .settings
+            .limit_notifications
+            .applies(chat.is_group())
+        {
+            crate::notify::Quiet::Limited
+        } else {
+            crate::notify::Quiet::Burst
+        };
+        let waits = quiet != crate::notify::Quiet::Never;
         let account = self.account().id.clone();
         if !self
             .notifications
-            .allow(&account, chat_id, std::time::Instant::now(), limited)
+            .allow(&account, chat_id, std::time::Instant::now(), quiet)
         {
             return;
         }
@@ -2554,7 +2562,7 @@ impl App {
             return;
         };
         if self.app_lock.is_locked() || !self.settings.notification_content {
-            self.notify_without_content(chat_id, chat.is_group(), &message.id, limited);
+            self.notify_without_content(chat_id, chat.is_group(), &message.id, waits);
             return;
         }
         let (name, is_group) = (self.chat_title(chat), chat.is_group());
@@ -2593,7 +2601,7 @@ impl App {
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
-            limited,
+            waits,
         );
         self.wants_attention = true;
     }
@@ -2610,7 +2618,7 @@ impl App {
         chat_id: &str,
         is_group: bool,
         message: &str,
-        limited: bool,
+        waits: bool,
     ) {
         self.wants_attention = true;
         let (title, body) = crate::notify::locked_lines(self.locale);
@@ -2628,7 +2636,7 @@ impl App {
             },
             std::sync::Arc::clone(&self.notification_opens),
             move || waker.wake(),
-            limited,
+            waits,
         );
     }
 
@@ -15121,6 +15129,7 @@ mod tests {
 
         app.apply(Action::SetAccountNotifications(second, true), &ctx);
         assert!(app.accounts[1].settings.notifications);
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         arrives(&mut app, "m3");
         assert_eq!(app.notifications.shown.len(), 2);
     }
@@ -26862,6 +26871,7 @@ mod app_lock_tests {
         assert_eq!(shown.title, "Ada Lovelace");
         assert_eq!(shown.body, "the engine is ready");
 
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         app.lock_app();
         app.maybe_notify(CHAT, &message);
         let shown = app.notifications.shown.last().unwrap();
@@ -26906,6 +26916,7 @@ mod app_lock_tests {
         assert_eq!(shown.sound, app.settings.message_sound);
 
         app.settings.notification_content = true;
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         app.maybe_notify(CHAT, &message);
         let shown = app.notifications.shown.last().unwrap();
         assert_eq!(shown.title, "Ada Lovelace");
@@ -26913,15 +26924,37 @@ mod app_lock_tests {
     }
 
     #[test]
+    fn a_burst_of_messages_notifies_once_until_the_chat_is_opened() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 2, "the burst is over");
+
+        app.open_chat(CHAT.into());
+        app.chats[0].unread = 1;
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 3, "opening reset the wait");
+    }
+
+    #[test]
     fn limited_direct_chats_notify_once_until_the_chat_is_opened() {
         let mut app = unlocked_app();
         let message = incoming(&mut app);
         app.maybe_notify(CHAT, &message);
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 2, "off by default");
 
         app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
         app.notifications.shown.clear();
+        app.notifications
+            .elapse(std::time::Duration::from_secs(10 * 60));
         app.maybe_notify(CHAT, &message);
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 1);
@@ -26981,6 +27014,7 @@ mod app_lock_tests {
 
         app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Group;
         app.maybe_notify(CHAT, &direct);
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         app.maybe_notify(CHAT, &direct);
         app.maybe_notify(GROUP, &group);
         app.maybe_notify(GROUP, &group);
@@ -26992,7 +27026,10 @@ mod app_lock_tests {
 
         app.account_mut().settings.limit_notifications = crate::settings::NotificationLimit::Direct;
         app.notifications.shown.clear();
+        app.notifications
+            .elapse(std::time::Duration::from_secs(10 * 60));
         app.maybe_notify(GROUP, &group);
+        app.notifications.elapse(crate::notify::BURST_WINDOW);
         app.maybe_notify(GROUP, &group);
         app.maybe_notify(CHAT, &direct);
         app.maybe_notify(CHAT, &direct);
