@@ -321,7 +321,7 @@ mod tests {
         let (mut worker, events, _, _) = worker();
         worker.archive.ensure_chat(CHAT, "Fixture").unwrap();
         worker.archive_requests.insert(CHAT.into(), 1);
-        worker.remove_chat(CHAT, 100, false);
+        worker.remove_chat(CHAT, 100, false, 0);
         assert!(worker.archive_requests.is_empty());
         events.try_iter().for_each(drop);
         worker
