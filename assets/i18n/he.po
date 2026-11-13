@@ -1,0 +1,3980 @@
+# Hebrew translation of ZapFast.
+# Distributed under the same MIT license as ZapFast.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ZapFast\n"
+"Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?template=translation.yml\n"
+"PO-Revision-Date: 2026-11-13 00:00+0200\n"
+"Last-Translator: ZapFast contributors\n"
+"Language-Team: Hebrew\n"
+"Language: he\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. Translators: one word, no spaces. The word after @ that mentions everyone.
+#: src/mentions.rs:80
+msgctxt "mention"
+msgid "all"
+msgstr "כולם"
+
+#: src/new_group.rs:190 src/ui/new_group.rs:452
+msgid "Enter a name for the group."
+msgstr "יש להזין שם לקבוצה."
+
+#: src/new_group.rs:192
+#, rust-format
+msgid "A group name can have at most {count} characters."
+msgstr "שם קבוצה יכול להכיל עד {count} תווים."
+
+#: src/new_group.rs:196
+msgid "Choose at least one person for the group."
+msgstr "יש לבחור לפחות איש קשר אחד לקבוצה."
+
+#: src/new_group.rs:198
+msgid "Connect to WhatsApp to create a group."
+msgstr "יש להתחבר ל-WhatsApp כדי ליצור קבוצה."
+
+#: src/new_group.rs:201
+msgid ""
+"WhatsApp did not answer in time. If the group does not appear shortly, try "
+"again."
+msgstr "WhatsApp לא הגיב בזמן. אם הקבוצה לא מופיעה בקרוב, יש לנסות שוב."
+
+#: src/new_group.rs:206
+msgid "WhatsApp does not allow this account to create groups right now."
+msgstr "WhatsApp לא מאפשר לחשבון הזה ליצור קבוצות כרגע."
+
+#: src/new_group.rs:211
+msgid "You have created too many groups recently. Try again later."
+msgstr "נוצרו יותר מדי קבוצות לאחרונה. יש לנסות שוב מאוחר יותר."
+
+#: src/new_group.rs:216
+msgid "WhatsApp did not accept this group's name or members."
+msgstr "WhatsApp לא קיבל את שם הקבוצה או את החברים בה."
+
+#: src/new_group.rs:219
+msgid "Could not create the group. Try again."
+msgstr "לא ניתן היה ליצור את הקבוצה. יש לנסות שוב."
+
+#: src/new_group.rs:258
+#, rust-format
+msgid ""
+"{names} could not be added to the group. Their privacy settings may not "
+"allow it."
+msgstr ""
+"לא ניתן היה להוסיף את {names} לקבוצה. ייתכן שהגדרות הפרטיות שלהם אינן "
+"מאפשרות זאת."
+
+#: src/model.rs:203 src/model.rs:240
+msgid "All"
+msgstr "הכול"
+
+#: src/model.rs:204 src/a11y.rs:112 src/a11y.rs:697
+msgid "Unread"
+msgstr "שלא נקראו"
+
+#: src/model.rs:205
+msgid "Private"
+msgstr "פרטי"
+
+#: src/model.rs:206 src/ui/picker.rs:1284
+msgid "Favorites"
+msgstr "מועדפים"
+
+#: src/model.rs:207 src/settings.rs:382
+msgid "Groups"
+msgstr "קבוצות"
+
+#: src/model.rs:208
+msgid "Channels"
+msgstr "ערוצים"
+
+#: src/model.rs:241
+msgid "Missed"
+msgstr "שלא נענו"
+
+#: src/model.rs:1738 src/ui/conversation.rs:2388 src/ui/image_preview.rs:1061
+#: src/ui/info.rs:1380 src/a11y.rs:199
+msgid "Photo"
+msgstr "תמונה"
+
+#: src/model.rs:1739 src/ui/image_preview.rs:1059 src/ui/info.rs:1378
+#: src/a11y.rs:211
+msgid "Video"
+msgstr "וידאו"
+
+#: src/model.rs:1740 src/ui/picker.rs:141 src/a11y.rs:207
+msgid "GIF"
+msgstr "GIF"
+
+#: src/model.rs:1741 src/a11y.rs:209
+msgid "Video message"
+msgstr "הודעת וידאו"
+
+#: src/model.rs:1742 src/app.rs:10956 src/a11y.rs:221
+msgid "Voice message"
+msgstr "הודעה קולית"
+
+#: src/model.rs:1743 src/ui/conversation.rs:11479 src/a11y.rs:223
+msgid "Audio"
+msgstr "אודיו"
+
+#: src/model.rs:1744 src/a11y.rs:228
+msgid "Document"
+msgstr "מסמך"
+
+#: src/model.rs:1745 src/a11y.rs:232
+msgid "Sticker"
+msgstr "סטיקר"
+
+#: src/model.rs:1746 src/ui/dialogs.rs:1247 src/a11y.rs:234
+msgid "Sticker pack"
+msgstr "חבילת סטיקרים"
+
+#: src/model.rs:1747 src/ui/conversation.rs:8313 src/a11y.rs:239
+msgid "Location"
+msgstr "מיקום"
+
+#: src/model.rs:1748 src/ui/conversation.rs:8360 src/ui/conversation.rs:8586
+#: src/a11y.rs:243 src/a11y.rs:275
+msgid "Live location"
+msgstr "מיקום חי"
+
+#: src/model.rs:1749 src/ui/conversation.rs:8358 src/a11y.rs:262
+msgid "Live location ended"
+msgstr "המיקום החי הסתיים"
+
+#: src/model.rs:1750 src/a11y.rs:245
+msgid "Contact"
+msgstr "איש קשר"
+
+#: src/model.rs:1751
+msgid "Poll"
+msgstr "סקר"
+
+#: src/model.rs:1752 src/ui/conversation.rs:7840 src/a11y.rs:267
+#: src/a11y.rs:695
+msgid "This message was deleted"
+msgstr "הודעה זו נמחקה"
+
+#: src/model.rs:1753
+msgid "Unsupported message"
+msgstr "הודעה שאינה נתמכת"
+
+#: src/model.rs:1754 src/a11y.rs:279
+msgid "View once photo"
+msgstr "תמונה לצפייה חד-פעמית"
+
+#: src/model.rs:1755 src/a11y.rs:280
+msgid "View once video"
+msgstr "וידאו לצפייה חד-פעמית"
+
+#: src/model.rs:1756 src/a11y.rs:281
+msgid "View once voice message"
+msgstr "הודעה קולית לצפייה חד-פעמית"
+
+#: src/model.rs:1757 src/a11y.rs:282
+msgid "View once audio"
+msgstr "אודיו לצפייה חד-פעמית"
+
+#: src/model.rs:1758 src/a11y.rs:287
+msgid "View once message"
+msgstr "הודעה לצפייה חד-פעמית"
+
+#: src/model.rs:1759 src/a11y.rs:288
+msgid "Message on your phone"
+msgstr "הודעה בטלפון"
+
+#: src/model.rs:1760 src/ui/calls.rs:100
+msgid "Missed voice call"
+msgstr "שיחה קולית שלא נענתה"
+
+#: src/model.rs:1761 src/ui/calls.rs:101
+msgid "Missed video call"
+msgstr "שיחת וידאו שלא נענתה"
+
+#: src/model.rs:1762 src/ui/conversation.rs:687 src/ui/conversation.rs:854
+#: src/ui/conversation.rs:5295 src/ui/calls.rs:104 src/ui/calls.rs:389
+msgid "Voice call"
+msgstr "שיחה קולית"
+
+#: src/model.rs:1763 src/ui/conversation.rs:688 src/ui/conversation.rs:882
+#: src/ui/conversation.rs:5312 src/ui/calls.rs:105 src/ui/calls.rs:387
+msgid "Video call"
+msgstr "שיחת וידאו"
+
+#: src/model.rs:1773 src/util.rs:303 src/ui/info.rs:539 src/a11y.rs:265
+msgid "Disappearing messages"
+msgstr "הודעות נעלמות"
+
+#: src/util.rs:245 src/util.rs:386
+msgid "Yesterday"
+msgstr "אתמול"
+
+#: src/util.rs:282
+#, rust-format
+msgid "Yesterday at {time}"
+msgstr "אתמול ב-{time}"
+
+#: src/util.rs:283
+#, rust-format
+msgid "{weekday} at {time}"
+msgstr "{weekday} ב-{time}"
+
+#: src/util.rs:286
+#, rust-format
+msgid "{date} at {time}"
+msgstr "{date} ב-{time}"
+
+#: src/util.rs:312 src/settings.rs:380 src/ui/info.rs:602
+msgid "Off"
+msgstr "כבוי"
+
+#: src/util.rs:313 src/ui/info.rs:603
+msgid "24 hours"
+msgstr "24 שעות"
+
+#: src/util.rs:314 src/ui/info.rs:604
+msgid "7 days"
+msgstr "7 ימים"
+
+#: src/util.rs:315 src/ui/info.rs:605
+msgid "90 days"
+msgstr "90 יום"
+
+#: src/util.rs:325
+#, rust-format
+msgid "{name} turned off disappearing messages"
+msgstr "{name} כיבה/ה את ההודעות הנעלמות"
+
+#: src/util.rs:329
+#, rust-format
+msgid "{name} changed the disappearing messages setting to {duration}"
+msgstr "{name} שינה/תה את הגדרת ההודעות הנעלמות ל-{duration}"
+
+#: src/util.rs:356
+#, rust-format
+msgid "last seen today at {time}"
+msgstr "נראה לאחרונה היום ב-{time}"
+
+#: src/util.rs:357
+#, rust-format
+msgid "last seen yesterday at {time}"
+msgstr "נראה לאחרונה אתמול ב-{time}"
+
+#: src/util.rs:365
+#, rust-format
+msgid "last seen {weekday} at {time}"
+msgstr "נראה לאחרונה {weekday} ב-{time}"
+
+#: src/util.rs:369
+#, rust-format
+msgid "last seen {date}"
+msgstr "נראה לאחרונה {date}"
+
+#: src/util.rs:385
+msgid "Today"
+msgstr "היום"
+
+#: src/util.rs:421
+msgid "Monday"
+msgstr "יום שני"
+
+#: src/util.rs:422
+msgid "Tuesday"
+msgstr "יום שלישי"
+
+#: src/util.rs:423
+msgid "Wednesday"
+msgstr "יום רביעי"
+
+#: src/util.rs:424
+msgid "Thursday"
+msgstr "יום חמישי"
+
+#: src/util.rs:425
+msgid "Friday"
+msgstr "יום שישי"
+
+#: src/util.rs:426
+msgid "Saturday"
+msgstr "שבת"
+
+#: src/util.rs:427
+msgid "Sunday"
+msgstr "יום ראשון"
+
+#: src/util.rs:435
+msgid "January"
+msgstr "ינואר"
+
+#: src/util.rs:436
+msgid "February"
+msgstr "פברואר"
+
+#: src/util.rs:437
+msgid "March"
+msgstr "מרץ"
+
+#: src/util.rs:438
+msgid "April"
+msgstr "אפריל"
+
+#: src/util.rs:439
+msgid "May"
+msgstr "מאי"
+
+#: src/util.rs:440
+msgid "June"
+msgstr "יוני"
+
+#: src/util.rs:441
+msgid "July"
+msgstr "יולי"
+
+#: src/util.rs:442
+msgid "August"
+msgstr "אוגוסט"
+
+#: src/util.rs:443
+msgid "September"
+msgstr "ספטמבר"
+
+#: src/util.rs:444
+msgid "October"
+msgstr "אוקטובר"
+
+#: src/util.rs:445
+msgid "November"
+msgstr "נובמבר"
+
+#: src/util.rs:446
+msgid "December"
+msgstr "דצמבר"
+
+#: src/util.rs:637
+#, rust-format
+msgid "{seconds} s"
+msgstr "{seconds} שנ'"
+
+#: src/util.rs:638
+#, rust-format
+msgid "{minutes} min"
+msgstr "{minutes} דק'"
+
+#: src/util.rs:639
+#, rust-format
+msgid "{minutes} min {seconds} s"
+msgstr "{minutes} דק' {seconds} שנ'"
+
+#: src/util.rs:640
+#, rust-format
+msgid "{hours} h"
+msgstr "{hours} שע'"
+
+#: src/util.rs:641
+#, rust-format
+msgid "{hours} h {minutes} min"
+msgstr "{hours} שע' {minutes} דק'"
+
+#: src/ui/chats.rs:188 src/ui/chats.rs:523 src/app.rs:3809
+msgid "Starred"
+msgstr "מסומנות בכוכב"
+
+#: src/ui/chats.rs:268 src/ui/conversation.rs:950
+msgid "Back to the calls"
+msgstr "חזרה לשיחות"
+
+#: src/ui/chats.rs:277 src/ui/chats.rs:410
+msgid "New call"
+msgstr "שיחה חדשה"
+
+#: src/ui/chats.rs:291
+msgid "Search name or number"
+msgstr "חיפוש שם או מספר"
+
+#: src/ui/chats.rs:324 src/ui/pane.rs:260
+msgid "Search"
+msgstr "חיפוש"
+
+#: src/ui/chats.rs:695
+msgid "No starred messages"
+msgstr "אין הודעות מסומנות בכוכב"
+
+#: src/ui/chats.rs:698
+msgid "Right-click a message and choose Star to keep it here."
+msgstr "לחיצה ימנית על הודעה ובחירה ב\"הוספת כוכב\" תשמור אותה כאן."
+
+#: src/ui/chats.rs:945
+msgid "No favorites yet"
+msgstr "אין מועדפים עדיין"
+
+#: src/ui/chats.rs:1100 src/ui/chats.rs:1970 src/ui/dialogs.rs:352
+msgid "Locked chats"
+msgstr "צ'אטים נעולים"
+
+#: src/ui/chats.rs:1406 src/app.rs:3078
+msgid "Message yourself"
+msgstr "הודעה לעצמך"
+
+#: src/ui/chats.rs:1620 src/ui/conversation.rs:1008
+#, rust-format
+msgid "{name} is recording audio…"
+msgstr "{name} מקליט/ה הודעה קולית…"
+
+#: src/ui/chats.rs:1625 src/ui/conversation.rs:1028
+msgid "recording audio…"
+msgstr "מקליט/ה הודעה קולית…"
+
+#: src/ui/chats.rs:1639
+msgid "Draft:"
+msgstr "טיוטה:"
+
+#: src/ui/chats.rs:1729 src/ui/chats.rs:2126 src/ui/picker.rs:1715
+msgid "Remove from favorites"
+msgstr "הסרה מהמועדפים"
+
+#: src/ui/chats.rs:1731 src/ui/chats.rs:2128 src/ui/conversation.rs:7031
+#: src/ui/conversation.rs:7556 src/ui/dialogs.rs:1421 src/ui/picker.rs:1716
+msgid "Add to favorites"
+msgstr "הוספה למועדפים"
+
+#: src/ui/chats.rs:1741 src/ui/chats.rs:2148 src/ui/conversation.rs:648
+#: src/ui/dialogs.rs:1758 src/ui/info.rs:745
+msgid "Leave group"
+msgstr "עזיבת הקבוצה"
+
+#: src/ui/chats.rs:1742 src/ui/chats.rs:2146 src/ui/conversation.rs:646
+#: src/ui/dialogs.rs:1756 src/ui/info.rs:743
+msgid "Leave channel"
+msgstr "עזיבת הערוץ"
+
+#: src/ui/chats.rs:1745 src/ui/chats.rs:2223 src/ui/chats.rs:2496
+#: src/ui/conversation.rs:683 src/ui/dialogs.rs:1131
+msgid "Clear chat"
+msgstr "ניקוי צ'אט"
+
+#: src/ui/chats.rs:1746 src/ui/chats.rs:2235
+msgid "Delete chat"
+msgstr "מחיקת צ'אט"
+
+#: src/ui/chats.rs:1756 src/ui/chats.rs:2323 src/ui/conversation.rs:10859
+#: src/ui/call.rs:529
+msgid "Mute"
+msgstr "השתקה"
+
+#: src/ui/chats.rs:1759 src/ui/labels.rs:178 src/ui/labels.rs:223
+msgid "Labels"
+msgstr "תוויות"
+
+#: src/ui/chats.rs:2093
+msgid "Mark as read"
+msgstr "סימון כנקרא"
+
+#: src/ui/chats.rs:2103
+msgid "Mark as unread"
+msgstr "סימון כלא נקרא"
+
+#: src/ui/chats.rs:2109 src/ui/conversation.rs:673
+msgid "Unpin"
+msgstr "ביטול נעיצה"
+
+#: src/ui/chats.rs:2111 src/ui/conversation.rs:675
+msgid "Pin to top"
+msgstr "נעיצה למעלה"
+
+#: src/ui/chats.rs:2136 src/ui/conversation.rs:678
+msgid "Unarchive"
+msgstr "הוצאה מהארכיון"
+
+#: src/ui/chats.rs:2138 src/ui/conversation.rs:680
+msgid "Archive"
+msgstr "העברה לארכיון"
+
+#: src/ui/chats.rs:2164 src/ui/conversation.rs:10857 src/ui/call.rs:522
+msgid "Unmute"
+msgstr "ביטול השתקה"
+
+#: src/ui/chats.rs:2175
+msgid "Unlock chat"
+msgstr "ביטול נעילת צ'אט"
+
+#: src/ui/chats.rs:2177 src/ui/dialogs.rs:458
+msgid "Lock chat"
+msgstr "נעילת צ'אט"
+
+#: src/ui/chats.rs:2201 src/ui/conversation.rs:684 src/ui/conversation.rs:9777
+msgid "Copy number"
+msgstr "העתקת מספר"
+
+#: src/ui/chats.rs:2210 src/ui/conversation.rs:671
+msgid "Info"
+msgstr "מידע"
+
+#: src/ui/chats.rs:2262
+msgid "Default"
+msgstr "ברירת מחדל"
+
+#: src/ui/chats.rs:2263
+msgid "System sound"
+msgstr "צליל מערכת"
+
+#: src/ui/chats.rs:2264
+msgid "No sound"
+msgstr "ללא צליל"
+
+#: src/ui/chats.rs:2274
+msgid "Custom"
+msgstr "מותאם אישית"
+
+#: src/ui/chats.rs:2279 src/ui/settings.rs:2005
+msgid "Choose a file…"
+msgstr "בחירת קובץ…"
+
+#: src/ui/chats.rs:2286
+msgid "Notification sound"
+msgstr "צליל התראה"
+
+#: src/ui/chats.rs:2313
+msgid "8 hours"
+msgstr "8 שעות"
+
+#: src/ui/chats.rs:2317
+msgid "1 week"
+msgstr "שבוע"
+
+#: src/ui/chats.rs:2320
+msgid "Always"
+msgstr "תמיד"
+
+#: src/ui/conversation.rs:264
+#, rust-format
+msgid "Pinned message {index} of {count}: {text}"
+msgstr "הודעה נעוצה {index} מתוך {count}: {text}"
+
+#: src/ui/conversation.rs:308
+msgid "Your chats appear on the left as they load."
+msgstr "הצ'אטים שלך יופיעו משמאל בזמן הטעינה."
+
+#: src/ui/conversation.rs:310
+msgid "Select a chat on the left."
+msgstr "יש לבחור צ'אט מימין."
+
+#: src/ui/conversation.rs:320
+msgid "Ctrl+K to search · ? for keyboard shortcuts"
+msgstr "Ctrl+K לחיפוש · ? לקיצורי מקלדת"
+
+#: src/ui/conversation.rs:650
+msgid "Select messages"
+msgstr "בחירת הודעות"
+
+#: src/ui/conversation.rs:665
+msgid "More"
+msgstr "עוד"
+
+#: src/ui/conversation.rs:682
+msgid "Export chat…"
+msgstr "ייצוא צ'אט…"
+
+#: src/ui/conversation.rs:685
+msgid "Close chat"
+msgstr "סגירת צ'אט"
+
+#: src/ui/conversation.rs:686 src/ui/conversation.rs:908 src/ui/pane.rs:224
+msgid "Search messages"
+msgstr "חיפוש הודעות"
+
+#: src/ui/conversation.rs:847 src/ui/call.rs:129 src/ui/call.rs:577
+msgid "Hang up"
+msgstr "ניתוק"
+
+#: src/ui/conversation.rs:1012
+#, rust-format
+msgid "{names} and {last} are recording audio…"
+msgstr "{names} ו-{last} מקליטים הודעה קולית…"
+
+#: src/ui/conversation.rs:1514
+msgid "You blocked this contact"
+msgstr "חסמת איש קשר זה"
+
+#: src/ui/conversation.rs:1526
+msgid "You left this channel"
+msgstr "עזבת את הערוץ הזה"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "ערוצים הם לקריאה בלבד ב-ZapFast"
+
+#: src/ui/conversation.rs:1553
+msgid "You left this group"
+msgstr "עזבת את הקבוצה הזו"
+
+#: src/ui/conversation.rs:1604
+msgid "Original group message unavailable"
+msgstr "הודעת הקבוצה המקורית אינה זמינה"
+
+#: src/ui/conversation.rs:1732
+msgid "Attach"
+msgstr "צירוף"
+
+#: src/ui/conversation.rs:1831
+msgid "Type a message"
+msgstr "הקלדת הודעה"
+
+#: src/ui/conversation.rs:1834
+msgid "Add a caption"
+msgstr "הוספת כיתוב"
+
+#: src/ui/conversation.rs:1935
+msgid "Bold"
+msgstr "מודגש"
+
+#: src/ui/conversation.rs:1936
+msgid "Italic"
+msgstr "נטוי"
+
+#: src/ui/conversation.rs:1937
+msgid "Strikethrough"
+msgstr "קו חוצה"
+
+#: src/ui/conversation.rs:1938
+msgid "Monospace"
+msgstr "גופן קבוע רוחב"
+
+#: src/ui/conversation.rs:2112
+msgid ""
+"Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V"
+" pastes a picture"
+msgstr ""
+"Enter לשליחה · Shift+Enter לשורה חדשה · *מודגש* _נטוי_ ~קו חוצה~ · Ctrl+V "
+"להדבקת תמונה"
+
+#: src/ui/conversation.rs:2114
+msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
+msgstr "Ctrl+Enter לשליחה · *מודגש* _נטוי_ ~קו חוצה~ · Ctrl+V להדבקת תמונה"
+
+#: src/ui/conversation.rs:2125
+msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
+msgstr "הסתרת רמזי הקיצורים (ניתן להחזיר אותם מתוך קיצורי מקלדת)"
+
+#: src/ui/conversation.rs:2140
+#, rust-format
+msgid "All shortcuts ({})"
+msgstr "כל הקיצורים ({})"
+
+#: src/ui/conversation.rs:2273
+msgid "Send files"
+msgstr "שליחת קבצים"
+
+#: src/ui/conversation.rs:2279
+msgid "Send as document"
+msgstr "שליחה כמסמך"
+
+#: src/ui/conversation.rs:2283 src/ui/locations.rs:16
+msgid "Send location"
+msgstr "שליחת מיקום"
+
+#: src/ui/conversation.rs:2288 src/ui/polls.rs:16
+msgid "Create poll"
+msgstr "יצירת סקר"
+
+#: src/ui/conversation.rs:2350
+#, rust-format
+msgid "Voice message ({duration}) not sent"
+msgstr "הודעה קולית ({duration}) לא נשלחה"
+
+#: src/ui/conversation.rs:2352
+msgid "Discard voice message"
+msgstr "מחיקת הודעה קולית"
+
+#: src/ui/conversation.rs:2384
+#, rust-format
+msgid "Cancel sending {name}"
+msgstr "ביטול שליחת {name}"
+
+#: src/ui/conversation.rs:2392
+#, rust-format
+msgid "Sending {name}"
+msgstr "שולח את {name}"
+
+#: src/ui/conversation.rs:2398
+#, rust-format
+msgid "{time} left"
+msgstr "נותרו {time}"
+
+#: src/ui/conversation.rs:2534
+msgid "Loading preview…"
+msgstr "טוען תצוגה מקדימה…"
+
+#: src/ui/conversation.rs:2545
+msgid "Remove link preview"
+msgstr "הסרת תצוגת הקישור"
+
+#: src/ui/conversation.rs:2862
+msgid "You pinned a message"
+msgstr "נעצת הודעה"
+
+#: src/ui/conversation.rs:2865
+msgid "A message was pinned"
+msgstr "הודעה ננעצה"
+
+#: src/ui/conversation.rs:2867
+#, rust-format
+msgid "{} pinned a message"
+msgstr "{} נעץ/נעצה הודעה"
+
+#: src/ui/conversation.rs:3613 src/notify.rs:19
+#, rust-format
+msgid "{} unread message"
+msgid_plural "{} unread messages"
+msgstr[0] "{} הודעה שלא נקראה"
+msgstr[1] "{} הודעות שלא נקראו"
+
+#: src/ui/conversation.rs:3801 src/ui/conversation.rs:3938
+#: src/ui/conversation.rs:3995 src/ui/conversation.rs:4838
+#: src/ui/conversation.rs:6884 src/ui/call.rs:1017 src/app/calls.rs:135
+#: src/app.rs:3060 src/app.rs:3079
+msgid "You"
+msgstr "את/ה"
+
+#: src/ui/conversation.rs:3817
+#, rust-format
+msgid "Select message from {sender}, {time}: {summary}"
+msgstr "בחירת הודעה מאת {sender}, {time}: {summary}"
+
+#: src/ui/conversation.rs:4739 src/ui/image_preview.rs:399
+msgid "React"
+msgstr "תגובה באמוג'י"
+
+#: src/ui/conversation.rs:4766 src/ui/conversation.rs:7018
+#: src/ui/conversation.rs:7347 src/ui/image_preview.rs:386
+msgid "Reply"
+msgstr "השבה"
+
+#: src/ui/conversation.rs:4790 src/ui/conversation.rs:7024
+#: src/ui/conversation.rs:7403 src/ui/dialogs.rs:791 src/ui/dialogs.rs:810
+#: src/ui/image_preview.rs:419
+msgid "Forward"
+msgstr "העברה"
+
+#: src/ui/conversation.rs:5262
+msgid "Group calls happen on the phone"
+msgstr "שיחות קבוצתיות מתקיימות בטלפון"
+
+#: src/ui/conversation.rs:6686 src/ui/conversation.rs:7039
+#: src/ui/conversation.rs:7640 src/ui/message_info.rs:17
+msgid "Message info"
+msgstr "מידע על ההודעה"
+
+#: src/ui/conversation.rs:6954
+msgid "Remove reaction"
+msgstr "הסרת תגובה"
+
+#: src/ui/conversation.rs:7019 src/ui/conversation.rs:7364
+msgid "Reply privately"
+msgstr "השבה בפרטי"
+
+#: src/ui/conversation.rs:7020 src/ui/conversation.rs:7376
+msgid "Star"
+msgstr "סימון בכוכב"
+
+#: src/ui/conversation.rs:7021 src/ui/conversation.rs:7374
+msgid "Unstar"
+msgstr "הסרת הכוכב"
+
+#: src/ui/conversation.rs:7022 src/ui/conversation.rs:7390
+msgid "Pin message"
+msgstr "נעיצת הודעה"
+
+#: src/ui/conversation.rs:7023 src/ui/conversation.rs:7388
+msgid "Unpin message"
+msgstr "ביטול נעיצת הודעה"
+
+#: src/ui/conversation.rs:7025 src/ui/conversation.rs:7415
+msgid "Open in the viewer"
+msgstr "פתיחה בצפייה"
+
+#: src/ui/conversation.rs:7026 src/ui/conversation.rs:7429
+msgid "Select"
+msgstr "בחירה"
+
+#: src/ui/conversation.rs:7027 src/ui/conversation.rs:7495
+msgid "Copy text"
+msgstr "העתקת טקסט"
+
+#: src/ui/conversation.rs:7028 src/ui/conversation.rs:7511
+msgid "Edit"
+msgstr "עריכה"
+
+#: src/ui/conversation.rs:7029 src/ui/conversation.rs:7219
+#: src/ui/conversation.rs:7527 src/ui/conversation.rs:7870
+#: src/ui/conversation.rs:11722
+msgid "Delete for everyone"
+msgstr "מחיקה אצל כולם"
+
+#: src/ui/conversation.rs:7030 src/ui/conversation.rs:7224
+#: src/ui/conversation.rs:7536 src/ui/conversation.rs:11723
+msgid "Delete for me"
+msgstr "מחיקה אצלי"
+
+#: src/ui/conversation.rs:7032 src/ui/conversation.rs:7565
+msgid "Open in system player"
+msgstr "פתיחה בנגן המערכת"
+
+#: src/ui/conversation.rs:7033 src/ui/conversation.rs:7567
+#: src/ui/picker.rs:1609
+msgid "Open file"
+msgstr "פתיחת קובץ"
+
+#: src/ui/conversation.rs:7034 src/ui/conversation.rs:7577
+#: src/ui/image_preview.rs:302 src/ui/image_preview.rs:628
+msgid "Copy image"
+msgstr "העתקת תמונה"
+
+#: src/ui/conversation.rs:7035 src/ui/conversation.rs:7586
+#: src/ui/image_preview.rs:444 src/ui/image_preview.rs:629
+msgid "Save as…"
+msgstr "שמירה בשם…"
+
+#: src/ui/conversation.rs:7036 src/ui/conversation.rs:7598
+msgid "Show in folder"
+msgstr "הצגה בתיקייה"
+
+#: src/ui/conversation.rs:7037 src/ui/conversation.rs:7611
+msgid "Downloading…"
+msgstr "מוריד…"
+
+#: src/ui/conversation.rs:7038 src/ui/conversation.rs:7613
+#: src/ui/image_preview.rs:460 src/ui/image_preview.rs:815
+#: src/ui/image_preview.rs:823 src/ui/image_preview.rs:905
+msgid "Download"
+msgstr "הורדה"
+
+#: src/ui/conversation.rs:7040 src/ui/conversation.rs:7652
+msgid "Reload earlier messages"
+msgstr "טעינה מחדש של הודעות קודמות"
+
+#: src/ui/conversation.rs:7041 src/ui/conversation.rs:7665
+msgid "Copy message ID"
+msgstr "העתקת מזהה הודעה"
+
+#: src/ui/conversation.rs:7284
+msgid "Remove your reaction"
+msgstr "הסרת התגובה שלך"
+
+#: src/ui/conversation.rs:7301
+msgid "React with any emoji"
+msgstr "תגובה עם כל אימוג׳י"
+
+#: src/ui/conversation.rs:7460 src/ui/conversation.rs:7866
+#, rust-format
+msgid "{option}, unavailable: {reason}"
+msgstr "{option}, לא זמין: {reason}"
+
+#: src/ui/conversation.rs:7708
+#, rust-format
+msgid "Card {number}: {button}"
+msgstr "כרטיס {number}: {button}"
+
+#: src/ui/conversation.rs:7750
+msgid "Go to replied message"
+msgstr "מעבר להודעה שהגבת עליה"
+
+#: src/ui/conversation.rs:7761
+#, rust-format
+msgid "Info about {name}"
+msgstr "מידע על {name}"
+
+#: src/ui/conversation.rs:7839
+msgid "Only messages you sent"
+msgstr "רק הודעות ששלחת"
+
+#: src/ui/conversation.rs:7841
+msgid "The time limit has passed"
+msgstr "פרק הזמן המותר עבר"
+
+#: src/ui/conversation.rs:8370
+#, rust-format
+msgid "Updated {time}"
+msgstr "עודכן {time}"
+
+#: src/ui/conversation.rs:8385 src/ui/conversation.rs:8594
+msgid "Open WhatsApp on your phone to follow it."
+msgstr "יש לפתוח את WhatsApp בטלפון כדי לעקוב."
+
+#: src/ui/conversation.rs:8429
+msgid "Chat"
+msgstr "צ'אט"
+
+#: src/ui/conversation.rs:8444
+msgid "Add"
+msgstr "הוספה"
+
+#: src/ui/conversation.rs:8492
+#, rust-format
+msgid "{} sticker"
+msgid_plural "{} stickers"
+msgstr[0] "{} מדבקה"
+msgstr[1] "{} מדבקות"
+
+#: src/ui/conversation.rs:8505
+msgid "View stickers"
+msgstr "הצגת מדבקות"
+
+#: src/ui/conversation.rs:8612
+msgid "View once photo. For your privacy, it opens only on your phone."
+msgstr "תמונה לצפייה חד-פעמית. לשמירה על פרטיותך, היא נפתחת רק בטלפון."
+
+#: src/ui/conversation.rs:8616
+msgid "View once video. For your privacy, it opens only on your phone."
+msgstr "סרטון לצפייה חד-פעמית. לשמירה על פרטיותך, הוא נפתח רק בטלפון."
+
+#: src/ui/conversation.rs:8620
+msgid ""
+"View once voice message. For your privacy, it opens only on your phone."
+msgstr "הודעה קולית לצפייה חד-פעמית. לשמירה על פרטיותך, היא נפתחת רק בטלפון."
+
+#: src/ui/conversation.rs:8624
+msgid "View once audio. For your privacy, it opens only on your phone."
+msgstr "הקלטת אודיו לצפייה חד-פעמית. לשמירה על פרטיותך, היא נפתחת רק בטלפון."
+
+#: src/ui/conversation.rs:8628
+msgid "View once message. For your privacy, it opens only on your phone."
+msgstr "הודעה לצפייה חד-פעמית. לשמירה על פרטיותך, היא נפתחת רק בטלפון."
+
+#: src/ui/conversation.rs:8630
+msgid "This message can only be seen on your phone."
+msgstr "ניתן לראות את ההודעה הזו רק בטלפון."
+
+#: src/ui/conversation.rs:8972
+msgid "Save all…"
+msgstr "שמירת הכול…"
+
+#: src/ui/conversation.rs:9260 src/ui/conversation.rs:10328
+msgid "Download failed. Click to retry."
+msgstr "ההורדה נכשלה. יש ללחוץ כדי לנסות שוב."
+
+#: src/ui/conversation.rs:9403 src/ui/dialogs.rs:225
+msgid "Sending reply…"
+msgstr "שולח תגובה…"
+
+#: src/ui/conversation.rs:9404 src/ui/dialogs.rs:227
+msgid "Connect to WhatsApp to reply"
+msgstr "יש להתחבר ל-WhatsApp כדי להגיב"
+
+#: src/ui/conversation.rs:9405
+msgid "This conversation is read-only"
+msgstr "השיחה הזו היא לקריאה בלבד"
+
+#: src/ui/conversation.rs:9406
+msgid "Reply options are for the recipient"
+msgstr "אפשרויות התגובה מיועדות לנמען"
+
+#: src/ui/conversation.rs:9407
+msgid "Open this option in WhatsApp Web or on your phone"
+msgstr "את האפשרות הזו אפשר לפתוח ב-WhatsApp Web או בטלפון"
+
+#: src/ui/conversation.rs:9586
+#, rust-format
+msgid "Send reply: {label}"
+msgstr "שליחת תגובה: {label}"
+
+#: src/ui/conversation.rs:9590 src/ui/login.rs:307
+msgid "Copy code"
+msgstr "העתקת קוד"
+
+#: src/ui/conversation.rs:9776 src/ui/dialogs.rs:2051
+msgid "Message"
+msgstr "הודעה"
+
+#: src/ui/conversation.rs:10032 src/ui/locations.rs:52
+msgid "Open in a map"
+msgstr "פתיחה במפה"
+
+#: src/ui/conversation.rs:10797
+msgid "Pause"
+msgstr "השהיה"
+
+#: src/ui/conversation.rs:10799 src/ui/settings.rs:1988
+msgid "Play"
+msgstr "הפעלה"
+
+#: src/ui/conversation.rs:10828
+msgid "Back to the message (Esc)"
+msgstr "חזרה להודעה (Esc)"
+
+#: src/ui/conversation.rs:10830
+msgid "Fill the window"
+msgstr "מילוי החלון"
+
+#: src/ui/conversation.rs:11669
+msgid "Cancel selection"
+msgstr "ביטול הבחירה"
+
+#: src/ui/conversation.rs:11678 src/ui/new_group.rs:146
+#, rust-format
+msgid "{count} selected"
+msgid_plural "{count} selected"
+msgstr[0] "נבחר {count}"
+msgstr[1] "{count} נבחרו"
+
+#: src/ui/conversation.rs:11692
+msgid "Forward…"
+msgstr "העברה…"
+
+#: src/ui/conversation.rs:11708
+msgid "Delete…"
+msgstr "מחיקה…"
+
+#: src/ui/conversation.rs:13594
+msgid "View once"
+msgstr "צפייה חד-פעמית"
+
+#: src/ui/conversation.rs:13623
+msgid "The recipient can open this photo only once, on their phone."
+msgstr "הנמען יכול לפתוח את התמונה הזו פעם אחת בלבד, בטלפון שלו."
+
+#: src/ui/dialogs.rs:179
+msgid "Choose an option"
+msgstr "בחירת אפשרות"
+
+#: src/ui/dialogs.rs:198 src/ui/dialogs.rs:899 src/ui/dialogs.rs:1231
+#: src/ui/dialogs.rs:1283 src/ui/locations.rs:27 src/ui/message_info.rs:28
+#: src/ui/labels.rs:234 src/ui/info.rs:283 src/ui/mod.rs:924
+#: src/ui/new_group.rs:57 src/ui/polls.rs:27 src/ui/polls.rs:468
+msgid "Close"
+msgstr "סגירה"
+
+#: src/ui/dialogs.rs:209
+msgid "This list is no longer available."
+msgstr "הרשימה הזו כבר אינה זמינה."
+
+#: src/ui/dialogs.rs:223
+msgid "This list can no longer receive replies."
+msgstr "הרשימה הזו כבר אינה מקבלת תגובות."
+
+#: src/ui/dialogs.rs:350
+msgid "Set up locked chats"
+msgstr "הגדרת צ'אטים נעולים"
+
+#: src/ui/dialogs.rs:358
+msgid ""
+"Choose a local code to open the Locked tab. It is separate from your phone's"
+" code. This hides chats in ZapFast, it does not add another encryption "
+"layer."
+msgstr ""
+"יש לבחור קוד מקומי לפתיחת הלשונית ״נעולים״. הוא נפרד מהקוד של הטלפון. הפעולה"
+" מסתירה צ'אטים ב-ZapFast ואינה מוסיפה שכבת הצפנה נוספת."
+
+#: src/ui/dialogs.rs:363
+msgid ""
+"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"locks it again."
+msgstr ""
+"יש להזין את הקוד המקומי של ZapFast. יציאה מהלשונית ״נעולים״ או סגירת החלון "
+"תנעל אותה שוב."
+
+#: src/ui/dialogs.rs:374
+msgid "Local code"
+msgstr "קוד מקומי"
+
+#: src/ui/dialogs.rs:386
+msgid "Confirm code"
+msgstr "אישור הקוד"
+
+#: src/ui/dialogs.rs:398
+msgid "That code did not match. Try again."
+msgstr "הקודים אינם תואמים. יש לנסות שוב."
+
+#: src/ui/dialogs.rs:407
+msgid "Set code and open"
+msgstr "הגדרת קוד ופתיחה"
+
+#: src/ui/dialogs.rs:409
+msgid "Open locked chats"
+msgstr "פתיחת צ'אטים נעולים"
+
+#: src/ui/dialogs.rs:420 src/ui/dialogs.rs:472 src/ui/dialogs.rs:1212
+#: src/ui/dialogs.rs:1428 src/ui/dialogs.rs:1631 src/ui/dialogs.rs:1720
+#: src/ui/dialogs.rs:1786 src/ui/dialogs.rs:1877 src/ui/dialogs.rs:2062
+#: src/ui/locations.rs:82 src/ui/settings.rs:1062 src/ui/settings.rs:1758
+#: src/ui/lock.rs:142 src/ui/accounts.rs:373 src/ui/info.rs:2122
+#: src/ui/polls.rs:154
+msgid "Cancel"
+msgstr "ביטול"
+
+#: src/ui/dialogs.rs:443
+msgid "Lock this chat?"
+msgstr "לנעול את הצ'אט הזה?"
+
+#: src/ui/dialogs.rs:449
+msgid ""
+"This moves the chat to the Locked tab, hiding it from the normal chat list, "
+"search, unread badges, and notifications. The lock status also syncs to your"
+" phone. Open Locked with a separate local ZapFast code to read it."
+msgstr ""
+"הפעולה מעבירה את הצ'אט ללשונית ״נעולים״ ומסתירה אותו מרשימת הצ'אטים הרגילה, "
+"מהחיפוש, ממונה ההודעות שלא נקראו ומההתראות. מצב הנעילה מסתנכרן גם לטלפון "
+"שלך. כדי לקרוא אותו, יש לפתוח את ״נעולים״ באמצעות קוד מקומי נפרד של ZapFast."
+
+#: src/ui/dialogs.rs:489
+msgid "New chat"
+msgstr "צ'אט חדש"
+
+#: src/ui/dialogs.rs:491 src/ui/new_group.rs:91
+msgid "Search contacts"
+msgstr "חיפוש אנשי קשר"
+
+#: src/ui/dialogs.rs:512 src/ui/new_group.rs:292
+msgid "New group"
+msgstr "קבוצה חדשה"
+
+#: src/ui/dialogs.rs:516
+msgid "Add contact"
+msgstr "הוספת איש קשר"
+
+#: src/ui/dialogs.rs:527 src/ui/calls.rs:566 src/ui/new_group.rs:125
+msgid "No matching contacts"
+msgstr "לא נמצאו אנשי קשר תואמים"
+
+#: src/ui/dialogs.rs:587
+msgid "Forward message"
+msgstr "העברת הודעה"
+
+#: src/ui/dialogs.rs:591
+#, rust-format
+msgid "Forward {count} message"
+msgid_plural "Forward {count} messages"
+msgstr[0] "העברת {count} הודעה"
+msgstr[1] "העברת {count} הודעות"
+
+#: src/ui/dialogs.rs:616
+msgid "Forward to these chats?"
+msgstr "להעביר לצ'אטים האלה?"
+
+#: src/ui/dialogs.rs:781 src/ui/info.rs:281 src/ui/info.rs:1212
+#: src/ui/info.rs:1852 src/ui/new_group.rs:35 src/ui/new_group.rs:463
+msgid "Back"
+msgstr "חזרה"
+
+#: src/ui/dialogs.rs:805
+msgid "Review recipients"
+msgstr "בדיקת הנמענים"
+
+#: src/ui/dialogs.rs:828
+#, rust-format
+msgid "{count} recipient selected"
+msgid_plural "{count} recipients selected"
+msgstr[0] "נבחר {count} נמען"
+msgstr[1] "נבחרו {count} נמענים"
+
+#: src/ui/dialogs.rs:852
+msgid "Messages forwarded many times can be sent to one chat at a time"
+msgstr "הודעות שהועברו פעמים רבות אפשר לשלוח לצ'אט אחד בכל פעם"
+
+#: src/ui/dialogs.rs:860
+#, rust-format
+msgid "You can forward to up to {count} chat"
+msgid_plural "You can forward to up to {count} chats"
+msgstr[0] "אפשר להעביר עד {count} צ'אט"
+msgstr[1] "אפשר להעביר עד {count} צ'אטים"
+
+#: src/ui/dialogs.rs:964 src/ui/settings.rs:888 src/ui/settings.rs:1836
+msgid "Keyboard shortcuts"
+msgstr "קיצורי מקלדת"
+
+#: src/ui/dialogs.rs:1016
+msgid "Show shortcut hints under the message box"
+msgstr "הצגת רמזים לקיצורי מקלדת מתחת לתיבת ההודעה"
+
+#: src/ui/dialogs.rs:1026 src/ui/settings.rs:884 src/ui/settings.rs:1847
+msgid "About"
+msgstr "אודות"
+
+#: src/ui/dialogs.rs:1032
+#, rust-format
+msgid "Version {version}"
+msgstr "גרסה {version}"
+
+#: src/ui/dialogs.rs:1042
+msgid ""
+"A native WhatsApp client written in Rust with egui. It connects through "
+"whatsapp-rust. Messages are end-to-end encrypted on this device."
+msgstr ""
+"לקוח WhatsApp מקורי שנכתב ב-Rust עם egui. הוא מתחבר דרך whatsapp-rust. "
+"ההודעות מוצפנות מקצה לקצה במכשיר הזה."
+
+#: src/ui/dialogs.rs:1051
+msgid ""
+"This is an unofficial client. Using it may be against WhatsApp's terms of "
+"service and could get an account suspended."
+msgstr ""
+"זהו לקוח לא רשמי. השימוש בו עלול להפר את תנאי השימוש של WhatsApp ולגרום "
+"להשעיית החשבון."
+
+#: src/ui/dialogs.rs:1060 src/ui/settings.rs:889 src/ui/settings.rs:1858
+msgid "Source code"
+msgstr "קוד מקור"
+
+#: src/ui/dialogs.rs:1087
+#, rust-format
+msgid "{count} selected message"
+msgid_plural "{count} selected messages"
+msgstr[0] "{count} הודעה נבחרה"
+msgstr[1] "{count} הודעות נבחרו"
+
+#: src/ui/dialogs.rs:1097 src/ui/dialogs.rs:1118
+msgid "this chat"
+msgstr "הצ'אט הזה"
+
+#: src/ui/dialogs.rs:1102
+#, rust-format
+msgid ""
+"This deletes your chat with {name}, including all messages, on this computer"
+" and on your phone. It cannot be undone."
+msgstr ""
+"הפעולה מוחקת את הצ'אט שלך עם {name}, כולל כל ההודעות, במחשב הזה ובטלפון. אי "
+"אפשר לבטל אותה."
+
+#: src/ui/dialogs.rs:1108
+msgid "Delete chat?"
+msgstr "למחוק את הצ'אט?"
+
+#: src/ui/dialogs.rs:1110 src/ui/dialogs.rs:1522
+msgid "Delete"
+msgstr "מחיקה"
+
+#: src/ui/dialogs.rs:1123
+#, rust-format
+msgid ""
+"This clears every message in your chat with {name}, including downloaded "
+"media, on this computer and on your phone. The chat itself stays. It cannot "
+"be undone."
+msgstr ""
+"הפעולה מנקה את כל ההודעות בצ'אט שלך עם {name}, כולל מדיה שהורדה, במחשב הזה "
+"ובטלפון. הצ'אט עצמו יישאר. אי אפשר לבטל אותה."
+
+#: src/ui/dialogs.rs:1129
+msgid "Clear chat?"
+msgstr "לנקות את הצ'אט?"
+
+#: src/ui/dialogs.rs:1145 src/ui/dialogs.rs:1157
+msgid "Group invite"
+msgstr "הזמנה לקבוצה"
+
+#: src/ui/dialogs.rs:1149
+msgid "Looking up the group…"
+msgstr "מחפש את הקבוצה…"
+
+#: src/ui/dialogs.rs:1166 src/ui/info.rs:501
+#, rust-format
+msgid "{} member"
+msgid_plural "{} members"
+msgstr[0] "{} חבר"
+msgstr[1] "{} חברים"
+
+#: src/ui/dialogs.rs:1184
+msgid "An admin must approve your request before you join."
+msgstr "מנהל צריך לאשר את הבקשה שלך לפני שתצטרף."
+
+#: src/ui/dialogs.rs:1194
+msgid "Open chat"
+msgstr "פתיחת צ'אט"
+
+#: src/ui/dialogs.rs:1195
+msgid "Request to join"
+msgstr "בקשה להצטרפות"
+
+#: src/ui/dialogs.rs:1196
+msgid "Join group"
+msgstr "הצטרפות לקבוצה"
+
+#: src/ui/dialogs.rs:1199
+msgid "Joining…"
+msgstr "מצטרף…"
+
+#: src/ui/dialogs.rs:1252
+msgid "Downloading the pack…"
+msgstr "מוריד את החבילה…"
+
+#: src/ui/dialogs.rs:1276
+msgid "Add to my stickers"
+msgstr "הוספה למדבקות שלי"
+
+#: src/ui/dialogs.rs:1300
+msgid "Make a sticker"
+msgstr "יצירת מדבקה"
+
+#: src/ui/dialogs.rs:1364
+msgid "Size"
+msgstr "גודל"
+
+#: src/ui/dialogs.rs:1379
+msgid "Keep the transparent background"
+msgstr "שמירת הרקע השקוף"
+
+#: src/ui/dialogs.rs:1396
+msgid "Emojis that describe it, like 😂 or ❤️"
+msgstr "אימוג׳י שמתארים אותה, כמו 😂 או ❤️"
+
+#: src/ui/dialogs.rs:1413 src/ui/locations.rs:87
+msgid "Send"
+msgstr "שליחה"
+
+#: src/ui/dialogs.rs:1442
+msgid "Start over?"
+msgstr "להתחיל מחדש?"
+
+#: src/ui/dialogs.rs:1446
+msgid ""
+"ZapFast keeps your unreadable archive as a separate file, creates a new one,"
+" and asks you to link again. Linking again brings back recent history from "
+"your phone. Afterwards, remove the old ZapFast entry under Linked devices on"
+" your phone."
+msgstr ""
+"ZapFast שומר את הארכיון הלא קריא שלך כקובץ נפרד, יוצר ארכיון חדש ומבקש לקשר "
+"מחדש. קישור מחדש מחזיר היסטוריה אחרונה מהטלפון. לאחר מכן, יש להסיר את הרשומה"
+" הישנה של ZapFast תחת ״מכשירים מקושרים״ בטלפון."
+
+#: src/ui/dialogs.rs:1450
+msgid ""
+"If you can restore the original keyring instead, choose Cancel and Try "
+"again: nothing is lost that way."
+msgstr ""
+"אם אפשר לשחזר את מחזיקי המפתחות המקוריים, יש לבחור ״ביטול״ ואז ״ניסיון "
+"חוזר״: כך שום דבר לא יאבד."
+
+#: src/ui/dialogs.rs:1453
+msgid "Start over"
+msgstr "התחלה מחדש"
+
+#: src/ui/dialogs.rs:1461
+msgid ""
+"This removes the message from your phone and linked devices. Other people "
+"keep their copy. Connect to WhatsApp to delete it. This cannot be undone."
+msgstr ""
+"הפעולה מסירה את ההודעה מהטלפון שלך ומהמכשירים המקושרים. אצל אחרים העותק "
+"נשאר. כדי למחוק אותה יש להתחבר ל-WhatsApp. אי אפשר לבטל את הפעולה."
+
+#: src/ui/dialogs.rs:1462
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" instead. It "
+"cannot be undone."
+msgstr ""
+"כולם בצ'אט הזה יראו במקומה את \"ההודעה הזו נמחקה\". אי אפשר לבטל את הפעולה."
+
+#: src/ui/dialogs.rs:1463
+msgid ""
+"This removes these messages from your phone and linked devices. Other people"
+" keep their copy. Connect to WhatsApp to delete them. This cannot be undone."
+msgstr ""
+"הפעולה מסירה את ההודעות האלה מהטלפון שלך ומהמכשירים המקושרים. אצל אחרים "
+"העותק נשאר. כדי למחוק אותן יש להתחבר ל-WhatsApp. אי אפשר לבטל את הפעולה."
+
+#: src/ui/dialogs.rs:1464
+#, rust-format
+msgid ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected message. This cannot be undone."
+msgid_plural ""
+"Everyone in this chat will see \"This message was deleted\" in place of the "
+"selected messages. This cannot be undone."
+msgstr[0] ""
+"כולם בצ'אט הזה יראו במקום ההודעה שנבחרה את \"ההודעה הזו נמחקה\". אי אפשר "
+"לבטל את הפעולה."
+msgstr[1] ""
+"כולם בצ'אט הזה יראו במקום ההודעות שנבחרו את \"ההודעה הזו נמחקה\". אי אפשר "
+"לבטל את הפעולה."
+
+#: src/ui/dialogs.rs:1492
+msgid "Delete for everyone?"
+msgstr "למחוק אצל כולם?"
+
+#: src/ui/dialogs.rs:1494
+msgid "Delete for me?"
+msgstr "למחוק אצלי?"
+
+#: src/ui/dialogs.rs:1536
+#, rust-format
+msgid ""
+"This deletes \"{name}\" and its stickers from this computer. To use it "
+"again, import it again."
+msgstr ""
+"הפעולה מוחקת את \"{name}\" ואת המדבקות שבה מהמחשב הזה. כדי להשתמש בה שוב, יש"
+" לייבא אותה מחדש."
+
+#: src/ui/dialogs.rs:1542
+msgid "Remove sticker pack?"
+msgstr "להסיר את חבילת המדבקות?"
+
+#: src/ui/dialogs.rs:1544 src/ui/dialogs.rs:1602 src/ui/dialogs.rs:1708
+msgid "Remove"
+msgstr "הסרה"
+
+#: src/ui/dialogs.rs:1554 src/ui/lock.rs:123
+msgid "Unlink this computer?"
+msgstr "לבטל את הקישור של המחשב הזה?"
+
+#: src/ui/dialogs.rs:1557
+msgid ""
+"This removes the device from WhatsApp and deletes the chats stored here. You"
+" can link again with a new code."
+msgstr ""
+"הפעולה מסירה את המכשיר מ-WhatsApp ומוחקת את הצ'אטים השמורים כאן. אפשר לקשר "
+"שוב באמצעות קוד חדש."
+
+#: src/ui/dialogs.rs:1559 src/ui/lock.rs:139
+msgid "Unlink"
+msgstr "ביטול קישור"
+
+#: src/ui/dialogs.rs:1575
+msgid "Clear the media cache?"
+msgstr "לנקות את מטמון המדיה?"
+
+#: src/ui/dialogs.rs:1579
+#, rust-format
+msgid ""
+"This deletes the photos, videos, stickers and files {account} downloaded to "
+"this computer. Messages stay, and attachments download again when you open "
+"them, while WhatsApp still has them."
+msgstr ""
+"הפעולה מוחקת את התמונות, הסרטונים, המדבקות והקבצים ש-{account} הוריד למחשב "
+"הזה. ההודעות נשארות, והקבצים המצורפים יורדו שוב כשתפתחו אותם, כל עוד הם "
+"עדיין זמינים ב-WhatsApp."
+
+#: src/ui/dialogs.rs:1584
+msgid "Files in a download folder you chose are kept."
+msgstr "קבצים בתיקיית הורדות שבחרת יישמרו."
+
+#: src/ui/dialogs.rs:1587 src/ui/settings.rs:507
+msgid "Clear"
+msgstr "ניקוי"
+
+#: src/ui/dialogs.rs:1597
+msgid "Remove this account?"
+msgstr "להסיר את החשבון הזה?"
+
+#: src/ui/dialogs.rs:1600
+msgid ""
+"This unlinks the number on this computer and deletes its local chats. Other "
+"accounts stay."
+msgstr ""
+"הפעולה מבטלת את הקישור של המספר במחשב הזה ומוחקת את הצ'אטים המקומיים שלו. "
+"חשבונות אחרים יישארו."
+
+#: src/ui/dialogs.rs:1659
+msgid "Reset the invite link?"
+msgstr "לאפס את קישור ההזמנה?"
+
+#: src/ui/dialogs.rs:1665
+msgid ""
+"The current link will stop working, and nobody can join with it any more. A "
+"new link replaces it."
+msgstr ""
+"הקישור הנוכחי יפסיק לעבוד ואף אחד לא יוכל להצטרף באמצעותו. קישור חדש יחליף "
+"אותו."
+
+#: src/ui/dialogs.rs:1674 src/ui/info.rs:1770
+msgid "Reset link"
+msgstr "איפוס הקישור"
+
+#: src/ui/dialogs.rs:1691
+msgid "Remove from the group?"
+msgstr "להסיר מהקבוצה?"
+
+#: src/ui/dialogs.rs:1697
+#, rust-format
+msgid ""
+"{name} will no longer receive messages from {group}. You can add them again "
+"later."
+msgstr ""
+"{name} לא יקבל/תקבל יותר הודעות מ-{group}. אפשר להוסיף אותו/ה שוב מאוחר "
+"יותר."
+
+#: src/ui/dialogs.rs:1740
+msgid "Leave this channel?"
+msgstr "לעזוב את הערוץ הזה?"
+
+#: src/ui/dialogs.rs:1742
+msgid "Leave this group?"
+msgstr "לעזוב את הקבוצה הזו?"
+
+#: src/ui/dialogs.rs:1749
+msgid ""
+"You will not receive new messages. The local history stays on this computer."
+msgstr "לא תקבלו הודעות חדשות. ההיסטוריה המקומית תישאר במחשב הזה."
+
+#: src/ui/dialogs.rs:1769
+msgid "Leave channel and archive"
+msgstr "עזיבת הערוץ והעברה לארכיון"
+
+#: src/ui/dialogs.rs:1771
+msgid "Leave group and archive"
+msgstr "עזיבת הקבוצה והעברה לארכיון"
+
+#: src/ui/dialogs.rs:1802
+msgid "Link with a phone number"
+msgstr "קישור באמצעות מספר טלפון"
+
+#: src/ui/dialogs.rs:1808
+msgid ""
+"Enter the WhatsApp phone number with its country code. Do not include a plus"
+" sign or leading zero. You will get a code to enter on the phone."
+msgstr ""
+"יש להזין את מספר הטלפון של WhatsApp עם קידומת המדינה, בלי סימן פלוס ובלי אפס"
+" מוביל. תקבלו קוד להזנה בטלפון."
+
+#: src/ui/dialogs.rs:1857
+msgid "Enter the whole number, starting with the country code"
+msgstr "יש להזין את המספר המלא, החל בקידומת המדינה"
+
+#: src/ui/dialogs.rs:1864
+msgid "Get a code"
+msgstr "קבלת קוד"
+
+#: src/ui/dialogs.rs:1890
+msgid "New contact"
+msgstr "איש קשר חדש"
+
+#: src/ui/dialogs.rs:1895
+msgid ""
+"Enter a phone number with its country code. Add a name to save the contact, "
+"or leave it blank to message the number without saving it. WhatsApp uses the"
+" first name as the display name."
+msgstr ""
+"יש להזין מספר טלפון עם קידומת המדינה. אפשר להוסיף שם כדי לשמור את איש הקשר, "
+"או להשאיר ריק כדי לשלוח הודעה למספר בלי לשמור אותו. WhatsApp משתמש בשם הפרטי"
+" כשם התצוגה."
+
+#: src/ui/dialogs.rs:1954
+msgid "First name"
+msgstr "שם פרטי"
+
+#: src/ui/dialogs.rs:1955
+msgid "Surname"
+msgstr "שם משפחה"
+
+#: src/ui/dialogs.rs:2014
+msgid "Also save to your phone's contacts"
+msgstr "לשמור גם באנשי הקשר בטלפון"
+
+#: src/ui/dialogs.rs:2024 src/ui/dialogs.rs:2033
+msgid "Checking the number…"
+msgstr "בודק את המספר…"
+
+#: src/ui/dialogs.rs:2037
+msgid ""
+"Enter a phone number with its country code, using only digits, spaces, "
+"hyphens and brackets"
+msgstr ""
+"יש להזין מספר טלפון עם קידומת המדינה, באמצעות ספרות, רווחים, מקפים וסוגריים "
+"בלבד"
+
+#: src/ui/dialogs.rs:2043
+msgid "Save contact"
+msgstr "שמירת איש קשר"
+
+#: src/ui/locations.rs:36
+msgid "Paste a map link or coordinates"
+msgstr "הדבקת קישור למפה או קואורדינטות"
+
+#: src/ui/locations.rs:65
+msgid ""
+"Short links only open online. Paste the full map link or the coordinates."
+msgstr ""
+"קישורים קצרים נפתחים רק באינטרנט. יש להדביק את הקישור המלא למפה או את "
+"הקואורדינטות."
+
+#: src/ui/locations.rs:74
+msgid "That is not a location."
+msgstr "זה לא מיקום."
+
+#: src/ui/settings.rs:271
+msgid "Settings"
+msgstr "הגדרות"
+
+#: src/ui/settings.rs:288
+#, rust-format
+msgid "No settings match “{query}”."
+msgstr "אין הגדרות שתואמות ל-“{query}”."
+
+#: src/ui/settings.rs:324
+msgid "Search settings"
+msgstr "חיפוש בהגדרות"
+
+#: src/ui/settings.rs:342
+msgid "Appearance"
+msgstr "מראה"
+
+#: src/ui/settings.rs:349
+msgid "Follow system uses your Omarchy colours."
+msgstr "״עקוב אחר המערכת״ משתמש בצבעי Omarchy שלך."
+
+#: src/ui/settings.rs:353 src/ui/settings.rs:1140
+msgid "Theme"
+msgstr "ערכת נושא"
+
+#: src/ui/settings.rs:355
+msgid "Font"
+msgstr "גופן"
+
+#: src/ui/settings.rs:358
+msgid ""
+"System is your desktop's interface font. Inter looks the same on every "
+"computer."
+msgstr ""
+"״מערכת״ הוא גופן הממשק של שולחן העבודה שלך. Inter נראה אותו דבר בכל מחשב."
+
+#: src/ui/settings.rs:363
+msgid "Wallpaper"
+msgstr "טפט"
+
+#: src/ui/settings.rs:367 src/app.rs:3607 src/ui/image_preview.rs:248
+msgid "Image"
+msgstr "תמונה"
+
+#: src/ui/settings.rs:377
+msgid "Zoom"
+msgstr "זום"
+
+#: src/ui/settings.rs:380
+msgid "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it."
+msgstr "Ctrl+Plus ו-Ctrl+Minus פועלים בכל מקום, ו-Ctrl+0 מאפס."
+
+#: src/ui/settings.rs:389
+msgid "Larger"
+msgstr "הגדלה"
+
+#: src/ui/settings.rs:407
+msgid "Smaller"
+msgstr "הקטנה"
+
+#: src/ui/settings.rs:415
+msgid "Language"
+msgstr "שפה"
+
+#: src/ui/settings.rs:419 src/ui/settings.rs:1878
+msgid "Custom title bar"
+msgstr "סרגל כותרת מותאם אישית"
+
+#: src/ui/settings.rs:422
+msgid ""
+"Draw ZapFast's own title bar and window buttons instead of the desktop's."
+msgstr "ציור סרגל הכותרת וכפתורי החלון של ZapFast במקום אלה של שולחן העבודה."
+
+#: src/ui/settings.rs:428 src/ui/rail.rs:293
+msgid "Chats"
+msgstr "צ'אטים"
+
+#: src/ui/settings.rs:430
+msgid "Enter sends"
+msgstr "Enter שולח"
+
+#: src/ui/settings.rs:431
+msgid "When off, Ctrl+Enter sends."
+msgstr "כשהאפשרות כבויה, Ctrl+Enter שולח."
+
+#: src/ui/settings.rs:435
+msgid "Download files automatically"
+msgstr "הורדת קבצים אוטומטית"
+
+#: src/ui/settings.rs:438
+msgid "Files up to 64 MiB download as they come into view."
+msgstr "קבצים עד 64 MiB יורדים כשהם מופיעים על המסך."
+
+#: src/ui/settings.rs:443
+msgid "Fetch older history"
+msgstr "אחזור היסטוריה ישנה"
+
+#: src/ui/settings.rs:446
+msgid ""
+"Asks your phone in the background for older messages in the open, pinned and"
+" ten most recent chats."
+msgstr ""
+"מבקש מהטלפון ברקע הודעות ישנות בצ'אט הפתוח, בצ'אטים הנעוצים ובעשרת הצ'אטים "
+"האחרונים."
+
+#: src/ui/settings.rs:453
+msgid "Pause other media while recording or playing"
+msgstr "השהיית מדיה אחרת בזמן הקלטה או השמעה"
+
+#: src/ui/settings.rs:454
+msgid "Music and videos in other apps resume afterwards."
+msgstr "מוזיקה וסרטונים באפליקציות אחרות יימשכו לאחר מכן."
+
+#: src/ui/settings.rs:459 src/ui/settings.rs:468
+msgid "Keep chats archived"
+msgstr "השארת צ'אטים בארכיון"
+
+#: src/ui/settings.rs:462
+msgid "When off, a new message brings an archived chat back to the list."
+msgstr "כשהאפשרות כבויה, הודעה חדשה מחזירה צ'אט מהארכיון לרשימה."
+
+#: src/ui/settings.rs:483
+msgid "Locked chats code"
+msgstr "קוד צ'אטים נעולים"
+
+#: src/ui/settings.rs:486
+msgid ""
+"Opens the Locked tab on this computer. It hides chats, it does not encrypt "
+"them."
+msgstr "פותח את הלשונית 'נעולים' במחשב זה. הוא מסתיר צ'אטים ולא מצפין אותם."
+
+#: src/ui/settings.rs:498
+msgid "Secret code"
+msgstr "קוד סודי"
+
+#: src/ui/settings.rs:517 src/ui/settings.rs:2116
+msgid "Notifications"
+msgstr "התראות"
+
+#: src/ui/settings.rs:519
+msgid "Desktop notifications"
+msgstr "התראות שולחן עבודה"
+
+#: src/ui/settings.rs:522
+msgid "For chats you are not looking at. Muted chats stay quiet."
+msgstr "לצ'אטים שאינך מסתכל בהם. צ'אטים מושתקים נשארים שקטים."
+
+#: src/ui/settings.rs:529
+msgid "Show message content in notifications"
+msgstr "הצגת תוכן ההודעה בהתראות"
+
+#: src/ui/settings.rs:530
+msgid "When off, they say only “New message”."
+msgstr "כשהאפשרות כבויה, מוצג רק “הודעה חדשה”."
+
+#: src/ui/settings.rs:535
+msgid "Limit repeat notifications"
+msgstr "הגבלת התראות חוזרות"
+
+#: src/ui/settings.rs:538
+msgid ""
+"After one notification, a chat stays quiet for 10 minutes. Opening the chat "
+"resets this. In groups, mentions and replies to you still notify."
+msgstr ""
+"לאחר התראה אחת, הצ'אט נשאר שקט למשך 10 דקות. פתיחת הצ'אט מאפסת זאת. בקבוצות,"
+" אזכורים ותגובות אליך עדיין יוצרים התראה."
+
+#: src/ui/settings.rs:564 src/ui/settings.rs:2123
+msgid "Play sounds for group messages"
+msgstr "השמעת צלילים להודעות קבוצה"
+
+#: src/ui/settings.rs:567
+msgid "When off, only mentions and replies to you make a sound."
+msgstr "כשהאפשרות כבויה, רק אזכורים ותגובות אליך משמיעים צליל."
+
+#: src/ui/settings.rs:575
+msgid "Privacy"
+msgstr "פרטיות"
+
+#: src/ui/settings.rs:577
+msgid "Off for your account, so only groups get them."
+msgstr "כבוי בחשבון שלך, ולכן רק קבוצות מקבלות אותן."
+
+#: src/ui/settings.rs:579
+msgid "Let people see when you read their messages."
+msgstr "אפשרו לאחרים לראות מתי קראת את ההודעות שלהם."
+
+#: src/ui/settings.rs:582
+msgid "Send read receipts"
+msgstr "שליחת אישורי קריאה"
+
+#: src/ui/settings.rs:587
+msgid "Show when you are typing"
+msgstr "הצגת מצב הקלדה"
+
+#: src/ui/settings.rs:593
+msgid "Blocked contacts"
+msgstr "אנשי קשר חסומים"
+
+#: src/ui/settings.rs:599
+msgid "Manage"
+msgstr "ניהול"
+
+#: src/ui/settings.rs:615
+msgid ""
+"Could not load your account privacy. Trying again when ZapFast reconnects."
+msgstr ""
+"לא ניתן לטעון את הגדרות הפרטיות של החשבון. ננסה שוב כש-ZapFast יתחבר מחדש."
+
+#: src/ui/settings.rs:620
+msgid "Connect to WhatsApp to change your account privacy."
+msgstr "יש להתחבר ל-WhatsApp כדי לשנות את הגדרות הפרטיות של החשבון."
+
+#: src/ui/settings.rs:625
+msgid "Loading your account privacy…"
+msgstr "טוען את הגדרות הפרטיות של החשבון…"
+
+#: src/ui/settings.rs:650
+msgid "Change who is excluded on your phone."
+msgstr "שינוי הרשימה של מי שלא נכלל, דרך הטלפון."
+
+#: src/ui/settings.rs:668
+msgid "System"
+msgstr "מערכת"
+
+#: src/ui/settings.rs:670
+msgid "Keep running when the window closes"
+msgstr "המשך הפעולה לאחר סגירת החלון"
+
+#: src/ui/settings.rs:671
+msgid "Quit from the tray or with Ctrl+Q."
+msgstr "יציאה מהמגש או באמצעות Ctrl+Q."
+
+#: src/ui/settings.rs:676 src/ui/settings.rs:684
+msgid "Start at login"
+msgstr "הפעלה בכניסה למערכת"
+
+#: src/ui/settings.rs:677
+msgid "Starts in the tray, without a window."
+msgstr "מופעל במגש, ללא חלון."
+
+#: src/ui/settings.rs:700
+msgid "Check for updates"
+msgstr "בדיקת עדכונים"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "פונה ל-GitHub פעם ביום ושולח רק את גרסת ZapFast."
+
+#: src/ui/settings.rs:708
+msgid "Download updates automatically"
+msgstr "הורדת עדכונים אוטומטית"
+
+#: src/ui/settings.rs:711
+msgid ""
+"You still choose when to restart. Package managers and Flatpak update "
+"ZapFast themselves."
+msgstr ""
+"ההחלטה מתי להפעיל מחדש נשארת בידיך. מנהלי חבילות ו-Flatpak מעדכנים את "
+"ZapFast בעצמם."
+
+#: src/ui/settings.rs:724
+#, rust-format
+msgid "Using {proxy} from the environment."
+msgstr "משתמש ב-{proxy} מהסביבה."
+
+#: src/ui/settings.rs:732
+msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
+msgstr ""
+"עבור WhatsApp, מדיה ועדכונים. אם ריק, נעשה שימוש ב-ALL_PROXY או "
+"ב-HTTPS_PROXY."
+
+#: src/ui/settings.rs:735
+msgid "Proxy"
+msgstr "פרוקסי"
+
+#: src/ui/settings.rs:755
+msgid "GIPHY API key"
+msgstr "מפתח GIPHY API"
+
+#: src/ui/settings.rs:759
+msgid "For GIF search. Replaces the key this build includes."
+msgstr "לחיפוש GIF. מחליף את המפתח שכלול בגרסה זו."
+
+#: src/ui/settings.rs:764
+msgid "For GIF search. Get a free key at developers.giphy.com."
+msgstr "לחיפוש GIF. אפשר לקבל מפתח חינם ב-developers.giphy.com."
+
+#: src/ui/settings.rs:780 src/ui/settings.rs:2170 src/ui/settings.rs:2176
+msgid "Account"
+msgstr "חשבון"
+
+#: src/ui/settings.rs:783 src/ui/settings.rs:1657
+msgid "Your name"
+msgstr "השם שלך"
+
+#: src/ui/settings.rs:785 src/ui/settings.rs:1665
+msgctxt "profile"
+msgid "About"
+msgstr "פרטים"
+
+#: src/ui/settings.rs:788 src/ui/settings.rs:1634
+msgid "Change profile picture"
+msgstr "החלפת תמונת פרופיל"
+
+#: src/ui/settings.rs:789 src/ui/settings.rs:1717 src/ui/settings.rs:2172
+msgid "Unlink this computer"
+msgstr "ניתוק המחשב הזה"
+
+#: src/ui/settings.rs:790 src/ui/settings.rs:1728 src/ui/accounts.rs:167
+msgid "Add account"
+msgstr "הוספת חשבון"
+
+#: src/ui/settings.rs:791 src/ui/settings.rs:1704 src/ui/accounts.rs:377
+msgid "Remove this account"
+msgstr "הסרת החשבון הזה"
+
+#: src/ui/settings.rs:796
+msgid "Files"
+msgstr "קבצים"
+
+#: src/ui/settings.rs:799
+msgid "Open folder"
+msgstr "פתיחת תיקייה"
+
+#: src/ui/settings.rs:801
+msgid "Message archive"
+msgstr "ארכיון הודעות"
+
+#: src/ui/settings.rs:819
+msgid "Downloads"
+msgstr "הורדות"
+
+#: src/ui/settings.rs:832
+msgid "Change…"
+msgstr "שינוי…"
+
+#: src/ui/settings.rs:844
+msgid "Use default"
+msgstr "שימוש בברירת המחדל"
+
+#: src/ui/settings.rs:855 src/ui/settings.rs:1470
+msgid "Storage used"
+msgstr "נפח אחסון בשימוש"
+
+#: src/ui/settings.rs:856
+msgid "Media cache"
+msgstr "מטמון מדיה"
+
+#: src/ui/settings.rs:857 src/ui/settings.rs:1524
+msgid "Images"
+msgstr "תמונות"
+
+#: src/ui/settings.rs:858 src/ui/settings.rs:1530
+msgid "Videos and GIFs"
+msgstr "סרטונים ו-GIF"
+
+#: src/ui/settings.rs:859 src/ui/settings.rs:1536 src/ui/picker.rs:142
+msgid "Stickers"
+msgstr "מדבקות"
+
+#: src/ui/settings.rs:860 src/ui/settings.rs:1542
+msgid "Other"
+msgstr "אחר"
+
+#: src/ui/settings.rs:861 src/ui/settings.rs:1476
+msgid "Clear…"
+msgstr "ניקוי…"
+
+#: src/ui/settings.rs:867
+msgid "Log"
+msgstr "יומן"
+
+#: src/ui/settings.rs:874
+msgid "Open"
+msgstr "פתיחה"
+
+#: src/ui/settings.rs:914 src/ui/settings.rs:941
+msgid "App lock"
+msgstr "נעילת אפליקציה"
+
+#: src/ui/settings.rs:917
+msgid ""
+"Asks for a password at start and after a while unused. It keeps people using"
+" this computer out of your chats and encrypts nothing more. A forgotten "
+"password means unlinking."
+msgstr ""
+"מבקש סיסמה בהפעלה ולאחר זמן שבו לא נעשה שימוש. זה מונע מאנשים שמשתמשים במחשב"
+" זה לגשת לצ'אטים שלך, ואינו מצפין דבר נוסף. אם הסיסמה נשכחת, יש לנתק את "
+"המחשב."
+
+#: src/ui/settings.rs:924
+msgid "Turn off…"
+msgstr "כיבוי…"
+
+#: src/ui/settings.rs:925
+msgid "Change password…"
+msgstr "שינוי סיסמה…"
+
+#: src/ui/settings.rs:928
+msgid "Set password…"
+msgstr "הגדרת סיסמה…"
+
+#: src/ui/settings.rs:942 src/ui/settings.rs:949
+msgid "Lock after"
+msgstr "נעילה לאחר"
+
+#: src/ui/settings.rs:952
+msgid ""
+"Time without using ZapFast, also counted while it is in the tray. "
+"Ctrl+Shift+L locks it at once."
+msgstr ""
+"זמן ללא שימוש ב-ZapFast, כולל כשהיא פועלת במגש. Ctrl+Shift+L נועל אותה מיד."
+
+#: src/ui/settings.rs:994
+msgid "Set an app lock password"
+msgstr "הגדרת סיסמה לנעילת האפליקציה"
+
+#: src/ui/settings.rs:995
+msgid "Change the app lock password"
+msgstr "שינוי סיסמת נעילת האפליקציה"
+
+#: src/ui/settings.rs:996
+msgid "Turn off the app lock"
+msgstr "כיבוי נעילת האפליקציה"
+
+#: src/ui/settings.rs:1006
+msgid "Current password"
+msgstr "הסיסמה הנוכחית"
+
+#: src/ui/settings.rs:1013
+#, rust-format
+msgid "New password, at least {count} characters"
+msgstr "סיסמה חדשה, לפחות {count} תווים"
+
+#: src/ui/settings.rs:1018
+msgid "Type the new password again"
+msgstr "הקלדת הסיסמה החדשה שוב"
+
+#: src/ui/settings.rs:1042
+#, rust-format
+msgid "The password needs at least {count} characters."
+msgstr "הסיסמה חייבת להכיל לפחות {count} תווים."
+
+#: src/ui/settings.rs:1044
+msgid "The two new passwords are different."
+msgstr "שתי הסיסמאות החדשות שונות זו מזו."
+
+#: src/ui/settings.rs:1045 src/ui/lock.rs:85
+msgid "Wrong password. Try again."
+msgstr "הסיסמה שגויה. יש לנסות שוב."
+
+#: src/ui/settings.rs:1052
+msgid "Turn on"
+msgstr "הפעלה"
+
+#: src/ui/settings.rs:1053
+msgid "Change password"
+msgstr "שינוי סיסמה"
+
+#: src/ui/settings.rs:1054
+msgid "Turn off"
+msgstr "כיבוי"
+
+#: src/ui/settings.rs:1149
+msgid "Open themes folder"
+msgstr "פתיחת תיקיית ערכות נושא"
+
+#: src/ui/settings.rs:1160
+msgid "How to make a theme"
+msgstr "איך יוצרים ערכת נושא"
+
+#: src/ui/settings.rs:1201 src/ui/settings.rs:1210
+msgid "Auto"
+msgstr "אוטומטי"
+
+#: src/ui/settings.rs:1295
+msgid "Add doodles"
+msgstr "הוספת דודלים"
+
+#: src/ui/settings.rs:1299
+msgid "Show the default doodles over the selected colour."
+msgstr "הצגת הדודלים המוגדרים כברירת מחדל מעל הצבע שנבחר."
+
+#: src/ui/settings.rs:1383
+msgid "Choose image…"
+msgstr "בחירת תמונה…"
+
+#: src/ui/settings.rs:1384
+msgid "Remove image"
+msgstr "הסרת תמונה"
+
+#: src/ui/settings.rs:1412
+msgctxt "wallpaper colour"
+msgid "Theme"
+msgstr "ערכת נושא"
+
+#: src/ui/settings.rs:1505
+#, rust-format
+msgid ""
+"Photos, videos, stickers and files {account} downloaded to this computer. "
+"Clearing them keeps your messages; attachments download again when you open "
+"them."
+msgstr ""
+"תמונות, סרטונים, מדבקות וקבצים ש-{account} הורידה למחשב זה. ניקוי שלהם משאיר"
+" את ההודעות; קבצים מצורפים יורדו שוב כשייפתחו."
+
+#: src/ui/settings.rs:1673
+msgid "Linked device"
+msgstr "מכשיר מקושר"
+
+#: src/ui/settings.rs:1684
+msgid "Edit your name and About"
+msgstr "עריכת השם והפרטים שלך"
+
+#: src/ui/settings.rs:1748
+msgid "Save"
+msgstr "שמירה"
+
+#: src/ui/settings.rs:1815
+msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
+msgstr "לקוח WhatsApp מקורי שנבנה עם Rust, egui ו-whatsapp-rust."
+
+#: src/ui/settings.rs:1826
+#, rust-format
+msgid "Update to {version}"
+msgstr "עדכון ל-{version}"
+
+#: src/ui/settings.rs:1944
+msgid "Mention sound"
+msgstr "צליל אזכור"
+
+#: src/ui/settings.rs:1945
+msgid "When a group mentions you or replies to you."
+msgstr "כשקבוצה מזכירה אותך או מגיבה אליך."
+
+#: src/ui/settings.rs:1948
+msgid "Message sound"
+msgstr "צליל הודעה"
+
+#: src/ui/settings.rs:1965
+msgid "Pidgin alert"
+msgstr "התראת Pidgin"
+
+#: src/ui/settings.rs:1966 src/ui/call.rs:597
+msgid "System default"
+msgstr "ברירת המחדל של המערכת"
+
+#. Translators: no notification sound.
+#: src/ui/settings.rs:1968
+msgctxt "sound"
+msgid "None"
+msgstr "ללא"
+
+#: src/ui/call.rs:142
+msgid "Return to the call"
+msgstr "חזרה לשיחה"
+
+#: src/ui/call.rs:218
+msgid "Wants to switch to video: turn on your camera to answer"
+msgstr "מבקש לעבור לווידאו: יש להפעיל את המצלמה כדי לענות"
+
+#: src/ui/call.rs:228
+msgid "Their camera is off"
+msgstr "המצלמה שלו כבויה"
+
+#: src/ui/call.rs:311
+msgid "Hide the call screen"
+msgstr "הסתרת מסך השיחה"
+
+#: src/ui/call.rs:320
+msgid "Exit full screen"
+msgstr "יציאה ממסך מלא"
+
+#: src/ui/call.rs:322
+msgid "Full screen"
+msgstr "מסך מלא"
+
+#: src/ui/call.rs:377 src/ui/call.rs:383 src/ui/call.rs:388
+msgid "Connecting…"
+msgstr "מתחבר…"
+
+#: src/ui/call.rs:379
+msgid "Calling…"
+msgstr "מחייג…"
+
+#: src/ui/call.rs:381
+msgid "Ringing…"
+msgstr "מצלצל…"
+
+#: src/ui/call.rs:392 src/ui/call.rs:400
+msgid "Call ended"
+msgstr "השיחה הסתיימה"
+
+#: src/ui/call.rs:401
+msgid "Missed call"
+msgstr "שיחה שלא נענתה"
+
+#: src/ui/call.rs:402 src/ui/calls.rs:121
+msgid "Declined"
+msgstr "נדחתה"
+
+#: src/ui/call.rs:403 src/ui/calls.rs:123
+msgid "Busy"
+msgstr "תפוס"
+
+#: src/ui/call.rs:404 src/ui/call.rs:409 src/ui/calls.rs:124
+msgid "Could not connect"
+msgstr "לא ניתן להתחבר"
+
+#: src/ui/call.rs:405 src/ui/calls.rs:125
+msgid "No answer"
+msgstr "אין מענה"
+
+#: src/ui/call.rs:407 src/ui/calls.rs:126 src/app.rs:5058
+msgid "Connection lost"
+msgstr "החיבור אבד"
+
+#: src/ui/call.rs:411 src/ui/calls.rs:120
+msgid "Answered on another device"
+msgstr "נענתה במכשיר אחר"
+
+#: src/ui/call.rs:414 src/ui/calls.rs:122
+msgid "Declined on another device"
+msgstr "נדחתה במכשיר אחר"
+
+#: src/ui/call.rs:435
+#, rust-format
+msgid "Microphone “{name}” is not available; using the system default"
+msgstr "המיקרופון “{name}” אינו זמין; נעשה שימוש בברירת המחדל של המערכת"
+
+#: src/ui/call.rs:439
+#, rust-format
+msgid "Speaker “{name}” is not available; using the system default"
+msgstr "הרמקול “{name}” אינו זמין; נעשה שימוש בברירת המחדל של המערכת"
+
+#: src/ui/call.rs:441
+#, rust-format
+msgid "Camera “{name}” is not available"
+msgstr "המצלמה “{name}” אינה זמינה"
+
+#: src/ui/call.rs:464
+msgid "No audio is arriving from this call"
+msgstr "לא מתקבל שמע מהשיחה הזו"
+
+#: src/ui/call.rs:466
+msgid "This call's audio cannot be decoded"
+msgstr "לא ניתן לפענח את השמע של השיחה הזו"
+
+#: src/ui/call.rs:474
+msgid "The other side's audio is not getting through"
+msgstr "השמע מהצד השני לא מגיע"
+
+#: src/ui/call.rs:543
+msgid "Start video"
+msgstr "התחלת וידאו"
+
+#: src/ui/call.rs:550
+msgid "Turn the camera off"
+msgstr "כיבוי המצלמה"
+
+#: src/ui/call.rs:557
+msgid "Turn the camera on"
+msgstr "הפעלת המצלמה"
+
+#: src/ui/call.rs:567
+msgid "Devices"
+msgstr "מכשירים"
+
+#: src/ui/call.rs:624
+msgid "Microphone"
+msgstr "מיקרופון"
+
+#: src/ui/call.rs:635
+msgid "Speaker"
+msgstr "רמקול"
+
+#: src/ui/call.rs:647
+msgid "Camera"
+msgstr "מצלמה"
+
+#: src/ui/call.rs:648
+msgid "First camera"
+msgstr "המצלמה הראשונה"
+
+#: src/ui/call.rs:737
+msgid "Incoming voice call"
+msgstr "שיחה קולית נכנסת"
+
+#: src/ui/call.rs:738
+msgid "Incoming video call"
+msgstr "שיחת וידאו נכנסת"
+
+#: src/ui/call.rs:740
+#, rust-format
+msgid "Group voice call from {name}"
+msgstr "שיחה קולית קבוצתית מאת {name}"
+
+#: src/ui/call.rs:743
+#, rust-format
+msgid "Group video call from {name}"
+msgstr "שיחת וידאו קבוצתית מאת {name}"
+
+#: src/ui/call.rs:745
+msgid "Incoming group voice call"
+msgstr "שיחה קולית קבוצתית נכנסת"
+
+#: src/ui/call.rs:746
+msgid "Incoming group video call"
+msgstr "שיחת וידאו קבוצתית נכנסת"
+
+#: src/ui/call.rs:785
+msgid "Decline"
+msgstr "דחייה"
+
+#: src/ui/call.rs:798
+msgid "Accept"
+msgstr "מענה"
+
+#: src/ui/call.rs:1226
+msgid "Invited"
+msgstr "הוזמן"
+
+#: src/ui/calls.rs:102
+msgid "Missed group voice call"
+msgstr "שיחה קולית קבוצתית שלא נענתה"
+
+#: src/ui/calls.rs:103
+msgid "Missed group video call"
+msgstr "שיחת וידאו קבוצתית שלא נענתה"
+
+#: src/ui/calls.rs:106
+msgid "Group voice call"
+msgstr "שיחה קולית קבוצתית"
+
+#: src/ui/calls.rs:107
+msgid "Group video call"
+msgstr "שיחת וידאו קבוצתית"
+
+#: src/ui/calls.rs:175 src/app/calls.rs:112
+msgid "Call link"
+msgstr "קישור לשיחה"
+
+#: src/ui/calls.rs:205
+msgid "No calls yet"
+msgstr "עדיין אין שיחות"
+
+#: src/ui/calls.rs:208
+msgid ""
+"Calls from your phone's call log and the ones you make here appear here."
+msgstr "שיחות מיומן השיחות בטלפון ושיחות שביצעת כאן יופיעו כאן."
+
+#: src/ui/calls.rs:213 src/ui/message_info.rs:93
+msgid "Loading…"
+msgstr "טוען…"
+
+#: src/ui/calls.rs:214
+msgid "Reading this account's calls."
+msgstr "קורא את השיחות של החשבון הזה."
+
+#: src/ui/calls.rs:238
+msgid "No missed calls"
+msgstr "אין שיחות שלא נענו"
+
+#: src/ui/calls.rs:239
+msgid "Choose All to see every call."
+msgstr "יש לבחור 'הכול' כדי לראות את כל השיחות."
+
+#: src/ui/calls.rs:261
+msgid "No matching calls"
+msgstr "אין שיחות תואמות"
+
+#: src/ui/calls.rs:496
+#, rust-format
+msgid "{} participant"
+msgid_plural "{} participants"
+msgstr[0] "משתתף {}"
+msgstr[1] "{} משתתפים"
+
+#: src/ui/calls.rs:554
+msgid "Frequently contacted"
+msgstr "אנשי קשר תכופים"
+
+#: src/ui/calls.rs:572
+msgid "All contacts"
+msgstr "כל אנשי הקשר"
+
+#: src/ui/calls.rs:636
+#, rust-format
+msgid "Video call {name}"
+msgstr "שיחת וידאו עם {name}"
+
+#: src/ui/calls.rs:650
+#, rust-format
+msgid "Voice call {name}"
+msgstr "שיחה קולית עם {name}"
+
+#: src/ui/calls.rs:680
+msgid "Start call"
+msgstr "התחלת שיחה"
+
+#: src/ui/calls.rs:701
+msgid ""
+"Call one person by voice or video, or choose a call in the list to see it."
+msgstr ""
+"אפשר להתקשר לאדם אחד בשיחה קולית או בווידאו, או לבחור שיחה ברשימה כדי להציג "
+"אותה."
+
+#: src/app/calls.rs:116 src/app.rs:10953
+msgid "Locked chat"
+msgstr "צ'אט נעול"
+
+#: src/app/calls.rs:377
+msgid "Unblock this contact to call them."
+msgstr "יש לבטל את החסימה של איש הקשר כדי להתקשר אליו."
+
+#: src/app/calls.rs:405 src/app/calls.rs:686
+msgid "Hang up the current call first"
+msgstr "קודם יש לנתק את השיחה הנוכחית"
+
+#: src/app/calls.rs:510 src/app/calls.rs:579
+msgid "Incoming call"
+msgstr "שיחה נכנסת"
+
+#: src/app/calls.rs:620
+#, rust-format
+msgid ""
+"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"your phone."
+msgstr ""
+"{caller} מתקשר/ת אל {group}. ZapFast עדיין לא יכול להצטרף לשיחות קבוצתיות: "
+"יש לענות בטלפון."
+
+#: src/app/calls.rs:628
+#, rust-format
+msgid ""
+"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"answer on your phone."
+msgstr ""
+"{caller} מתקשר/ת אליך ואל אחרים. ZapFast עדיין לא יכול להצטרף לשיחות "
+"קבוצתיות: יש לענות בטלפון."
+
+#. Translators: {name} is replaced by the author's name, shown as a link.
+#: src/ui/widgets.rs:1178
+#, rust-format
+msgid "Built with love by {name}"
+msgstr "נבנה באהבה על ידי {name}"
+
+#: src/ui/message_info.rs:44
+msgid "This message is no longer available."
+msgstr "ההודעה הזו כבר לא זמינה."
+
+#: src/ui/message_info.rs:192
+msgid "Played"
+msgstr "הושמע"
+
+#: src/ui/message_info.rs:194
+msgid "Read"
+msgstr "נקרא"
+
+#: src/ui/message_info.rs:208
+msgid "Delivered"
+msgstr "נמסר"
+
+#: src/ui/message_info.rs:224
+msgid "Time not recorded"
+msgstr "הזמן לא נרשם"
+
+#: src/ui/message_info.rs:246
+msgid ""
+"No receipts were recorded for this message. Details are available for "
+"messages sent from now on."
+msgstr ""
+"לא נרשמו אישורים עבור ההודעה הזו. הפרטים זמינים להודעות שיישלחו מעכשיו."
+
+#: src/ui/message_info.rs:258
+msgid ""
+"Some receipts for this message were not recorded. Details are complete for "
+"messages sent from now on."
+msgstr ""
+"חלק מהאישורים עבור ההודעה הזו לא נרשמו. הפרטים יהיו מלאים להודעות שיישלחו "
+"מעכשיו."
+
+#: src/ui/message_info.rs:268
+msgid "Played by"
+msgstr "הושמע על ידי"
+
+#: src/ui/message_info.rs:277
+msgid "Read by"
+msgstr "נקרא על ידי"
+
+#: src/ui/message_info.rs:285
+msgid "Delivered to"
+msgstr "נמסר אל"
+
+#: src/ui/message_info.rs:295
+#, rust-format
+msgid "{} remaining"
+msgid_plural "{} remaining"
+msgstr[0] "נותר {}"
+msgstr[1] "נותרו {}"
+
+#: src/ui/message_info.rs:322
+msgid "No one yet"
+msgstr "עדיין אף אחד"
+
+#: src/app.rs:1038
+msgid "Could not check the number. Please try again."
+msgstr "לא ניתן היה לבדוק את המספר. יש לנסות שוב."
+
+#: src/app.rs:1042
+msgid "This number is not on WhatsApp"
+msgstr "המספר הזה לא רשום ב-WhatsApp"
+
+#: src/app.rs:1045
+msgid "Not connected to WhatsApp"
+msgstr "אין חיבור ל-WhatsApp"
+
+#: src/app.rs:1048 src/app.rs:9159
+msgid "Enter a valid international phone number"
+msgstr "יש להזין מספר טלפון בינלאומי תקין"
+
+#: src/app.rs:2157
+msgid "Could not delete the removed account's files"
+msgstr "לא ניתן היה למחוק את הקבצים של החשבון שהוסר"
+
+#: src/app.rs:2970
+#, rust-format
+msgid "A label named “{name}” already exists."
+msgstr "כבר קיימת תווית בשם “{name}”."
+
+#: src/app.rs:3059
+#, rust-format
+msgid "{name} (You)"
+msgstr "{name} (את/ה)"
+
+#: src/app.rs:3676
+msgid "Media cache cleared"
+msgstr "מטמון המדיה נוקה"
+
+#: src/app.rs:3811
+msgid "Star removed"
+msgstr "הכוכב הוסר"
+
+#: src/app.rs:3847
+msgid "Pinned for 7 days"
+msgstr "נעוץ ל-7 ימים"
+
+#: src/app.rs:3849
+msgid "Pin removed"
+msgstr "הנעיצה הוסרה"
+
+#: src/app.rs:4130
+#, rust-format
+msgid ""
+"Saved {path}. Messages: {messages}; attachments: {files}; unavailable: "
+"{missing}."
+msgstr ""
+"{path} נשמר. הודעות: {messages}; קבצים מצורפים: {files}; לא זמינים: "
+"{missing}."
+
+#: src/app.rs:4499
+msgid "Loading chat history"
+msgstr "טוען את היסטוריית הצ'אט"
+
+#: src/app.rs:4593
+msgid "Could not use this image"
+msgstr "לא ניתן להשתמש בתמונה הזו"
+
+#: src/app.rs:4651
+msgid "Could not use this picture."
+msgstr "לא ניתן להשתמש בתמונה הזו."
+
+#: src/app.rs:4897 src/app.rs:9028
+msgid "This chat already has three pinned messages"
+msgstr "בצ'אט הזה כבר יש שלוש הודעות נעוצות"
+
+#: src/app.rs:4902
+msgid ""
+"WhatsApp hasn't turned on group calls from a computer for your account yet. "
+"Ask someone in the group to call it, and answer here."
+msgstr ""
+"WhatsApp עדיין לא הפעילה שיחות קבוצתיות ממחשב עבור החשבון שלך. אפשר לבקש "
+"ממישהו בקבוצה להתקשר, ולענות כאן."
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr ""
+"ZapFast עדיין לא יכול להצטרף לשיחות קבוצתיות: יש לפתוח את הקישור בטלפון."
+
+#: src/app.rs:4913
+msgid "Connect to WhatsApp to change disappearing messages."
+msgstr "יש להתחבר ל-WhatsApp כדי לשנות הודעות נעלמות."
+
+#: src/app.rs:4919
+msgid "Could not change disappearing messages."
+msgstr "לא ניתן היה לשנות הודעות נעלמות."
+
+#: src/app.rs:4924
+msgid "Only admins can change disappearing messages."
+msgstr "רק מנהלים יכולים לשנות הודעות נעלמות."
+
+#: src/app.rs:4961
+msgid "Connect to WhatsApp to archive this chat"
+msgstr "יש להתחבר ל-WhatsApp כדי להעביר צ'אט זה לארכיון"
+
+#: src/app.rs:4965
+msgid "Connect to WhatsApp to unarchive this chat"
+msgstr "יש להתחבר ל-WhatsApp כדי להוציא צ'אט זה מהארכיון"
+
+#: src/app.rs:4968
+msgid "Could not read this chat. Try again"
+msgstr "לא ניתן היה לקרוא את הצ'אט הזה. יש לנסות שוב"
+
+#: src/app.rs:4972
+msgid "Could not confirm archiving on WhatsApp. Try again"
+msgstr "לא ניתן היה לאשר את העברת הצ'אט לארכיון ב-WhatsApp. יש לנסות שוב"
+
+#: src/app.rs:4976
+msgid "Could not confirm unarchiving on WhatsApp. Try again"
+msgstr "לא ניתן היה לאשר את הוצאת הצ'אט מהארכיון ב-WhatsApp. יש לנסות שוב"
+
+#: src/app.rs:4980
+msgid "WhatsApp updated this chat, but ZapFast could not save the change"
+msgstr "WhatsApp עדכנה את הצ'אט הזה, אבל ZapFast לא הצליח לשמור את השינוי"
+
+#: src/app.rs:5068
+msgid "Connecting"
+msgstr "מתחבר"
+
+#: src/app.rs:5736 src/app.rs:7363
+msgid "Unblock this contact to send messages."
+msgstr "יש לבטל את החסימה של איש הקשר כדי לשלוח הודעות."
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "לא נשלח: ZapFast לא מחובר ל-WhatsApp."
+
+#: src/app.rs:5744
+msgid ""
+"Not sent: the message you’re replying to isn’t available on this computer. "
+"Cancel the reply to send without a quote."
+msgstr ""
+"לא נשלח: ההודעה שאת/ה מגיב/ה אליה אינה זמינה במחשב הזה. יש לבטל את התגובה "
+"כדי לשלוח ללא ציטוט."
+
+#: src/app.rs:5748 src/app.rs:6795
+msgid "Not sent: view-once mode is available for one photo at a time."
+msgstr "לא נשלח: מצב צפייה חד-פעמית זמין לתמונה אחת בכל פעם."
+
+#: src/app.rs:8204
+msgid "A selected chat is no longer writable"
+msgstr "אחד הצ'אטים שנבחרו אינו ניתן לכתיבה יותר"
+
+#: src/app.rs:8776
+msgid "Added to favorites"
+msgstr "נוסף למועדפים"
+
+#: src/app.rs:8853
+msgid "Sending the sticker pack…"
+msgstr "שולח את חבילת המדבקות…"
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "יש לך {limit} תוויות, המקסימום ש-ZapFast שומר."
+
+#: src/app.rs:9446
+msgid "No chat open"
+msgstr "אין צ'אט פתוח"
+
+#: src/app.rs:9474
+msgid "Loading the replied message"
+msgstr "טוען את ההודעה שהגבת עליה"
+
+#: src/app.rs:9784
+msgid "Invite link copied"
+msgstr "קישור ההזמנה הועתק"
+
+#. Translators: an announcement from an account that is not on screen:
+#. the account's name, then what it announced.
+#: src/app.rs:10064
+#, rust-format
+msgid "{}: {}"
+msgstr "{}: {}"
+
+#: src/app.rs:10174
+msgid "The old link no longer works. Here is a new one."
+msgstr "הקישור הישן כבר לא פועל. הנה קישור חדש."
+
+#: src/app.rs:10216
+#, rust-format
+msgid "{count} person added to the group"
+msgid_plural "{count} people added to the group"
+msgstr[0] "נוסף {count} משתתף לקבוצה"
+msgstr[1] "נוספו {count} משתתפים לקבוצה"
+
+#: src/app.rs:10276
+msgid "This file is no longer on this computer. Download it again."
+msgstr "הקובץ הזה כבר לא נמצא במחשב. יש להוריד אותו שוב."
+
+#: src/app.rs:10652
+msgid "App lock password saved"
+msgstr "סיסמת נעילת האפליקציה נשמרה"
+
+#: src/app.rs:10660
+msgid "App lock turned off"
+msgstr "נעילת האפליקציה כובתה"
+
+#: src/app.rs:10794
+msgid "This video opens in your system player"
+msgstr "הסרטון הזה נפתח בנגן של המערכת"
+
+#: src/app.rs:11146 src/app.rs:11206
+msgid "Replied message not found"
+msgstr "ההודעה שהגבת עליה לא נמצאה"
+
+#: src/app.rs:11836
+msgid "Copied image"
+msgstr "התמונה הועתקה"
+
+#: src/app.rs:11839 src/app.rs:11844
+msgid "Failed to copy image"
+msgstr "העתקת התמונה נכשלה"
+
+#: src/ui/labels.rs:68
+msgctxt "label colour"
+msgid "Blue"
+msgstr "כחול"
+
+#: src/ui/labels.rs:69
+msgctxt "label colour"
+msgid "Green"
+msgstr "ירוק"
+
+#: src/ui/labels.rs:70
+msgctxt "label colour"
+msgid "Yellow"
+msgstr "צהוב"
+
+#: src/ui/labels.rs:71
+msgctxt "label colour"
+msgid "Orange"
+msgstr "כתום"
+
+#: src/ui/labels.rs:72
+msgctxt "label colour"
+msgid "Red"
+msgstr "אדום"
+
+#: src/ui/labels.rs:73
+msgctxt "label colour"
+msgid "Pink"
+msgstr "ורוד"
+
+#: src/ui/labels.rs:74
+msgctxt "label colour"
+msgid "Purple"
+msgstr "סגול"
+
+#: src/ui/labels.rs:75
+msgctxt "label colour"
+msgid "Teal"
+msgstr "טורקיז"
+
+#: src/ui/labels.rs:76
+msgctxt "label colour"
+msgid "Grey"
+msgstr "אפור"
+
+#: src/ui/labels.rs:77
+msgctxt "label colour"
+msgid "Sky blue"
+msgstr "תכלת"
+
+#: src/ui/labels.rs:78
+msgctxt "label colour"
+msgid "Colour"
+msgstr "צבע"
+
+#: src/ui/labels.rs:151
+msgid "Manage labels"
+msgstr "ניהול תוויות"
+
+#: src/ui/labels.rs:166
+msgid "Manage labels…"
+msgstr "ניהול תוויות…"
+
+#: src/ui/labels.rs:246
+msgid ""
+"Labels stay on this computer. They do not reach your phone or anyone you "
+"chat with."
+msgstr ""
+"התוויות נשארות במחשב הזה. הן לא מגיעות לטלפון שלך או לאנשים שאיתם את/ה "
+"מתכתב/ת."
+
+#: src/ui/labels.rs:267
+msgid "New label"
+msgstr "תווית חדשה"
+
+#: src/ui/labels.rs:281 src/ui/new_group.rs:451
+msgid "Create"
+msgstr "יצירה"
+
+#: src/ui/labels.rs:311
+msgid ""
+"No labels yet. Create one above, then add chats to it from their right-click"
+" menu."
+msgstr ""
+"אין תוויות עדיין. יש ליצור אחת למעלה, ואז להוסיף אליה צ'אטים מתפריט הקליק "
+"הימני שלהם."
+
+#: src/ui/labels.rs:346
+msgid "Next colour"
+msgstr "הצבע הבא"
+
+#: src/ui/labels.rs:395
+#, rust-format
+msgid "{} chat"
+msgid_plural "{} chats"
+msgstr[0] "{} צ'אט"
+msgstr[1] "{} צ'אטים"
+
+#: src/ui/labels.rs:416
+msgid "Rename or recolour"
+msgstr "שינוי שם או צבע"
+
+#: src/ui/labels.rs:441
+msgid "Delete this label. Its chats keep their messages."
+msgstr "מחיקת התווית. ההודעות בצ'אטים שלה נשארות."
+
+#: src/ui/picker.rs:140
+msgid "Emoji"
+msgstr "אימוג'י"
+
+#: src/ui/picker.rs:477
+msgid "React to message"
+msgstr "תגובה להודעה"
+
+#: src/ui/picker.rs:488
+msgid "Close reactions"
+msgstr "סגירת התגובות"
+
+#: src/ui/picker.rs:667
+msgid "Search emoji"
+msgstr "חיפוש אימוג'י"
+
+#: src/ui/picker.rs:1053
+msgid "Search GIFs via GIPHY"
+msgstr "חיפוש GIF ב-GIPHY"
+
+#: src/ui/picker.rs:1070
+msgid "Searching…"
+msgstr "מחפש…"
+
+#: src/ui/picker.rs:1157 src/ui/mod.rs:656
+msgid "Retry"
+msgstr "ניסיון חוזר"
+
+#: src/ui/picker.rs:1159
+msgid "Load more"
+msgstr "טעינת עוד"
+
+#: src/ui/picker.rs:1170
+msgid "Search for a GIF or browse trending results."
+msgstr "אפשר לחפש GIF או לעיין בתוצאות הפופולריות."
+
+#: src/ui/picker.rs:1283
+msgid "Recent"
+msgstr "אחרונים"
+
+#: src/ui/picker.rs:1285
+msgid "Received"
+msgstr "התקבלו"
+
+#: src/ui/picker.rs:1286
+msgid "Add stickers"
+msgstr "הוספת מדבקות"
+
+#: src/ui/picker.rs:1321
+msgid "Search by emoji, word, or pack"
+msgstr "חיפוש לפי אימוג'י, מילה או חבילה"
+
+#: src/ui/picker.rs:1360
+msgid "No stickers match your search."
+msgstr "אין מדבקות שתואמות לחיפוש."
+
+#: src/ui/picker.rs:1374
+msgid "Loading your stickers…"
+msgstr "טוען את המדבקות שלך…"
+
+#: src/ui/picker.rs:1376
+msgid "Stickers you send appear here."
+msgstr "מדבקות ששלחת יופיעו כאן."
+
+#: src/ui/picker.rs:1385
+msgid ""
+"Right-click any sticker to add it to your favorites. They stay in sync with "
+"your phone."
+msgstr ""
+"אפשר ללחוץ קליק ימני על מדבקה כדי להוסיף אותה למועדפים. הן מסונכרנות עם "
+"הטלפון שלך."
+
+#: src/ui/picker.rs:1391
+msgid "Stickers people send you appear here."
+msgstr "מדבקות שאנשים שולחים לך יופיעו כאן."
+
+#: src/ui/picker.rs:1406
+msgid "Remove this pack"
+msgstr "הסרת החבילה הזו"
+
+#: src/ui/picker.rs:1420
+msgid "Send this pack to the chat"
+msgstr "שליחת החבילה הזו לצ'אט"
+
+#: src/ui/picker.rs:1434
+msgid "Nothing here yet. Right-click any sticker to add it to this pack."
+msgstr ""
+"אין כאן כלום עדיין. אפשר ללחוץ קליק ימני על מדבקה כדי להוסיף אותה לחבילה "
+"הזו."
+
+#: src/ui/picker.rs:1511
+msgid "Import a pack"
+msgstr "ייבוא חבילה"
+
+#: src/ui/picker.rs:1519
+msgid ""
+"Paste a signal.art link from signalstickers.org, or open a .wastickers file."
+msgstr ""
+"יש להדביק קישור signal.art מ-signalstickers.org, או לפתוח קובץ .wastickers."
+
+#: src/ui/picker.rs:1529
+msgid "Make your own"
+msgstr "יצירה בעצמך"
+
+#: src/ui/picker.rs:1537
+msgid ""
+"Start a pack, then right-click any sticker to add it. Or turn a picture into"
+" a sticker."
+msgstr ""
+"אפשר להתחיל חבילה, ואז ללחוץ קליק ימני על מדבקה כדי להוסיף אותה. או להפוך "
+"תמונה למדבקה."
+
+#: src/ui/picker.rs:1549
+msgid "Make a sticker from a picture…"
+msgstr "יצירת מדבקה מתמונה…"
+
+#: src/ui/picker.rs:1564
+msgid "Create pack"
+msgstr "יצירת חבילה"
+
+#: src/ui/picker.rs:1575
+msgid "New pack…"
+msgstr "חבילה חדשה…"
+
+#: src/ui/picker.rs:1608
+msgid "Find packs"
+msgstr "מציאת חבילות"
+
+#: src/ui/picker.rs:1624
+msgid "Paste a signal.art link"
+msgstr "הדבקת קישור signal.art"
+
+#: src/ui/picker.rs:1652
+msgid "Browse signalstickers.org"
+msgstr "עיון ב-signalstickers.org"
+
+#: src/ui/picker.rs:1668
+msgid "Importing the pack…"
+msgstr "מייבא את החבילה…"
+
+#: src/ui/picker.rs:1717
+msgid "Remove from recents"
+msgstr "הסרה מהאחרונים"
+
+#: src/ui/pane.rs:214
+msgid "Close search"
+msgstr "סגירת החיפוש"
+
+#: src/ui/pane.rs:242 src/ui/pane.rs:420
+msgid "Filter by date"
+msgstr "סינון לפי תאריך"
+
+#: src/ui/pane.rs:295
+#, rust-format
+msgid "Search messages with {}"
+msgstr "חיפוש הודעות עם {}"
+
+#: src/ui/pane.rs:318
+msgid "No messages found"
+msgstr "לא נמצאו הודעות"
+
+#: src/ui/pane.rs:319
+msgid "Try another word or pick a different day."
+msgstr "אפשר לנסות מילה אחרת או לבחור יום אחר."
+
+#: src/ui/pane.rs:346
+#, rust-format
+msgid ""
+"Only the newest {} matches are listed. Narrow the search or pick a day."
+msgstr ""
+"רק {} ההתאמות החדשות ביותר מופיעות ברשימה. אפשר לצמצם את החיפוש או לבחור "
+"יום."
+
+#: src/ui/pane.rs:435
+msgid "Clear the day filter"
+msgstr "ניקוי סינון היום"
+
+#: src/ui/pane.rs:502
+msgid "Next month"
+msgstr "החודש הבא"
+
+#: src/ui/pane.rs:514
+msgid "Previous month"
+msgstr "החודש הקודם"
+
+#: src/privacy.rs:42
+msgctxt "privacy"
+msgid "Last seen"
+msgstr "נראה לאחרונה"
+
+#: src/privacy.rs:43
+msgctxt "privacy"
+msgid "Online"
+msgstr "מחובר"
+
+#: src/privacy.rs:44
+msgctxt "privacy"
+msgid "Profile photo"
+msgstr "תמונת פרופיל"
+
+#: src/privacy.rs:45
+msgctxt "privacy"
+msgid "About"
+msgstr "מידע"
+
+#: src/privacy.rs:46
+msgctxt "privacy"
+msgid "Groups"
+msgstr "קבוצות"
+
+#: src/privacy.rs:47
+msgctxt "privacy"
+msgid "Read receipts"
+msgstr "אישורי קריאה"
+
+#: src/privacy.rs:48
+msgctxt "privacy"
+msgid "Calls"
+msgstr "שיחות"
+
+#: src/privacy.rs:58
+msgid "Who can add you to groups."
+msgstr "מי יכול להוסיף אותך לקבוצות."
+
+#: src/privacy.rs:60
+msgid "For your whole account. Groups always send them."
+msgstr "לכל החשבון שלך. בקבוצות הם תמיד נשלחים."
+
+#: src/privacy.rs:139
+msgctxt "privacy"
+msgid "Everyone"
+msgstr "כולם"
+
+#: src/privacy.rs:140
+msgctxt "privacy"
+msgid "My contacts"
+msgstr "אנשי הקשר שלי"
+
+#: src/privacy.rs:141
+msgctxt "privacy"
+msgid "My contacts except…"
+msgstr "אנשי הקשר שלי מלבד…"
+
+#: src/privacy.rs:142
+msgctxt "privacy"
+msgid "Nobody"
+msgstr "אף אחד"
+
+#: src/privacy.rs:143
+msgctxt "privacy"
+msgid "Same as last seen"
+msgstr "כמו נראה לאחרונה"
+
+#: src/privacy.rs:144
+msgctxt "privacy"
+msgid "Silence unknown callers"
+msgstr "השתקת מתקשרים לא מוכרים"
+
+#: src/ui/image_editor.rs:125
+msgid "Cancel (Esc)"
+msgstr "ביטול (Esc)"
+
+#: src/ui/image_editor.rs:138
+msgid "Keep this crop"
+msgstr "שמירת החיתוך הזה"
+
+#: src/ui/image_editor.rs:160
+msgid "Reset"
+msgstr "איפוס"
+
+#: src/ui/image_editor.rs:164
+msgid "Turn right"
+msgstr "סיבוב ימינה"
+
+#: src/ui/image_editor.rs:177
+msgid "Turn left"
+msgstr "סיבוב שמאלה"
+
+#: src/ui/image_preview.rs:281
+msgid "Close preview (Esc)"
+msgstr "סגירת התצוגה המקדימה (Esc)"
+
+#: src/ui/image_preview.rs:294 src/ui/image_preview.rs:631
+msgid "Open in another app"
+msgstr "פתיחה באפליקציה אחרת"
+
+#: src/ui/image_preview.rs:336
+msgid "Zoom in"
+msgstr "הגדלה"
+
+#: src/ui/image_preview.rs:346
+msgid "Fit"
+msgstr "התאמה"
+
+#: src/ui/image_preview.rs:347
+msgid "Show at original size"
+msgstr "הצגה בגודל המקורי"
+
+#: src/ui/image_preview.rs:353
+msgid "Fit to the window (0)"
+msgstr "התאמה לחלון (0)"
+
+#: src/ui/image_preview.rs:369
+msgid "Zoom out"
+msgstr "הקטנה"
+
+#: src/ui/image_preview.rs:481
+msgid "Show in the chat"
+msgstr "הצגה בצ'אט"
+
+#: src/ui/image_preview.rs:536
+msgid "Show the photo"
+msgstr "הצגת התמונה"
+
+#: src/ui/image_preview.rs:540
+msgid "Play motion photo"
+msgstr "הפעלת תמונה עם תנועה"
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "לא ניתן להציג את התמונה הזו ב-ZapFast."
+
+#: src/ui/image_preview.rs:741
+msgid "Open externally"
+msgstr "פתיחה חיצונית"
+
+#: src/ui/image_preview.rs:903
+msgid "Play or pause the video"
+msgstr "הפעלה או השהיה של הסרטון"
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast נעול"
+
+#: src/ui/lock.rs:23
+msgid "Unlinking this computer…"
+msgstr "מנתק את המחשב הזה…"
+
+#: src/ui/lock.rs:52
+msgid "Enter your password to unlock."
+msgstr "יש להזין את הסיסמה כדי לבטל את הנעילה."
+
+#: src/ui/lock.rs:66
+msgid "Password"
+msgstr "סיסמה"
+
+#: src/ui/lock.rs:76
+#, rust-format
+msgid "Too many wrong passwords. Try again in {seconds} s."
+msgstr "יותר מדי סיסמאות שגויות. יש לנסות שוב בעוד {seconds} שנ'."
+
+#: src/ui/lock.rs:97
+msgid "Unlock"
+msgstr "ביטול נעילה"
+
+#: src/ui/lock.rs:108
+msgid "Forgot password? Unlink this computer"
+msgstr "שכחת סיסמה? ניתוק המחשב הזה"
+
+#: src/ui/lock.rs:131
+msgid ""
+"Without the password, the only way back in is to unlink. This removes the "
+"device from WhatsApp, deletes the chats stored here, and turns the app lock "
+"off. You can link again with a new code."
+msgstr ""
+"בלי הסיסמה, הדרך היחידה להיכנס שוב היא ניתוק. הפעולה מסירה את המכשיר "
+"מ-WhatsApp, מוחקת את הצ'אטים השמורים כאן וכובה את נעילת האפליקציה. אפשר לקשר"
+" שוב עם קוד חדש."
+
+#. Translators: the body of a notification that hides who wrote and
+#. what: a message has arrived.
+#: src/notify.rs:400
+msgctxt "notification"
+msgid "New message"
+msgstr "הודעה חדשה"
+
+#: src/settings.rs:347
+msgid "After 1 minute"
+msgstr "אחרי דקה"
+
+#: src/settings.rs:348
+msgid "After 15 minutes"
+msgstr "אחרי 15 דקות"
+
+#: src/settings.rs:349
+msgid "After 1 hour"
+msgstr "אחרי שעה"
+
+#: src/settings.rs:381
+msgid "Direct messages"
+msgstr "הודעות ישירות"
+
+#: src/settings.rs:383
+msgid "Direct messages and groups"
+msgstr "הודעות ישירות וקבוצות"
+
+#: src/account.rs:342
+#, rust-format
+msgid "Account {id}"
+msgstr "חשבון {id}"
+
+#: src/ui/accounts.rs:35
+msgid "Switch account"
+msgstr "החלפת חשבון"
+
+#: src/ui/accounts.rs:115
+msgid "Not linked"
+msgstr "לא מקושר"
+
+#: src/ui/accounts.rs:203 src/ui/accounts.rs:321
+msgid "Mute notifications"
+msgstr "השתקת התראות"
+
+#: src/ui/accounts.rs:319
+msgid "Unmute notifications"
+msgstr "ביטול השתקת התראות"
+
+#: src/ui/accounts.rs:335
+#, rust-format
+msgid "{count} unread chats"
+msgstr "{count} צ'אטים שלא נקראו"
+
+#: src/ui/accounts.rs:341
+msgid "notifications muted"
+msgstr "התראות מושתקות"
+
+#: src/ui/accounts.rs:375
+msgid "Use another account"
+msgstr "שימוש בחשבון אחר"
+
+#: src/ui/info.rs:47
+msgid "Media, links and docs"
+msgstr "מדיה, קישורים ומסמכים"
+
+#: src/ui/info.rs:273
+msgid "Group info"
+msgstr "פרטי הקבוצה"
+
+#: src/ui/info.rs:275
+msgid "Channel info"
+msgstr "פרטי הערוץ"
+
+#: src/ui/info.rs:277
+msgid "Contact info"
+msgstr "פרטי איש הקשר"
+
+#: src/ui/info.rs:335
+msgid "View photo"
+msgstr "הצגת תמונה"
+
+#: src/ui/info.rs:366
+msgid "Edit group name"
+msgstr "עריכת שם הקבוצה"
+
+#: src/ui/info.rs:493 src/ui/info.rs:644 src/ui/info.rs:1908
+msgid "Saving…"
+msgstr "שומר…"
+
+#: src/ui/info.rs:680
+msgid "Add group description"
+msgstr "הוספת תיאור לקבוצה"
+
+#: src/ui/info.rs:690
+msgid "Description"
+msgstr "תיאור"
+
+#: src/ui/info.rs:701
+msgid "Edit group description"
+msgstr "עריכת תיאור הקבוצה"
+
+#: src/ui/info.rs:728 src/ui/info.rs:1853
+msgid "Group permissions"
+msgstr "הרשאות הקבוצה"
+
+#: src/ui/info.rs:903 src/ui/new_group.rs:76
+msgid "Add members"
+msgstr "הוספת משתתפים"
+
+#: src/ui/info.rs:957
+#, rust-format
+msgid "Options for {name}"
+msgstr "אפשרויות עבור {name}"
+
+#: src/ui/info.rs:1009
+msgid "Group admin"
+msgstr "מנהל/ת הקבוצה"
+
+#: src/ui/info.rs:1137
+#, rust-format
+msgid "{}+"
+msgstr "{}+"
+
+#: src/ui/info.rs:1190
+msgid "Could not list the media."
+msgstr "לא ניתן להציג את רשימת המדיה."
+
+#: src/ui/info.rs:1198 src/ui/info.rs:1745 src/ui/login.rs:136
+msgid "Try again"
+msgstr "נסו שוב"
+
+#: src/ui/info.rs:1310
+msgid "No media"
+msgstr "אין מדיה"
+
+#: src/ui/info.rs:1313
+msgid "Photos and videos shared in this chat will show here."
+msgstr "תמונות וסרטונים שישותפו בצ'אט הזה יוצגו כאן."
+
+#: src/ui/info.rs:1487
+msgid "No documents"
+msgstr "אין מסמכים"
+
+#: src/ui/info.rs:1488
+msgid "Files shared in this chat will show here."
+msgstr "קבצים שישותפו בצ'אט הזה יוצגו כאן."
+
+#: src/ui/info.rs:1511
+#, rust-format
+msgid "{} page"
+msgid_plural "{} pages"
+msgstr[0] "{} עמוד"
+msgstr[1] "{} עמודים"
+
+#: src/ui/info.rs:1533
+msgid "No links"
+msgstr "אין קישורים"
+
+#: src/ui/info.rs:1534
+msgid "Links shared in this chat will show here."
+msgstr "קישורים שישותפו בצ'אט הזה יוצגו כאן."
+
+#: src/ui/info.rs:1607
+msgid "Only the newest items are listed."
+msgstr "מוצגים הפריטים החדשים ביותר בלבד."
+
+#: src/ui/info.rs:1623
+msgctxt "info tab"
+msgid "Media"
+msgstr "מדיה"
+
+#: src/ui/info.rs:1624
+msgctxt "info tab"
+msgid "Docs"
+msgstr "מסמכים"
+
+#: src/ui/info.rs:1625
+msgctxt "info tab"
+msgid "Links"
+msgstr "קישורים"
+
+#: src/ui/info.rs:1708
+msgid "Invite via link"
+msgstr "הזמנה באמצעות קישור"
+
+#: src/ui/info.rs:1718
+msgid "Getting the link…"
+msgstr "מקבל את הקישור…"
+
+#: src/ui/info.rs:1755
+msgid "Copy link"
+msgstr "העתקת קישור"
+
+#: src/ui/info.rs:1819
+msgid "Make group admin"
+msgstr "מינוי למנהל/ת קבוצה"
+
+#: src/ui/info.rs:1823
+msgid "Dismiss as admin"
+msgstr "הסרה מניהול הקבוצה"
+
+#: src/ui/info.rs:1827
+msgid "Remove from group"
+msgstr "הסרה מהקבוצה"
+
+#: src/ui/info.rs:1892
+msgid "Admins can:"
+msgstr "מנהלים יכולים:"
+
+#: src/ui/info.rs:1894
+msgid "Members can:"
+msgstr "משתתפים יכולים:"
+
+#: src/ui/info.rs:2037
+msgid "Change group photo"
+msgstr "שינוי תמונת הקבוצה"
+
+#: src/ui/info.rs:2044 src/ui/new_group.rs:311
+msgid "Change photo"
+msgstr "שינוי תמונה"
+
+#: src/ui/info.rs:2045 src/ui/new_group.rs:312
+msgid "Remove photo"
+msgstr "הסרת תמונה"
+
+#: src/ui/info.rs:2071
+msgid "Group description"
+msgstr "תיאור הקבוצה"
+
+#: src/ui/info.rs:2110
+msgid "Save description"
+msgstr "שמירת תיאור"
+
+#: src/ui/info.rs:2152
+msgid "Group name"
+msgstr "שם הקבוצה"
+
+#: src/ui/info.rs:2195
+msgid "Save name (Enter)"
+msgstr "שמירת שם (Enter)"
+
+#: src/ui/info.rs:2207
+msgid "Cancel (Escape)"
+msgstr "ביטול (Escape)"
+
+#: src/ui/login.rs:16
+msgid "A native WhatsApp client."
+msgstr "לקוח WhatsApp מקורי."
+
+#: src/ui/login.rs:92 src/ui/mod.rs:589
+msgid "Connecting to WhatsApp…"
+msgstr "מתחבר ל-WhatsApp…"
+
+#: src/ui/login.rs:99
+msgid "Linked. Waiting for your chats…"
+msgstr "מקושר. ממתין לצ'אטים שלך…"
+
+#: src/ui/login.rs:108
+msgid "This computer was unlinked from your phone. Requesting a new code."
+msgstr "המחשב הזה נותק מהטלפון שלך. מבקש קוד חדש."
+
+#: src/ui/login.rs:117
+msgid "Requesting a new code…"
+msgstr "מבקש קוד חדש…"
+
+#: src/ui/login.rs:147
+msgid "Start over…"
+msgstr "התחלה מחדש…"
+
+#: src/ui/login.rs:165
+#, rust-format
+msgid "Requesting a code for +{phone}…"
+msgstr "מבקש קוד עבור +{phone}…"
+
+#: src/ui/login.rs:174
+msgid "Waiting for a code from WhatsApp…"
+msgstr "ממתין לקוד מ-WhatsApp…"
+
+#: src/ui/login.rs:185
+msgid ""
+"Unofficial client. Using it may be against WhatsApp's terms of service."
+msgstr "לקוח לא רשמי. השימוש בו עשוי להפר את תנאי השירות של WhatsApp."
+
+#: src/ui/login.rs:211
+msgid "Link this computer"
+msgstr "קישור המחשב הזה"
+
+#: src/ui/login.rs:225 src/ui/login.rs:281
+msgid "Open WhatsApp on your phone"
+msgstr "פתחו את WhatsApp בטלפון"
+
+#: src/ui/login.rs:226 src/ui/login.rs:282
+msgid "Tap Menu or Settings, then Linked devices"
+msgstr "הקישו על תפריט או על הגדרות, ואז על מכשירים מקושרים"
+
+#: src/ui/login.rs:227
+msgid "Tap Link a device and point the phone at this code"
+msgstr "הקישו על קישור מכשיר וכוונו את הטלפון אל הקוד הזה"
+
+#: src/ui/login.rs:244
+msgid "Link with phone number instead"
+msgstr "קישור באמצעות מספר טלפון במקום"
+
+#: src/ui/login.rs:259
+msgid "Enter this code on your phone"
+msgstr "הזינו את הקוד הזה בטלפון"
+
+#: src/ui/login.rs:264
+#, rust-format
+msgid "for +{phone}"
+msgstr "עבור +{phone}"
+
+#: src/ui/login.rs:285
+msgid "Tap Link a device, then Link with phone number instead"
+msgstr "הקישו על קישור מכשיר, ואז על קישור באמצעות מספר טלפון במקום"
+
+#: src/ui/rail.rs:302
+msgid "Calls"
+msgstr "שיחות"
+
+#: src/ui/rail.rs:309
+msgid "Starred messages"
+msgstr "הודעות מסומנות בכוכב"
+
+#: src/ui/rail.rs:317
+msgid "Archived"
+msgstr "בארכיון"
+
+#: src/ui/rail.rs:323
+msgid "Locked"
+msgstr "נעול"
+
+#: src/ui/mod.rs:545
+#, rust-format
+msgid "Drop to send to {name}"
+msgstr "שחררו כדי לשלוח אל {name}"
+
+#: src/ui/mod.rs:566
+#, rust-format
+msgid "Loading chat history… {percent}%"
+msgstr "טוען היסטוריית צ'אטים… {percent}%"
+
+#: src/ui/mod.rs:569
+msgid "Loading chat history…"
+msgstr "טוען היסטוריית צ'אטים…"
+
+#: src/ui/mod.rs:579
+#, rust-format
+msgid "ZapFast {version} is available"
+msgstr "ZapFast {version} זמין"
+
+#: src/ui/mod.rs:596
+#, rust-format
+msgid "Offline ({reason}). Reconnecting…"
+msgstr "אין חיבור ({reason}). מתחבר מחדש…"
+
+#: src/ui/mod.rs:611
+msgid "Not linked to a phone"
+msgstr "לא מקושר לטלפון"
+
+#: src/ui/mod.rs:645
+msgid "Update"
+msgstr "עדכון"
+
+#: src/ui/mod.rs:771
+msgid "Dismiss"
+msgstr "סגירה"
+
+#: src/ui/mod.rs:786
+msgid "Copy this message"
+msgstr "העתקת ההודעה"
+
+#: src/ui/mod.rs:921
+msgid "Minimize"
+msgstr "מזעור"
+
+#: src/ui/mod.rs:922
+msgid "Maximize"
+msgstr "הגדלה"
+
+#: src/ui/mod.rs:923
+msgid "Restore"
+msgstr "שחזור"
+
+#: src/ui/new_group.rs:78
+msgid "Add group members"
+msgstr "הוספת משתתפים לקבוצה"
+
+#: src/ui/new_group.rs:156
+msgctxt "add group members"
+msgid "Add"
+msgstr "הוספה"
+
+#: src/ui/new_group.rs:158
+msgid "Next"
+msgstr "הבא"
+
+#: src/ui/new_group.rs:160
+msgid "Choose at least one person"
+msgstr "בחרו לפחות איש קשר אחד"
+
+#: src/ui/new_group.rs:186
+#, rust-format
+msgid "Remove {name}"
+msgstr "הסרת {name}"
+
+#: src/ui/new_group.rs:310
+msgid "Add group photo"
+msgstr "הוספת תמונת קבוצה"
+
+#: src/ui/new_group.rs:341
+msgid "Group name (required)"
+msgstr "שם הקבוצה (חובה)"
+
+#: src/ui/new_group.rs:416
+#, rust-format
+msgid "{count} member besides you"
+msgid_plural "{count} members besides you"
+msgstr[0] "משתתף/ת {count} מלבדך"
+msgstr[1] "{count} משתתפים מלבדך"
+
+#: src/ui/new_group.rs:445
+msgid "Creating the group…"
+msgstr "יוצר את הקבוצה…"
+
+#: src/group_admin.rs:60
+msgid "Edit group settings"
+msgstr "עריכת הגדרות הקבוצה"
+
+#: src/group_admin.rs:61
+msgid "Send new messages"
+msgstr "שליחת הודעות חדשות"
+
+#: src/group_admin.rs:62
+msgid "Add other members"
+msgstr "הוספת משתתפים נוספים"
+
+#: src/group_admin.rs:63
+msgid "Approve new members"
+msgstr "אישור משתתפים חדשים"
+
+#: src/group_admin.rs:73
+msgid "Change the group's name, photo, description and disappearing messages."
+msgstr "שינוי השם, התמונה, התיאור והודעות הנעלמות של הקבוצה."
+
+#: src/group_admin.rs:75
+msgid "Write in the group."
+msgstr "כתיבה בקבוצה."
+
+#: src/group_admin.rs:76
+msgid "Add people to the group."
+msgstr "הוספת אנשים לקבוצה."
+
+#: src/group_admin.rs:79
+msgid "When turned on, admins must approve anyone who wants to join."
+msgstr "כשהאפשרות פעילה, מנהלים צריכים לאשר כל מי שרוצה להצטרף."
+
+#: src/group_admin.rs:216
+msgid "Connect to WhatsApp to change the group."
+msgstr "התחברו ל-WhatsApp כדי לשנות את הקבוצה."
+
+#: src/group_admin.rs:217
+msgid "WhatsApp did not answer in time. Try again."
+msgstr "WhatsApp לא הגיב בזמן. נסו שוב."
+
+#: src/group_admin.rs:218
+msgid "Only group admins can do that."
+msgstr "רק מנהלי הקבוצה יכולים לעשות זאת."
+
+#: src/group_admin.rs:219
+msgid "Too many changes at once. Try again later."
+msgstr "יותר מדי שינויים בבת אחת. נסו שוב מאוחר יותר."
+
+#: src/group_admin.rs:220
+msgid "Could not change the group. Try again."
+msgstr "לא ניתן לשנות את הקבוצה. נסו שוב."
+
+#: src/group_admin.rs:228
+msgid "Connect to WhatsApp to see the invite link."
+msgstr "התחברו ל-WhatsApp כדי לראות את קישור ההזמנה."
+
+#: src/group_admin.rs:229
+msgid "Only group admins can see the invite link."
+msgstr "רק מנהלי הקבוצה יכולים לראות את קישור ההזמנה."
+
+#: src/group_admin.rs:230
+msgid "Could not get the invite link."
+msgstr "לא ניתן לקבל את קישור ההזמנה."
+
+#: src/group_admin.rs:291
+#, rust-format
+msgid ""
+"{names} could not be added to the group. Their privacy settings may not "
+"allow it. You can send them the invite link."
+msgstr ""
+"לא ניתן היה להוסיף את {names} לקבוצה. ייתכן שהגדרות הפרטיות שלהם לא מאפשרות "
+"זאת. אפשר לשלוח להם את קישור ההזמנה."
+
+#: src/group_admin.rs:295
+#, rust-format
+msgid "{names} left the group recently and cannot be added back yet."
+msgstr "{names} עזבו את הקבוצה לאחרונה ועדיין לא ניתן להוסיף אותם בחזרה."
+
+#: src/group_admin.rs:297
+#, rust-format
+msgid "The group is full. {names} could not be added."
+msgstr "הקבוצה מלאה. לא ניתן היה להוסיף את {names}."
+
+#: src/group_admin.rs:298
+#, rust-format
+msgid "{names} could not be added to the group."
+msgstr "לא ניתן היה להוסיף את {names} לקבוצה."
+
+#: src/group_admin.rs:308
+#, rust-format
+msgid "{name} is now a group admin."
+msgstr "{name} הוא/היא עכשיו מנהל/ת הקבוצה."
+
+#: src/group_admin.rs:309
+#, rust-format
+msgid "{name} is no longer a group admin."
+msgstr "{name} הוא/היא כבר לא מנהל/ת הקבוצה."
+
+#: src/group_admin.rs:310
+#, rust-format
+msgid "{name} was removed from the group."
+msgstr "{name} הוסר/ה מהקבוצה."
+
+#: src/ui/polls.rs:39
+msgid "Question"
+msgstr "שאלה"
+
+#: src/ui/polls.rs:52
+msgid "Ask a question"
+msgstr "שאלו שאלה"
+
+#: src/ui/polls.rs:66
+msgid "Answers"
+msgstr "תשובות"
+
+#: src/ui/polls.rs:90
+#, rust-format
+msgid "Answer {index}"
+msgstr "תשובה {index}"
+
+#: src/ui/polls.rs:109
+msgid "Remove answer"
+msgstr "הסרת תשובה"
+
+#: src/ui/polls.rs:126
+msgid "Add answer"
+msgstr "הוספת תשובה"
+
+#: src/ui/polls.rs:138
+msgid "Allow multiple answers"
+msgstr "אפשר לבחור כמה תשובות"
+
+#: src/ui/polls.rs:165
+msgid "Sending…"
+msgstr "שולח…"
+
+#: src/ui/polls.rs:167
+msgid "Send poll"
+msgstr "שליחת סקר"
+
+#: src/ui/polls.rs:217
+msgid "Select one answer"
+msgstr "בחירת תשובה אחת"
+
+#: src/ui/polls.rs:219
+msgid "Select answers"
+msgstr "בחירת תשובות"
+
+#: src/ui/polls.rs:321
+msgid "Sending vote…"
+msgstr "שולח הצבעה…"
+
+#: src/ui/polls.rs:325
+msgid "Waiting for your phone · earlier votes may be missing"
+msgstr "ממתין לטלפון שלך · ייתכן שחסרות הצבעות קודמות"
+
+#: src/ui/polls.rs:328
+msgid "Loading earlier votes from your phone…"
+msgstr "טוען הצבעות קודמות מהטלפון שלך…"
+
+#: src/ui/polls.rs:330
+msgid "Earlier votes have not been loaded yet"
+msgstr "הצבעות קודמות עדיין לא נטענו"
+
+#: src/ui/polls.rs:332
+#, rust-format
+msgid "{} voter"
+msgid_plural "{} voters"
+msgstr[0] "מצביע/ה {}"
+msgstr[1] "{} מצביעים"
+
+#: src/ui/polls.rs:351
+msgid "Voting key unavailable · use your phone"
+msgstr "מפתח ההצבעה לא זמין · השתמשו בטלפון"
+
+#: src/ui/polls.rs:358
+msgid "Reconnect to vote"
+msgstr "התחברו מחדש כדי להצביע"
+
+#: src/ui/polls.rs:401 src/ui/polls.rs:430
+msgid "Show votes"
+msgstr "הצגת הצבעות"
+
+#: src/ui/polls.rs:457
+msgid "Poll results"
+msgstr "תוצאות הסקר"
+
+#: src/ui/polls.rs:484
+msgid "This poll is no longer available."
+msgstr "הסקר הזה כבר לא זמין."
+
+#: src/ui/polls.rs:505
+msgid "Earlier votes may still be missing. Results update as they arrive."
+msgstr "ייתכן שעדיין חסרות הצבעות קודמות. התוצאות מתעדכנות עם הגעתן."
+
+#: src/ui/polls.rs:537
+#, rust-format
+msgid "{} vote"
+msgid_plural "{} votes"
+msgstr[0] "{} הצבעה"
+msgstr[1] "{} הצבעות"
+
+#: src/ui/polls.rs:581
+msgid "Participant details are not available yet"
+msgstr "פרטי המשתתפים עדיין לא זמינים"
+
+#: src/ui/update.rs:25 src/ui/update.rs:38
+msgid "Update ZapFast"
+msgstr "עדכון ZapFast"
+
+#: src/ui/update.rs:49
+msgid "Close update"
+msgstr "סגירת העדכון"
+
+#: src/ui/update.rs:63
+msgid "Release notes"
+msgstr "הערות גרסה"
+
+#: src/ui/update.rs:70
+msgid "Checking download…"
+msgstr "בודק הורדה…"
+
+#: src/ui/update.rs:72
+msgid "Downloading update…"
+msgstr "מוריד עדכון…"
+
+#: src/ui/update.rs:85
+#, rust-format
+msgid "{received} of {total} MB"
+msgstr "{received} מתוך {total} MB"
+
+#: src/ui/update.rs:104
+msgid "Ready to install"
+msgstr "מוכן להתקנה"
+
+#: src/ui/update.rs:113
+msgid ""
+"Finish any unsent messages or recordings before restarting. ZapFast will "
+"briefly disconnect, then reconnect automatically."
+msgstr ""
+"סיימו הודעות או הקלטות שלא נשלחו לפני ההפעלה מחדש. ZapFast יתנתק לרגע ואז "
+"יתחבר מחדש אוטומטית."
+
+#: src/ui/update.rs:121
+msgid "Restart to update"
+msgstr "הפעלה מחדש לעדכון"
+
+#: src/ui/update.rs:130
+msgid "Preparing to restart…"
+msgstr "מתכונן להפעלה מחדש…"
+
+#: src/ui/update.rs:147
+msgid "Download from GitHub"
+msgstr "הורדה מ-GitHub"
+
+#: src/ui/update.rs:152
+msgid "Retry download"
+msgstr "ניסיון הורדה חוזר"
+
+#: src/ui/update.rs:154
+msgid "Download update"
+msgstr "הורדת העדכון"
+
+#: src/a11y.rs:97
+#, rust-format
+msgid "Messages in {name}"
+msgstr "הודעות ב{name}"
+
+#: src/a11y.rs:99
+#, rust-format
+msgid "Messages with {name}"
+msgstr "הודעות עם {name}"
+
+#: src/a11y.rs:122
+#, rust-format
+msgid "replying to {name}: {text}"
+msgstr "תשובה אל {name}: {text}"
+
+#: src/a11y.rs:130
+msgid "forwarded"
+msgstr "הועברה"
+
+#: src/a11y.rs:133
+msgid "edited"
+msgstr "נערכה"
+
+#: src/a11y.rs:136
+msgid "starred"
+msgstr "מסומנת בכוכב"
+
+#: src/a11y.rs:139
+msgid "pinned"
+msgstr "נעוצה"
+
+#: src/a11y.rs:149
+#, rust-format
+msgid "reactions: {reactions}"
+msgstr "תגובות: {reactions}"
+
+#: src/a11y.rs:167
+#, rust-format
+msgid "{count} photo"
+msgid_plural "{count} photos"
+msgstr[0] "{count} תמונה"
+msgstr[1] "{count} תמונות"
+
+#: src/a11y.rs:173
+#, rust-format
+msgid "{count} video"
+msgid_plural "{count} videos"
+msgstr[0] "{count} סרטון"
+msgstr[1] "{count} סרטונים"
+
+#: src/a11y.rs:253
+#, rust-format
+msgid "Poll: {question}, {count} option"
+msgid_plural "Poll: {question}, {count} options"
+msgstr[0] "סקר: {question}, {count} אפשרות"
+msgstr[1] "סקר: {question}, {count} אפשרויות"
+
+#: src/a11y.rs:269
+#, rust-format
+msgid "Unsupported message ({what})"
+msgstr "הודעה לא נתמכת ({what})"
+
+#: src/a11y.rs:339
+msgid "downloading"
+msgstr "מוריד"
+
+#: src/a11y.rs:343
+msgid "download failed"
+msgstr "ההורדה נכשלה"
+
+#: src/a11y.rs:348
+msgid "not downloaded"
+msgstr "לא הורד"
+
+#: src/a11y.rs:357
+msgid "sending"
+msgstr "שולח"
+
+#: src/a11y.rs:358
+msgid "sent"
+msgstr "נשלחה"
+
+#: src/a11y.rs:359
+msgid "delivered"
+msgstr "נמסרה"
+
+#: src/a11y.rs:360
+msgid "read"
+msgstr "נקראה"
+
+#: src/a11y.rs:361
+msgid "played"
+msgstr "הושמעה"
+
+#: src/a11y.rs:362
+msgid "not sent"
+msgstr "לא נשלחה"
