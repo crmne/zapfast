@@ -173,7 +173,7 @@ the other way round. Stars made before your copy of ZapFast followed them are
 read from the phone once, the next time it connects. The star near the foot of the rail on the left of the chat list, above
 **Archived** and **Settings**, opens
 **Starred**, which lists every starred message, newest star first, with its
-chat's name and when it was starred. Text shows as written; a photo, video,
+chat's name and the day each message was sent. Text shows as written; a photo, video,
 document, or voice message shows the same label the chat list uses. Clicking a
 row opens the chat at that message, and right-clicking it offers the chat's own
 menu, including **Unstar**. Messages from locked chats stay out of the list.
