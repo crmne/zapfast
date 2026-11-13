@@ -17,6 +17,48 @@ WhatsApp answers a limited number of QR codes on one connection and then ends
 it. ZapFast opens a fresh connection for a new set, so the linking screen keeps
 showing a current code until you scan it.
 
+### Passkey verification
+
+Development builds can answer WhatsApp's additional passkey challenge through
+a nearby phone. This is separate from the WhatsApp linking QR code. Select
+**Start**, then scan the passkey QR code with the phone's camera, not the
+Linked devices scanner. Approve the request using a WhatsApp passkey already
+available on that phone. ZapFast does not need access to your password manager
+or the passkey's private key.
+
+Both devices need Bluetooth and internet access. Linux uses BlueZ through
+system D-Bus; macOS needs Bluetooth permission. On supported Windows 11
+versions, Windows displays the authentication dialog and its QR code.
+The phone's operating system determines which passkey providers it offers.
+
+For a fresh link, compare the code shown on both devices before continuing.
+Cancel and failed-attempt retries keep the local archive and session files.
+The authenticator request expires after at most one minute. Linking initially
+has a two-minute deadline after **Start**. When a confirmation code arrives,
+a fresh two-minute window covers code comparison and the remaining pairing
+steps. Repeated confirmation events do not extend that window.
+Failed attempts retain their original error instead of replacing it when that
+deadline passes. Diagnostic logs record linking stages and error categories,
+not QR payloads, challenges, or credentials.
+Optional browser metadata, transport hints, and unsupported WebAuthn extensions
+do not block the QR flow. The server's challenge, relying party, allowed
+credential IDs, and user-verification requirement stay intact.
+
+This integration is experimental. Its hybrid transport library warns that
+the implementation is incomplete and has not had a cryptographic security
+review. Live compatibility with a particular phone or passkey provider must
+be checked before relying on it.
+
+The published `webauthn-authenticator-rs` 0.6.2 crate drops the authenticator's
+user handle from CTAP assertions on Linux and macOS. A discoverable request,
+with no allowed credential IDs, requires a non-empty user handle. If the
+authenticator omits it, ZapFast stops before submitting the assertion and
+explains that updated authenticator support is needed. It never fabricates
+a handle. Requests that name allowed credential IDs may omit it.
+The successful local trial used a dependency patch; this build uses the
+unmodified published crate and has not had the same end-to-end verification.
+Windows uses the native WebAuthn API instead.
+
 Each linked device can have one connection. Two clients using the same device
 keys will disconnect each other. A second ZapFast launch reopens the existing
 window instead of starting another instance.
@@ -47,6 +89,10 @@ for its picture, to build a [preview](/using-zapfast/#writing). It has no
 telemetry. It also asks
 `api.github.com` once a day whether a newer release exists; you can turn this
 off in Settings. Downloading an update fetches release files from GitHub.
+
+Passkey verification also uses Bluetooth for proximity and an encrypted
+hybrid-authentication tunnel through infrastructure operated by Apple or
+Google. The tunnel carries authentication traffic, not chats or contacts.
 
 Unlinking from Settings tells the phone to forget the device and deletes
 the local archive and caches.

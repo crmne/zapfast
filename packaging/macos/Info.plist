@@ -16,6 +16,7 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>ZapFast uses the microphone for calls and for the voice messages you choose to send.</string>
     <key>NSCameraUsageDescription</key><string>ZapFast uses the camera for the video calls you make and answer.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>ZapFast uses Bluetooth to connect to the nearby phone you choose for passkey sign-in.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Carmine Paolino. Not affiliated with WhatsApp or Meta.</string>
 </dict>
 </plist>

@@ -19,6 +19,9 @@ struct Cli {
     /// and ZapFast keeps running in the background. For login autostart.
     #[arg(long)]
     start_hidden: bool,
+    /// Internal authenticator child process. Reads only its anonymous pipe.
+    #[arg(long, hide = true)]
+    passkey_helper: bool,
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
@@ -206,6 +209,15 @@ fn run() -> eframe::Result<()> {
     // `--update-receipt` and `--update-error` off the command line.
     let launch = fastframe_update::intercept(&zapfast::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
+    if cli.passkey_helper {
+        std::process::exit(
+            if backend::passkey::run_helper() == std::process::ExitCode::SUCCESS {
+                0
+            } else {
+                1
+            },
+        );
+    }
     let discovered = paths::AppDirs::discover();
     // A control command only talks to the running copy: whatever the answer,
     // it never starts ZapFast and never stops a process itself.

@@ -15,6 +15,9 @@ use crate::model::{
 };
 use crate::paths::AccountDirs;
 
+#[doc(hidden)]
+pub mod passkey;
+
 pub(crate) mod picture_edit;
 
 // Re-exported so the picker can detect pasted Signal pack links.
@@ -33,6 +36,18 @@ pub enum MessageRemovalOutcome {
     Uncertain,
 }
 
+/// The user-visible steps of passkey linking, without protocol data.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PasskeyStage {
+    Ready,
+    Starting,
+    Qr(String),
+    Waiting,
+    Confirm(String),
+    Submitting,
+    Failed(String),
+}
+
 /// Phone-link state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkStatus {
@@ -42,6 +57,10 @@ pub enum LinkStatus {
         qr: Option<String>,
         pair_code: Option<String>,
         pairing_phone: Option<String>,
+    },
+    Passkey {
+        attempt: u64,
+        stage: PasskeyStage,
     },
     Connecting,
     Connected,
@@ -64,6 +83,15 @@ impl LinkStatus {
         match self {
             Self::Starting => "starting",
             Self::Unlinked { .. } => "unlinked",
+            Self::Passkey { stage, .. } => match stage {
+                PasskeyStage::Ready => "passkey required",
+                PasskeyStage::Starting => "passkey starting",
+                PasskeyStage::Qr(_) => "passkey qr",
+                PasskeyStage::Waiting => "passkey waiting for phone",
+                PasskeyStage::Confirm(_) => "passkey code confirmation",
+                PasskeyStage::Submitting => "passkey submitting",
+                PasskeyStage::Failed(_) => "passkey failed",
+            },
             Self::Connecting => "connecting",
             Self::Connected => "connected",
             Self::Disconnected { .. } => "disconnected",
@@ -973,6 +1001,9 @@ pub enum Command {
         success: bool,
     },
     PairWithPhone(String),
+    StartPasskey(u64),
+    ConfirmPasskey(u64),
+    CancelPasskey(u64),
     /// Unlinks the device remotely and locally.
     Unlink,
     /// Unlinks this account and deletes its local folders.
@@ -1117,6 +1148,7 @@ pub enum Command {
     },
     /// Internal pairing-code result.
     PairCode {
+        connection: u64,
         result: Result<String, String>,
     },
     /// Internal account read-receipt setting.

@@ -9,7 +9,7 @@ mod focus_trace;
 use std::collections::HashMap;
 
 use crate::app::{App, Conversation, Presence};
-use crate::backend::LinkStatus;
+use crate::backend::{LinkStatus, PasskeyStage};
 use crate::calls::{CallPhase, CallUpdate};
 use crate::model::CallDirection;
 use crate::model::{
@@ -3327,6 +3327,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     filename: "Messages light.json".into(),
                     palette: crate::theme::Palette::messages_light(),
                 });
+            }
+            "passkey" | "passkey-qr" | "passkey-waiting" | "passkey-confirm" | "passkey-error" => {
+                app.dialog = None;
+                app.link = LinkStatus::Passkey {
+                    attempt: 42,
+                    stage: match part {
+                        "passkey-qr" => {
+                            PasskeyStage::Qr("FIDO:/ZAPFAST-SYNTHETIC-DEMO-NOT-A-CREDENTIAL".into())
+                        }
+                        "passkey-waiting" => PasskeyStage::Waiting,
+                        "passkey-confirm" => PasskeyStage::Confirm("123456".into()),
+                        "passkey-error" => PasskeyStage::Failed(
+                            crate::backend::passkey::MISSING_USER_HANDLE_ERROR.into(),
+                        ),
+                        _ => PasskeyStage::Ready,
+                    },
+                };
             }
             "login" => {
                 unlink(app);
@@ -9873,7 +9890,21 @@ mod tests {
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
         }
-        for page in ["login", "pair", "phone"] {
+        for page in [
+            "login",
+            "pair",
+            "phone",
+            "passkey",
+            "passkey-qr",
+            "passkey-waiting",
+            "passkey-confirm",
+            "passkey-error",
+            "passkey,light",
+            "passkey-qr,light",
+            "passkey-waiting,light",
+            "passkey-confirm,light",
+            "passkey-error,light",
+        ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
@@ -10028,6 +10059,16 @@ mod tests {
             ("locked-open", wide),
             ("app-lock", wide),
             ("login", wide),
+            ("passkey", wide),
+            ("passkey-qr", wide),
+            ("passkey-waiting", wide),
+            ("passkey-confirm", wide),
+            ("passkey-error", wide),
+            ("passkey", narrow),
+            ("passkey-qr", narrow),
+            ("passkey-waiting", narrow),
+            ("passkey-confirm", narrow),
+            ("passkey-error", narrow),
             ("offline", wide),
             ("offline,empty", wide),
             ("offline,settings", wide),
@@ -10174,6 +10215,11 @@ mod tests {
                 "archived",
                 "offline",
                 "login",
+                "passkey",
+                "passkey-qr",
+                "passkey-waiting",
+                "passkey-confirm",
+                "passkey-error",
             ] {
                 let mut app = self::app();
                 app.settings.zoom = zoom;

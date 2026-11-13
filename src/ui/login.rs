@@ -1,9 +1,9 @@
-//! Phone linking with a QR code or pairing code.
+//! Phone linking and passkey authentication.
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Stroke, Vec2};
 
 use crate::app::App;
-use crate::backend::LinkStatus;
+use crate::backend::{LinkStatus, PasskeyStage};
 use crate::model::{Action, Dialog};
 use crate::qr::Qr;
 use crate::theme::{self, Icon};
@@ -154,6 +154,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         }
+        LinkStatus::Passkey { attempt, stage } => passkey_view(app, ui, attempt, &stage),
         LinkStatus::Unlinked {
             qr,
             pair_code,
@@ -187,6 +188,146 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(11.5),
         palette.dim,
     );
+}
+
+fn passkey_view(app: &mut App, ui: &mut egui::Ui, attempt: u64, stage: &PasskeyStage) {
+    let palette = app.palette;
+    let locale = app.locale;
+    theme::text(
+        ui,
+        crate::i18n::gettext(locale, "Sign in with a passkey"),
+        theme::semibold(16.0),
+        palette.text,
+    );
+    match stage {
+        PasskeyStage::Ready => {
+            theme::paragraph(
+                ui,
+                crate::i18n::gettext(
+                    locale,
+                    "WhatsApp requires your passkey to continue. Use a nearby phone that can access your WhatsApp passkey. Your saved chats stay on this computer.",
+                ),
+                theme::regular(13.0),
+                palette.secondary,
+            );
+            if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Start"), true)
+                .clicked()
+            {
+                app.actions.push(Action::StartPasskey(attempt));
+            }
+        }
+        PasskeyStage::Starting => busy(
+            ui,
+            palette.accent,
+            &crate::i18n::gettext(locale, "Preparing passkey authentication…"),
+        ),
+        PasskeyStage::Qr(code) => {
+            let side = ui.available_width().min(220.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+            match Qr::encode(code) {
+                Some(qr) => qr.paint(ui, rect, egui::Color32::BLACK, egui::Color32::WHITE),
+                None => {
+                    ui.painter().rect_filled(rect, 8.0, palette.surface);
+                    theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
+                }
+            }
+            theme::paragraph(
+                ui,
+                crate::i18n::gettext(
+                    locale,
+                    "Scan this code with your phone's camera, not WhatsApp's Linked devices scanner. Keep the phone nearby, turn on Bluetooth on both devices, and connect both to the internet.",
+                ),
+                theme::regular(13.0),
+                palette.secondary,
+            );
+        }
+        PasskeyStage::Waiting => {
+            busy(
+                ui,
+                palette.accent,
+                &crate::i18n::gettext(locale, "Waiting for approval on your phone…"),
+            );
+            theme::paragraph(
+                ui,
+                crate::i18n::gettext(
+                    locale,
+                    "Choose your WhatsApp passkey on the phone and approve the request. Keep Bluetooth and internet enabled.",
+                ),
+                theme::regular(13.0),
+                palette.secondary,
+            );
+        }
+        PasskeyStage::Confirm(code) => {
+            theme::paragraph(
+                ui,
+                crate::i18n::gettext(
+                    locale,
+                    "Check that your phone shows this same code. Continue only if the codes match.",
+                ),
+                theme::regular(13.0),
+                palette.secondary,
+            );
+            Frame::new()
+                .fill(palette.surface)
+                .corner_radius(CornerRadius::same(theme::RADIUS))
+                .inner_margin(Margin::symmetric(22, 12))
+                .show(ui, |ui| {
+                    theme::text(ui, code, theme::bold(30.0), palette.text);
+                });
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(locale, "The same code is on my phone"),
+                true,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::ConfirmPasskey(attempt));
+            }
+        }
+        PasskeyStage::Submitting => busy(
+            ui,
+            palette.accent,
+            &crate::i18n::gettext(locale, "Finishing passkey authentication…"),
+        ),
+        PasskeyStage::Failed(message) => {
+            theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
+            let missing_user_handle = message == crate::backend::passkey::MISSING_USER_HANDLE_ERROR;
+            let explanation = if missing_user_handle {
+                crate::i18n::gettext(
+                    locale,
+                    "The authenticator did not return the user handle required for this passkey request. ZapFast needs updated authenticator support to complete it.",
+                )
+            } else {
+                std::borrow::Cow::Borrowed(message.as_str())
+            };
+            theme::paragraph(ui, explanation, theme::regular(13.0), palette.danger);
+            if !missing_user_handle {
+                theme::paragraph(
+                    ui,
+                    crate::i18n::gettext(
+                        locale,
+                        "Check Bluetooth, internet access, and that your phone has your WhatsApp passkey, then try again.",
+                    ),
+                    theme::regular(13.0),
+                    palette.secondary,
+                );
+            }
+            if theme::pill_button(
+                ui,
+                &palette,
+                &crate::i18n::gettext(locale, "Try again"),
+                true,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::StartPasskey(attempt));
+            }
+        }
+    }
+    if theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Cancel"), false).clicked() {
+        app.actions.push(Action::CancelPasskey(attempt));
+    }
 }
 
 pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
