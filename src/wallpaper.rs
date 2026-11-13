@@ -35,6 +35,8 @@ pub struct Look {
     pub color: Color32,
     /// Whether the doodles are drawn over the colour.
     pub doodles: bool,
+    /// Their ink strength between 0 (invisible) and 1 (original appearance).
+    pub doodle_opacity: f32,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<ColorImage>)>,
 }
@@ -61,7 +63,7 @@ pub fn paint_rect(ui: &egui::Ui, rect: Rect, look: &Look) {
         None => forget_image(ui.ctx()),
     }
 
-    if !look.doodles {
+    if !look.doodles || look.doodle_opacity <= 0.0 {
         return;
     }
 
@@ -74,7 +76,7 @@ pub fn paint_rect(ui: &egui::Ui, rect: Rect, look: &Look) {
         return;
     }
 
-    let line = doodle_ink(look.color);
+    let line = doodle_ink_with_opacity(look.color, look.doodle_opacity);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let origin = pos2(0.0, 0.0);
     let first_x = origin.x + (rect.left() - origin.x).div_euclid(tile.x) * tile.x;
@@ -112,6 +114,20 @@ pub fn doodle_ink(background: Color32) -> Color32 {
     let distance = (luma - f32::from(ink)).abs().max(1.0);
     let alpha = (step / distance).clamp(0.1, 0.4);
     Color32::from_rgba_unmultiplied(ink, ink, ink, (alpha * 255.0).round() as u8)
+}
+
+/// Scale the ink's opacity without changing its colour or theme-based contrast.
+fn doodle_ink_with_opacity(background: Color32, opacity: f32) -> Color32 {
+    let ink = doodle_ink(background);
+    let opacity = opacity.clamp(0.0, 1.0);
+    // Color32 channels are premultiplied by alpha. Scale all four together
+    // to preserve the ink colour as its strength changes.
+    Color32::from_rgba_premultiplied(
+        (f32::from(ink.r()) * opacity).round() as u8,
+        (f32::from(ink.g()) * opacity).round() as u8,
+        (f32::from(ink.b()) * opacity).round() as u8,
+        (f32::from(ink.a()) * opacity).round() as u8,
+    )
 }
 
 /// The part of an image of `image` size that covers `area` while keeping its
@@ -463,6 +479,24 @@ mod tests {
         // WhatsApp's own light and dark defaults keep their familiar look.
         assert_eq!(ink_alpha(doodle_ink(Color32::from_rgb(245, 241, 235))), 28);
         assert_eq!(ink_alpha(doodle_ink(Color32::from_rgb(22, 23, 23))), 42);
+    }
+
+    #[test]
+    fn doodle_opacity_scales_the_original_tint() {
+        for background in [
+            Color32::from_rgb(22, 23, 23),
+            Color32::from_rgb(245, 241, 235),
+        ] {
+            let original = doodle_ink(background);
+            assert_eq!(doodle_ink_with_opacity(background, 1.0), original);
+            assert_eq!(doodle_ink_with_opacity(background, 0.0).a(), 0);
+            let faded = doodle_ink_with_opacity(background, 0.5);
+            assert_eq!(faded.a(), (f32::from(original.a()) * 0.5).round() as u8);
+            assert_eq!(faded.r(), (f32::from(original.r()) * 0.5).round() as u8);
+            assert_eq!(faded.g(), (f32::from(original.g()) * 0.5).round() as u8);
+            assert_eq!(faded.b(), (f32::from(original.b()) * 0.5).round() as u8);
+            assert_eq!(doodle_ink_with_opacity(background, 2.0), original);
+        }
     }
 
     fn ink_alpha(ink: Color32) -> u8 {

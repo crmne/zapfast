@@ -963,6 +963,16 @@ the button under **Calls** brings the full list back.
 In a short window, scroll the rail to reach its lower buttons. Tab and
 Shift+Tab bring the focused button into view, too.
 
+## Chat wallpaper
+
+Open **Settings > Appearance > Wallpaper** to choose a background colour or
+image for your conversations. **Add doodles** overlays the default pattern on
+the selected colour. With doodles enabled, **Doodle opacity** adjusts their
+strength from 0% (invisible) to 100% (the original appearance). The control is
+disabled when doodles are off, and ZapFast remembers the chosen opacity.
+
+A selected wallpaper image replaces the colour and doodles until you remove it.
+
 ## Notifications and the tray
 
 Closing the window keeps ZapFast linked in the tray, unless **Keep running when

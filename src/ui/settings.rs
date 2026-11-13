@@ -1255,18 +1255,13 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                 Layout::top_down(Align::Min).with_main_align(Align::Min),
                 |ui| {
                     let section = ui.max_rect();
-                    let header = Rect::from_min_size(
-                        section.left_top(),
-                        vec2(left_width, HEADER_HEIGHT),
-                    );
+                    let header =
+                        Rect::from_min_size(section.left_top(), vec2(left_width, HEADER_HEIGHT));
                     ui.painter().rect_filled(header, 0.0, palette.panel);
                     ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .max_rect(header)
-                            .layout(
-                                Layout::left_to_right(Align::Center)
-                                    .with_main_align(Align::Min),
-                            ),
+                        egui::UiBuilder::new().max_rect(header).layout(
+                            Layout::left_to_right(Align::Center).with_main_align(Align::Min),
+                        ),
                         |ui| {
                             ui.add_space(24.0);
                             if theme::icon_button(
@@ -1298,24 +1293,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                 .id_salt("wallpaper-palette")
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    ui.allocate_ui_with_layout(
-                                        vec2(palette_width, 28.0),
-                                        Layout::top_down(Align::Center),
-                                        |ui| {
-                                            let mut doodles = app.settings.show_wallpaper;
-                                            let checkbox = ui.checkbox(
-                                                &mut doodles,
-                                                crate::i18n::gettext(app.locale, "Add doodles"),
-                                            );
-                                            checkbox.on_hover_text(crate::i18n::gettext(
-                                                app.locale,
-                                                "Show the default doodles over the selected colour.",
-                                            ));
-                                            if doodles != app.settings.show_wallpaper {
-                                                app.actions.push(Action::SetWallpaperDoodles(doodles));
-                                            }
-                                        },
-                                    );
+                                    wallpaper_doodle_controls(app, ui, palette_width);
                                     ui.add_space(12.0);
                                     image_buttons(app, ui, palette_width);
                                     ui.add_space(18.0);
@@ -1335,13 +1313,10 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                                 app.settings.wallpaper_color_for(palette.dark);
                                             for color in WallpaperColor::choices(palette.dark) {
                                                 if wallpaper_color_button(
-                                                    ui,
-                                                    &palette,
-                                                    app.locale,
-                                                    *color,
-                                                    selected,
+                                                    ui, &palette, app.locale, *color, selected,
                                                 ) {
-                                                    app.actions.push(Action::SetWallpaperColor(*color));
+                                                    app.actions
+                                                        .push(Action::SetWallpaperColor(*color));
                                                 }
                                             }
                                         });
@@ -1358,10 +1333,8 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                 Layout::top_down(Align::Min).with_main_align(Align::Min),
                 |ui| {
                     let section = ui.max_rect();
-                    let header = Rect::from_min_size(
-                        section.left_top(),
-                        vec2(preview_width, HEADER_HEIGHT),
-                    );
+                    let header =
+                        Rect::from_min_size(section.left_top(), vec2(preview_width, HEADER_HEIGHT));
                     ui.painter().rect_filled(header, 0.0, palette.panel);
                     ui.painter().text(
                         header.center(),
@@ -1387,6 +1360,82 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
             );
         },
     );
+}
+
+/// Keep doodle visibility and opacity together, even when the palette is narrow.
+fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
+    let mut doodles = app.settings.show_wallpaper;
+    let mut opacity = app.settings.doodle_opacity;
+    let doodles_label = crate::i18n::gettext(app.locale, "Add doodles");
+    let doodles_hint = crate::i18n::gettext(
+        app.locale,
+        "Show the default doodles over the selected colour.",
+    );
+    let opacity_label = crate::i18n::gettext(app.locale, "Doodle opacity");
+    let checkbox = |ui: &mut egui::Ui, enabled: &mut bool| {
+        let _response = ui
+            .checkbox(enabled, doodles_label.as_ref())
+            .on_hover_text(doodles_hint.as_ref());
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("test-wallpaper-doodles-toggle"),
+                _response.rect,
+            );
+        });
+    };
+    let slider = |ui: &mut egui::Ui, enabled: bool, value: &mut u8, inline_label: bool| {
+        // On narrow palettes the label has its own row. Reserve width for
+        // the percentage field and give the slider track the remaining space.
+        ui.spacing_mut().slider_width = if inline_label {
+            108.0
+        } else {
+            (width - 64.0).max(48.0)
+        };
+        let mut control = egui::Slider::new(value, 0..=100).suffix("%");
+        if inline_label {
+            control = control.text(opacity_label.as_ref());
+        }
+        let _response = ui.add_enabled(enabled, control);
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("test-wallpaper-doodle-opacity"),
+                (_response.rect, _response.enabled()),
+            );
+        });
+    };
+
+    if width >= 440.0 {
+        ui.allocate_ui_with_layout(
+            vec2(width, 36.0),
+            Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+            |ui| {
+                checkbox(ui, &mut doodles);
+                ui.add_space(14.0);
+                slider(ui, doodles, &mut opacity, true);
+            },
+        );
+    } else {
+        ui.allocate_ui_with_layout(vec2(width, 28.0), Layout::top_down(Align::Center), |ui| {
+            checkbox(ui, &mut doodles)
+        });
+        ui.allocate_ui_with_layout(vec2(width, 22.0), Layout::top_down(Align::Center), |ui| {
+            ui.label(opacity_label.as_ref());
+        });
+        ui.allocate_ui_with_layout(
+            vec2(width, 36.0),
+            Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+            |ui| slider(ui, doodles, &mut opacity, false),
+        );
+    }
+
+    if doodles != app.settings.show_wallpaper {
+        app.actions.push(Action::SetWallpaperDoodles(doodles));
+    }
+    if opacity != app.settings.doodle_opacity {
+        app.actions.push(Action::SetWallpaperDoodleOpacity(opacity));
+    }
 }
 
 /// "Choose image…", and "Remove image" while one is set, centred over the
