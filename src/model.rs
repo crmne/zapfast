@@ -571,6 +571,126 @@ pub enum Delivery {
     Failed,
 }
 
+/// What a message's own entry says about when it disappears.
+///
+/// Absence of a field is "the phone did not say", never "no deadline": a
+/// message in a timed chat can arrive without any of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ephemeral {
+    /// The phone's own deadline for this message, in Unix seconds.
+    pub absolute: Option<i64>,
+    /// The Unix second this message's timer started, from history.
+    pub started_at: Option<i64>,
+    /// The timer's length in seconds. A timer that is off is none.
+    pub duration: Option<u32>,
+}
+
+/// How far a message's deadline can be trusted, which decides what may replace
+/// it for the same message: a stronger value wins, and an equally strong one
+/// only fills a missing deadline, except among the weakest class, where the
+/// newest answer stands because those values are guesses.
+///
+/// This ranks evidence about *when* a message expires, which is not the same as
+/// permission to remove it: WhatsApp also lets a message be kept, and this
+/// archive does not record that yet, so no rank here is enough on its own to
+/// delete a row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(i64)]
+pub enum DeadlineTrust {
+    /// Counted from a time this device cannot vouch for: one it stamped itself
+    /// for a message it is still sending, or one the library supplied in place
+    /// of a missing or unreadable stanza attribute. Not "never sent": a received
+    /// message can sit here too, and a later delivery may then move it, in
+    /// either direction, since nothing here proves which time was the real one.
+    /// Anything the server answered replaces it.
+    ///
+    /// A sweep that deletes expired messages must not delete on this. The time
+    /// it counts from may be the delivery time of a stanza whose attribute the
+    /// library replaced, so the deadline can be later than WhatsApp's own,
+    /// which is the wrong side to be wrong on only for as long as nothing
+    /// deletes.
+    #[default]
+    Provisional = 0,
+    /// Counted from a timestamp WhatsApp set for the message. Necessary
+    /// evidence for a deletion, never sufficient: nothing here records whether
+    /// the message was kept, which overrides its timer.
+    Server = 1,
+    /// The phone's own value, from history. Same caveat as [`Self::Server`].
+    Stated = 2,
+}
+
+impl DeadlineTrust {
+    /// The rank `messages.expires_trust` stores. The numbers are the stored
+    /// meaning, so they are written down here and nowhere else.
+    pub fn rank(self) -> i64 {
+        self as i64
+    }
+
+    /// The trust a stored rank stands for. A rank this build does not know is
+    /// the weakest, never one that would let a deadline carry a deletion.
+    pub fn from_rank(rank: i64) -> Self {
+        match rank {
+            1 => Self::Server,
+            2 => Self::Stated,
+            _ => Self::Provisional,
+        }
+    }
+}
+
+/// One message's deadline and how far it can be trusted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Expiry {
+    /// Unix seconds after which the message disappears.
+    pub at: i64,
+    pub trust: DeadlineTrust,
+}
+
+impl Ephemeral {
+    /// What a message we are sending says: only its timer's length, its
+    /// deadline counted from the message's own time.
+    pub fn timed(duration: Option<u32>) -> Option<Self> {
+        Some(Self {
+            duration: Some(duration.filter(|seconds| *seconds > 0)?),
+            ..Self::default()
+        })
+    }
+
+    /// Fills a length this statement lacks from another statement of the same
+    /// message, keeping what this one says. A history envelope can name only the
+    /// timer's start while the message body carries its length.
+    pub fn fill_missing_duration(&mut self, other: &Self) {
+        if self.duration.is_none() {
+            self.duration = other.duration;
+        }
+    }
+
+    /// The expiry this entry states for a message sent at `sent`, counting a
+    /// timer from that time when only its length is known.
+    ///
+    /// A value the phone stated is trusted as such, and so is a timer counted
+    /// from the start history recorded, which is WhatsApp's own time. Counting
+    /// from the message's own time is trusted as far as `counted` says, and is
+    /// not done at all when that time is unknown: a message whose entry carries
+    /// no time and no server-answered deadline has no deadline here.
+    pub fn expiry(&self, sent: Option<i64>, counted: DeadlineTrust) -> Option<Expiry> {
+        if let Some(absolute) = self.absolute {
+            return Some(Expiry {
+                at: absolute,
+                trust: DeadlineTrust::Stated,
+            });
+        }
+        let duration = i64::from(self.duration?);
+        let (from, trust) = match self.started_at {
+            Some(started_at) => (started_at, DeadlineTrust::Server),
+            None => (sent?, counted),
+        };
+        Some(Expiry {
+            at: from.saturating_add(duration),
+            trust,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// WhatsApp message id, unique within a chat.
@@ -3523,6 +3643,110 @@ mod storage_tests {
 
 #[cfg(test)]
 mod tests {
+    /// The phone's own deadline wins; a timer counts from the start history
+    /// recorded, else from the message's own time, and never from a missing
+    /// time or the clock.
+    #[test]
+    fn a_deadline_comes_from_the_phones_own_answer_else_the_messages_time() {
+        use super::{DeadlineTrust, Ephemeral, Expiry};
+        let timed = Ephemeral::timed(Some(86_400)).unwrap();
+        assert_eq!(
+            timed.expiry(Some(1_000), DeadlineTrust::Server),
+            Some(Expiry {
+                at: 1_000 + 86_400,
+                trust: DeadlineTrust::Server,
+            })
+        );
+        assert_eq!(
+            timed.expiry(Some(1_000), DeadlineTrust::Provisional),
+            Some(Expiry {
+                at: 1_000 + 86_400,
+                trust: DeadlineTrust::Provisional,
+            })
+        );
+        // A message whose own time the entry never stated has nothing to count
+        // from, so it carries no deadline rather than one counted from zero.
+        assert_eq!(timed.expiry(None, DeadlineTrust::Provisional), None);
+        // A start the phone recorded is its own time, whatever the message's is.
+        let counted = Ephemeral {
+            started_at: Some(2_000),
+            duration: Some(600),
+            absolute: None,
+        };
+        assert_eq!(
+            counted.expiry(None, DeadlineTrust::Provisional),
+            Some(Expiry {
+                at: 2_600,
+                trust: DeadlineTrust::Server,
+            })
+        );
+        let stated = Ephemeral {
+            absolute: Some(5_000),
+            started_at: Some(1),
+            duration: Some(86_400),
+        };
+        assert_eq!(
+            stated.expiry(None, DeadlineTrust::Provisional),
+            Some(Expiry {
+                at: 5_000,
+                trust: DeadlineTrust::Stated,
+            })
+        );
+        // A timer that is off states no deadline, and neither does a statement
+        // that names nothing or only a start: absence is not "never expires".
+        assert!(Ephemeral::timed(Some(0)).is_none());
+        assert_eq!(
+            Ephemeral::default().expiry(Some(1_000), DeadlineTrust::Server),
+            None
+        );
+        assert_eq!(
+            Ephemeral {
+                started_at: Some(1),
+                ..Ephemeral::default()
+            }
+            .expiry(Some(1_000), DeadlineTrust::Server),
+            None
+        );
+        // A length from another statement fills in without losing the start.
+        let mut start_only = Ephemeral {
+            started_at: Some(2_000),
+            ..Ephemeral::default()
+        };
+        assert_eq!(start_only.expiry(Some(1), DeadlineTrust::Server), None);
+        start_only.fill_missing_duration(&timed);
+        assert_eq!(
+            start_only.expiry(Some(9_999), DeadlineTrust::Provisional),
+            Some(Expiry {
+                at: 2_000 + 86_400,
+                trust: DeadlineTrust::Server,
+            })
+        );
+        // A statement that already has a length keeps its own.
+        let mut kept = counted;
+        kept.fill_missing_duration(&timed);
+        assert_eq!(kept.duration, Some(600));
+    }
+
+    /// The stored ranks are a compatibility surface, so they are written down
+    /// and read back through one pair rather than the variant order.
+    #[test]
+    fn deadline_trust_ranks_are_stable_and_unknown_ones_are_weakest() {
+        use super::DeadlineTrust;
+        for trust in [
+            DeadlineTrust::Provisional,
+            DeadlineTrust::Server,
+            DeadlineTrust::Stated,
+        ] {
+            assert_eq!(DeadlineTrust::from_rank(trust.rank()), trust);
+        }
+        assert_eq!(DeadlineTrust::Provisional.rank(), 0);
+        assert_eq!(DeadlineTrust::Server.rank(), 1);
+        assert_eq!(DeadlineTrust::Stated.rank(), 2);
+        // A rank this build does not know must never justify a deletion.
+        assert_eq!(DeadlineTrust::from_rank(7), DeadlineTrust::Provisional);
+        assert_eq!(DeadlineTrust::from_rank(-1), DeadlineTrust::Provisional);
+    }
+
     /// Checks compatibility with older archived quotes that omitted a source chat.
     #[test]
     fn archived_quotes_without_a_source_chat_remain_readable() {
