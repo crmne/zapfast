@@ -21,7 +21,9 @@ to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 After five seconds without input, the text cursor stays visible without
 blinking; it starts blinking again when you use the window.
 The emoji picker stays open while you choose emoji and closes when you send
-the text.
+the text. Press `Ctrl+.` or `Ctrl+;` in the message field (Control on macOS
+too) to open it with its search focused, as in GTK apps; Escape returns to the
+message.
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
 like WhatsApp, and a message of nothing but emoji shows large. Select text in
 the composer and right-click (or press Shift+F10 while it is focused) for

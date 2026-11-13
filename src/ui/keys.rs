@@ -3,7 +3,7 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Chat, ChatId, Dialog, InfoView, Page, Scroll};
+use crate::model::{Action, Chat, ChatId, Dialog, InfoView, Page, PickerTab, Scroll};
 
 /// Whether Home, End and Ctrl+End scroll the open chat rather than move the
 /// cursor of the focused text field (#456).
@@ -38,6 +38,23 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     // or with no field focused.
     let jump_allowed =
         jump_keys_reach_chat(editing_text, composer_focused, app.composer.is_empty());
+    // The emoji keys open the picker only where the smiley would: beside the
+    // focused message field, which hides the smiley while editing. A
+    // selection, a block or a read-only chat replaces the field, which can
+    // keep its focus for a frame after.
+    let emoji_keys_allowed = composer_focused
+        && app.chat_view()
+        && app.current_chat().is_some_and(|chat| {
+            chat.can_send() && !app.blocklist.contains(&chat.id) && !app.selecting_in(&chat.id)
+        })
+        && app.editing.is_none()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker != Some(PickerTab::Emoji)
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        // The call screen covers the chats.
+        && (app.call.is_none() || app.call_surface_hidden);
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         // The message list's key counts only with its modifier alone:
@@ -152,6 +169,11 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 Some(2) => actions.extend(super::rail::Destination::Calls.actions(app)),
                 _ => {}
             }
+        }
+        // Ctrl+. and Ctrl+; open the emoji picker with its search focused,
+        // the keys GTK's text fields open their emoji chooser with (#822).
+        if emoji_keys_allowed && take_emoji_key(input) {
+            actions.push(Action::TogglePicker(PickerTab::Emoji));
         }
     });
     drop_shortcut_text(ctx);
@@ -612,6 +634,37 @@ fn take_chat_number(input: &mut egui::InputState) -> Option<usize> {
     number
 }
 
+/// Takes this frame's first Ctrl+. or Ctrl+;, the emoji picker's keys. On
+/// macOS they are Control's too, held alone: Command+. and Command+Control
+/// are the system's.
+fn take_emoji_key(input: &mut egui::InputState) -> bool {
+    let mut taken = false;
+    input.events.retain(|event| {
+        let matches = !taken
+            && matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::Period | Key::Semicolon,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if emoji_modifiers(*modifiers)
+            );
+        taken |= matches;
+        !matches
+    });
+    taken
+}
+
+/// Control held with no other modifier, as the emoji keys want it.
+fn emoji_modifiers(modifiers: Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        control_alone(modifiers)
+    } else {
+        modifiers.matches_exact(Modifiers::CTRL)
+    }
+}
+
 /// Takes Ctrl+Shift+1 or Ctrl+Shift+2 (Cmd on macOS), the rail's Chats and
 /// Calls, and says which. It goes by the key's place on the keyboard: with
 /// Shift held, each layout reports the digit as a symbol of its own.
@@ -1058,6 +1111,14 @@ const MESSAGES_KEYS: &str = if cfg!(target_os = "macos") {
     "Alt+2"
 };
 
+/// Opens the emoji picker from the message input. Control on every platform:
+/// `label` would show "Ctrl" as ⌘ on macOS.
+const EMOJI_KEYS: &str = if cfg!(target_os = "macos") {
+    "Control+. / Control+;"
+} else {
+    "Ctrl+. / Ctrl+;"
+};
+
 /// Deletes the current message for me. A Mac's Delete key is Backspace, and
 /// Fn+Delete is Delete.
 const DELETE_KEYS: &str = if cfg!(target_os = "macos") {
@@ -1082,6 +1143,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Walk the open chat's search results and jump to one",
     ),
     ("Ctrl+L", "Focus the message input"),
+    (EMOJI_KEYS, "Emoji picker (in the message input)"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("Ctrl+Shift+[ / ]", "Previous / next chat, as in WhatsApp"),
     ("Ctrl+1..9", "Open a chat by its position in the chat list"),
@@ -2115,6 +2177,126 @@ mod tests {
                 ..Modifiers::NONE
             },
         ]
+    }
+
+    /// Ctrl+. and Ctrl+; open the emoji picker from the focused message
+    /// field, as they open GTK's emoji chooser (#822). Elsewhere, with
+    /// another modifier, while editing, or with the emoji tab already open,
+    /// the keys are left for the views.
+    #[test]
+    fn ctrl_period_and_semicolon_open_the_emoji_picker_from_the_composer() {
+        let (_root, mut app, ids) = app_with_chats(1);
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        // What a real Control press carries: Ctrl alone on macOS, where
+        // Command is its own key, and Ctrl and Command elsewhere.
+        let control = if cfg!(target_os = "macos") {
+            Modifiers::CTRL
+        } else {
+            Modifiers {
+                ctrl: true,
+                command: true,
+                ..Modifiers::NONE
+            }
+        };
+        let composer = egui::Id::new("composer-text");
+        let press_in_composer = |app: &mut App, key: Key, modifiers: Modifiers| {
+            app.actions.clear();
+            ctx.memory_mut(|memory| memory.request_focus(composer));
+            let survived = press(app, &ctx, key, modifiers);
+            (survived, std::mem::take(&mut app.actions))
+        };
+        for key in [Key::Period, Key::Semicolon] {
+            assert_eq!(
+                press_in_composer(&mut app, key, control),
+                (false, vec![Action::TogglePicker(PickerTab::Emoji)]),
+                "{key:?}"
+            );
+            let shifted = Modifiers {
+                shift: true,
+                ..control
+            };
+            assert_eq!(
+                press_in_composer(&mut app, key, shifted),
+                (true, vec![]),
+                "Shift with {key:?}"
+            );
+        }
+        // Another tab switches to the emoji; the emoji tab stays open.
+        app.picker = Some(PickerTab::Gifs);
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (false, vec![Action::TogglePicker(PickerTab::Emoji)])
+        );
+        app.picker = Some(PickerTab::Emoji);
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.picker = None;
+        // Editing hides the smiley, and the keys open nothing either.
+        app.editing = Some("sent".into());
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.editing = None;
+        // The call screen covers the chats, and the message field under it.
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: ids[0].clone(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        });
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.call_surface_hidden = true;
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (false, vec![Action::TogglePicker(PickerTab::Emoji)])
+        );
+        app.call = None;
+        app.call_surface_hidden = false;
+        // A selection or a block replaces the message field, and the keys
+        // open nothing in the frame it may still hold focus.
+        app.selection = Some((ids[0].clone(), Vec::new()));
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.selection = None;
+        app.blocklist.ids = Some(std::iter::once(ids[0].clone()).collect());
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.blocklist.ids = None;
+        app.chats[0].read_only = true;
+        assert_eq!(
+            press_in_composer(&mut app, Key::Period, control),
+            (true, vec![])
+        );
+        app.chats[0].read_only = false;
+        // Without the message field focused, the keys are not the picker's.
+        ctx.memory_mut(|memory| memory.surrender_focus(composer));
+        app.actions.clear();
+        assert!(press(&mut app, &ctx, Key::Period, control));
+        assert_eq!(app.actions, []);
     }
 
     #[test]

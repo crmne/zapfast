@@ -23012,6 +23012,50 @@ mod tests {
         assert_eq!(app.dialog, Some(crate::model::Dialog::Shortcuts));
     }
 
+    /// Ctrl+. and Ctrl+; in the message field open the emoji picker with
+    /// its search focused, and Escape closes it and gives the message field
+    /// its focus back (#822).
+    #[test]
+    fn the_emoji_keys_open_the_picker_and_escape_returns_to_the_message() {
+        // What a real Control press carries: Ctrl alone on macOS, and Ctrl
+        // and Command elsewhere.
+        let control = if cfg!(target_os = "macos") {
+            egui::Modifiers::CTRL
+        } else {
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..egui::Modifiers::NONE
+            }
+        };
+        let composer = egui::Id::new("composer-text");
+        for key in [egui::Key::Period, egui::Key::Semicolon] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            assert_eq!(ctx.memory(|memory| memory.focused()), Some(composer));
+            press_key(&mut app, &ctx, key, control);
+            assert_eq!(
+                app.picker,
+                Some(crate::model::PickerTab::Emoji),
+                "{key:?} opened the picker"
+            );
+            assert_eq!(
+                ctx.memory(|memory| memory.focused()),
+                Some(egui::Id::new("emoji-search")),
+                "{key:?} focused the picker's search"
+            );
+            press_key(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
+            assert!(app.picker.is_none(), "Escape closed the picker");
+            assert_eq!(
+                ctx.memory(|memory| memory.focused()),
+                Some(composer),
+                "Escape after {key:?} returned to the message"
+            );
+        }
+    }
+
     #[test]
     fn sending_text_closes_the_emoji_picker() {
         for enter_sends in [true, false] {
