@@ -8,14 +8,26 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-/// Image URIs kept resident. Anything the current frame drew is always kept,
-/// so this only bounds what has scrolled away.
+/// Keep the recent image window proportional to the selected resource profile.
+/// Images drawn in the current frame are always kept, even if this budget is exceeded.
+#[cfg(feature = "nano-ultra-low-resource")]
+const RESIDENT: usize = 24;
+#[cfg(all(feature = "nano-low-resource", not(feature = "nano-ultra-low-resource")))]
+const RESIDENT: usize = 48;
+#[cfg(not(feature = "nano-low-resource"))]
 const RESIDENT: usize = 96;
+
+/// Keep off-screen images briefly so a quick scroll back does not reload them.
+/// A single delayed repaint releases them after this window, even below RESIDENT.
+const IDLE_RETENTION: Duration = Duration::from_secs(30);
 
 struct Entry {
     /// Frame the image was last drawn on.
     frame: u64,
+    /// Last time it was drawn, used to release off-screen images after inactivity.
+    last_drawn: Instant,
     /// Whether its bytes are registered with egui's byte loader. egui drops
     /// them once the texture is uploaded, so this is what says a later draw
     /// has to register them again.
@@ -38,11 +50,13 @@ fn registry(ctx: &egui::Context) -> Registry {
 /// has dropped them once the texture was uploaded.
 pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
     let frame = ctx.cumulative_frame_nr();
+    let now = Instant::now();
     let registry = registry(ctx);
     let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
     let fresh = match entries.get_mut(uri) {
         Some(entry) => {
             entry.frame = frame;
+            entry.last_drawn = now;
             !std::mem::replace(&mut entry.registered, true)
         }
         None => {
@@ -50,6 +64,7 @@ pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
                 uri.to_owned(),
                 Entry {
                     frame,
+                    last_drawn: now,
                     registered: true,
                 },
             );
@@ -65,15 +80,20 @@ pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
 /// Marks an image URI as drawn this frame.
 pub fn touch(ctx: &egui::Context, uri: &str) {
     let frame = ctx.cumulative_frame_nr();
+    let now = Instant::now();
     let registry = registry(ctx);
     let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
     match entries.get_mut(uri) {
-        Some(entry) => entry.frame = frame,
+        Some(entry) => {
+            entry.frame = frame;
+            entry.last_drawn = now;
+        }
         None => {
             entries.insert(
                 uri.to_owned(),
                 Entry {
                     frame,
+                    last_drawn: now,
                     registered: false,
                 },
             );
@@ -94,33 +114,72 @@ pub fn forget(ctx: &egui::Context, uri: &str) {
     ctx.forget_image(uri);
 }
 
-/// Forgets the images that have not been drawn for the longest.
+/// Forgets images that have left the visible frame.
 ///
-/// Images the current frame drew are never forgotten, so a frame that shows
-/// more than `RESIDENT` images does not reload them on the next one.
+/// Current-frame images are always protected. Off-screen images get a short
+/// reuse window, then are released even when the resident budget is not full.
+/// The next expiry is scheduled as one delayed repaint; there is no polling
+/// timer keeping an otherwise idle window awake.
 pub fn sweep(ctx: &egui::Context) {
+    sweep_at(ctx, Instant::now());
+}
+
+fn sweep_at(ctx: &egui::Context, now: Instant) {
     let frame = ctx.cumulative_frame_nr();
-    let stale: Vec<String> = {
+    let (stale, next_expiry) = {
         let registry = registry(ctx);
         let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stale = Vec::new();
+        let mut next_expiry: Option<Instant> = None;
+
+        entries.retain(|uri, entry| {
+            if entry.frame >= frame {
+                return true;
+            }
+
+            let expires = entry.last_drawn + IDLE_RETENTION;
+            if now >= expires {
+                stale.push(uri.clone());
+                false
+            } else {
+                next_expiry = Some(next_expiry.map_or(expires, |current| current.min(expires)));
+                true
+            }
+        });
+
+        // Preserve the current frame, and trim the least-recently-drawn
+        // off-screen entries if the profile's cache budget is exceeded.
         let over = entries.len().saturating_sub(RESIDENT);
-        if over == 0 {
-            return;
+        if over > 0 {
+            let mut idle: Vec<(Instant, String)> = entries
+                .iter()
+                .filter(|(_, entry)| entry.frame < frame)
+                .map(|(uri, entry)| (entry.last_drawn, uri.clone()))
+                .collect();
+            idle.sort_unstable_by(|(left_time, left_uri), (right_time, right_uri)| {
+                left_time
+                    .cmp(right_time)
+                    .then_with(|| left_uri.cmp(right_uri))
+            });
+            let remove_count = over.min(idle.len());
+            for (_, uri) in idle.iter().take(remove_count) {
+                entries.remove(uri);
+                stale.push(uri.clone());
+            }
+            next_expiry = idle
+                .get(remove_count)
+                .map(|(last_drawn, _)| *last_drawn + IDLE_RETENTION);
         }
-        let mut idle: Vec<(u64, String)> = entries
-            .iter()
-            .filter(|(_, entry)| entry.frame < frame)
-            .map(|(uri, entry)| (entry.frame, uri.clone()))
-            .collect();
-        idle.sort_unstable();
-        idle.truncate(over);
-        for (_, uri) in &idle {
-            entries.remove(uri);
-        }
-        idle.into_iter().map(|(_, uri)| uri).collect()
+
+        (stale, next_expiry)
     };
+
     for uri in stale {
         ctx.forget_image(&uri);
+    }
+
+    if let Some(expires) = next_expiry {
+        ctx.request_repaint_after(expires.saturating_duration_since(now));
     }
 }
 
@@ -222,6 +281,41 @@ mod tests {
     }
 
     #[test]
+    fn offscreen_images_are_released_after_the_idle_reuse_window() {
+        let ctx = context();
+        include(&ctx, &uri(0), b"image bytes");
+        frame(&ctx);
+
+        sweep_at(
+            &ctx,
+            Instant::now() + IDLE_RETENTION + Duration::from_secs(1),
+        );
+
+        assert!(
+            !registered(&ctx, &uri(0)),
+            "an off-screen image should not remain cached indefinitely"
+        );
+    }
+
+    #[test]
+    fn an_image_drawn_in_the_current_frame_survives_idle_cleanup() {
+        let ctx = context();
+        include(&ctx, &uri(0), b"image bytes");
+        frame(&ctx);
+        include(&ctx, &uri(0), b"image bytes");
+
+        sweep_at(
+            &ctx,
+            Instant::now() + IDLE_RETENTION + Duration::from_secs(1),
+        );
+
+        assert!(
+            registered(&ctx, &uri(0)),
+            "the current frame must keep visible images resident"
+        );
+    }
+
+    #[test]
     fn images_that_scroll_away_are_released() {
         let ctx = context();
         let total = RESIDENT + 40;
@@ -234,6 +328,27 @@ mod tests {
             .filter(|index| registered(&ctx, &uri(*index)))
             .count();
         assert_eq!(kept, RESIDENT, "the window should hold exactly its budget");
+    }
+
+    #[test]
+    fn cache_budget_evicts_the_oldest_uri_first_when_draw_times_tie() {
+        let ctx = context();
+        for index in 0..RESIDENT + 2 {
+            include(&ctx, &uri(index), b"image bytes");
+        }
+        let same_time = Instant::now();
+        registry(&ctx)
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values_mut()
+            .for_each(|entry| entry.last_drawn = same_time);
+        frame(&ctx);
+        sweep(&ctx);
+
+        assert!(!registered(&ctx, &uri(0)));
+        assert!(!registered(&ctx, &uri(1)));
+        assert!(registered(&ctx, &uri(2)));
     }
 
     #[test]

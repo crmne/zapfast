@@ -1067,6 +1067,7 @@ pub async fn run(
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
+        poll_votes_need_pump: false,
         poll_history: Default::default(),
         poll_sending: HashSet::new(),
         prefetch: prefetch::State::default(),
@@ -1466,6 +1467,8 @@ struct Worker {
     /// Sending favorite chats to the phone, and reading its list once.
     favorite_chats: favorite_chats::FavoriteChats,
     poll_decrypting: usize,
+    /// A durable poll-vote scan is needed after an event or a failed attempt.
+    poll_votes_need_pump: bool,
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
@@ -4109,8 +4112,9 @@ impl Worker {
                 self.older_warned.clear();
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
+                self.read_sync.wake();
                 self.pump_read_sync();
-                self.pump_favorite_chats();
+                self.wake_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
                 self.push_favorites();
                 self.fetch_missing_favorites();
@@ -4119,7 +4123,7 @@ impl Worker {
                 self.recover_stars();
                 self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
-                self.pump_poll_votes();
+                self.wake_poll_votes();
                 if let Some(client) = self.client.clone() {
                     let me = self.me_pn.clone().and_then(|pn| Self::jid_of(&pn));
                     let commands = self.commands.clone();
@@ -5350,7 +5354,7 @@ impl Worker {
             self.settle_early_receipts(&chat, &id);
         }
         if is_poll {
-            self.pump_poll_votes();
+            self.wake_poll_votes();
         }
     }
 
@@ -6706,7 +6710,7 @@ impl Worker {
             }
             filed.push((id, count, chat.more_on_phone));
         }
-        self.pump_poll_votes();
+        self.wake_poll_votes();
         self.pump_poll_history();
         for (id, _, _) in &filed {
             self.emit_chat(id);
@@ -7328,6 +7332,7 @@ impl Worker {
                 Ok(marked) => {
                     self.emit_chat(&chat);
                     if marked {
+                        self.read_sync.wake();
                         self.pump_read_sync();
                     }
                 }
@@ -9976,19 +9981,30 @@ impl Worker {
             return;
         }
         let _ = self.archive.queue_read_sync(&chat);
+        self.read_sync.wake();
         self.pump_read_sync();
         self.send_read_receipts(chat, ids);
     }
 
     fn pump_read_sync(&mut self) {
-        if !matches!(self.status, LinkStatus::Connected) || !self.read_sync.ready(Instant::now()) {
+        let now = Instant::now();
+        if !matches!(self.status, LinkStatus::Connected) || !self.read_sync.should_pump(now) {
             return;
         }
         let Some(client) = self.client.clone() else {
             return;
         };
-        for (chat, through) in self.archive.pending_reads().unwrap_or_default() {
+        let pending_reads = match self.archive.pending_reads() {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::warn!("could not load pending read-state sync: {error}");
+                return;
+            }
+        };
+        let mut unmapped = false;
+        for (chat, through) in pending_reads {
             let Some(jid) = Self::jid_of(&chat) else {
+                unmapped = true;
                 continue;
             };
             if !self.read_sync.start(&chat, through, Instant::now()) {
@@ -10020,8 +10036,16 @@ impl Worker {
         }
         // Reads go first: a chat read here and then marked unread again ends
         // unread on the phone too.
-        for (chat, marked_at, through) in self.archive.pending_unreads().unwrap_or_default() {
+        let pending_unreads = match self.archive.pending_unreads() {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::warn!("could not load pending unread-state sync: {error}");
+                return;
+            }
+        };
+        for (chat, marked_at, through) in pending_unreads {
             let Some(jid) = Self::jid_of(&chat) else {
+                unmapped = true;
                 continue;
             };
             if !self
@@ -10048,6 +10072,9 @@ impl Worker {
                 });
             });
             break;
+        }
+        if !unmapped {
+            self.read_sync.drained();
         }
     }
 
@@ -20130,6 +20157,7 @@ mod receipt_tests {
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
+            poll_votes_need_pump: false,
             poll_history: Default::default(),
             poll_sending: HashSet::new(),
             prefetch: prefetch::State::default(),

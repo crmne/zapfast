@@ -3862,6 +3862,7 @@ impl App {
                         items.iter().map(|item| item.id.clone()).collect(),
                     );
                     self.chat_pins.insert(chat, items);
+                    self.pins_expiry_checked_at = None;
                 }
             }
             Event::PinChanged {
@@ -3875,6 +3876,7 @@ impl App {
                 } else {
                     ids.remove(&message);
                 }
+                self.pins_expiry_checked_at = None;
                 if live {
                     // One literal per branch, so both reach the catalogs.
                     let label = if pinned {
@@ -4191,6 +4193,7 @@ impl App {
                     if let Some(rows) = self.chat_pins.get_mut(&message.chat) {
                         rows.retain(|row| row.id != message.id);
                     }
+                    self.pins_expiry_checked_at = None;
                 } else if in_starred {
                     for entry in &mut self.starred {
                         if entry.message.chat == message.chat && entry.message.id == message.id {
@@ -4430,6 +4433,7 @@ impl App {
                 if let Some(pins) = self.chat_pins.get_mut(&chat) {
                     pins.retain(|pin| pin.id != id);
                 }
+                self.pins_expiry_checked_at = None;
                 if let Some(ids) = self.pins.get_mut(&chat) {
                     ids.remove(&id);
                 }
@@ -6962,6 +6966,17 @@ impl App {
         self.follow_outgoing();
     }
 
+    /// Expiration uses Unix seconds, so checking more often cannot change the result.
+    fn pin_expiry_sweep_due(&mut self, stamp: i64) -> bool {
+        let account = &mut **self;
+        if account.pins_expiry_checked_at == Some(stamp) {
+            false
+        } else {
+            account.pins_expiry_checked_at = Some(stamp);
+            true
+        }
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         self.tick_call(ctx);
@@ -7016,15 +7031,17 @@ impl App {
         // cache the footer and the message menu read, so an expired pin stops
         // painting its mark and stops offering Unpin.
         let stamp = crate::util::now();
-        let account = &mut **self;
-        for (chat, rows) in &account.chat_pins {
-            let Some(ids) = account.pins.get_mut(chat) else {
-                continue;
-            };
-            ids.retain(|id| {
-                rows.iter()
-                    .any(|row| row.id == *id && row.expires_at > stamp)
-            });
+        if self.pin_expiry_sweep_due(stamp) {
+            let account = &mut **self;
+            for (chat, rows) in &account.chat_pins {
+                let Some(ids) = account.pins.get_mut(chat) else {
+                    continue;
+                };
+                ids.retain(|id| {
+                    rows.iter()
+                        .any(|row| row.id == *id && row.expires_at > stamp)
+                });
+            }
         }
     }
 
@@ -19845,6 +19862,17 @@ mod tests {
 
         assert!(!app.chat_pins.contains_key(chat));
         assert!(!app.pins.contains_key(chat));
+    }
+
+    #[test]
+    fn expired_pin_cache_is_swept_at_most_once_per_second() {
+        let mut app = app();
+        assert!(app.pin_expiry_sweep_due(100));
+        assert!(!app.pin_expiry_sweep_due(100));
+        assert!(app.pin_expiry_sweep_due(101));
+        // An arriving full pin list can request an immediate same-second sweep.
+        app.pins_expiry_checked_at = None;
+        assert!(app.pin_expiry_sweep_due(101));
     }
 
     #[test]

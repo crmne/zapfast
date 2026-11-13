@@ -482,7 +482,7 @@ impl Worker {
             self.save_group_recipients(&chat, &created.id, &created.recipients);
         }
         self.emit(Event::PollCreated { chat, error: None });
-        self.pump_poll_votes();
+        self.wake_poll_votes();
     }
 
     pub(super) fn vote_poll(&mut self, chat: ChatId, id: String, mut choices: Vec<usize>) {
@@ -635,22 +635,45 @@ impl Worker {
         if let Err(error) = self.archive.save_poll_vote(&vote) {
             log::warn!("could not store a poll vote: {error}");
         }
+        self.wake_poll_votes();
+    }
+
+    /// Marks durable poll-vote work as needing attention, then handles it now.
+    /// The maintenance tick calls pump_poll_votes directly, so an empty queue
+    /// does not cause another SQLite scan until a new event wakes it.
+    pub(super) fn wake_poll_votes(&mut self) {
+        self.poll_votes_need_pump = true;
         self.pump_poll_votes();
     }
 
     pub(super) fn pump_poll_votes(&mut self) {
+        if !self.poll_votes_need_pump {
+            return;
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
         if self.poll_decrypting >= 8 {
             return;
         }
-        for vote in self
-            .archive
-            .pending_poll_votes(8 - self.poll_decrypting)
-            .unwrap_or_default()
-        {
-            if self.archive.attempt_poll_vote(&vote).is_err() {
+        let limit = 8 - self.poll_decrypting;
+        let votes = match self.archive.pending_poll_votes(limit) {
+            Ok(votes) => votes,
+            Err(error) => {
+                log::warn!("could not load pending poll votes: {error}");
+                return;
+            }
+        };
+        if votes.is_empty() {
+            self.poll_votes_need_pump = false;
+            return;
+        }
+        let batch_is_full = votes.len() == limit;
+        let mut attempt_failed = false;
+        for vote in votes {
+            if let Err(error) = self.archive.attempt_poll_vote(&vote) {
+                log::warn!("could not mark a poll vote for decryption: {error}");
+                attempt_failed = true;
                 continue;
             }
             let prepared = (|| {
@@ -698,6 +721,11 @@ impl Worker {
                 let _ = commands.send(Command::PollDecoded { vote, choices });
             });
         }
+        // A full batch may have left more durable work behind. A completion
+        // also safely rechecks after a new vote arrived during decryption.
+        if !batch_is_full && !attempt_failed {
+            self.poll_votes_need_pump = false;
+        }
     }
 
     pub(super) fn poll_decoded(&mut self, vote: PollVote, choices: Option<Vec<usize>>) {
@@ -713,7 +741,7 @@ impl Worker {
         } else {
             log::debug!("a poll vote could not be decrypted");
         }
-        self.pump_poll_votes();
+        self.wake_poll_votes();
     }
 }
 
@@ -1045,6 +1073,21 @@ mod tests {
         assert_eq!(choices_for(&options, &[vec![0; 32]]), None);
     }
 
+    #[test]
+    fn idle_poll_vote_queue_does_not_arm_another_scan() {
+        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+        assert!(!worker.poll_votes_need_pump);
+        worker.pump_poll_votes();
+        assert!(!worker.poll_votes_need_pump);
+    }
+
+    #[test]
+    fn poll_vote_wakeup_is_retained_until_a_client_is_available() {
+        let (mut worker, _events, _commands, _wa) = super::super::receipt_tests::worker();
+        worker.wake_poll_votes();
+        assert!(worker.poll_votes_need_pump);
+    }
+
     #[tokio::test]
     async fn an_encrypted_vote_before_its_poll_is_decrypted_without_network_access() {
         let (mut worker, _events, mut commands, _wa) = super::super::receipt_tests::worker();
@@ -1093,7 +1136,7 @@ mod tests {
         let raw = creation_archive(&row.content, &key);
         worker.remember_poll(&row, &raw, creator, None);
         worker.store_message(row.clone(), Some(raw.encode_to_vec()), None);
-        worker.pump_poll_votes();
+        worker.wake_poll_votes();
         assert_eq!(worker.poll_decrypting, 1);
         let result = tokio::time::timeout(Duration::from_secs(5), commands.recv())
             .await

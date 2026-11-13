@@ -492,6 +492,8 @@ fn run() -> eframe::Result<()> {
                         app,
                         window_recovery_checked: false,
                         stalls: Default::default(),
+                        #[cfg(feature = "nano-gui-profile")]
+                        gui_profile: GuiProfile::default(),
                         transparent,
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
@@ -656,6 +658,105 @@ fn native_options(
     }
 }
 
+#[cfg(feature = "nano-gui-profile")]
+#[derive(Default)]
+struct GuiProfile {
+    started: Option<std::time::Instant>,
+    logic_callback: GuiProfilePhase,
+    background: GuiProfilePhase,
+    app_logic: GuiProfilePhase,
+    ui: GuiProfilePhase,
+}
+
+#[cfg(feature = "nano-gui-profile")]
+#[derive(Default)]
+struct GuiProfilePhase {
+    calls: u64,
+    total: std::time::Duration,
+    max: std::time::Duration,
+}
+
+#[cfg(feature = "nano-gui-profile")]
+impl GuiProfilePhase {
+    fn record(&mut self, elapsed: std::time::Duration) {
+        self.calls += 1;
+        self.total += elapsed;
+        self.max = self.max.max(elapsed);
+    }
+
+    fn average_micros(&self) -> u128 {
+        if self.calls == 0 {
+            0
+        } else {
+            self.total.as_micros() / u128::from(self.calls)
+        }
+    }
+}
+
+#[cfg(feature = "nano-gui-profile")]
+impl GuiProfile {
+    fn start(&mut self) {
+        if self.started.is_none() {
+            self.started = Some(std::time::Instant::now());
+        }
+    }
+
+    fn record_background(&mut self, elapsed: std::time::Duration) {
+        self.start();
+        self.background.record(elapsed);
+    }
+
+    fn record_app_logic(&mut self, elapsed: std::time::Duration) {
+        self.start();
+        self.app_logic.record(elapsed);
+    }
+
+    fn record_logic_callback(&mut self, elapsed: std::time::Duration) {
+        self.start();
+        self.logic_callback.record(elapsed);
+        self.report_if_due();
+    }
+
+    fn record_ui(&mut self, elapsed: std::time::Duration) {
+        self.start();
+        self.ui.record(elapsed);
+        self.report_if_due();
+    }
+
+    fn report_if_due(&mut self) {
+        let Some(started) = self.started.as_ref() else {
+            return;
+        };
+        let interval = started.elapsed();
+        if interval < std::time::Duration::from_secs(10) {
+            return;
+        }
+
+        log::info!(
+            "gui_profile interval_ms={} logic_calls={} logic_calls_per_sec={:.2} logic_avg_us={} logic_max_us={} background_avg_us={} background_max_us={} app_logic_avg_us={} app_logic_max_us={} ui_calls={} ui_calls_per_sec={:.2} ui_avg_us={} ui_max_us={}",
+            interval.as_millis(),
+            self.logic_callback.calls,
+            self.logic_callback.calls as f64 / interval.as_secs_f64(),
+            self.logic_callback.average_micros(),
+            self.logic_callback.max.as_micros(),
+            self.background.average_micros(),
+            self.background.max.as_micros(),
+            self.app_logic.average_micros(),
+            self.app_logic.max.as_micros(),
+            self.ui.calls,
+            self.ui.calls as f64 / interval.as_secs_f64(),
+            self.ui.average_micros(),
+            self.ui.max.as_micros(),
+        );
+
+        self.started = Some(std::time::Instant::now());
+        self.logic_callback = GuiProfilePhase::default();
+        self.background = GuiProfilePhase::default();
+        self.app_logic = GuiProfilePhase::default();
+        self.ui = GuiProfilePhase::default();
+    }
+}
+
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes
 /// back to the shell when the window closes.
 struct Shell {
@@ -663,6 +764,8 @@ struct Shell {
     window_recovery_checked: bool,
     /// Logs an update that froze the window for a moment.
     stalls: fastframe_shell::StallWatch,
+    #[cfg(feature = "nano-gui-profile")]
+    gui_profile: GuiProfile,
     /// Whether this window was made transparent, for the Messages theme.
     transparent: bool,
     update_receipt: Option<fastframe_update::Receipt>,
@@ -761,15 +864,23 @@ impl eframe::App for Shell {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(feature = "nano-gui-profile")]
+        let started = std::time::Instant::now();
         let mut stalls = std::mem::take(&mut self.stalls);
         stalls.logic(|| self.window_logic(ctx, frame));
         self.stalls = stalls;
+        #[cfg(feature = "nano-gui-profile")]
+        self.gui_profile.record_logic_callback(started.elapsed());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "nano-gui-profile")]
+        let started = std::time::Instant::now();
         let mut stalls = std::mem::take(&mut self.stalls);
         stalls.ui(|| self.window_ui(ui));
         self.stalls = stalls;
+        #[cfg(feature = "nano-gui-profile")]
+        self.gui_profile.record_ui(started.elapsed());
     }
 
     /// Saves essential state before the window closes.
@@ -788,8 +899,17 @@ impl Shell {
         if let Some(tour) = self.tour.as_mut() {
             tour.drive(app, ctx);
         }
+        #[cfg(feature = "nano-gui-profile")]
+        let background_started = std::time::Instant::now();
         app.background_frame(ctx);
+        #[cfg(feature = "nano-gui-profile")]
+        self.gui_profile.record_background(background_started.elapsed());
+
+        #[cfg(feature = "nano-gui-profile")]
+        let app_logic_started = std::time::Instant::now();
         app.window_logic(ctx);
+        #[cfg(feature = "nano-gui-profile")]
+        self.gui_profile.record_app_logic(app_logic_started.elapsed());
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
             && let Some(at) = self.taskbar.show(
