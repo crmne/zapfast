@@ -254,12 +254,12 @@ msgstr "90 Tage"
 #: src/util.rs:325
 #, fuzzy, rust-format
 msgid "{name} turned off disappearing messages"
-msgstr "Selbstlöschende Nachrichten"
+msgstr "{name} hat selbstlöschende Nachrichten deaktiviert"
 
 #: src/util.rs:329
 #, rust-format
 msgid "{name} changed the disappearing messages setting to {duration}"
-msgstr ""
+msgstr "{name} setzte selbstlöschende Nachrichten auf {duration}"
 
 #: src/util.rs:356
 #, rust-format
@@ -430,12 +430,12 @@ msgstr "Nachricht an dich selbst"
 #: src/ui/chats.rs:1620 src/ui/conversation.rs:1008
 #, rust-format
 msgid "{name} is recording audio…"
-msgstr ""
+msgstr "{name} nimmt eine Nachricht auf…"
 
 #: src/ui/chats.rs:1625 src/ui/conversation.rs:1028
 #, fuzzy
 msgid "recording audio…"
-msgstr "Sticker-Pack wird gesendet…"
+msgstr "nimmt NAchricht auf…"
 
 #: src/ui/chats.rs:1639
 msgid "Draft:"
@@ -481,29 +481,29 @@ msgstr "Labels"
 
 #: src/ui/chats.rs:2093
 msgid "Mark as read"
-msgstr ""
+msgstr "Als gelesen markieren"
 
 #: src/ui/chats.rs:2103
 msgid "Mark as unread"
-msgstr ""
+msgstr "Als ungelesen markieren"
 
 #: src/ui/chats.rs:2109 src/ui/conversation.rs:673
 msgid "Unpin"
-msgstr ""
+msgstr "nicht mehr anpinnen"
 
 #: src/ui/chats.rs:2111 src/ui/conversation.rs:675
 msgid "Pin to top"
-msgstr ""
+msgstr "Oben anpinnen"
 
 #: src/ui/chats.rs:2136 src/ui/conversation.rs:678
 #, fuzzy
 msgid "Unarchive"
-msgstr "Archiviert"
+msgstr "Aus dem Archiv holen"
 
 #: src/ui/chats.rs:2138 src/ui/conversation.rs:680
 #, fuzzy
 msgid "Archive"
-msgstr "Archiviert"
+msgstr "Archivieren"
 
 #: src/ui/chats.rs:2164 src/ui/conversation.rs:10857 src/ui/call.rs:522
 msgid "Unmute"
@@ -512,12 +512,12 @@ msgstr "Ton an"
 #: src/ui/chats.rs:2175
 #, fuzzy
 msgid "Unlock chat"
-msgstr "Gesperrter Chat"
+msgstr "Chat entsperren"
 
 #: src/ui/chats.rs:2177 src/ui/dialogs.rs:458
 #, fuzzy
 msgid "Lock chat"
-msgstr "Gesperrter Chat"
+msgstr "Chat sperren"
 
 #: src/ui/chats.rs:2201 src/ui/conversation.rs:684 src/ui/conversation.rs:9777
 msgid "Copy number"
@@ -525,7 +525,7 @@ msgstr "Nummer kopieren"
 
 #: src/ui/chats.rs:2210 src/ui/conversation.rs:671
 msgid "Info"
-msgstr ""
+msgstr "Info"
 
 #: src/ui/chats.rs:2262
 #, fuzzy
@@ -535,16 +535,16 @@ msgstr "Standard verwenden"
 #: src/ui/chats.rs:2263
 #, fuzzy
 msgid "System sound"
-msgstr "System"
+msgstr "Systemton"
 
 #: src/ui/chats.rs:2264
 #, fuzzy
 msgid "No sound"
-msgstr "Erwähnungston"
+msgstr "kein Ton"
 
 #: src/ui/chats.rs:2274
 msgid "Custom"
-msgstr ""
+msgstr "Eigene"
 
 #: src/ui/chats.rs:2279 src/ui/settings.rs:2005
 msgid "Choose a file…"
@@ -553,20 +553,20 @@ msgstr "Datei auswählen…"
 #: src/ui/chats.rs:2286
 #, fuzzy
 msgid "Notification sound"
-msgstr "Benachrichtigungen"
+msgstr "Benachrichtigungston"
 
 #: src/ui/chats.rs:2313
 #, fuzzy
 msgid "8 hours"
-msgstr "24 Stunden"
+msgstr "8 Stunden"
 
 #: src/ui/chats.rs:2317
 msgid "1 week"
-msgstr ""
+msgstr "1 Woche"
 
 #: src/ui/chats.rs:2320
 msgid "Always"
-msgstr ""
+msgstr "Immer"
 
 #: src/ui/conversation.rs:264
 #, rust-format
@@ -575,11 +575,11 @@ msgstr "Angepinnte Nachricht {index} von {count}: {text}"
 
 #: src/ui/conversation.rs:308
 msgid "Your chats appear on the left as they load."
-msgstr ""
+msgstr "Deine Chats erscheinen links sobald sie geladen sind"
 
 #: src/ui/conversation.rs:310
 msgid "Select a chat on the left."
-msgstr ""
+msgstr "Wähle links einen Chat aus"
 
 #: src/ui/conversation.rs:320
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
@@ -591,11 +591,11 @@ msgstr "Nachrichten auswählen"
 
 #: src/ui/conversation.rs:665
 msgid "More"
-msgstr ""
+msgstr "Mehr"
 
 #: src/ui/conversation.rs:682
 msgid "Export chat…"
-msgstr ""
+msgstr "Chat exportieren"
 
 #: src/ui/conversation.rs:685
 #, fuzzy
@@ -613,12 +613,12 @@ msgstr "Auflegen"
 #: src/ui/conversation.rs:1012
 #, rust-format
 msgid "{names} and {last} are recording audio…"
-msgstr ""
+msgstr "{names} und {last} nehmen eine Nachricht auf…"
 
 #: src/ui/conversation.rs:1514
 #, fuzzy
 msgid "You blocked this contact"
-msgstr "Du hast diesen Kanal verlassen"
+msgstr "Du hast diesen Kontakt blockiert"
 
 #: src/ui/conversation.rs:1526
 msgid "You left this channel"
@@ -650,15 +650,15 @@ msgstr "Bildunterschrift hinzufügen"
 
 #: src/ui/conversation.rs:1935
 msgid "Bold"
-msgstr ""
+msgstr "fett"
 
 #: src/ui/conversation.rs:1936
 msgid "Italic"
-msgstr ""
+msgstr "kursiv"
 
 #: src/ui/conversation.rs:1937
 msgid "Strikethrough"
-msgstr ""
+msgstr "durchgestrichen"
 
 #: src/ui/conversation.rs:1938
 msgid "Monospace"
@@ -716,17 +716,17 @@ msgstr "Sprachnachricht verwerfen"
 #: src/ui/conversation.rs:2384
 #, fuzzy, rust-format
 msgid "Cancel sending {name}"
-msgstr "Nachrichteninfo"
+msgstr "Senden an {name} abbrechen"
 
 #: src/ui/conversation.rs:2392
 #, fuzzy, rust-format
 msgid "Sending {name}"
-msgstr "Nachrichteninfo"
+msgstr "Sende an {name}"
 
 #: src/ui/conversation.rs:2398
 #, rust-format
 msgid "{time} left"
-msgstr ""
+msgstr "{time} verbleibend"
 
 #: src/ui/conversation.rs:2534
 #, fuzzy
@@ -735,7 +735,7 @@ msgstr "Wird geladen…"
 
 #: src/ui/conversation.rs:2545
 msgid "Remove link preview"
-msgstr ""
+msgstr "Linkvorschau entfernen"
 
 #: src/ui/conversation.rs:2862
 msgid "You pinned a message"
@@ -897,7 +897,7 @@ msgstr "Mit einem beliebigen Emoji reagieren"
 #: src/ui/conversation.rs:7460 src/ui/conversation.rs:7866
 #, rust-format
 msgid "{option}, unavailable: {reason}"
-msgstr ""
+msgstr "{option}, nicht verfügbar: {reason}"
 
 #: src/ui/conversation.rs:7708
 #, rust-format
@@ -2628,6 +2628,8 @@ msgid ""
 "Saved {path}. Messages: {messages}; attachments: {files}; unavailable: "
 "{missing}."
 msgstr ""
+"{path} gespeichert. Nachrichten: {messages}; Anhänge: {files}; nicht verfügbar: "
+"{missing}."
 
 #: src/app.rs:4499
 msgid "Loading chat history"
@@ -2669,41 +2671,41 @@ msgstr ""
 #: src/app.rs:4919
 #, fuzzy
 msgid "Could not change disappearing messages."
-msgstr "Selbstlöschende Nachrichten"
+msgstr "Konnte selbstlöschende Nachrichten nicht ändern"
 
 #: src/app.rs:4924
 #, fuzzy
 msgid "Only admins can change disappearing messages."
-msgstr "Selbstlöschende Nachrichten"
+msgstr "Nur Admins können selbstlöschende Nachrichten ändern"
 
 #: src/app.rs:4961
 #, fuzzy
 msgid "Connect to WhatsApp to archive this chat"
-msgstr "Verbinde dich mit WhatsApp, um eine Gruppe zu erstellen."
+msgstr "Verbinde dich mit WhatsApp, um die Chat zu archivieren."
 
 #: src/app.rs:4965
 #, fuzzy
 msgid "Connect to WhatsApp to unarchive this chat"
-msgstr "Verbinde dich mit WhatsApp, um eine Gruppe zu erstellen."
+msgstr "Verbinde dich mit WhatsApp, um diesen Chat aus dem Archiv zu holen."
 
 #: src/app.rs:4968
 #, fuzzy
 msgid "Could not read this chat. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr "Der Chat konnte nicht gelesen werden. Versuche es erneut."
 
 #: src/app.rs:4972
 #, fuzzy
 msgid "Could not confirm archiving on WhatsApp. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr ""
 
 #: src/app.rs:4976
 #, fuzzy
 msgid "Could not confirm unarchiving on WhatsApp. Try again"
-msgstr "Die Gruppe konnte nicht erstellt werden. Versuche es erneut."
+msgstr ""
 
 #: src/app.rs:4980
 msgid "WhatsApp updated this chat, but ZapFast could not save the change"
-msgstr ""
+msgstr "WhatsApp hat den chat aktualisiert, ZapFast konnte die Änderung jedoch nicht speichern"
 
 #: src/app.rs:5068
 msgid "Connecting"
@@ -2711,7 +2713,7 @@ msgstr "Verbindung wird hergestellt"
 
 #: src/app.rs:5736 src/app.rs:7363
 msgid "Unblock this contact to send messages."
-msgstr ""
+msgstr "Hebe die Blockierung des Kontakts auf, um eine Nachricht zu senden"
 
 #: src/app.rs:5740
 msgid "Not sent: ZapFast is not connected to WhatsApp."
@@ -2752,16 +2754,16 @@ msgstr "Du hast {limit} Labels, mehr hebt ZapFast nicht auf."
 #: src/app.rs:9446
 #, fuzzy
 msgid "No chat open"
-msgstr "Code für gesperrte Chats"
+msgstr "Kein Chat geöffnet"
 
 #: src/app.rs:9474
 #, fuzzy
 msgid "Loading the replied message"
-msgstr "Frühere Nachrichten neu laden"
+msgstr "Lade die beantwortete Nachricht"
 
 #: src/app.rs:9784
 msgid "Invite link copied"
-msgstr ""
+msgstr "Einladungslink kopiert"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2772,18 +2774,18 @@ msgstr "{}: {}"
 
 #: src/app.rs:10174
 msgid "The old link no longer works. Here is a new one."
-msgstr ""
+msgstr "Der alte Link funktioniert nicht mehr. Hier ist ein neuer."
 
 #: src/app.rs:10216
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Person wurde zur Gruppe hinzugefügt"
+msgstr[1] "{count} Personen wurden zur Gruppe hinzugefügt"
 
 #: src/app.rs:10276
 msgid "This file is no longer on this computer. Download it again."
-msgstr ""
+msgstr "Die Datei ist auf diesem Gerät nicht mehr verfügbar. Lade sie erneut herunter."
 
 #: src/app.rs:10652
 msgid "App lock password saved"
@@ -2928,29 +2930,29 @@ msgstr "Nachrichten auswählen"
 #: src/ui/picker.rs:488
 #, fuzzy
 msgid "Close reactions"
-msgstr "Suche schließen"
+msgstr "Reaktionen schließen"
 
 #: src/ui/picker.rs:667
 #, fuzzy
 msgid "Search emoji"
-msgstr "Einstellungen durchsuchen"
+msgstr "Emojis durchsuchen"
 
 #: src/ui/picker.rs:1053
 msgid "Search GIFs via GIPHY"
-msgstr ""
+msgstr "Suche GIFs bei GIPHY"
 
 #: src/ui/picker.rs:1070
 #, fuzzy
 msgid "Searching…"
-msgstr "Wird gespeichert…"
+msgstr "Suche…"
 
 #: src/ui/picker.rs:1157 src/ui/mod.rs:656
 msgid "Retry"
-msgstr ""
+msgstr "Wiederholen"
 
 #: src/ui/picker.rs:1159
 msgid "Load more"
-msgstr ""
+msgstr "mehr laden"
 
 #: src/ui/picker.rs:1170
 msgid "Search for a GIF or browse trending results."
@@ -2970,7 +2972,7 @@ msgstr "Sticker hinzufügen"
 
 #: src/ui/picker.rs:1321
 msgid "Search by emoji, word, or pack"
-msgstr "Nach Emoji, Wort oder Pack suchen"
+msgstr "Nach Emoji, Wort oder Sticker-Pack suchen"
 
 #: src/ui/picker.rs:1360
 msgid "No stickers match your search."
@@ -3404,7 +3406,7 @@ msgstr ""
 
 #: src/ui/info.rs:903 src/ui/new_group.rs:76
 msgid "Add members"
-msgstr ""
+msgstr "Mitglieder hinzufügen"
 
 #: src/ui/info.rs:957
 #, rust-format
