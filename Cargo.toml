@@ -331,6 +331,9 @@ harness = false
 [features]
 # Sample data, layout tests, and screenshots. Not used in release builds.
 demo = []
+# Experimental A/B build: use one Tokio worker per account backend instead of two.
+# This is not enabled by default; remove after collecting comparable measurements.
+nano-one-worker = []
 
 [profile.release]
 lto = "thin"
