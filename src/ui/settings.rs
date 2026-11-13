@@ -348,7 +348,10 @@ fn sections(app: &App) -> Vec<Section> {
     } else if app.custom_themes.follows_omarchy() {
         translated(locale, "Follow system uses your Omarchy colours.")
     } else {
-        Text::default()
+        translated(
+            locale,
+            "Follow the system, or pick a colour scheme of your own.",
+        )
     };
     appearance.row(translated(locale, "Theme"), detail, theme_picker);
     appearance.row(
@@ -361,7 +364,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     appearance.row(
         translated(locale, "Wallpaper"),
-        Text::default(),
+        translated(locale, "The picture behind your conversations."),
         move |ui, app| {
             let label = if app.account().settings.wallpaper_image.is_some() {
                 crate::i18n::gettext(app.locale, "Image").into_owned()
@@ -412,7 +415,14 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
-    appearance.row(translated(locale, "Language"), "", language_picker);
+    appearance.row(
+        translated(locale, "Language"),
+        translated(
+            locale,
+            "The language of the interface. Auto follows your system.",
+        ),
+        language_picker,
+    );
     // macOS keeps its own traffic lights over ZapFast's headers.
     if cfg!(any(windows, target_os = "linux")) {
         appearance.row(
@@ -585,13 +595,13 @@ fn sections(app: &App) -> Vec<Section> {
     );
     privacy.account_toggle(
         translated(locale, "Show when you are typing"),
-        "",
+        translated(locale, "Lets other people see that you are writing."),
         |settings| &mut settings.send_typing,
     );
     app_lock_rows(app, &mut privacy);
     privacy.row(
         translated(locale, "Blocked contacts"),
-        "",
+        translated(locale, "People you do not want to hear from."),
         move |ui, app| {
             if theme::pill_button(
                 ui,
@@ -1155,28 +1165,32 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             info.current_text_value = Some(selected.to_owned());
             info
         });
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            &crate::i18n::gettext(app.locale, "Open themes folder"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::OpenThemesFolder);
-        }
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            &crate::i18n::gettext(app.locale, "How to make a theme"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
-        }
+        // The two buttons sit on one line, so the row is no taller than the
+        // ones below it.
+        ui.horizontal(|ui| {
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(app.locale, "Themes folder"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenThemesFolder);
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(app.locale, "Theme guide"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
+            }
+        });
     });
 }
 
