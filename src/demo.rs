@@ -23586,7 +23586,7 @@ mod tests {
 /// A long transcript lays out only the rows near the screen.
 #[cfg(test)]
 mod wallpaper_tests {
-    use super::tests::{app, render};
+    use super::tests::{app, frame_with, render};
     use super::*;
     use crate::settings::WallpaperColor;
     use egui::epaint::{ClippedShape, Shape};
@@ -23641,6 +23641,102 @@ mod wallpaper_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Check the tint actually painted through the doodle texture.
+    fn doodle_tint(shapes: &[Shape], texture: egui::TextureId) -> Option<egui::Color32> {
+        shapes.iter().find_map(|shape| match shape {
+            Shape::Mesh(mesh) if mesh.texture_id == texture => {
+                mesh.vertices.first().map(|vertex| vertex.color)
+            }
+            _ => None,
+        })
+    }
+
+    fn click(app: &mut App, ctx: &egui::Context, at: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(app, ctx, vec![egui::Event::PointerMoved(at), button(true)]);
+        frame_with(app, ctx, vec![button(false)]);
+    }
+
+    #[test]
+    fn wallpaper_doodle_slider_updates_preview_and_chat_and_disables_with_doodles() {
+        let mut app = app();
+        app.page = Page::Wallpaper;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let before = shapes(&mut app, &ctx);
+        let (_, tile) = crate::wallpaper::texture_ids(&ctx);
+        let original_tint = doodle_tint(&before, tile).expect("preview shows doodles");
+
+        let (slider, enabled) = ctx
+            .data(|data| {
+                data.get_temp::<(egui::Rect, bool)>(egui::Id::new(
+                    "test-wallpaper-doodle-opacity",
+                ))
+            })
+            .expect("the opacity slider is on the wallpaper page");
+        assert!(enabled, "the slider is enabled when doodles are on");
+        // Click inside the slider track, away from its 100% endpoint.
+        click(&mut app, &ctx, egui::pos2(slider.left() + 45.0, slider.center().y));
+        assert!(
+            (1..100).contains(&app.settings.doodle_opacity),
+            "moving the slider updates the saved percentage"
+        );
+        let expected = f32::from(app.settings.doodle_opacity) / 100.0;
+        assert_eq!(app.wallpaper().doodle_opacity, expected);
+
+        let preview = shapes(&mut app, &ctx);
+        let preview_tint = doodle_tint(&preview, tile).expect("preview still draws doodles");
+        assert!(preview_tint.a() < original_tint.a());
+        app.page = Page::Chats;
+        let chat = shapes(&mut app, &ctx);
+        assert_eq!(
+            doodle_tint(&chat, tile),
+            Some(preview_tint),
+            "the conversation paints the same reduced opacity as the preview"
+        );
+
+        app.page = Page::Wallpaper;
+        render(&mut app, &ctx);
+        let checkbox = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(egui::Id::new("test-wallpaper-doodles-toggle"))
+            })
+            .expect("the doodle checkbox is on the wallpaper page");
+        click(&mut app, &ctx, checkbox.center());
+        assert!(!app.settings.show_wallpaper);
+        let preview = shapes(&mut app, &ctx);
+        assert!(doodle_tint(&preview, tile).is_none());
+        let (slider, enabled) = ctx
+            .data(|data| {
+                data.get_temp::<(egui::Rect, bool)>(egui::Id::new(
+                    "test-wallpaper-doodle-opacity",
+                ))
+            })
+            .unwrap();
+        assert!(!enabled, "doodles off must disable the slider");
+        let saved_opacity = app.settings.doodle_opacity;
+        click(&mut app, &ctx, egui::pos2(slider.left() + 90.0, slider.center().y));
+        assert_eq!(app.settings.doodle_opacity, saved_opacity);
+        app.page = Page::Chats;
+        assert!(doodle_tint(&shapes(&mut app, &ctx), tile).is_none());
+
+        // Re-enabling doodles restores the previously chosen strength.
+        app.page = Page::Wallpaper;
+        render(&mut app, &ctx);
+        click(&mut app, &ctx, checkbox.center());
+        assert!(app.settings.show_wallpaper);
+        assert_eq!(app.settings.doodle_opacity, saved_opacity);
+        assert_eq!(
+            doodle_tint(&shapes(&mut app, &ctx), tile),
+            Some(preview_tint)
+        );
     }
 
     /// The default Theme wallpaper is the palette's chat colour, in the chat,

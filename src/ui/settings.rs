@@ -1373,17 +1373,37 @@ fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
     );
     let opacity_label = crate::i18n::gettext(app.locale, "Doodle opacity");
     let checkbox = |ui: &mut egui::Ui, enabled: &mut bool| {
-        ui.checkbox(enabled, doodles_label.as_ref())
+        let _response = ui
+            .checkbox(enabled, doodles_label.as_ref())
             .on_hover_text(doodles_hint.as_ref());
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("test-wallpaper-doodles-toggle"),
+                _response.rect,
+            );
+        });
     };
-    let slider = |ui: &mut egui::Ui, enabled: bool, value: &mut u8| {
-        ui.spacing_mut().slider_width = 108.0;
-        ui.add_enabled(
-            enabled,
-            egui::Slider::new(value, 0..=100)
-                .text(opacity_label.as_ref())
-                .suffix("%"),
-        );
+    let slider = |ui: &mut egui::Ui, enabled: bool, value: &mut u8, inline_label: bool| {
+        // On narrow palettes the label has its own row. Reserve width for
+        // the percentage field and give the slider track the remaining space.
+        ui.spacing_mut().slider_width = if inline_label {
+            108.0
+        } else {
+            (width - 64.0).max(48.0)
+        };
+        let mut control = egui::Slider::new(value, 0..=100).suffix("%");
+        if inline_label {
+            control = control.text(opacity_label.as_ref());
+        }
+        let _response = ui.add_enabled(enabled, control);
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("test-wallpaper-doodle-opacity"),
+                (_response.rect, _response.enabled()),
+            );
+        });
     };
 
     if width >= 440.0 {
@@ -1393,17 +1413,20 @@ fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
             |ui| {
                 checkbox(ui, &mut doodles);
                 ui.add_space(14.0);
-                slider(ui, doodles, &mut opacity);
+                slider(ui, doodles, &mut opacity, true);
             },
         );
     } else {
         ui.allocate_ui_with_layout(vec2(width, 28.0), Layout::top_down(Align::Center), |ui| {
             checkbox(ui, &mut doodles)
         });
+        ui.allocate_ui_with_layout(vec2(width, 22.0), Layout::top_down(Align::Center), |ui| {
+            ui.label(opacity_label.as_ref());
+        });
         ui.allocate_ui_with_layout(
             vec2(width, 36.0),
             Layout::left_to_right(Align::Center).with_main_align(Align::Center),
-            |ui| slider(ui, doodles, &mut opacity),
+            |ui| slider(ui, doodles, &mut opacity, false),
         );
     }
 
