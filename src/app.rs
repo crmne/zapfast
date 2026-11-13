@@ -26008,7 +26008,7 @@ mod tests {
         );
         assert_eq!(
             app.display_name("5511999999999@s.whatsapp.net"),
-            "+55 (11) 99999-9999"
+            "+55 11 99999-9999"
         );
         // Without a number in the id there is nothing to format afresh.
         app.chats
