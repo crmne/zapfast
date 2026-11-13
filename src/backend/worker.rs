@@ -65,8 +65,8 @@ mod sticker_pace;
 mod stickers;
 
 use super::{
-    Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
-    read_sync::ReadSync,
+    Command, DownloadError, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn,
+    Unsent, Waker, read_sync::ReadSync,
 };
 use crate::app::PAGE;
 use crate::archive::Archive;
@@ -136,13 +136,13 @@ fn attachment_deadline(size: Option<u64>) -> Duration {
     ATTACHMENT_TIMEOUT + Duration::from_secs(size.unwrap_or(0) / ATTACHMENT_SLOWEST_RATE)
 }
 
-async fn with_attachment_deadline<T>(
+async fn with_attachment_deadline<T, E: From<&'static str>>(
     duration: Duration,
-    operation: impl std::future::Future<Output = Result<T, String>>,
-) -> Result<T, String> {
+    operation: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E> {
     tokio::time::timeout(duration, operation)
         .await
-        .unwrap_or_else(|_| Err("Download timed out".to_owned()))
+        .unwrap_or_else(|_| Err("Download timed out".into()))
 }
 
 /// Tells the window how far an attachment transfer has got, and how long the
@@ -279,7 +279,7 @@ async fn download_attachment(
     dir: &Path,
     path: &Path,
     limit: u64,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, DownloadError> {
     fetch_attachment(client, downloadable, dir, path, limit, false, None, None).await
 }
 
@@ -297,9 +297,9 @@ async fn fetch_attachment(
     keep_others: bool,
     cache: Option<&Path>,
     progress: Option<Progress>,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, DownloadError> {
     if downloadable.file_length().is_some_and(|size| size > limit) {
-        return Err(ATTACHMENT_LIMIT_ERROR.to_owned());
+        return Err(ATTACHMENT_LIMIT_ERROR.into());
     }
     debug_assert_eq!(path.parent(), Some(dir));
     let (target, temporary, file) = stage_attachment(path, cache).await?;
@@ -317,15 +317,28 @@ async fn fetch_attachment(
             drop(writer);
             // The staging file is removed on the way out if it was not
             // published.
-            publish_download(&temporary, &target, keep_others && target == path, cache).await
+            publish_download(&temporary, &target, keep_others && target == path, cache)
+                .await
+                .map_err(DownloadError::from)
         }
         Err(error) => {
-            let error = error.to_string();
-            if error.contains(ATTACHMENT_LIMIT_ERROR) {
-                Err(ATTACHMENT_LIMIT_ERROR.to_owned())
+            let error = DownloadError::from(error);
+            if error.text.contains(ATTACHMENT_LIMIT_ERROR) {
+                Err(ATTACHMENT_LIMIT_ERROR.into())
             } else {
                 Err(error)
             }
+        }
+    }
+}
+
+impl From<whatsapp_rust::download::ClientDownloadError> for DownloadError {
+    fn from(error: whatsapp_rust::download::ClientDownloadError) -> Self {
+        use whatsapp_rust::ErrorChainExt;
+        Self {
+            http_status: error.http_status(),
+            iq_code: error.server_rejection().map(|rejection| rejection.code),
+            text: error.to_string(),
         }
     }
 }
@@ -10160,7 +10173,7 @@ impl Worker {
             return;
         }
         let Some(client) = self.client.clone() else {
-            self.downloaded(chat, id, card, Err("Not connected to WhatsApp".to_owned()));
+            self.downloaded(chat, id, card, Err("Not connected to WhatsApp".into()));
             return;
         };
         let raw = self.archive.raw(&chat, &id).ok().flatten();
@@ -10169,7 +10182,7 @@ impl Worker {
                 chat,
                 id,
                 card,
-                Err("Attachment download keys are missing".to_owned()),
+                Err("Attachment download keys are missing".into()),
             );
             return;
         };
@@ -10186,7 +10199,7 @@ impl Worker {
                     chat,
                     id,
                     card,
-                    Err("This card has no downloadable image".to_owned()),
+                    Err("This card has no downloadable image".into()),
                 );
                 return;
             }
@@ -10235,12 +10248,12 @@ impl Worker {
                     chat,
                     id,
                     card,
-                    Err("This message has no downloadable file".to_owned()),
+                    Err("This message has no downloadable file".into()),
                 );
                 return;
             };
         if !manual && attachment_is_too_large(downloadable.file_length()) {
-            self.downloaded(chat, id, card, Err(ATTACHMENT_LIMIT_ERROR.to_owned()));
+            self.downloaded(chat, id, card, Err(ATTACHMENT_LIMIT_ERROR.into()));
             return;
         }
         let limit = if manual {
@@ -10370,8 +10383,9 @@ impl Worker {
                 {
                     Ok(path) => Ok(path),
                     Err(error) => {
-                        let text = error.to_string();
-                        let expired = ["403", "404", "410"].iter().any(|code| text.contains(code));
+                        let expired = ["403", "404", "410"]
+                            .iter()
+                            .any(|code| error.text.contains(code));
                         match (&jid, expired && reupload && !media_key.is_empty()) {
                             (Some(jid), true) => {
                                 // Ask the phone to re-upload expired media, then retry once.
@@ -10386,7 +10400,7 @@ impl Worker {
                                 let (Ok(target), Ok(media_key)) =
                                     (target, <&[u8; 32]>::try_from(media_key.as_slice()))
                                 else {
-                                    return Err(text);
+                                    return Err(error);
                                 };
                                 let request = MediaReuploadRequest { target, media_key };
                                 match client.media_reupload().request(&request).await {
@@ -10405,19 +10419,19 @@ impl Worker {
                                                 )
                                                 .await
                                             }
-                                            None => Err(text),
+                                            None => Err(error),
                                         }
                                     }
                                     Ok(_) => {
-                                        Err("No longer available on WhatsApp's servers".to_owned())
+                                        Err("No longer available on WhatsApp's servers".into())
                                     }
                                     Err(_error) => {
                                         log::info!("media re-upload was not granted");
-                                        Err("No longer available on WhatsApp's servers".to_owned())
+                                        Err("No longer available on WhatsApp's servers".into())
                                     }
                                 }
                             }
-                            _ => Err(text),
+                            _ => Err(error),
                         }
                     }
                 }
@@ -10474,7 +10488,8 @@ impl Worker {
                 attachment_deadline(video.file_length),
                 download_attachment(&client, &video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
             )
-            .await;
+            .await
+            .map_err(|error| error.text);
             let _ = commands.send(Command::MotionDownloaded { chat, id, result });
         });
     }
@@ -10485,7 +10500,7 @@ impl Worker {
         chat: ChatId,
         id: String,
         card: Option<usize>,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, DownloadError>,
     ) {
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
@@ -10509,7 +10524,7 @@ impl Worker {
             }
         }
         let transferred = result.is_ok();
-        let result = result.and_then(|path| {
+        let result = result.map_err(|error| error.text).and_then(|path| {
             let saved = self
                 .archive
                 .put_media_path_at(&chat, &id, card, Some(&path))
@@ -10577,6 +10592,7 @@ impl Worker {
         // A few at a time, and none while the server asked to wait: each
         // arrival starts the next (#298).
         if !self.sticker_pace.open(Instant::now()) {
+            self.sticker_resume = true;
             return;
         }
         let phone = match self.archive.phone_stickers() {
@@ -15115,9 +15131,77 @@ mod tests {
         .await;
         assert_eq!(result.unwrap_err(), "Download timed out");
         assert_eq!(
-            with_attachment_deadline(Duration::from_secs(1), async { Ok(42) }).await,
+            with_attachment_deadline(Duration::from_secs(1), async { Ok::<_, String>(42) }).await,
             Ok(42)
         );
+    }
+
+    /// A CDN that refuses every request with one status.
+    struct RefusingCdn(u16);
+
+    #[whatsapp_rust::async_trait]
+    impl whatsapp_rust::http::HttpClient for RefusingCdn {
+        async fn execute(
+            &self,
+            _request: whatsapp_rust::http::HttpRequest,
+        ) -> anyhow::Result<whatsapp_rust::http::HttpResponse> {
+            Ok(whatsapp_rust::http::HttpResponse::new(self.0, Vec::new()))
+        }
+    }
+
+    /// How the library's own download fails when the CDN answers `status`.
+    pub(super) async fn refused_download(status: u16) -> DownloadError {
+        let root = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::open(
+            &root.path().join("session.db").to_string_lossy(),
+        )
+        .await
+        .unwrap();
+        let bot = Bot::builder()
+            .with_backend(store)
+            .with_http_client(RefusingCdn(status))
+            .build()
+            .await
+            .unwrap();
+        // A static URL needs no media connection, so nothing goes to WhatsApp.
+        let mut image = wa::message::ImageMessage::default();
+        image.static_url = Some("https://mmg.whatsapp.net/v/t62.7118-24/refused".into());
+        image.file_sha256 = Some(vec![0; 32]);
+        let path = root.path().join("refused.jpg");
+        download_attachment(
+            &bot.client(),
+            &image,
+            root.path(),
+            &path,
+            ATTACHMENT_DOWNLOAD_LIMIT,
+        )
+        .await
+        .unwrap_err()
+    }
+
+    /// How a download fails when the server refuses its media connection for
+    /// asking too often, from the stanza through the library's own parser.
+    pub(super) fn rate_overlimit() -> DownloadError {
+        use whatsapp_rust::wacore_binary::{marshal::marshal, util::unpack};
+        let stanza = whatsapp_rust::NodeBuilder::new("iq")
+            .attr("type", "error")
+            .children([whatsapp_rust::NodeBuilder::new("error")
+                .attr("code", "429")
+                .attr("text", "rate-overlimit")
+                .build()])
+            .build();
+        let packed = marshal(&stanza).unwrap();
+        let response = Arc::new(
+            whatsapp_rust::OwnedNodeRef::new(unpack(&packed).unwrap().into_owned()).unwrap(),
+        );
+        let refused = whatsapp_rust::wacore::request::RequestUtils::new(String::new())
+            .parse_iq_response(response.get())
+            .unwrap_err();
+        whatsapp_rust::download::ClientDownloadError::MediaSession {
+            force_refresh: false,
+            source: whatsapp_rust::IqError::from_response(refused, &response),
+        }
+        .into()
     }
 
     #[test]
@@ -26742,7 +26826,7 @@ mod saved_download_tests {
                 message.chat,
                 message.id,
                 (target == Target::Carousel).then_some(0),
-                result,
+                result.map_err(DownloadError::from),
             );
         }
     }
