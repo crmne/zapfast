@@ -152,6 +152,10 @@
             );
             ZAPFAST_TEST_RTL_FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf";
 
+            preBuild = ''
+              unset OPENSSL_NO_VENDOR
+            '';
+
             # The vendored OpenSSL (through rusqlite's bundled SQLCipher) embeds
             # its build line, compiler path included, in the binary. The app
             # never runs it, but the text alone would keep the whole compiler
@@ -205,7 +209,10 @@
             meta = {
               description = "Fast native WhatsApp client";
               homepage = "https://zapfast.rocks";
-              license = with pkgs.lib.licenses; [ mit gpl2Only ];
+              license = with pkgs.lib.licenses; [
+                mit
+                gpl2Only
+              ];
               mainProgram = "zapfast";
               # The flake publishes only aarch64-darwin. Older nixpkgs, for
               # example through follows, still list x86_64-darwin.
