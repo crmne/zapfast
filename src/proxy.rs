@@ -353,8 +353,17 @@ fn configured() -> &'static RwLock<Configured> {
     })
 }
 
-/// Applies the Settings value. An invalid value is ignored, so Settings
-/// validates before saving.
+/// Validates an explicit setting for both the connection and HTTP downloads.
+pub fn validate_setting(setting: &str) -> Result<Proxy, String> {
+    let proxy = Proxy::parse(setting)?;
+    // Never include a client's parse error: it may contain credentials.
+    ureq::Proxy::new(proxy.url())
+        .map_err(|_| "The proxy address is not usable for downloads".to_owned())?;
+    Ok(proxy)
+}
+
+/// Applies the Settings value. Settings validates before saving; an invalid
+/// stored value still prevents HTTP requests rather than connecting directly.
 pub fn configure(setting: &str) {
     let mut configured = configured().write().unwrap_or_else(|e| e.into_inner());
     if configured.setting != setting.trim() {
@@ -364,54 +373,64 @@ pub fn configure(setting: &str) {
 }
 
 /// The proxy chosen in Settings, if any.
-pub fn from_settings() -> Option<Proxy> {
+pub fn from_settings() -> Result<Option<Proxy>, String> {
     let setting = configured()
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .setting
         .clone();
     (!setting.is_empty())
-        .then(|| Proxy::parse(&setting).ok())
-        .flatten()
+        .then(|| validate_setting(&setting))
+        .transpose()
 }
 
 /// The proxy for the WhatsApp connection: Settings, then the environment.
-pub fn for_whatsapp() -> Option<Proxy> {
-    from_settings().or_else(|| from_env("web.whatsapp.com"))
+pub fn for_whatsapp() -> Result<Option<Proxy>, String> {
+    Ok(from_settings()?.or_else(|| from_env("web.whatsapp.com")))
 }
 
 /// The ureq proxy: Settings, then the environment's proxy variables.
-pub fn ureq_proxy() -> Option<ureq::Proxy> {
-    match from_settings().map(|proxy| ureq::Proxy::new(&proxy.url)) {
-        Some(Ok(proxy)) => Some(proxy),
-        Some(Err(error)) => {
-            log::warn!("the proxy is not usable for downloads: {error}");
-            None
-        }
-        None => ureq::Proxy::try_from_env(),
+pub fn ureq_proxy() -> Result<Option<ureq::Proxy>, String> {
+    let configured = configured().read().unwrap_or_else(|e| e.into_inner());
+    ureq_proxy_for(&configured.setting)
+}
+
+fn ureq_proxy_for(setting: &str) -> Result<Option<ureq::Proxy>, String> {
+    if setting.trim().is_empty() {
+        Ok(ureq::Proxy::try_from_env())
+    } else {
+        let proxy = Proxy::parse(setting)?;
+        ureq::Proxy::new(proxy.url())
+            .map(Some)
+            .map_err(|_| "The proxy address is not usable for downloads".to_owned())
     }
 }
 
 /// A shared HTTP agent that uses [`ureq_proxy`].
-pub fn agent() -> ureq::Agent {
-    if let Some(agent) = &configured().read().unwrap_or_else(|e| e.into_inner()).agent {
-        return agent.clone();
+pub fn agent() -> Result<ureq::Agent, String> {
+    let mut configured = configured().write().unwrap_or_else(|e| e.into_inner());
+    if let Some(agent) = &configured.agent {
+        return Ok(agent.clone());
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .proxy(ureq_proxy())
+    let agent = build_agent(&configured.setting)?;
+    configured.agent = Some(agent.clone());
+    Ok(agent)
+}
+
+fn build_agent(setting: &str) -> Result<ureq::Agent, String> {
+    Ok(ureq::Agent::config_builder()
+        .proxy(ureq_proxy_for(setting)?)
         .build()
-        .into();
-    configured()
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .agent = Some(agent.clone());
-    agent
+        .into())
 }
 
 /// The Settings proxy as a reqwest proxy. reqwest reads the environment
 /// itself when this is `None`.
-pub fn reqwest_proxy() -> Option<reqwest::Proxy> {
-    from_settings().and_then(|proxy| reqwest::Proxy::all(&proxy.url).ok())
+pub fn reqwest_proxy() -> Result<Option<reqwest::Proxy>, String> {
+    from_settings()?
+        .map(|proxy| reqwest::Proxy::all(&proxy.url))
+        .transpose()
+        .map_err(|_| "The proxy address is not usable for HTTP requests".to_owned())
 }
 
 /// Opens the WhatsApp WebSocket through a proxy.
@@ -467,6 +486,62 @@ mod tests {
         assert!(Proxy::parse("ftp://proxy.lan").is_err());
         assert!(Proxy::parse("http://proxy.lan/path").is_err());
         assert!(Proxy::parse("").is_err());
+    }
+
+    #[test]
+    fn configured_download_proxy_never_falls_back_on_invalid_settings() {
+        for setting in [
+            "ftp://proxy.invalid:1080",
+            "http://user:secret@proxy.invalid/path",
+            "socks5h://user:%FF@127.0.0.1:9050",
+        ] {
+            let error = ureq_proxy_for(setting).unwrap_err();
+            assert!(!error.contains("secret"));
+            assert!(!error.contains("%FF"));
+        }
+    }
+
+    #[test]
+    fn settings_reject_a_url_that_only_the_connection_accepts() {
+        let setting = "socks5h://user:%FF@127.0.0.1:9050";
+        let parsed = Proxy::parse(setting).unwrap();
+        assert!(ureq::Proxy::new(parsed.url()).is_err());
+        assert!(validate_setting(setting).is_err());
+    }
+
+    #[test]
+    fn supported_settings_are_usable_for_downloads() {
+        for setting in [
+            "proxy.invalid:3128",
+            "http://me:p%40ss@proxy.invalid:3128",
+            "socks5://127.0.0.1:1080",
+            "socks5h://me:p%40ss@127.0.0.1:9050",
+            "socks5h://[::1]:9050",
+        ] {
+            assert!(validate_setting(setting).is_ok());
+            assert!(ureq_proxy_for(setting).unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn rejected_proxy_sends_no_request_to_the_origin() {
+        let origin = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        origin.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/", origin.local_addr().unwrap());
+        let result = build_agent("socks5h://user:%FF@127.0.0.1:9050").and_then(|agent| {
+            agent
+                .get(&url)
+                .config()
+                .timeout_global(Some(Duration::from_millis(100)))
+                .build()
+                .call()
+                .map_err(|error| error.to_string())
+        });
+        assert!(result.is_err(), "an unusable proxy must refuse the request");
+        assert_eq!(
+            origin.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]
