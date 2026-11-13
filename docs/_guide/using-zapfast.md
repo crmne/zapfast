@@ -766,10 +766,12 @@ follow the timer; messages you receive stay in ZapFast's archive after they
 disappear on your other devices.
 
 To block or unblock a person, open their contact info or either chat menu and
-choose **Block contact** or **Unblock contact**, then confirm. Blocking keeps
-the conversation and its history; the composer shows an **Unblock contact**
-button and keeps your unsent draft. Blocked contacts cannot be sent new direct
-messages or called from ZapFast. Shared groups are unaffected. Under
+choose **Block contact** or **Unblock contact**, then confirm. In Contact info,
+the action buttons share centered rows, wrap when they do not fit, and follow
+their visual order when navigating with Tab. Blocking keeps the conversation
+and its history; the composer shows an **Unblock contact** button and keeps
+your unsent draft. Blocked contacts cannot be sent new direct messages or
+called from ZapFast. Shared groups are unaffected. Under
 **Settings > Privacy > Blocked contacts**, you can also see the account's full
 blocked list and unblock people with no chat on this computer.
 
