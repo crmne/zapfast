@@ -884,7 +884,9 @@ with that number or to copy the number as it is written.
 
 ZapFast registers the `whatsapp:` and `wa:` schemes, so a link that names a
 chat opens that chat here. This works from a terminal, a script, or anything
-else that hands a link to the desktop.
+else that hands a link to the desktop. On Windows the `.msi` installer
+registers `whatsapp:` links, unless another program already opens them; a
+copy run from the `.zip` registers nothing.
 
 ```sh
 xdg-open 'whatsapp://send?phone=20123456789'
