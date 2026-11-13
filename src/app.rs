@@ -947,6 +947,10 @@ pub struct App {
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
     pub wants_show: bool,
+    /// Whether the shell should bring the window forward through Win32 this
+    /// frame (Windows only): winit's focus presses a synthetic Alt, which
+    /// reaches other apps' global hotkeys as Right Alt.
+    pub raise_window: bool,
     /// A hidden start whose tray item no panel shows yet waits until then
     /// for one to appear, and shows the window if none has (#429).
     tray_wait: Option<Instant>,
@@ -1790,6 +1794,7 @@ impl App {
             window_hidden: false,
             hide_intent: false,
             wants_show: false,
+            raise_window: false,
             tray_wait: None,
             tray_clicked: None,
             has_focus: false,
@@ -10043,6 +10048,14 @@ impl App {
                     // and a notification click lands on a visible window.
                     self.reopen = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else if cfg!(windows) {
+                    // winit's Windows focus presses and releases a synthetic
+                    // Alt, which arrives as Right Alt and toggles any global
+                    // hotkey bound to it (a voice chat's mute key). The shell
+                    // restores and raises the window through Win32 instead,
+                    // and falls back to egui's focus only if Windows refuses.
+                    self.raise_window = true;
+                    ctx.request_repaint();
                 } else {
                     // Focus alone leaves a minimized window where it is on
                     // Windows, so restore it first.
@@ -18155,6 +18168,11 @@ mod tests {
         app.apply(Action::ShowWindow, &ctx);
         assert!(!app.reopen, "elsewhere the window is only focused");
         assert_ne!(app.closed(), Closed::Reopen);
+        assert_eq!(
+            app.raise_window,
+            cfg!(windows),
+            "Windows raises the window natively, without winit's synthetic Alt"
+        );
     }
 
     /// The title bar choice is saved and, because decorations are fixed when
