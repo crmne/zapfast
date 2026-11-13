@@ -4920,8 +4920,26 @@ impl App {
                     self.timer_saving.remove(&chat);
                 }
             }
+            Event::ErrorResolved(message) => {
+                // What this account said no longer holds, whatever the toast.
+                let said = self.toast_said(&message);
+                self.announcer
+                    .retract(crate::announcer::Category::Error, &said);
+                if message == crate::backend::PHONE_SILENT {
+                    self.phone_silent = false;
+                    // Another account's phone may still be silent.
+                    if self.accounts.iter().any(|account| account.phone_silent) {
+                        return;
+                    }
+                }
+                self.toasts
+                    .retain(|toast| toast.kind != ToastKind::Error || toast.message != message);
+            }
             Event::Error(message) => {
                 self.sticker_import_pending = false;
+                if message == crate::backend::PHONE_SILENT {
+                    self.phone_silent = true;
+                }
                 // The worker sends the English catalog key. `gettext` only
                 // accepts a static key, so unknown errors stay as the worker
                 // wrote them.
@@ -19924,6 +19942,82 @@ mod tests {
                 .any(|toast| toast.message.contains("fijados")),
             "the toast is translated"
         );
+    }
+
+    /// Errors stay until dismissed, unless the worker says one no longer
+    /// holds: then only that toast goes.
+    #[test]
+    fn a_resolved_error_takes_its_toast_back() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        for message in [
+            crate::backend::PHONE_SILENT,
+            "Could not save the attachment",
+        ] {
+            events.send(Event::Error(message.into())).unwrap();
+        }
+        app.handle_events();
+        assert_eq!(app.toasts.len(), 2);
+        // An info toast with the same words is not the error.
+        app.toast(crate::backend::PHONE_SILENT);
+
+        events
+            .send(Event::ErrorResolved(crate::backend::PHONE_SILENT.into()))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.toasts.len(), 2);
+        assert_eq!(app.toasts[0].message, "Could not save the attachment");
+        assert_eq!(app.toasts[0].kind, ToastKind::Error);
+        assert_eq!(app.toasts[1].message, crate::backend::PHONE_SILENT);
+        assert_eq!(app.toasts[1].kind, ToastKind::Info);
+    }
+
+    /// Every account shares the one phone-silence toast. One phone answering
+    /// leaves it up while another account's phone is still silent.
+    #[test]
+    fn the_phone_silence_toast_waits_for_every_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(directory.path());
+        let (mut app, first) = App::headless(dirs.clone(), Settings::default());
+        let (second_account, second) = Account::detached(
+            &dirs,
+            AccountId::parse("2").unwrap(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap();
+        app.accounts.push(second_account);
+        app.active = 0;
+        let silent = || Event::Error(crate::backend::PHONE_SILENT.into());
+        let resolved = || Event::ErrorResolved(crate::backend::PHONE_SILENT.into());
+        let warned = |app: &App| {
+            app.toasts.iter().any(|toast| {
+                toast.kind == ToastKind::Error && toast.message == crate::backend::PHONE_SILENT
+            })
+        };
+
+        first.send(silent()).unwrap();
+        second.send(silent()).unwrap();
+        app.handle_events();
+        assert!(warned(&app));
+
+        first.send(resolved()).unwrap();
+        app.handle_events();
+        assert!(warned(&app), "the second phone is still silent");
+        // Only the second account's warning is still waiting to be spoken.
+        app.announcer.show(&egui::Context::default(), true);
+        assert_eq!(
+            app.announcer.spoken()[0]
+                .matches(crate::backend::PHONE_SILENT)
+                .count(),
+            1,
+            "{:?}",
+            app.announcer.spoken()
+        );
+
+        second.send(resolved()).unwrap();
+        app.handle_events();
+        assert!(!warned(&app));
     }
 
     /// A pin that expires while the chat is closed leaves the line when it is

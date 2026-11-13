@@ -1176,6 +1176,10 @@ pub enum Command {
     },
 }
 
+/// The warning shown when the phone leaves a reader's request for older
+/// messages unanswered. It is taken back once the phone answers.
+pub const PHONE_SILENT: &str = "Your phone did not send older messages. Check that it is online";
+
 #[derive(Debug)]
 pub enum Event {
     Blocklist {
@@ -1598,6 +1602,8 @@ pub enum Event {
         failure: ArchiveFailure,
     },
     Error(String),
+    /// An error sent earlier no longer holds, so its toast is taken back.
+    ErrorResolved(String),
     /// A change to a group's name or photo went to WhatsApp (`saving`), or
     /// WhatsApp answered it.
     GroupSaving {
