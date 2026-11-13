@@ -15,12 +15,13 @@ use crate::model::{
 };
 use crate::paths::AccountDirs;
 
+mod gif_video;
 pub(crate) mod picture_edit;
 
 // Re-exported so the picker can detect pasted Signal pack links.
 mod read_sync;
 pub(crate) mod sticker_import;
-mod sticker_maker;
+pub(crate) mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
@@ -757,6 +758,11 @@ pub enum Command {
     DeleteStickerPack {
         dir: PathBuf,
     },
+    /// Asks where to save a pack, then writes it there as a .wastickers
+    /// archive.
+    ExportStickerPack {
+        dir: PathBuf,
+    },
     /// Internal pack-import result. An empty error means the picker was canceled.
     StickerPackImported {
         result: Result<String, String>,
@@ -782,10 +788,28 @@ pub enum Command {
     },
     /// Chooses a picture to make a sticker from.
     PickStickerPicture,
-    /// Internal: the chosen picture, its size, and whether it has see-through
-    /// pixels; or an empty error when the choice was cancelled.
+    /// Downloads a GIF result's animated rendition for the sticker maker.
+    FetchGifSticker {
+        id: String,
+        url: String,
+    },
+    /// Opens the sticker maker on a picture already on disk, such as a file
+    /// copied in a file manager.
+    OpenStickerPicture(PathBuf),
+    /// Opens the sticker maker on pasted pixels: straight-alpha RGBA. A
+    /// browser pastes only an animation's first frame, so `link`, the
+    /// pasted picture's web address, is downloaded and used instead when it
+    /// moves.
+    StickerFromPixels {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        link: Option<String>,
+    },
+    /// Internal: the chosen picture and what the maker needs to know about
+    /// it; or an empty error when the choice was cancelled.
     StickerPicturePicked {
-        result: Result<(PathBuf, u32, u32, bool), String>,
+        result: Result<(PathBuf, sticker_maker::Inspected), String>,
     },
     /// Makes a sticker from a picture, then adds it to favorites or, with a
     /// chat, sends it there.
@@ -793,6 +817,7 @@ pub enum Command {
         source: PathBuf,
         crop: crate::model::StickerCrop,
         transparent: bool,
+        key: Option<crate::model::ColorKey>,
         emojis: Vec<String>,
         chat: Option<ChatId>,
         quoting: Option<crate::model::ReplyTarget>,
@@ -835,6 +860,13 @@ pub enum Command {
         crop: crate::model::PictureCrop,
         turns: u8,
     },
+    /// Downloads the web picture a browser copied along with a pasted one.
+    /// When it moves, it replaces the still staged as `target`, which holds
+    /// only its first frame.
+    FetchPastedPicture {
+        target: crate::app::AttachmentId,
+        link: String,
+    },
     /// Internal: the edited picture, ready to replace the staged attachment.
     PictureEdited {
         target: crate::app::AttachmentId,
@@ -844,7 +876,7 @@ pub enum Command {
     CreateStickerPack {
         name: String,
     },
-    /// Files a sticker into a local pack by its content, or takes it out.
+    /// Files a sticker into a pack by its content, or takes it out.
     /// The sticker's own file stays where it is.
     SetStickerPack {
         pack: PathBuf,
@@ -1385,6 +1417,10 @@ pub enum Event {
         width: u32,
         height: u32,
         transparent: bool,
+        /// It moves, and becomes an animated sticker.
+        animated: bool,
+        /// The first frame, scaled down.
+        poster: std::sync::Arc<image::RgbaImage>,
     },
     /// Bounded preview pixels; only the UI uploads the texture.
     PicturePreviewReady {

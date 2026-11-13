@@ -1445,8 +1445,9 @@ fn navigation_overlay(
     }
 }
 
-/// Height kept below a sticker for its favorite button and the card margins.
-const STICKER_BUTTON_ROOM: f32 = 110.0;
+/// Height kept below a sticker for its favorite and pack buttons and the
+/// card margins.
+const STICKER_BUTTON_ROOM: f32 = 150.0;
 /// A sticker's side in the viewer, as in WhatsApp's: a card, not the window.
 /// Animated frames are decoded at most 320 pixels wide, so this stays sharp.
 const STICKER_VIEW_SIDE: f32 = 300.0;
@@ -1512,6 +1513,37 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
                     .data_mut(|data| data.insert_temp(sticker_favorite_id(), button.rect));
                 if button.clicked() {
                     app.actions.push(action);
+                }
+                if !app.sticker_packs.is_empty() {
+                    ui.add_space(6.0);
+                    let label = crate::i18n::gettext(app.locale, "Add to pack");
+                    let button =
+                        theme::soft_button(ui, &palette, Some(Icon::Sticker), &label, false);
+                    let names: Vec<&str> = app
+                        .sticker_packs
+                        .iter()
+                        .map(|pack| pack.name.as_str())
+                        .collect();
+                    let width = crate::ui::widgets::menu_width(ui, &names, true);
+                    let picked = egui::Popup::menu(&button)
+                        .width(width)
+                        .frame(crate::ui::widgets::menu_frame(&palette))
+                        .show(|ui| {
+                            super::picker::pack_menu_items(
+                                ui,
+                                &palette,
+                                &app.sticker_packs,
+                                preview.path(),
+                            )
+                        })
+                        .and_then(|shown| shown.inner);
+                    if let Some((pack, member)) = picked {
+                        app.actions.push(Action::SetStickerPack {
+                            pack,
+                            sticker: preview.path().to_owned(),
+                            member,
+                        });
+                    }
                 }
             });
         });

@@ -96,7 +96,9 @@ pub fn packs(root: &Path) -> Vec<StickerPack> {
                 };
                 stickers.sort_by_key(rank);
             }
-            if stickers.is_empty() && !local {
+            // A pack emptied here keeps its manifest and stays, so its tab
+            // does not vanish under the person emptying it.
+            if stickers.is_empty() && manifest.is_none() {
                 return None;
             }
             let when = match &manifest {
@@ -144,27 +146,58 @@ pub fn create_local_pack(root: &Path, name: &str, now: i64) -> Result<PathBuf, S
     Ok(dir)
 }
 
-/// Files a sticker into a local pack under its content hash, or takes it out.
-/// Imported packs stay as they were imported.
+/// Files a sticker into a pack under its content hash, or takes it out. A
+/// copy already in the pack under another name, as an imported pack names
+/// its files, is the same member.
 pub fn set_member(pack: &Path, sticker: &Path, member: bool) -> Result<(), String> {
-    let mut manifest = read_manifest(pack)
-        .filter(|manifest| manifest.local)
-        .ok_or("Only packs made in ZapFast can change")?;
-    let bytes = std::fs::read(sticker).map_err(|error| error.to_string())?;
-    let file = format!("{}.webp", content_hash(&bytes));
-    let target = pack.join(&file);
-    if member {
-        if !target.exists() {
-            std::fs::write(&target, &bytes).map_err(|error| error.to_string())?;
+    let mut manifest = read_manifest(pack).unwrap_or_else(|| Manifest {
+        name: pack
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        ..Default::default()
+    });
+    let mut files: Vec<PathBuf> = std::fs::read_dir(pack)
+        .map_err(|error| error.to_string())?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| is_webp(path))
+        .collect();
+    files.sort();
+    // Files the manifest does not list show after those it does, in name
+    // order; listing them keeps that order once more are added.
+    for path in &files {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        if let Some(name) = name
+            && !manifest.stickers.contains(&name)
+        {
+            manifest.stickers.push(name);
         }
-        if !manifest.stickers.contains(&file) {
+    }
+    let bytes = std::fs::read(sticker).map_err(|error| error.to_string())?;
+    let hash = content_hash(&bytes);
+    let present = files.into_iter().find(|path| {
+        path.file_stem().is_some_and(|stem| *stem == *hash)
+            || std::fs::read(path).is_ok_and(|held| content_hash(&held) == hash)
+    });
+    match (member, present) {
+        (true, None) => {
+            let file = format!("{hash}.webp");
+            std::fs::write(pack.join(&file), &bytes).map_err(|error| error.to_string())?;
             manifest.stickers.push(file);
         }
-    } else {
-        if target.exists() {
-            std::fs::remove_file(&target).map_err(|error| error.to_string())?;
+        (false, Some(path)) => {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            manifest
+                .stickers
+                .retain(|listed| Some(listed) != name.as_ref());
         }
-        manifest.stickers.retain(|listed| *listed != file);
+        _ => return Ok(()),
     }
     write_manifest(pack, &manifest)
 }
@@ -247,18 +280,39 @@ mod tests {
     }
 
     #[test]
-    fn imported_packs_do_not_change_and_empty_ones_are_hidden() {
+    fn imported_packs_take_stickers_and_empty_ones_are_hidden() {
         let root = tempfile::tempdir().expect("temp");
         let packs_root = root.path().join("packs");
         let imported = packs_root.join("Frogs");
         sticker(&imported, "000.webp", b"frog");
+        sticker(&imported, "001.webp", b"toad");
         std::fs::create_dir_all(packs_root.join("Empty")).expect("dirs");
         let loose = sticker(root.path(), "x.webp", b"x");
-        assert!(set_member(&imported, &loose, true).is_err());
+        set_member(&imported, &loose, true).expect("adds");
         let listed = packs(&packs_root);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "Frogs");
         assert!(!listed[0].local);
+        assert_eq!(
+            listed[0]
+                .stickers
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "000.webp".to_owned(),
+                "001.webp".to_owned(),
+                format!("{}.webp", content_hash(b"x")),
+            ],
+            "the new sticker comes after the imported ones"
+        );
+        // A copy of an imported sticker is already a member, and takes it out.
+        let toad = sticker(root.path(), "toad.webp", b"toad");
+        set_member(&imported, &toad, true).expect("adds nothing");
+        assert_eq!(packs(&packs_root)[0].stickers.len(), 3);
+        set_member(&imported, &toad, false).expect("removes");
+        assert!(!imported.join("001.webp").exists());
+        assert_eq!(packs(&packs_root)[0].stickers.len(), 2);
     }
 
     #[test]

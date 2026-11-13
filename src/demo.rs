@@ -3936,13 +3936,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 let (photo, _) = sample_files(app);
                 let crop = crate::model::StickerCrop::centered(900, 1200).resized(620, 900, 1200);
                 app.sticker_draft = Some(crate::model::StickerDraft {
-                    source: photo,
+                    source: photo.clone(),
                     width: 900,
                     height: 1200,
                     transparent: false,
                     crop: crop.moved(0, 130, 900, 1200),
                     keep_transparent: false,
                     emojis: "🌅 🌊".into(),
+                    animated: false,
+                    poster: std::sync::Arc::new(
+                        image::open(&photo)
+                            .map(|picture| picture.thumbnail(360, 360).to_rgba8())
+                            .unwrap_or_else(|_| image::RgbaImage::new(270, 360)),
+                    ),
+                    remove_color: true,
+                    key: crate::model::ColorKey {
+                        color: [255; 3],
+                        tolerance: 40,
+                    },
+                    picking: false,
                 });
                 app.dialog = Some(Dialog::StickerMaker);
             }
@@ -3960,6 +3972,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         still: Some(still.clone()),
                         animated: Some(animated.clone()),
                         animated_source: None,
+                        sticker_source: None,
                         mp4: String::new(),
                         width: 200,
                         height: if index % 2 == 0 { 150 } else { 200 },
@@ -6436,6 +6449,48 @@ mod tests {
             .filter_map(|(_, node)| node.label().or_else(|| node.value()))
             .map(str::to_owned)
             .collect()
+    }
+
+    /// A staged picture or photo offers "Create sticker" in the review; the
+    /// attachment stays staged after the sticker maker opens.
+    #[test]
+    fn staged_pictures_offer_to_become_stickers() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        app.backend.record_demo_commands();
+        // The review shows one attachment at a time, with its own offer.
+        let labels = accessible_labels(&mut app, &ctx);
+        let offers = labels
+            .iter()
+            .filter(|label| *label == "Create sticker")
+            .count();
+        assert_eq!(offers, 1, "{labels:?}");
+        for staged in [app.pending[0].id, app.pending[1].id] {
+            app.actions
+                .push(crate::model::Action::StickerFromPending(staged));
+        }
+        render(&mut app, &ctx);
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::StickerFromPixels {
+                    width: 48,
+                    link: None,
+                    ..
+                }
+            )),
+            "{commands:?}"
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, crate::backend::Command::OpenStickerPicture(_))),
+            "{commands:?}"
+        );
+        assert_eq!(app.pending.len(), 4, "the attachments stay staged");
     }
 
     /// With our read receipts off, WhatsApp shows no read ticks in a
@@ -13872,6 +13927,82 @@ mod tests {
         assert!(
             app.sticker_view.is_none(),
             "a click on the sticker closes it"
+        );
+    }
+
+    /// A sticker shown large after a click in the chat files into a pack
+    /// from the card's "Add to pack" menu.
+    #[test]
+    fn a_large_sticker_files_into_a_pack_from_its_menu() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("sticker-view"));
+        app.backend.record_demo_commands();
+        let received = app.sticker_view.as_ref().expect("open").path().to_owned();
+        let dir = app.dirs.media_cache_dir().join("test-pack");
+        app.sticker_packs = vec![crate::model::StickerPack {
+            name: "Test pack".to_owned(),
+            dir: dir.clone(),
+            stickers: Vec::new(),
+            local: false,
+        }];
+        render(&mut app, &ctx);
+        ctx.enable_accesskit();
+        let bounds = |app: &mut App, events: Vec<egui::Event>, label: &str| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            let tree = output.platform_output.accesskit_update.unwrap();
+            tree.nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .and_then(|(_, node)| node.bounds())
+                .map(|rect| egui::pos2(rect.x0 as f32 + 4.0, rect.y0 as f32 + 4.0))
+        };
+        let click = |pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            [
+                vec![egui::Event::PointerMoved(pos), press(true)],
+                vec![press(false)],
+            ]
+        };
+
+        let button = bounds(&mut app, Vec::new(), "Add to pack").expect("the pack button");
+        let [down, up] = click(button);
+        bounds(&mut app, down, "");
+        bounds(&mut app, up, "");
+        let item = bounds(&mut app, Vec::new(), "Test pack").expect("the pack menu");
+        let [down, up] = click(item);
+        bounds(&mut app, down, "");
+        bounds(&mut app, up, "");
+        render(&mut app, &ctx);
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                crate::backend::Command::SetStickerPack { pack, sticker, member: true }
+                    if *pack == dir && *sticker == received
+            )),
+            "{commands:?}"
         );
     }
 

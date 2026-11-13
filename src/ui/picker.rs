@@ -1143,10 +1143,24 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                                 );
                             }
                         }
-                        if response
+                        let response = response
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
+                            .on_hover_text(gettext(
+                                app.locale,
+                                "Click to send, right-click to make a sticker",
+                            ));
+                        response.context_menu(|ui| {
+                            if widgets::menu_item(
+                                ui,
+                                palette,
+                                Some(Icon::Sticker),
+                                &gettext(app.locale, "Make a sticker"),
+                            ) {
+                                app.actions.push(Action::MakeGifSticker(gif.clone()));
+                                ui.close();
+                            }
+                        });
+                        if response.clicked() {
                             picked = Some(gif.clone());
                         }
                     }
@@ -1328,20 +1342,16 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         add_page(app, ui, palette);
         return;
     }
-    let local: Vec<StickerPack> = app
-        .sticker_packs
-        .iter()
-        .filter(|pack| pack.local)
-        .cloned()
-        .collect();
+    let packs = app.sticker_packs.clone();
     let grid = GridContext {
         locale,
         animate: app.window_focused,
-        local: &local,
+        packs: &packs,
     };
     let mut choices = StickerChoices::default();
     let mut delete_pack = None;
     let mut share_pack = None;
+    let mut export_pack = None;
     if !query.is_empty() {
         let found = crate::sticker_search::search(
             &crate::sticker_search::Library {
@@ -1423,6 +1433,19 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         {
                             share_pack = Some(pack.dir.clone());
                         }
+                        if !pack.stickers.is_empty()
+                            && theme::icon_button(
+                                ui,
+                                Icon::Download,
+                                15.0,
+                                palette.dim,
+                                palette.text,
+                                &gettext(locale, "Export this pack to a file"),
+                            )
+                            .clicked()
+                        {
+                            export_pack = Some(pack.dir.clone());
+                        }
                     });
                 });
                 if pack.stickers.is_empty() {
@@ -1495,6 +1518,9 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if let Some(dir) = share_pack {
         app.actions.push(Action::ShareStickerPack(dir));
     }
+    if let Some(dir) = export_pack {
+        app.actions.push(Action::ExportStickerPack(dir));
+    }
 }
 
 /// The page behind the strip's plus: import packs, start a pack, or make a
@@ -1552,6 +1578,17 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             .clicked()
             {
                 app.actions.push(Action::PickStickerPicture);
+            }
+            if theme::soft_button(
+                ui,
+                palette,
+                Some(Icon::Copy),
+                &gettext(locale, "Paste a picture as a sticker"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::PasteStickerPicture);
             }
         });
 }
@@ -1697,12 +1734,12 @@ struct GridContext<'a> {
     locale: crate::i18n::Locale,
     /// Play animated stickers on hover.
     animate: bool,
-    /// Local packs a sticker can be filed into.
-    local: &'a [StickerPack],
+    /// Packs a sticker can be filed into, made here or imported.
+    packs: &'a [StickerPack],
 }
 
 /// Sticker tiles. Click sends; right-click saves, removes, or files the tile
-/// into one of the local packs.
+/// into one of the packs.
 fn sticker_grid(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -1724,7 +1761,7 @@ fn sticker_grid(
         save_label.as_ref(),
         unrecent_label.as_ref(),
     ];
-    labels.extend(grid.local.iter().map(|pack| pack.name.as_str()));
+    labels.extend(grid.packs.iter().map(|pack| pack.name.as_str()));
     let menu_width = widgets::menu_width(ui, &labels, true);
     for row in stickers.chunks(columns) {
         ui.horizontal(|ui| {
@@ -1756,18 +1793,12 @@ fn sticker_grid(
                         {
                             choices.unrecent = Some(path.clone());
                         }
-                        if !grid.local.is_empty() {
+                        if !grid.packs.is_empty() {
                             widgets::menu_separator(ui, palette);
-                            let hash = content_hash(ui.ctx(), path);
-                            for pack in grid.local {
-                                // A checked entry is a member: picking it again
-                                // takes the sticker back out.
-                                let member =
-                                    hash.as_deref().is_some_and(|hash| pack_holds(pack, hash));
-                                let icon = member.then_some(Icon::Check);
-                                if widgets::menu_item(ui, palette, icon, &pack.name) {
-                                    choices.pack = Some((pack.dir.clone(), path.clone(), !member));
-                                }
+                            if let Some((pack, member)) =
+                                pack_menu_items(ui, palette, grid.packs, path)
+                            {
+                                choices.pack = Some((pack, path.clone(), member));
                             }
                         }
                     });
@@ -1941,10 +1972,34 @@ fn content_hash(ctx: &egui::Context, path: &Path) -> Option<String> {
 }
 
 /// Whether a local pack holds the sticker with this content hash.
-fn pack_holds(pack: &StickerPack, hash: &str) -> bool {
-    pack.stickers
-        .iter()
-        .any(|path| path.file_stem().is_some_and(|stem| stem == hash))
+fn pack_holds(ctx: &egui::Context, pack: &StickerPack, hash: &str) -> bool {
+    pack.stickers.iter().any(|path| {
+        path.file_stem().is_some_and(|stem| stem == hash)
+            || content_hash(ctx, path).as_deref() == Some(hash)
+    })
+}
+
+/// One menu entry per pack, checked where the sticker at `path` is a
+/// member. Returns the pack picked and whether the sticker should join it;
+/// picking a checked entry takes the sticker back out.
+pub(crate) fn pack_menu_items(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    packs: &[StickerPack],
+    path: &Path,
+) -> Option<(PathBuf, bool)> {
+    let hash = content_hash(ui.ctx(), path);
+    let mut picked = None;
+    for pack in packs {
+        let member = hash
+            .as_deref()
+            .is_some_and(|hash| pack_holds(ui.ctx(), pack, hash));
+        let icon = member.then_some(Icon::Check);
+        if widgets::menu_item(ui, palette, icon, &pack.name) {
+            picked = Some((pack.dir.clone(), !member));
+        }
+    }
+    picked
 }
 
 /// Returns whether a sticker moves, probing each path once and re-probing
@@ -2090,11 +2145,17 @@ mod pack_tests {
         let hash = content_hash(&ctx, &path).expect("hashes");
         assert_eq!(hash, crate::backend::sticker_store::content_hash(b"sun"));
         let mut holder = pack("Bom dia", true);
-        assert!(!pack_holds(&holder, &hash));
+        assert!(!pack_holds(&ctx, &holder, &hash));
         holder
             .stickers
             .push(holder.dir.join(format!("{hash}.webp")));
-        assert!(pack_holds(&holder, &hash));
+        assert!(pack_holds(&ctx, &holder, &hash));
+        // An imported pack names its files by number; their content counts.
+        let imported_file = dir.path().join("000.webp");
+        std::fs::write(&imported_file, b"sun").expect("writes");
+        let mut imported = pack("Frogs", false);
+        imported.stickers.push(imported_file);
+        assert!(pack_holds(&ctx, &imported, &hash));
         // A changed file is hashed again.
         std::fs::write(&path, b"moon!").expect("writes");
         assert_ne!(content_hash(&ctx, &path).expect("hashes"), hash);
