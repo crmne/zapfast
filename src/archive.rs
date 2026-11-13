@@ -62,6 +62,14 @@ pub struct ArchivedSticker {
     pub raw: Option<Vec<u8>>,
 }
 
+pub struct RawMessage {
+    pub rowid: i64,
+    pub chat: String,
+    pub id: String,
+    /// Oversized recovery inputs retain their cursor but are not loaded.
+    pub raw: Option<Vec<u8>>,
+}
+
 pub struct Archive {
     connection: Connection,
 }
@@ -1133,7 +1141,8 @@ impl Archive {
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
             "SELECT chat, id, coalesce(json_extract(content, '$.media.path'),
-                 json_extract(content, '$.card.image.path')) AS path
+                 json_extract(content, '$.card.image.path'),
+                 json_extract(content, '$.preview.image.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -1947,6 +1956,46 @@ impl Archive {
         rows.collect()
     }
 
+    /// At most 128 rows and 8 MiB of recovery input. Oversized blobs stay
+    /// archived but are not decoded; their cursor still advances.
+    pub fn link_previews_with_raw(&self, after: i64) -> Result<Vec<RawMessage>> {
+        const BYTE_LIMIT: i64 = 8 * 1024 * 1024;
+        let mut statement = self.connection.prepare(
+            "SELECT rowid, chat, id, length(raw) FROM messages
+             WHERE rowid > ?1 AND raw IS NOT NULL AND edited = 0 AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'text'
+             ORDER BY rowid LIMIT 128",
+        )?;
+        let rows = statement.query_map([after], |row| {
+            Ok((
+                RawMessage {
+                    rowid: row.get(0)?,
+                    chat: row.get(1)?,
+                    id: row.get(2)?,
+                    raw: None,
+                },
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut raw = self
+            .connection
+            .prepare("SELECT raw FROM messages WHERE rowid = ?1")?;
+        let mut page = Vec::new();
+        let mut bytes = 0;
+        for row in rows {
+            let (mut row, size) = row?;
+            if size <= BYTE_LIMIT {
+                if bytes + size > BYTE_LIMIT {
+                    break;
+                }
+                row.raw = Some(raw.query_row([row.rowid], |row| row.get(0))?);
+                bytes += size;
+            }
+            page.push(row);
+        }
+        Ok(page)
+    }
+
     /// Video messages with their raw protobuf.
     pub fn videos_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
         let mut statement = self.connection.prepare(
@@ -2380,19 +2429,30 @@ impl Archive {
     }
 
     /// Attachment paths of the messages matching `filter` (over `messages m`),
-    /// including an interactive card's image and each carousel card's image.
+    /// including card and preview images. Shared files stay until their last
+    /// message is removed.
     fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
+        let paths = |filter: &str| {
+            format!(
+            "SELECT p.value AS file FROM messages m,
+                 json_each(CASE WHEN json_valid(m.content) THEN json_extract(m.content,
+                     '$.media.path', '$.card.image.path', '$.motion.path', '$.preview.image.path') END) p
+             WHERE ({filter}) AND p.type = 'text'
+             UNION ALL
+             SELECT CASE WHEN c.type = 'object' THEN json_extract(c.value, '$.image.path') END AS file
+             FROM messages m,
+                 json_each(CASE WHEN json_valid(m.content) THEN m.content END, '$.card.carousel') c
+             WHERE ({filter}) AND typeof(file) = 'text'"
+        )
+        };
         let mut statement = self.connection.prepare(&format!(
-            "SELECT file FROM (
-                 SELECT json_extract(m.content, '$.media.path') AS file FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(m.content, '$.motion.path') FROM messages m WHERE {filter}
-                 UNION ALL
-                 SELECT json_extract(c.value, '$.image.path')
-                 FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
-             ) WHERE file IS NOT NULL"
+            "WITH removed AS MATERIALIZED ({})
+             SELECT file FROM removed EXCEPT
+             SELECT file FROM ({}) WHERE file IN (SELECT file FROM removed)",
+            paths(filter),
+            paths(&format!(
+                "NOT ({filter}) AND EXISTS (SELECT 1 FROM removed)"
+            )),
         ))?;
         let rows =
             statement.query_map(params, |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
@@ -2681,13 +2741,42 @@ impl Archive {
         content: &Content,
         mentions: &[crate::model::MentionRef],
     ) -> Result<bool> {
+        self.set_edited(chat, id, content, mentions, None)
+    }
+
+    /// Saves a received edit and the current download keys and inline picture atomically.
+    pub fn set_edited_message(
+        &self,
+        chat: &str,
+        id: &str,
+        content: &Content,
+        mentions: &[crate::model::MentionRef],
+        raw: &[u8],
+        thumbnail: Option<&[u8]>,
+    ) -> Result<bool> {
+        self.set_edited(chat, id, content, mentions, Some((raw, thumbnail)))
+    }
+
+    fn set_edited(
+        &self,
+        chat: &str,
+        id: &str,
+        content: &Content,
+        mentions: &[crate::model::MentionRef],
+        received: Option<(&[u8], Option<&[u8]>)>,
+    ) -> Result<bool> {
         let changed = self.connection.execute(
-            "UPDATE messages SET content = ?3, mentions = ?4, edited = 1 WHERE chat = ?1 AND id = ?2",
+            "UPDATE messages SET content = ?3, mentions = ?4, edited = 1,
+             raw = COALESCE(?5, raw),
+             thumbnail = CASE WHEN ?5 IS NULL THEN thumbnail ELSE ?6 END
+             WHERE chat = ?1 AND id = ?2",
             params![
                 chat,
                 id,
                 serde_json::to_string(content).unwrap_or_default(),
                 serde_json::to_string(mentions).unwrap_or_default(),
+                received.map(|(raw, _)| raw),
+                received.and_then(|(_, thumbnail)| thumbnail),
             ],
         )?;
         Ok(changed > 0)
@@ -4421,7 +4510,11 @@ pub(crate) mod tests {
         let archive = Archive::in_memory().expect("opens");
         let media = PathBuf::from("/cache/zapfast/media/m2.jpg");
         let gone = furnished_chat(&archive, "1@s.whatsapp.net", &media);
-        let kept = furnished_chat(&archive, "2@s.whatsapp.net", &media);
+        let kept = furnished_chat(
+            &archive,
+            "2@s.whatsapp.net",
+            Path::new("/cache/zapfast/media/kept.jpg"),
+        );
 
         let removed = archive.delete_chat(&gone).expect("delete");
 
@@ -4521,9 +4614,9 @@ pub(crate) mod tests {
         assert_eq!(archive.removal_point(chat).unwrap(), None);
     }
 
-    /// Checks that chat removal includes downloaded interactive-card paths in its media cleanup list.
+    /// Chat removal includes downloaded preview and interactive-card pictures.
     #[test]
-    fn removing_a_chat_reports_interactive_card_images() {
+    fn removing_a_chat_reports_preview_and_interactive_images() {
         let image = |name: &str| crate::model::Media {
             mime: "image/jpeg".into(),
             size: 1,
@@ -4554,8 +4647,21 @@ pub(crate) mod tests {
             };
             archive.insert_message(&single, None).unwrap();
             archive.insert_message(&carousel, None).unwrap();
+            let mut preview = message(chat, "preview", 100, false);
+            preview.content = Content::Text {
+                text: "https://example.com".into(),
+                preview: Some(crate::model::LinkPreview {
+                    image_sha256: None,
+                    url: "https://example.com".into(),
+                    title: None,
+                    description: None,
+                    video: false,
+                    image: Some(Box::new(image("preview"))),
+                }),
+            };
+            archive.insert_message(&preview, None).unwrap();
         };
-        let mut expected: Vec<_> = ["card", "first", "second"]
+        let mut expected: Vec<_> = ["card", "first", "second", "preview"]
             .map(|name| image(name).path.unwrap())
             .into();
         expected.sort();
@@ -4579,6 +4685,184 @@ pub(crate) mod tests {
             removed.sort();
             assert_eq!(removed, expected, "{removal}");
         }
+    }
+
+    #[test]
+    fn malformed_content_does_not_block_chat_removal() {
+        for removal in ["clear", "delete", "through"] {
+            for corrupt_selected in [false, true] {
+                let archive = Archive::in_memory().unwrap();
+                // Simulate damaged stored content. Current partial indexes
+                // reject malformed JSON on ordinary writes.
+                archive
+                    .connection
+                    .execute_batch("DROP INDEX messages_stickers; DROP INDEX messages_calls;")
+                    .unwrap();
+                let chat = "1@s.whatsapp.net";
+                let other = "2@s.whatsapp.net";
+                let path = Path::new("/cache/synthetic.jpg");
+                furnished_chat(&archive, chat, path);
+                archive.ensure_chat(other, "Synthetic").unwrap();
+                let bad_chat = if corrupt_selected { chat } else { other };
+                archive
+                    .insert_message(&message(bad_chat, "bad", 100, false), None)
+                    .unwrap();
+                archive
+                    .connection
+                    .execute(
+                        "UPDATE messages SET content = '{' WHERE chat = ?1 AND id = 'bad'",
+                        params![bad_chat],
+                    )
+                    .unwrap();
+                if removal == "through" {
+                    archive
+                        .insert_message(&message(chat, "newer", 300, false), None)
+                        .unwrap();
+                }
+                let removed = match removal {
+                    "clear" => archive.clear_chat(chat),
+                    "delete" => archive.delete_chat(chat),
+                    _ => archive.remove_chat_through(chat, 200, false),
+                }
+                .unwrap();
+                assert_eq!(removed.media, [path.to_path_buf()]);
+                if !corrupt_selected {
+                    let content: String = archive
+                        .connection
+                        .query_row(
+                            "SELECT content FROM messages WHERE chat = ?1 AND id = 'bad'",
+                            params![other],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(content, "{", "unrelated damaged rows stay untouched");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chat_removal_keeps_preview_files_referenced_by_surviving_messages() {
+        for removal in ["clear", "delete", "through"] {
+            let archive = Archive::in_memory().unwrap();
+            let chat = "1@s.whatsapp.net";
+            let kept_chat = if removal == "through" {
+                chat
+            } else {
+                "2@s.whatsapp.net"
+            };
+            for (id, at, target, file) in [
+                ("source", 100, chat, "shared.jpg"),
+                ("unshared", 100, chat, "unshared.jpg"),
+                ("forwarded", 200, kept_chat, "shared.jpg"),
+                ("source-media", 100, chat, "attachment.jpg"),
+                ("forwarded-media", 200, kept_chat, "attachment.jpg"),
+            ] {
+                archive.ensure_chat(target, "Synthetic").unwrap();
+                let mut row = message(target, id, at, false);
+                row.forwarded = id.starts_with("forwarded");
+                let media = crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    album: None,
+                    path: Some(PathBuf::from(file)),
+                    state: crate::model::MediaState::Idle,
+                };
+                row.content = if id.ends_with("-media") {
+                    Content::Image {
+                        caption: None,
+                        motion: None,
+                        media,
+                    }
+                } else {
+                    Content::Text {
+                        text: "https://example.com".into(),
+                        preview: Some(crate::model::LinkPreview {
+                            url: "https://example.com".into(),
+                            title: None,
+                            description: None,
+                            video: false,
+                            image_sha256: None,
+                            image: Some(Box::new(media)),
+                        }),
+                    }
+                };
+                archive.insert_message(&row, None).unwrap();
+            }
+            let removed = match removal {
+                "clear" => archive.clear_chat(chat),
+                "delete" => archive.delete_chat(chat),
+                _ => archive.remove_chat_through(chat, 100, false),
+            }
+            .unwrap();
+            assert_eq!(removed.media, [PathBuf::from("unshared.jpg")], "{removal}");
+            let kept = archive.message(kept_chat, "forwarded").unwrap().unwrap();
+            assert_eq!(
+                kept.content.media().unwrap().path.as_deref(),
+                Some(Path::new("shared.jpg"))
+            );
+            assert_eq!(
+                archive
+                    .message(kept_chat, "forwarded-media")
+                    .unwrap()
+                    .unwrap()
+                    .content
+                    .media()
+                    .unwrap()
+                    .path
+                    .as_deref(),
+                Some(Path::new("attachment.jpg"))
+            );
+            assert_eq!(
+                archive.delete_chat(kept_chat).unwrap().media,
+                [PathBuf::from("attachment.jpg"), PathBuf::from("shared.jpg")]
+            );
+        }
+    }
+
+    #[test]
+    fn link_preview_recovery_bounds_raw_bytes_and_advances_past_oversized_rows() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Synthetic").unwrap();
+        for (id, size) in [("oversized", 9), ("first", 3), ("second", 3), ("third", 3)] {
+            archive
+                .insert_message(
+                    &message(chat, id, 1, false),
+                    Some(&vec![0; size * 1024 * 1024]),
+                )
+                .unwrap();
+        }
+        let mut after = 0;
+        let mut ids = Vec::new();
+        let mut raw_lengths = Vec::new();
+        loop {
+            let rows = archive.link_previews_with_raw(after).unwrap();
+            if rows.is_empty() {
+                break;
+            }
+            assert!(
+                rows.iter()
+                    .map(|row| row.raw.as_ref().map_or(0, Vec::len))
+                    .sum::<usize>()
+                    <= 8 * 1024 * 1024
+            );
+            after = rows.last().unwrap().rowid;
+            raw_lengths.extend(rows.iter().map(|row| row.raw.as_ref().map(Vec::len)));
+            ids.extend(rows.into_iter().map(|row| row.id));
+        }
+        assert_eq!(ids, ["oversized", "first", "second", "third"]);
+        assert_eq!(
+            raw_lengths,
+            [
+                None,
+                Some(3 * 1024 * 1024),
+                Some(3 * 1024 * 1024),
+                Some(3 * 1024 * 1024)
+            ]
+        );
     }
 
     #[test]
@@ -6568,6 +6852,9 @@ mod media_path_tests {
                 Content::Text {
                     text: "look".into(),
                     preview: Some(crate::model::LinkPreview {
+                        image_sha256: None,
+                        video: false,
+                        image: None,
                         url: "https://spotifast.rocks/".into(),
                         title: None,
                         description: None,
