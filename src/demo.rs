@@ -3865,6 +3865,26 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.stage(crate::app::Pending::File("/tmp/notes.pdf".into()));
                 app.composer = "Look at these".into();
             }
+            // A clip staged to go as a video message, with a photo after it.
+            "staged-video" | "staged-video-playing" => {
+                let clip = stock::save(
+                    &app.dirs.media_cache_dir(),
+                    "Launch rehearsal.mp4",
+                    stock::VIDEO,
+                );
+                let (photo, _) = sample_files(app);
+                let id = app.stage(crate::app::Pending::File(clip.clone()));
+                app.stage(crate::app::Pending::File(photo));
+                app.composer = "Take two, with the countdown".into();
+                // Screenshots stay quiet.
+                app.video.silence();
+                if part == "staged-video-playing" {
+                    app.actions.push(crate::model::Action::PlayVideo {
+                        message: crate::ui::attachment_preview::video_key(id),
+                        path: clip,
+                    });
+                }
+            }
             // Opens the cropper on a sample picture. The demo has no worker
             // to read a picture's size, so it is read here instead.
             "crop" => {
@@ -9818,6 +9838,8 @@ mod tests {
             "search",
             "forward-portuguese",
             "staged",
+            "staged-video",
+            "staged-video-playing",
             "view-once-off",
             "view-once",
             "view-once,light",
@@ -12909,6 +12931,77 @@ mod tests {
         );
         assert!(app.pending.is_empty());
         assert!(app.composer.is_empty());
+    }
+
+    /// A staged MP4 shows its still large, plays in place from the file as
+    /// picked, and stops as soon as it is not the file under review.
+    #[test]
+    fn attachment_review_previews_and_plays_a_staged_video() {
+        use crate::backend::Command;
+        use crate::ui::attachment_preview::video_key;
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged-video"));
+        app.backend.record_demo_commands();
+        // The still is read on a thread of its own, as the worker reads it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.pending[0].video.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the staged video's still arrives"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            render(&mut app, &ctx);
+        }
+        let clip = app.pending[0].id;
+        let [path, photo] = [0, 1].map(|index| match &app.pending[index].item {
+            crate::app::Pending::File(path) => path.clone(),
+            _ => unreachable!(),
+        });
+        let length = app.pending[0].video.as_ref().unwrap().length.unwrap();
+        assert_eq!(
+            length.as_secs_f32().round() as u32,
+            stock::CLIP_SECONDS,
+            "the review knows how long it plays"
+        );
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(
+            picture_rect(&shapes).area() > 100_000.0,
+            "the still fills the review"
+        );
+        click_review_button(&mut app, &ctx, "Play");
+        assert_eq!(app.video.message(), Some(video_key(clip).as_str()));
+        let photo = photo.file_name().unwrap().to_string_lossy().into_owned();
+        click_review_button(&mut app, &ctx, &format!("Attachment 2: {photo}"));
+        assert_eq!(app.video.message(), None, "picking another file stops it");
+        click_review_button(&mut app, &ctx, "Attachment 1: Launch rehearsal.mp4");
+        click_review_button(&mut app, &ctx, "Play");
+        assert_eq!(app.video.message(), Some(video_key(clip).as_str()));
+        app.backend.take_demo_commands();
+        click_review_button(&mut app, &ctx, "Send");
+        assert_eq!(app.video.message(), None, "sending stops it");
+        let commands = app.backend.take_demo_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::SendFiles { paths, documents: false, .. } if paths.contains(&path)
+            )),
+            "it goes as the file picked, as a video"
+        );
+        apply_flags(&mut app, Some("staged-video"));
+        render(&mut app, &ctx);
+        let clip = app.pending[0].id;
+        app.actions.push(crate::model::Action::PlayVideo {
+            message: video_key(clip),
+            path: path.clone(),
+        });
+        render(&mut app, &ctx);
+        assert_eq!(app.video.message(), Some(video_key(clip).as_str()));
+        app.actions.push(crate::model::Action::RemovePending(0));
+        render(&mut app, &ctx);
+        assert_eq!(app.video.message(), None, "removing it stops it");
     }
 
     #[test]

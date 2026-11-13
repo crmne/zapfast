@@ -10648,6 +10648,7 @@ fn video(
                             locale: view.locale,
                             accent: view.palette.accent,
                             expanded: false,
+                            fill_window: true,
                         },
                         &message.id,
                         path,
@@ -10770,6 +10771,9 @@ pub(crate) struct VideoControls<'a> {
     pub accent: Color32,
     /// Whether the video covers the window; its button then puts it back.
     pub expanded: bool,
+    /// Whether the switch between the message and the window shows. A video
+    /// staged to send is in no message the viewer could show.
+    pub fill_window: bool,
 }
 
 /// Play/pause, the time, a seek bar, a sound switch, and the switch between
@@ -10820,42 +10824,49 @@ pub(crate) fn video_controls(
             path: path.to_owned(),
         });
     }
-    let window =
+    // The right end holds the switch between the message and the window, and
+    // the sound where there is no such switch.
+    let corner =
         Rect::from_center_size(pos2(bar.right() - 18.0, bar.center().y), Vec2::splat(26.0));
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new(("video-window", message)), window));
-    theme::paint_icon(
-        ui,
-        if controls.expanded {
-            Icon::Minimize
+    let sound = if controls.fill_window {
+        let window = corner;
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::new(("video-window", message)), window));
+        theme::paint_icon(
+            ui,
+            if controls.expanded {
+                Icon::Minimize
+            } else {
+                Icon::Maximize
+            },
+            window,
+            16.0,
+            Color32::WHITE,
+        );
+        let tooltip = if controls.expanded {
+            crate::i18n::gettext(controls.locale, "Back to the message (Esc)")
         } else {
-            Icon::Maximize
-        },
-        window,
-        16.0,
-        Color32::WHITE,
-    );
-    let tooltip = if controls.expanded {
-        crate::i18n::gettext(controls.locale, "Back to the message (Esc)")
+            crate::i18n::gettext(controls.locale, "Fill the window")
+        };
+        if ui
+            .interact(window, id.with("window"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tooltip.as_ref())
+            .clicked()
+        {
+            actions.push(if controls.expanded {
+                Action::CloseImagePreview
+            } else {
+                expand_video_action(message, path)
+            });
+        }
+        Rect::from_center_size(
+            pos2(window.left() - 15.0, bar.center().y),
+            Vec2::splat(26.0),
+        )
     } else {
-        crate::i18n::gettext(controls.locale, "Fill the window")
+        corner
     };
-    if ui
-        .interact(window, id.with("window"), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(tooltip.as_ref())
-        .clicked()
-    {
-        actions.push(if controls.expanded {
-            Action::CloseImagePreview
-        } else {
-            expand_video_action(message, path)
-        });
-    }
-    let sound = Rect::from_center_size(
-        pos2(window.left() - 15.0, bar.center().y),
-        Vec2::splat(26.0),
-    );
     let muted = controls.player.muted();
     theme::paint_icon(
         ui,
@@ -11107,7 +11118,13 @@ fn video_note(
 
 /// Paints a texture into `rect` with rounded corners; a radius of half the
 /// side makes a circle.
-fn paint_texture(ui: &egui::Ui, rect: Rect, texture: egui::TextureId, uv: Rect, radius: f32) {
+pub(crate) fn paint_texture(
+    ui: &egui::Ui,
+    rect: Rect,
+    texture: egui::TextureId,
+    uv: Rect,
+    radius: f32,
+) {
     ui.painter().add(
         egui::epaint::RectShape::filled(
             rect,
@@ -11119,7 +11136,7 @@ fn paint_texture(ui: &egui::Ui, rect: Rect, texture: egui::TextureId, uv: Rect, 
 }
 
 /// The largest rect with the proportions of `size` centred in `rect`.
-fn fit_within(size: Vec2, rect: Rect) -> Rect {
+pub(crate) fn fit_within(size: Vec2, rect: Rect) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return rect;
     }

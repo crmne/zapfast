@@ -943,6 +943,7 @@ fn video(
                 locale: app.locale,
                 accent: palette.accent,
                 expanded: true,
+                fill_window: true,
             },
             message,
             path,

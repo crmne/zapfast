@@ -271,7 +271,11 @@ just as a held one does. Other text fields, such as search, paste only text,
 and nothing is staged while a menu, the picker, a recording, or a full-size
 video is open.
 Staged files open a review area below the chat header. The selected photo
-is shown large and fitted whole; other files show their name and size. Click
+is shown large and fitted whole; other files show their name and size. A
+video that goes as a video message shows a frame from about a second in and
+its length, in its tile too; click it to play it there, with the same
+controls as a video in a chat, before you send it. It stops when you pick
+another file, remove it, send or discard. Click
 a tile along the bottom to review another file, or **+** to add more. The
 normal composer stays below the preview for your caption, emoji and mentions;
 Send is at the right of the file strip. Enter still follows your send-key

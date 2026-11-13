@@ -1325,6 +1325,105 @@ fn decode(
     Ok(())
 }
 
+/// What a video staged to send shows before it plays.
+#[derive(Debug)]
+pub struct Still {
+    /// An upright frame from about a second in, as the thumbnail sent with
+    /// the video is taken, since openings are often black. `None` when the
+    /// video is not H.264, which plays only in the system player.
+    pub picture: Option<ColorImage>,
+    pub length: Duration,
+}
+
+/// How far into a video its still is taken, at most: half of a shorter one.
+const STILL_AT: Duration = Duration::from_secs(1);
+
+/// Reads the length of the MP4 at `path` and a picture from it no larger
+/// than `side`, decoding only from the keyframe before that picture, so a
+/// long video costs no more than a short one.
+pub(crate) fn still(path: &Path, side: u32) -> Option<Still> {
+    let file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    still_from(std::io::BufReader::new(file), size, side)
+}
+
+/// [`still`] of an MP4 of `size` bytes read from `reader`.
+fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32) -> Option<Still> {
+    let mut mp4 = mp4::Mp4Reader::read_header(reader, size).ok()?;
+    let length = mp4.duration();
+    let (track_id, count, timeline, parameters, turns) = {
+        let track = mp4
+            .tracks()
+            .values()
+            .find(|track| track.track_type().ok() == Some(mp4::TrackType::Video))?;
+        if track.media_type().ok() != Some(mp4::MediaType::H264) {
+            return Some(Still {
+                picture: None,
+                length,
+            });
+        }
+        let mut parameters = Vec::new();
+        crate::animation::push_annex_b(&mut parameters, track.sequence_parameter_set().ok()?);
+        crate::animation::push_annex_b(&mut parameters, track.picture_parameter_set().ok()?);
+        let matrix = &track.trak.tkhd.matrix;
+        (
+            track.track_id(),
+            track.sample_count(),
+            Timeline::of(track),
+            parameters,
+            quarter_turns(matrix.a, matrix.b, matrix.c, matrix.d),
+        )
+    };
+    let at = STILL_AT.min(length / 2);
+    // As in `decode`: no flush after each packet, or B-frames stop it.
+    let mut decoder = openh264::decoder::Decoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::decoder::DecoderConfig::new()
+            .flush_after_decode(openh264::decoder::Flush::NoFlush),
+    )
+    .ok()?;
+    let _ = decoder.decode(&parameters);
+    let mut order = Reorder::default();
+    // The newest frame just before `at`, in case the video ends before it.
+    let mut held = None;
+    for sample_id in timeline.first_sample(at)..=count {
+        let Ok(Some(sample)) = mp4.read_sample(track_id, sample_id) else {
+            break;
+        };
+        order.push(sample.start_time as i64 + i64::from(sample.rendering_offset));
+        let mut annex_b = Vec::with_capacity(sample.bytes.len() + 16);
+        crate::animation::avcc_to_annex_b(&mut annex_b, &sample.bytes);
+        if let Ok(Some(yuv)) = decoder.decode(&annex_b) {
+            let shown = timeline.time(order.pop().unwrap_or_default());
+            if shown >= at {
+                return Some(Still {
+                    picture: picture(&yuv, turns, side),
+                    length,
+                });
+            }
+            if shown + FRAME >= at {
+                held = picture(&yuv, turns, side);
+            }
+        }
+    }
+    if let Ok(rest) = decoder.flush_remaining() {
+        for yuv in &rest {
+            let shown = timeline.time(order.pop().unwrap_or_default());
+            if shown >= at {
+                return Some(Still {
+                    picture: picture(yuv, turns, side),
+                    length,
+                });
+            }
+            held = picture(yuv, turns, side);
+        }
+    }
+    Some(Still {
+        picture: held,
+        length,
+    })
+}
+
 /// Frames this close before a seek target are converted, so the picture
 /// showing at the target is ready.
 const FRAME: Duration = Duration::from_millis(100);
@@ -1914,6 +2013,38 @@ mod tests {
         assert_eq!(quarter_turns(0, 0x10000, -0x10000, 0), 1);
         assert_eq!(quarter_turns(-0x10000, 0, 0, -0x10000), 2);
         assert_eq!(quarter_turns(0, -0x10000, 0x10000, 0), 3);
+    }
+
+    #[test]
+    fn a_staged_video_shows_its_length_and_a_bounded_frame() {
+        let still = still(Path::new(SAMPLE), 1024).expect("the sample is an MP4");
+        assert_eq!(still.length.as_secs_f32().round(), 3.0);
+        let picture = still.picture.expect("the sample is H.264");
+        assert_eq!(picture.size, [320, 180]);
+        let small = super::still(Path::new(SAMPLE), 160).unwrap();
+        assert_eq!(small.picture.unwrap().size, [160, 90]);
+    }
+
+    #[test]
+    fn a_staged_video_still_turns_upright_as_its_track_says() {
+        // The sample with its track turned a quarter clockwise, as a phone
+        // held upright records: tkhd's matrix is a, b, u, c, d, ... after
+        // the version's times, the track id, the duration and 16 bytes more.
+        let mut bytes = std::fs::read(SAMPLE).unwrap();
+        let mut from = 0;
+        while let Some(found) = bytes[from..].windows(4).position(|name| name == b"tkhd") {
+            let tkhd = from + found;
+            let times = if bytes[tkhd + 4] == 1 { 32 } else { 20 };
+            let matrix = tkhd + 8 + times + 16;
+            for (offset, value) in [(0, 0), (4, 0x10000), (12, -0x10000), (16, 0)] {
+                bytes[matrix + offset..matrix + offset + 4]
+                    .copy_from_slice(&i32::to_be_bytes(value));
+            }
+            from = tkhd + 4;
+        }
+        let size = bytes.len() as u64;
+        let still = still_from(std::io::Cursor::new(bytes), size, 1024).unwrap();
+        assert_eq!(still.picture.unwrap().size, [180, 320]);
     }
 
     #[test]

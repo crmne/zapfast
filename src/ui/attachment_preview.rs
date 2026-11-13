@@ -1,15 +1,35 @@
 //! Review staged files before sending them, without leaving the chat's composer.
 
-use egui::{Align, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, vec2};
+use egui::{Align, Color32, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
-use crate::app::{App, Pending, Staged};
+use crate::app::{App, AttachmentId, Pending, Staged};
 use crate::model::Action;
 use crate::theme::{self, Icon};
 
+use super::conversation::{VideoControls, fit_within, paint_texture, video_controls};
 use super::focus::{Stop, TabStop};
 use super::widgets;
 
 const TILE: f32 = 56.0;
+
+/// What the video player calls a staged video; no WhatsApp message id
+/// starts this way.
+const VIDEO_KEY: &str = "staged-attachment-";
+
+/// The video player's name for the staged video `id`.
+pub(crate) fn video_key(id: AttachmentId) -> String {
+    format!("{VIDEO_KEY}{id}")
+}
+
+/// The staged attachment a video player's name stands for, if it is one.
+pub(crate) fn video_attachment(key: &str) -> Option<AttachmentId> {
+    key.strip_prefix(VIDEO_KEY)?.parse().ok()
+}
+
+/// The attachment the review shows large, if any is staged.
+pub(crate) fn selected_id(app: &App, ctx: &egui::Context) -> Option<AttachmentId> {
+    app.pending.get(selected(app, ctx)).map(|staged| staged.id)
+}
 
 /// Keep each chat and account's file selection independent.
 fn selection_key(app: &App) -> egui::Id {
@@ -83,6 +103,61 @@ fn image(ui: &egui::Ui, staged: &mut Staged) -> Option<egui::Image<'static>> {
             Some(widgets::file_image(ui, path))
         }
         _ => None,
+    }
+}
+
+/// Only what goes as a video message is previewed and played as a video.
+fn is_video(item: &Pending) -> bool {
+    matches!(item, Pending::File(path) if Pending::is_video_file(path))
+}
+
+/// A staged video's still, uploaded once by the window that shows it, for
+/// its tile and the stage alike.
+fn still(ui: &egui::Ui, staged: &mut Staged) -> Option<egui::TextureHandle> {
+    let video = staged.video.as_mut()?;
+    if video.texture.is_none()
+        && let Some(image) = &staged.preview
+    {
+        video.texture = Some(ui.ctx().load_texture(
+            format!("pending-video-{}", staged.id),
+            std::sync::Arc::clone(image),
+            egui::TextureOptions::LINEAR,
+        ));
+    }
+    video.texture.clone()
+}
+
+/// How long a staged video plays, as its tile and stage say it.
+fn length_label(staged: &Staged) -> Option<String> {
+    let length = staged.video.as_ref()?.length?;
+    Some(crate::util::duration(length.as_secs_f32().round() as u32))
+}
+
+/// A tile's sign that it holds a video, with the video's length once known.
+fn video_mark(ui: &egui::Ui, rect: Rect, length: Option<String>) {
+    let galley = length.map(|length| {
+        ui.painter()
+            .layout_no_wrap(length, theme::medium(10.0), Color32::WHITE)
+    });
+    let width = galley
+        .as_ref()
+        .map_or(18.0, |galley| 21.0 + galley.size().x);
+    let chip = Rect::from_min_size(
+        pos2(rect.left() + 3.0, rect.bottom() - 17.0),
+        vec2(width, 14.0),
+    );
+    ui.painter()
+        .rect_filled(chip, 7.0, Color32::from_black_alpha(150));
+    theme::paint_icon(
+        ui,
+        Icon::Video,
+        Rect::from_min_size(chip.min + vec2(3.0, 1.0), Vec2::splat(12.0)),
+        10.0,
+        Color32::WHITE,
+    );
+    if let Some(galley) = galley {
+        let at = pos2(chip.left() + 17.0, chip.center().y - galley.size().y / 2.0);
+        ui.painter().galley(at, galley, Color32::WHITE);
     }
 }
 
@@ -249,6 +324,17 @@ fn tile(
             .fit_to_exact_size(rect.size() - Vec2::splat(8.0))
             .corner_radius(4.0)
             .paint_at(ui, rect.shrink(4.0));
+    } else if is_video(&item.item) {
+        match still(ui, item) {
+            Some(texture) => {
+                egui::Image::from_texture(&texture)
+                    .fit_to_exact_size(rect.size() - Vec2::splat(8.0))
+                    .corner_radius(4.0)
+                    .paint_at(ui, rect.shrink(4.0));
+                video_mark(ui, rect.shrink(4.0), length_label(item));
+            }
+            None => theme::paint_icon(ui, Icon::Video, rect, 24.0, palette.secondary),
+        }
     } else {
         theme::paint_icon(ui, Icon::FileText, rect, 24.0, palette.secondary);
     }
@@ -299,6 +385,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let name = file_name(&item.item);
     let mut edit = false;
     let mut close = false;
+    let mut actions = Vec::new();
     ui.painter()
         .rect_filled(ui.available_rect_before_wrap(), 0.0, palette.surface);
     ui.add_space(6.0);
@@ -343,10 +430,26 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             } else {
                 image.max_size(rect.size()).paint_at(ui, rect);
             }
-        } else if matches!(item.item, Pending::Picture { .. }) {
+        } else if matches!(item.item, Pending::Picture { .. })
+            || (is_video(&item.item) && item.video.is_none())
+        {
             ui.put(
                 Rect::from_center_size(rect.center(), Vec2::splat(24.0)),
                 egui::Spinner::new(),
+            );
+        } else if is_video(&item.item) && item.preview.is_some() {
+            video_stage(
+                ui,
+                item,
+                &VideoControls {
+                    player: &app.video,
+                    locale: app.locale,
+                    accent: palette.accent,
+                    expanded: false,
+                    fill_window: false,
+                },
+                rect,
+                &mut actions,
             );
         } else {
             let mut body = ui.new_child(
@@ -356,22 +459,133 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             body.add_space((rect.height() / 2.0 - 65.0).max(0.0));
             let (icon, _) = body.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-            theme::paint_icon(&body, Icon::FileText, icon, 54.0, palette.secondary);
+            // A video that cannot be shown here still goes as a video.
+            let icon_kind = if is_video(&item.item) {
+                Icon::Video
+            } else {
+                Icon::FileText
+            };
+            theme::paint_icon(&body, icon_kind, icon, 54.0, palette.secondary);
             body.add(egui::Label::new(egui::RichText::new(name).color(palette.text)).wrap());
             let size = match &item.item {
                 Pending::Picture { .. } => None,
                 Pending::File(path) | Pending::Document(path) => file_size(ui.ctx(), path),
             };
-            if let Some(size) = size {
-                body.label(egui::RichText::new(crate::util::bytes(size)).color(palette.secondary));
+            let detail: Vec<String> = length_label(item)
+                .into_iter()
+                .chain(size.map(crate::util::bytes))
+                .collect();
+            if !detail.is_empty() {
+                body.label(egui::RichText::new(detail.join(" · ")).color(palette.secondary));
             }
         }
     }
+    app.actions.extend(actions);
     if edit {
         app.actions.push(Action::EditPicture(target));
     }
     if close {
         app.actions.push(Action::ClearPending);
+    }
+}
+
+/// The selected video, fitted whole: its still with a play button, and once
+/// it plays, its frames under the controls a video message has. It plays
+/// from the file as picked, with no message behind it.
+fn video_stage(
+    ui: &mut egui::Ui,
+    staged: &mut Staged,
+    controls: &VideoControls<'_>,
+    rect: Rect,
+    actions: &mut Vec<Action>,
+) {
+    use crate::video::State;
+    let Pending::File(path) = &staged.item else {
+        return;
+    };
+    let path = path.clone();
+    let Some(still) = still(ui, staged) else {
+        return;
+    };
+    let key = video_key(staged.id);
+    // The still's proportions hold the place, so starting to play moves nothing.
+    let picture = fit_within(still.size_vec2(), rect);
+    let response = ui
+        .interact(
+            picture,
+            ui.id().with(("staged-video", staged.id)),
+            Sense::click(),
+        )
+        .tab_stop(Stop::ReviewPlay);
+    theme::reveal_focus(&response);
+    let status = controls.player.status(&key);
+    if status.is_some() {
+        controls.player.saw(&key);
+    }
+    let state = status.as_ref().map(|status| status.state);
+    let label = if state == Some(State::Playing) {
+        crate::i18n::gettext(controls.locale, "Pause")
+    } else {
+        crate::i18n::gettext(controls.locale, "Play")
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let whole = Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0));
+    ui.painter().rect_filled(picture, 6.0, Color32::BLACK);
+    match status.as_ref().and_then(|status| status.frame.as_ref()) {
+        Some(frame) => paint_texture(
+            ui,
+            fit_within(frame.size_vec2(), picture),
+            frame.id(),
+            whole,
+            6.0,
+        ),
+        None => paint_texture(ui, picture, still.id(), whole, 6.0),
+    }
+    if state != Some(State::Playing) {
+        ui.painter()
+            .rect_filled(picture, 6.0, Color32::from_black_alpha(40));
+        let disc = Rect::from_center_size(picture.center(), Vec2::splat(56.0));
+        ui.painter()
+            .circle_filled(disc.center(), 28.0, Color32::from_black_alpha(140));
+        if state == Some(State::Loading) {
+            theme::paint_spinner(ui, disc, 26.0, Color32::WHITE);
+        } else {
+            theme::paint_icon(ui, Icon::Play, disc, 26.0, Color32::WHITE);
+        }
+    }
+    match &status {
+        // As in a message: while paused, and while the pointer is over it.
+        Some(status)
+            if status.state == State::Paused
+                || (status.state == State::Playing && ui.rect_contains_pointer(picture)) =>
+        {
+            video_controls(ui, controls, &key, &path, picture, status, actions);
+        }
+        Some(_) => {}
+        None => {
+            if let Some(length) = length_label(staged) {
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(length, theme::medium(11.5), Color32::WHITE);
+                let chip = Rect::from_min_size(
+                    pos2(
+                        picture.left() + 8.0,
+                        picture.bottom() - galley.size().y - 14.0,
+                    ),
+                    galley.size() + vec2(12.0, 6.0),
+                );
+                ui.painter()
+                    .rect_filled(chip, chip.height() / 2.0, Color32::from_black_alpha(140));
+                ui.painter()
+                    .galley(chip.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+            }
+        }
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        actions.push(Action::PlayVideo { message: key, path });
     }
 }
 

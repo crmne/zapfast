@@ -1080,6 +1080,18 @@ pub struct Staged {
     pub item: Pending,
     /// Bounded pixels retained so a replacement window can upload them again.
     pub preview: Option<std::sync::Arc<egui::ColorImage>>,
+    /// What was read of a video that goes as a video message, once it has
+    /// been; its still is in `preview`.
+    pub video: Option<StagedVideo>,
+}
+
+/// A staged video as the review shows it before it plays.
+pub struct StagedVideo {
+    /// How long it plays, or `None` when it could not be read.
+    pub length: Option<std::time::Duration>,
+    /// The still's texture, uploaded from `Staged::preview` by the window
+    /// that shows it.
+    pub texture: Option<egui::TextureHandle>,
 }
 
 impl App {
@@ -1111,10 +1123,19 @@ impl App {
                 rgba: std::sync::Arc::clone(rgba),
             });
         }
+        if let Pending::File(path) = &item
+            && Pending::is_video_file(path)
+        {
+            self.backend.send(Command::PrepareVideoPreview {
+                target: id,
+                path: path.clone(),
+            });
+        }
         Staged {
             id,
             item,
             preview: None,
+            video: None,
         }
     }
 
@@ -1153,6 +1174,25 @@ impl App {
         self.pending.iter().position(|staged| staged.id == id)
     }
 
+    /// The staged attachment a backend answer names, in the composer or in a
+    /// draft of the account it came from. A stable attachment id and that
+    /// account's drafts prevent a late answer from landing on another file
+    /// or account's composer.
+    fn staged_for_event(&mut self, target: AttachmentId) -> Option<&mut Staged> {
+        let staged = if self.events_hidden {
+            None
+        } else {
+            self.pending.iter_mut().find(|staged| staged.id == target)
+        };
+        staged.or_else(|| {
+            self.accounts[self.active]
+                .attachment_drafts
+                .values_mut()
+                .flat_map(|draft| &mut draft.pending)
+                .find(|staged| staged.id == target)
+        })
+    }
+
     /// Forgets what was remembered about attachments that are no longer staged,
     /// so neither map keeps an entry for every picture ever cropped, and a
     /// removed picture's original does not outlive it. Attachments waiting in
@@ -1186,6 +1226,12 @@ impl Pending {
         mime_guess2::from_path(path)
             .first()
             .is_some_and(|mime| mime.type_() == "image")
+    }
+
+    /// Whether the file goes as a video message, which the review previews
+    /// and plays: only MP4, as the worker's `whatsapp_video_mime` decides.
+    pub fn is_video_file(path: &std::path::Path) -> bool {
+        mime_guess2::from_path(path).first_raw() == Some("video/mp4")
     }
 
     /// Whether this file can be decoded and sent as a WhatsApp view-once photo.
@@ -2689,6 +2735,9 @@ impl App {
         ) {
             if let Pending::Picture { texture, .. } = &mut staged.item {
                 *texture = None;
+            }
+            if let Some(video) = &mut staged.video {
+                video.texture = None;
             }
         }
         self.video.attach(ctx);
@@ -4781,26 +4830,27 @@ impl App {
                 }
             }
             Event::PicturePreviewReady { target, image } => {
-                // A stable attachment id and this account's drafts prevent a late
-                // preview from landing on another file or account's composer.
-                let staged = if self.events_hidden {
-                    None
-                } else {
-                    self.pending.iter_mut().find(|staged| staged.id == target)
-                };
-                let staged = staged.or_else(|| {
-                    self.accounts[self.active]
-                        .attachment_drafts
-                        .values_mut()
-                        .flat_map(|draft| &mut draft.pending)
-                        .find(|staged| staged.id == target)
-                });
-                if let Some(staged) = staged
+                if let Some(staged) = self.staged_for_event(target)
                     && matches!(staged.item, Pending::Picture { .. })
                 {
                     staged.preview = Some(std::sync::Arc::new(
                         image.unwrap_or_else(egui::ColorImage::example),
                     ));
+                }
+            }
+            Event::VideoPreviewReady { target, still } => {
+                if let Some(staged) = self.staged_for_event(target)
+                    && matches!(&staged.item, Pending::File(path) if Pending::is_video_file(path))
+                {
+                    let (picture, length) = match still {
+                        Some(still) => (still.picture, Some(still.length)),
+                        None => (None, None),
+                    };
+                    staged.preview = picture.map(std::sync::Arc::new);
+                    staged.video = Some(StagedVideo {
+                        length,
+                        texture: None,
+                    });
                 }
             }
 
@@ -10818,6 +10868,16 @@ impl App {
         if self.video.message().is_some() && self.video_chat != self.open_chat {
             self.video.stop();
         }
+        // A staged video plays only while it is the one under review: picking
+        // another file, removing it, sending or discarding stops it at once.
+        if let Some(staged) = self
+            .video
+            .message()
+            .and_then(crate::ui::attachment_preview::video_attachment)
+            && crate::ui::attachment_preview::selected_id(self, ctx) != Some(staged)
+        {
+            self.video.stop();
+        }
         // The viewer shows the open chat's media, and leaves with it.
         if self
             .image_preview
@@ -13464,6 +13524,74 @@ mod tests {
         assert!(app.attachment_drafts["parked"].pending[0].preview.is_some());
     }
 
+    /// Only a file that goes as a video message asks for a still, and the
+    /// answer lands on that attachment, wherever it waits by then.
+    #[test]
+    fn staged_videos_ask_for_a_still_that_follows_their_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, mut commands, _) = Backend::recording_with_events();
+        let mut app = App::headless(AppDirs::under(root.path()), Settings::default()).0;
+        app.account_mut().backend = backend;
+        app.stage(Pending::File("clip.mov".into()));
+        app.stage(Pending::Document("clip.mp4".into()));
+        app.stage(Pending::File("notes.pdf".into()));
+        assert!(
+            commands.try_recv().is_err(),
+            "documents, and videos that go as documents, show as files"
+        );
+        let target = app.stage(Pending::File("clip.mp4".into()));
+        let unreadable = app.stage(Pending::File("broken.mp4".into()));
+        let Command::PrepareVideoPreview {
+            target: requested,
+            path,
+        } = commands.try_recv().unwrap()
+        else {
+            panic!("video preview command")
+        };
+        assert_eq!(requested, target);
+        assert_eq!(path, std::path::Path::new("clip.mp4"));
+        assert!(app.pending[3].video.is_none(), "not read yet");
+        // Parked in the chat's draft while it was read.
+        let pending = std::mem::take(&mut app.pending);
+        app.account_mut().attachment_drafts.insert(
+            "parked".into(),
+            AttachmentDraft {
+                pending,
+                ..Default::default()
+            },
+        );
+        app.apply_backend_event(
+            Event::VideoPreviewReady {
+                target,
+                still: Some(crate::video::Still {
+                    picture: Some(egui::ColorImage::example()),
+                    length: std::time::Duration::from_secs(3),
+                }),
+            },
+            true,
+        );
+        app.apply_backend_event(
+            Event::VideoPreviewReady {
+                target: unreadable,
+                still: None,
+            },
+            true,
+        );
+        let parked = &app.attachment_drafts["parked"].pending;
+        assert!(parked[3].preview.is_some());
+        assert_eq!(
+            parked[3].video.as_ref().unwrap().length,
+            Some(std::time::Duration::from_secs(3))
+        );
+        assert!(parked[4].preview.is_none());
+        assert_eq!(
+            parked[4].video.as_ref().unwrap().length,
+            None,
+            "read, with nothing to show"
+        );
+        assert!(parked[..3].iter().all(|staged| staged.video.is_none()));
+    }
+
     /// Identical chat IDs across accounts retain separate files, captions, mentions and reply quotes.
     #[test]
     fn attachment_drafts_keep_their_account_caption_mentions_and_quote() {
@@ -13569,6 +13697,7 @@ mod tests {
                 texture: None,
             },
             preview: None,
+            video: None,
         }];
         assert_eq!(app.draft_preview(chat).as_deref(), Some("Image"));
         app.open_chat(chat.into());
@@ -21782,6 +21911,7 @@ mod tests {
             id: 1,
             item: Pending::File("a.png".into()),
             preview: None,
+            video: None,
         });
         rest_on(&mut app, "hi https://ex.com/a", 0.0);
         assert!(preview_fetches(&mut commands).is_empty());
@@ -21803,6 +21933,7 @@ mod tests {
             id: 1,
             item: Pending::File("a.png".into()),
             preview: None,
+            video: None,
         });
         app.watch_link_preview(1.0);
         app.watch_link_preview(1.6);

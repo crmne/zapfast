@@ -17,6 +17,8 @@ pub enum Stop {
     ReviewAdd,
     ReviewEdit,
     ReviewClose,
+    /// A staged video's play button, the stage itself.
+    ReviewPlay,
     PhoneLink(u32),
     /// The chat header's Search, then the search pane's controls in reading
     /// order. The arrows walk its results from the field.

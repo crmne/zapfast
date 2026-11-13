@@ -815,6 +815,16 @@ pub enum Command {
         target: crate::app::AttachmentId,
         image: Option<egui::ColorImage>,
     },
+    /// Reads a staged video's length and a bounded still away from the UI thread.
+    PrepareVideoPreview {
+        target: crate::app::AttachmentId,
+        path: PathBuf,
+    },
+    /// Internal: the still read by a blocking worker.
+    VideoPreviewReady {
+        target: crate::app::AttachmentId,
+        still: Option<crate::video::Still>,
+    },
     /// Reads a staged picture's size, so the cropper can open on it.
     InspectPicture {
         target: crate::app::AttachmentId,
@@ -1391,6 +1401,12 @@ pub enum Event {
         target: crate::app::AttachmentId,
         image: Option<egui::ColorImage>,
     },
+    /// A staged video's length and bounded still, or `None` when it is not a
+    /// readable MP4; only the UI uploads the texture.
+    VideoPreviewReady {
+        target: crate::app::AttachmentId,
+        still: Option<crate::video::Still>,
+    },
     /// A staged picture's size, so the cropper can open on it.
     PictureInspected {
         target: crate::app::AttachmentId,
@@ -1879,6 +1895,23 @@ impl Backend {
                     .spawn(move || {
                         let image = picture_edit::preview(width, height, &rgba);
                         let _ = events.send(Event::PicturePreviewReady { target, image });
+                        waker.wake();
+                    })
+                    .ok();
+                return;
+            }
+            #[cfg(any(test, feature = "demo"))]
+            if let Command::PrepareVideoPreview { target, path } = &command
+                && let Some(events) = &self.demo_events
+            {
+                let (target, path) = (*target, path.clone());
+                let events = events.clone();
+                let waker = self.demo_waker.clone();
+                std::thread::Builder::new()
+                    .name("demo-video-preview".into())
+                    .spawn(move || {
+                        let still = crate::video::still(&path, picture_edit::PREVIEW_SIDE as u32);
+                        let _ = events.send(Event::VideoPreviewReady { target, still });
                         waker.wake();
                     })
                     .ok();

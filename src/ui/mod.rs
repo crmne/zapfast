@@ -1,7 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
-mod attachment_preview;
+pub(crate) mod attachment_preview;
 mod blocking;
 pub mod call;
 pub mod calls;

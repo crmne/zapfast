@@ -8056,6 +8056,17 @@ impl Worker {
             Command::PicturePreviewReady { target, image } => {
                 self.emit(Event::PicturePreviewReady { target, image });
             }
+            Command::PrepareVideoPreview { target, path } => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let side = super::picture_edit::PREVIEW_SIDE as u32;
+                    let still = crate::video::still(&path, side);
+                    let _ = commands.send(Command::VideoPreviewReady { target, still });
+                });
+            }
+            Command::VideoPreviewReady { target, still } => {
+                self.emit(Event::VideoPreviewReady { target, still });
+            }
             Command::InspectPicture { target, path } => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {
