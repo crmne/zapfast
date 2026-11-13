@@ -23,6 +23,10 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+
+/// Worker error keys the window translates.
+pub const REACTION_FAILED: &str = "Could not send the reaction.";
+pub const REACTION_FAILED_ANNOUNCEMENT: &str = "Could not send the reaction. If this is an old announcement, reload its history and try again.";
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
