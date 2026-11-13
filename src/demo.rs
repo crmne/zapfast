@@ -9935,7 +9935,7 @@ mod tests {
     }
 
     /// Lays out a few frames of a window `size` points big.
-    fn render_sized(app: &mut App, ctx: &egui::Context, size: egui::Vec2) {
+    pub(super) fn render_sized(app: &mut App, ctx: &egui::Context, size: egui::Vec2) {
         for _ in 0..4 {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -10055,6 +10055,61 @@ mod tests {
         app.attach(&ctx);
         render_sized(&mut app, &ctx, wide);
         assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x)).is_empty());
+    }
+
+    /// A long group member line stops at the name glass's right padding,
+    /// before Search, instead of sliding under the button.
+    #[test]
+    fn a_long_group_subtitle_keeps_the_name_glass_clear_of_search() {
+        use egui::accesskit::Role;
+        let mut app = app();
+        let group = SAMPLES[1].id.to_owned();
+        let mut participants = app
+            .chats
+            .iter()
+            .find(|chat| chat.id == group)
+            .map(|chat| chat.participants.clone())
+            .unwrap_or_default();
+        for index in 0..60 {
+            let id = format!("49175555{index:04}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some(format!("Member{index:02}")),
+                    first_name: None,
+                    push_name: None,
+                },
+            );
+            participants.push(id);
+        }
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == group)
+            .expect("the sample group")
+            .participants = participants;
+        app.typing.clear();
+        app.settings.theme = ThemeChoice::Messages;
+        app.open_chat = Some(group);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        render_sized(&mut app, &ctx, egui::vec2(1180.0, 780.0));
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let (_, _, search) = nodes
+            .iter()
+            .find(|(label, role, _)| label.starts_with("Search messages") && *role == Role::Button)
+            .expect("the header offers Search");
+        let pill = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::name_pill_id()))
+            .expect("the name glass");
+        // The glass around the 30-point button reaches three points further.
+        assert!(
+            pill.right() < search.x - 18.0,
+            "the name glass ends at {} and runs under Search at {}",
+            pill.right(),
+            search.x - 18.0
+        );
     }
 
     /// A header shares the caption row only at a corner it reaches: beside
@@ -24965,7 +25020,7 @@ mod bubble_detail_tests {
 /// one control that does end it.
 #[cfg(test)]
 mod call_surface_tests {
-    use super::tests::{app, frame_with};
+    use super::tests::{app, frame_with, render_sized};
     use super::*;
     use crate::model::Action;
 
@@ -24991,7 +25046,12 @@ mod call_surface_tests {
 
     /// The labels one frame publishes to a screen reader, after the surface has settled.
     fn labels(app: &mut App, ctx: &egui::Context) -> Vec<String> {
-        labelled(app, ctx)
+        labels_sized(app, ctx, egui::vec2(1180.0, 780.0))
+    }
+
+    /// The labels one frame of a window `size` points big publishes.
+    fn labels_sized(app: &mut App, ctx: &egui::Context, size: egui::Vec2) -> Vec<String> {
+        labelled_sized(app, ctx, size)
             .into_iter()
             .map(|(label, _)| label)
             .collect()
@@ -24999,14 +25059,16 @@ mod call_surface_tests {
 
     /// The labels one frame publishes, with whether each control is disabled.
     fn labelled(app: &mut App, ctx: &egui::Context) -> Vec<(String, bool)> {
+        labelled_sized(app, ctx, egui::vec2(1180.0, 780.0))
+    }
+
+    /// The labels one frame of a window `size` points big publishes.
+    fn labelled_sized(app: &mut App, ctx: &egui::Context, size: egui::Vec2) -> Vec<(String, bool)> {
         let mut labels = Vec::new();
         for _ in 0..3 {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1180.0, 780.0),
-                    )),
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                     ..Default::default()
                 },
                 |ui| {
@@ -25253,6 +25315,69 @@ mod call_surface_tests {
         assert!(
             !shown.contains(&"Voice call".to_owned()),
             "a channel has no call button: {shown:?}"
+        );
+    }
+
+    /// A blocked chat's folded header keeps its voice and video calls out of
+    /// More, as the unfolded header does.
+    #[test]
+    fn a_blocked_chats_folded_header_offers_no_calls() {
+        let mut app = app();
+        let person = SAMPLES[0].id.to_owned();
+        app.blocklist.ids = Some([person.clone()].into());
+        app.open_chat = Some(person.clone());
+        app.open_header_menu = Some(person);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let shown = labels_sized(&mut app, &ctx, egui::vec2(320.0, 780.0));
+        assert!(
+            shown.contains(&"Select messages".to_owned()),
+            "the header's More menu is open: {shown:?}"
+        );
+        for absent in ["Voice call", "Video call"] {
+            assert!(
+                !shown.contains(&absent.to_owned()),
+                "{absent} is not offered for a blocked chat: {shown:?}"
+            );
+        }
+    }
+
+    /// A narrow macOS header keeps a live call's Hang up, Back and More,
+    /// and folds Search into More instead of letting the name glass run
+    /// under Back.
+    #[test]
+    fn a_narrow_macos_call_header_keeps_the_name_glass_clear_of_back() {
+        let mut app = app();
+        apply_flags(&mut app, Some("call-active"));
+        app.call_surface_hidden = true;
+        app.open_chat = Some(SAMPLES[0].id.to_owned());
+        app.settings.theme = ThemeChoice::Messages;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::preview_macos(&ctx);
+        app.attach(&ctx);
+        render_sized(&mut app, &ctx, egui::vec2(360.0, 780.0));
+        let pill = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::name_pill_id()))
+            .expect("the name glass");
+        let back = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::back_button_id()))
+            .expect("the narrow header's Back");
+        assert!(
+            pill.right() < back.left() - 3.0,
+            "the name glass ends at {} and Back's glass starts at {}",
+            pill.right(),
+            back.left() - 3.0
+        );
+        let shown = labels_sized(&mut app, &ctx, egui::vec2(360.0, 780.0));
+        assert!(
+            shown.contains(&"Hang up".to_owned()),
+            "the live call keeps its Hang up: {shown:?}"
+        );
+        assert!(
+            !shown.contains(&"Search messages (Ctrl+F)".to_owned()),
+            "Search folds into More: {shown:?}"
         );
     }
 

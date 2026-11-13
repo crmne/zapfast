@@ -384,12 +384,18 @@ fn controls_width(buttons: f32, vibrant: bool) -> f32 {
     }
 }
 
+/// The room a vibrant header's name glass takes past its text, before the
+/// first button's glass. Without it a long name's pill slid under Search.
+fn name_glass_tail(vibrant: bool) -> f32 {
+    if vibrant { NAME_GLASS_PADDING.x } else { 0.0 }
+}
+
 /// Whether a header `width` wide holds the avatar, a readable name and
 /// `buttons` and `extra` more on their right.
 fn header_fits(width: f32, buttons: f32, extra: f32, vibrant: bool) -> bool {
     const AVATAR: f32 = 40.0 + 14.0;
     const NAME: f32 = 140.0;
-    width >= AVATAR + NAME + controls_width(buttons, vibrant) + extra
+    width >= AVATAR + NAME + controls_width(buttons, vibrant) + name_glass_tail(vibrant) + extra
 }
 
 /// Space between the header's last button and caption buttons `room` wide.
@@ -486,15 +492,26 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
                 // In a narrow pane, or on vibrant glass, which takes more room,
                 // Search and the call buttons go into More rather than push
-                // the name under them.
-                let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant())
-                    && !call_here;
+                // the name under them. A live call keeps its Hang up and folds
+                // Search alone.
+                let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant());
                 let (buttons, call_buttons) = if folded {
-                    (buttons - call_buttons - 1.0, 0.0)
+                    if call_here {
+                        // A live call keeps its Hang up; fold Search into More
+                        // instead, so the call and Back stay clear of it.
+                        (buttons - 1.0, call_buttons)
+                    } else {
+                        (buttons - call_buttons - 1.0, 0.0)
+                    }
                 } else {
                     (buttons, call_buttons)
                 };
-                let right_controls = controls_width(buttons, palette.vibrant()) + extra;
+                let right_controls = controls_width(buttons, palette.vibrant())
+                    + name_glass_tail(palette.vibrant())
+                    + extra;
+                // A live call may shrink the name to nothing rather than push
+                // its Hang up under the name glass.
+                let name_min = if call_here { 0.0 } else { 80.0 };
                 // On a vibrant window the name and the buttons sit on glass
                 // pills, drawn beneath them once they are measured.
                 let name_pill = ui.painter().add(egui::Shape::Noop);
@@ -506,7 +523,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         // Fix the child height before centering its contents.
                         ui.allocate_ui_with_layout(
                             vec2(
-                                (ui.available_width() - right_controls).max(80.0),
+                                (ui.available_width() - right_controls).max(name_min),
                                 HEADER_ROW,
                             ),
                             Layout::left_to_right(Align::Center),
@@ -530,7 +547,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 // Room for the name's glass pill to clear the avatar.
                                 ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
-                                    let width = ui.available_width().max(80.0);
+                                    let width = ui.available_width().max(name_min);
                                     ui.set_max_width(width);
                                     // On glass the lines centre on the avatar: the
                                     // column starts at the row's top otherwise.
@@ -634,6 +651,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     );
                     ui.painter()
                         .set(name_pill, glass(&palette, glass_rect, NAME_GLASS_RADIUS));
+                    #[cfg(any(test, feature = "demo"))]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(name_pill_id(), glass_rect));
                 }
                 let block = ui
                     .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
@@ -729,7 +749,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         Action::OpenChatSearch
                                     });
                                 }
-                                if callable(chat, app.me.as_deref()) {
+                                if !call_here
+                                    && callable(chat, app.me.as_deref())
+                                    && !app.blocklist.contains(&chat.id)
+                                {
                                     if widgets::menu_item(
                                         ui,
                                         &palette,
@@ -998,6 +1021,12 @@ pub(crate) fn back_button_id() -> egui::Id {
 /// Where the conversation header's row was laid out, for layout tests.
 pub(crate) fn header_row_id() -> egui::Id {
     egui::Id::new("conversation-header-row")
+}
+
+/// Where the name glass was last laid out, for layout tests.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) fn name_pill_id() -> egui::Id {
+    egui::Id::new("conversation-name-pill")
 }
 
 /// Chat-header subtitle.
@@ -11800,6 +11829,11 @@ mod tests {
         assert!(super::controls_width(4.0, true) > super::controls_width(4.0, false));
         assert!(super::header_fits(500.0, 4.0, 0.0, true));
         assert!(!super::header_fits(360.0, 4.0, 0.0, true));
+        // Four buttons fit at 380 without the name glass's right padding;
+        // with it, they need 393.
+        assert!(!super::header_fits(380.0, 4.0, 0.0, true));
+        assert!(super::header_fits(393.0, 4.0, 0.0, true));
+        assert!(!super::header_fits(392.0, 4.0, 0.0, true));
         // Folded, More alone leaves the name room.
         assert!(super::header_fits(280.0, 1.0, 0.0, true));
         assert!(!super::header_fits(460.0, 4.0, 120.0, true));
@@ -11812,6 +11846,9 @@ mod tests {
         assert!(!super::header_fits(353.0, 4.0, 0.0, false));
         assert!(super::header_fits(353.0, 1.0, 0.0, false));
         assert!(super::header_fits(500.0, 4.0, 0.0, false));
+        // A plain header has no name glass padding: four buttons fit at 370.
+        assert!(super::header_fits(370.0, 4.0, 0.0, false));
+        assert!(!super::header_fits(369.0, 4.0, 0.0, false));
     }
 
     #[test]
