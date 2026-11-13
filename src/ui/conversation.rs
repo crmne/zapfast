@@ -7601,15 +7601,17 @@ fn context_menu(
                         name: attachment_name(&message.content, path),
                     });
                 }
-                if let Some(folder) = path.parent()
-                    && widgets::menu_item(
-                        ui,
-                        &palette,
-                        Some(Icon::FileText),
-                        &crate::i18n::gettext(view.locale, "Show in folder"),
-                    )
-                {
-                    actions.push(Action::OpenFolder(folder.to_path_buf()));
+                if widgets::menu_item(
+                    ui,
+                    &palette,
+                    Some(Icon::FileText),
+                    &crate::i18n::gettext(view.locale, "Show in folder"),
+                ) {
+                    actions.push(Action::ShowFileInFolder {
+                        chat: chat.clone(),
+                        message: message.id.clone(),
+                        path: path.clone(),
+                    });
                 }
             }
             None => {

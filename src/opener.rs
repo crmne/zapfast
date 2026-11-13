@@ -10,6 +10,65 @@
 
 use std::path::Path;
 
+#[derive(Debug, PartialEq)]
+pub enum RevealError {
+    Missing,
+    Other(String),
+}
+
+/// Opens the containing folder, selecting the file when the platform supports it.
+pub fn show_in_folder(path: &Path) -> Result<(), RevealError> {
+    match path.metadata() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RevealError::Missing);
+        }
+        Err(error) => return Err(RevealError::Other(error.to_string())),
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(RevealError::Other("The file is unavailable".into()));
+        }
+        Ok(_) => {}
+    }
+    #[cfg(target_os = "windows")]
+    let result = explorer_command(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|error| error.to_string())
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("open failed ({status})"))
+            }
+        });
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = linux::show_items(path);
+    #[cfg(not(any(unix, target_os = "windows")))]
+    let result: Result<(), String> = Err("Unsupported platform".into());
+    result
+        .or_else(|error| {
+            let folder = path.parent().ok_or(error)?;
+            #[cfg(all(unix, not(target_os = "macos")))]
+            let result = open::that_detached_with_timeout(folder, linux::LAUNCH_GRACE);
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            let result = open::that_detached(folder);
+            result.map_err(|error| error.to_string())
+        })
+        .map_err(RevealError::Other)
+}
+
+#[cfg(target_os = "windows")]
+fn explorer_command(path: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("explorer.exe");
+    command.arg("/select,").arg(path);
+    command
+}
+
 /// Opens `path` in its default application or, failing that, shows it in its
 /// folder. Blocks for up to a few seconds per attempt, so call it off the
 /// interface thread. The error names the file so the reader can go there.
@@ -157,8 +216,11 @@ mod linux {
     /// Asks the file manager to show the file selected in its folder.
     pub(super) fn show_items(path: &Path) -> Result<(), String> {
         let uri = file_uri(path);
-        let connection =
-            zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
+        let connection = zbus::blocking::connection::Builder::session()
+            .map_err(|error| error.to_string())?
+            .method_timeout(LAUNCH_GRACE)
+            .build()
+            .map_err(|error| error.to_string())?;
         connection
             .call_method(
                 Some("org.freedesktop.FileManager1"),
@@ -194,6 +256,25 @@ mod linux {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn explorer_selects_the_full_file_path() {
+        let path = Path::new(r"C:\Users\Example User\Documents\lesson, 1.pptx");
+        let command = explorer_command(path);
+        assert_eq!(command.get_program(), "explorer.exe");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, [std::ffi::OsStr::new("/select,"), path.as_os_str()]);
+    }
+
+    #[test]
+    fn a_missing_attachment_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            show_in_folder(&dir.path().join("missing.pdf")),
+            Err(RevealError::Missing)
+        );
+    }
 
     #[test]
     fn the_first_attempt_that_works_ends_the_chain() {

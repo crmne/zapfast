@@ -7906,6 +7906,34 @@ impl Worker {
                 card,
                 path,
             } => self.attachment_missing(&chat, &message, card, &path),
+            Command::ShowFileInFolder {
+                chat,
+                message,
+                path,
+            } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || match crate::opener::show_in_folder(&path) {
+                    Ok(()) => {}
+                    Err(crate::opener::RevealError::Missing) => {
+                        let _ = commands.send(Command::AttachmentMissing {
+                            chat,
+                            message,
+                            card: None,
+                            path,
+                        });
+                        let _ = events.send(Event::Error(
+                            "This file is no longer on this computer. Download it again.".into(),
+                        ));
+                        waker.wake();
+                    }
+                    Err(crate::opener::RevealError::Other(error)) => {
+                        let _ = events.send(Event::Error(error));
+                        waker.wake();
+                    }
+                });
+            }
             Command::OpenLog(path) => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
@@ -26504,6 +26532,29 @@ mod missing_attachment_tests {
     fn path_of(worker: &Worker, row: &Message) -> Option<PathBuf> {
         let row = worker.archive.message(&row.chat, &row.id).unwrap().unwrap();
         row.content.media().unwrap().path.clone()
+    }
+
+    #[tokio::test]
+    async fn showing_a_missing_attachment_restores_its_download() {
+        let (mut worker, _events, mut commands, _) = receipt_tests::worker();
+        let gone = worker.dirs.media_cache_dir().join("gone.jpg");
+        let row = stored(&worker, &gone);
+        worker
+            .handle_command(Command::ShowFileInFolder {
+                chat: row.chat.clone(),
+                message: row.id.clone(),
+                path: gone.clone(),
+            })
+            .await;
+        let command = tokio::time::timeout(std::time::Duration::from_secs(2), commands.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&command, Command::AttachmentMissing { chat, message, card: None, path } if chat == &row.chat && message == &row.id && path == &gone)
+        );
+        worker.handle_command(command).await;
+        assert_eq!(path_of(&worker, &row), None);
     }
 
     #[test]

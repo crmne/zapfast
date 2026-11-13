@@ -2962,6 +2962,11 @@ pub enum Action {
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
     OpenFolder(PathBuf),
+    ShowFileInFolder {
+        chat: ChatId,
+        message: String,
+        path: PathBuf,
+    },
     /// Saves a copy of a downloaded attachment where the person chooses.
     ExportChat {
         chat: ChatId,
