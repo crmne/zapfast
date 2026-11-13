@@ -556,7 +556,7 @@ pub fn populate(app: &mut App) {
                 },
             });
             chat.group_description = Some(if sample.name == "Rust Berlin" {
-                "Rust meetups in Berlin 🦀\nShare projects, ask questions, and help each other learn.\nNext meetup: Thursday at 19:00.".to_owned()
+                "*Rust meetups in Berlin* 🦀\nShare projects, ask questions, and help each other learn.\nNext meetup: Thursday at 19:00.\nMore at https://rustmeetup.example.org".to_owned()
             } else {
                 String::new()
             });
@@ -11816,6 +11816,94 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The group's description shows WhatsApp's markup, and a link in it
+    /// opens in a browser.
+    #[test]
+    fn group_description_shows_whatsapps_markup_and_opens_its_links() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let description = "*Bold* and _italic_ with https://example.org/notes";
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[1].id)
+            .unwrap()
+            .group_description = Some(description.into());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut shapes = Vec::new();
+        for _ in 0..8 {
+            shapes = frame_sized(&mut app, &ctx, 800.0, Vec::new());
+        }
+        fn description_text(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text().starts_with("Bold") => Some(text),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(description_text),
+                _ => None,
+            }
+        }
+        let text = shapes
+            .iter()
+            .find_map(|clipped| description_text(&clipped.shape))
+            .expect("the description is drawn");
+        assert_eq!(
+            text.galley.text(),
+            "Bold and italic with https://example.org/notes",
+            "the markup is gone, the words stay"
+        );
+        // The link opens where it is written. The panel moves under the
+        // pointer, so its place is read again after the pointer arrives.
+        let links = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<Vec<(String, egui::Rect)>>(
+                    crate::ui::info::group_description_links_id(),
+                )
+            })
+            .expect("the links are drawn")
+        };
+        let (url, rect) = links(&ctx)
+            .first()
+            .expect("a link in the description")
+            .clone();
+        assert_eq!(url, "https://example.org/notes");
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(rect.center())]);
+        let rect = links(&ctx).first().expect("a link in the description").1;
+        let pos = rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut opened = Vec::new();
+        for events in [vec![press(true)], vec![press(false)]] {
+            let output = draw(&mut app, events);
+            for command in output.platform_output.commands {
+                if let egui::OutputCommand::OpenUrl(url) = command {
+                    opened.push(url.url);
+                }
+            }
+        }
+        assert_eq!(opened, ["https://example.org/notes"]);
     }
 
     #[test]

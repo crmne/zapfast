@@ -873,7 +873,9 @@ A person's details also list the groups you are both in, under a heading
 such as **3 groups in common**: click one to open it. Groups you left and
 locked chats are not listed.
 
-**Development builds** also show a group's description in the panel. You can
+**Development builds** also show a group's description in the panel. It reads
+as WhatsApp writes it: `*bold*`, `_italic_`, `~struck~` and `` `mono` `` are
+shown as such, and a web address under it opens in your browser. You can
 select and copy its text, and a long description scrolls. To change the
 description, use your phone.
 
