@@ -1533,10 +1533,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
     let nested = !chat.pinned
-        && app.search.trim().is_empty()
-        && !app.show_archived
-        && app.label_filter.is_none()
-        && matches!(app.chat_filter, ChatFilter::All | ChatFilter::Groups)
+        && !chat.left
+        && app.communities_grouped()
         && chat
             .community
             .as_ref()

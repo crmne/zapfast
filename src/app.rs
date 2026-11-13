@@ -3480,22 +3480,28 @@ impl App {
                 }
             })
         });
-        let grouped = self.sidebar_visible
+        crate::communities::visible(
+            chats,
+            &self.chats,
+            &self.collapsed_communities,
+            self.communities_grouped(),
+            self.open_chat.as_deref(),
+        )
+    }
+
+    /// Whether the Chats list shows communities as headings with their
+    /// groups beneath. Search, filters, archived chats and the locked folder
+    /// keep their flat lists of message destinations.
+    pub fn communities_grouped(&self) -> bool {
+        self.sidebar_visible
             && self.search.trim().is_empty()
-            && !locked
+            && !self.locked_folder_open()
             && !self.show_archived
             && self.label_filter.is_none()
             && matches!(
                 self.chat_filter,
                 crate::model::ChatFilter::All | crate::model::ChatFilter::Groups
-            );
-        crate::communities::visible(
-            chats,
-            &self.chats,
-            &self.collapsed_communities,
-            grouped,
-            self.open_chat.as_deref(),
-        )
+            )
     }
 
     /// Whether the chat list keeps the phone's favorites order instead of the
