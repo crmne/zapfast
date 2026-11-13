@@ -54,6 +54,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let message = preview.message().to_owned();
     let chat = preview.chat().to_owned();
     let thumbnail = item.and_then(|item| item.thumbnail.as_deref());
+    // When the picture on screen was sent, to name a saved copy by: the album
+    // item's time, or the chat's own copy before the album arrives.
+    let sent = item.map(|item| item.timestamp).or_else(|| {
+        app.conversations
+            .get(chat.as_str())
+            .and_then(|conversation| conversation.message(&message))
+            .map(|row| row.timestamp)
+    });
     // With no album item yet, the file's own name still says whether this is a
     // clip, so a clip is never handed to the image decoder.
     let clip = preview.shows_video(&album);
@@ -142,6 +150,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     shown.as_deref(),
                     thumbnail,
                     clip,
+                    sent,
                     &chat,
                     &message,
                     stage,
@@ -430,11 +439,12 @@ fn header(
                     // Already on the computer: hand it to the save dialog, the
                     // way the message menu does.
                     Some(path) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("attachment")
-                            .to_owned();
+                        let name = save_name(
+                            &path,
+                            item.is_some_and(|item| item.video),
+                            item.map(|item| item.timestamp),
+                            "attachment",
+                        );
                         if theme::icon_button(
                             ui,
                             Icon::Download,
@@ -559,6 +569,19 @@ fn motion_button(
     });
 }
 
+/// The name Save as offers for the file on screen: its kind and send time, as
+/// the message menu names it, else the file's own name.
+fn save_name(path: &Path, video: bool, sent: Option<i64>, fallback: &str) -> String {
+    let kind = if video { "Video" } else { "Image" };
+    sent.and_then(|sent| crate::util::saved_file_name(kind, sent, path))
+        .unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(fallback)
+                .to_owned()
+        })
+}
+
 /// The picture itself, zoomed and panned exactly as before.
 #[allow(clippy::too_many_arguments)]
 fn still(
@@ -568,6 +591,8 @@ fn still(
     path: Option<&Path>,
     thumbnail: Option<&[u8]>,
     video: bool,
+    // When the picture on screen was sent, to name a saved copy by.
+    sent: Option<i64>,
     chat: &str,
     message: &str,
     stage: Rect,
@@ -653,14 +678,9 @@ fn still(
                                         Some(Icon::Download),
                                         &save_label,
                                     ) {
-                                        let name = path
-                                            .file_name()
-                                            .and_then(|name| name.to_str())
-                                            .unwrap_or("image.png")
-                                            .to_owned();
                                         app.actions.push(Action::SaveAttachmentAs {
                                             path: path.to_owned(),
-                                            name,
+                                            name: save_name(path, false, sent, "image.png"),
                                         });
                                     }
                                     if crate::ui::widgets::menu_item(
@@ -1661,6 +1681,37 @@ fn fit(size: Vec2, max: Vec2) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The viewer's Save as names a photo or clip by its kind and send time, as
+    /// the message menu does, and keeps the file's own name only when it has
+    /// no time to go by (#801).
+    #[test]
+    fn the_viewer_names_a_saved_copy_by_kind_and_send_time() {
+        let _clock = crate::util::fixed_clock::set(crate::util::fixed_clock::Clock {
+            now: 0,
+            zone: jiff::tz::TimeZone::UTC,
+            twelve_hour: false,
+        });
+        let sent = 1_786_046_869; // 2026-08-06 at 20.07.49 UTC
+        let photo = Path::new("/cache/media/15550101234_s_whatsapp_net-AB1C23.jpg");
+        assert_eq!(
+            save_name(photo, false, Some(sent), "image.png"),
+            "WhatsApp Image 2026-08-06 at 20.07.49.jpg"
+        );
+        let clip = Path::new("/cache/media/15550101234_s_whatsapp_net-AB1C23.mp4");
+        assert_eq!(
+            save_name(clip, true, Some(sent), "attachment"),
+            "WhatsApp Video 2026-08-06 at 20.07.49.mp4"
+        );
+        assert_eq!(
+            save_name(photo, false, None, "image.png"),
+            "15550101234_s_whatsapp_net-AB1C23.jpg"
+        );
+        assert_eq!(
+            save_name(Path::new("/"), false, None, "image.png"),
+            "image.png"
+        );
+    }
 
     #[test]
     fn stickers_show_on_a_card_that_fits_small_windows() {
