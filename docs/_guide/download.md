@@ -2,6 +2,8 @@
 title: Download
 description: Get ZapFast for Linux, macOS, or Windows, with install instructions for each.
 nav_order: 1
+seo:
+  title: Download for Linux, macOS, and Windows
 ---
 
 {% assign v = site.zapfast_version %}

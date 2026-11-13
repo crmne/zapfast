@@ -4,6 +4,8 @@ description: Why ZapFast exists, what it supports, and its current limitations.
 redirect_from:
   - /what-is-fastsapp/
 nav_order: 0
+seo:
+  title: What is ZapFast? An Open-Source WhatsApp Client
 ---
 
 ## Why ZapFast

@@ -1,7 +1,9 @@
 ---
 layout: home
 title: ZapFast
-description: A fast, lightweight WhatsApp app for Linux, macOS, and Windows.
+description: ZapFast is a lightweight WhatsApp client for Linux, macOS, and Windows, written in Rust with no browser engine. Opens in under a second, about 200 MB of RAM.
+seo:
+  title: Native WhatsApp Client for Linux, macOS and Windows
 permalink: /
 hero:
   name: ZapFast
@@ -57,6 +59,10 @@ features:
     link: https://github.com/crmne/zapfast
     link_text: Read the source
 ---
+
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"ZapFast","url":"https://zapfast.rocks/","downloadUrl":"https://zapfast.rocks/download/","softwareVersion":"{{ site.zapfast_version }}","operatingSystem":"Linux, macOS, Windows","applicationCategory":"CommunicationApplication","license":"https://github.com/crmne/zapfast/blob/main/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"image":"https://zapfast.rocks/screenshot.png","author":{"@type":"Person","name":"Carmine Paolino","url":"https://paolino.me"}}
+</script>
 
 <p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://fastframe.dev">fastframe</a>, the shared foundation for native Rust apps built with <a href="https://www.egui.rs">egui</a>.</p>
 
