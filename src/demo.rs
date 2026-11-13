@@ -23676,14 +23676,16 @@ mod wallpaper_tests {
 
         let (slider, enabled) = ctx
             .data(|data| {
-                data.get_temp::<(egui::Rect, bool)>(egui::Id::new(
-                    "test-wallpaper-doodle-opacity",
-                ))
+                data.get_temp::<(egui::Rect, bool)>(egui::Id::new("test-wallpaper-doodle-opacity"))
             })
             .expect("the opacity slider is on the wallpaper page");
         assert!(enabled, "the slider is enabled when doodles are on");
         // Click inside the slider track, away from its 100% endpoint.
-        click(&mut app, &ctx, egui::pos2(slider.left() + 45.0, slider.center().y));
+        click(
+            &mut app,
+            &ctx,
+            egui::pos2(slider.left() + 45.0, slider.center().y),
+        );
         assert!(
             (1..100).contains(&app.settings.doodle_opacity),
             "moving the slider updates the saved percentage"
@@ -23715,14 +23717,16 @@ mod wallpaper_tests {
         assert!(doodle_tint(&preview, tile).is_none());
         let (slider, enabled) = ctx
             .data(|data| {
-                data.get_temp::<(egui::Rect, bool)>(egui::Id::new(
-                    "test-wallpaper-doodle-opacity",
-                ))
+                data.get_temp::<(egui::Rect, bool)>(egui::Id::new("test-wallpaper-doodle-opacity"))
             })
             .unwrap();
         assert!(!enabled, "doodles off must disable the slider");
         let saved_opacity = app.settings.doodle_opacity;
-        click(&mut app, &ctx, egui::pos2(slider.left() + 90.0, slider.center().y));
+        click(
+            &mut app,
+            &ctx,
+            egui::pos2(slider.left() + 90.0, slider.center().y),
+        );
         assert_eq!(app.settings.doodle_opacity, saved_opacity);
         app.page = Page::Chats;
         assert!(doodle_tint(&shapes(&mut app, &ctx), tile).is_none());
