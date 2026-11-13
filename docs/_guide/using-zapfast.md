@@ -298,6 +298,11 @@ instead. The files you select there go as documents with their own name and
 bytes, pictures included, and show as files in the review area until you send
 them.
 
+On macOS, a HEIC or HEIF photo, such as one dragged from Apple Photos, is
+converted to a JPEG when you attach it, so it is reviewed, cropped and sent as
+a photo like any other. On Linux and Windows it goes as a document. **Send as
+document** always sends the original HEIC file.
+
 Videos go as playable video messages only when they are MP4. WhatsApp does
 not deliver a video message in another format, and ZapFast does not convert
 videos, so a QuickTime `.mov`, WebM, MKV, or AVI file goes as a document
