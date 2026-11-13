@@ -22124,7 +22124,7 @@ mod tests {
         let pos = nodes
             .into_iter()
             .find(|(label, role, _)| {
-                label == "How to make a theme" && *role == egui::accesskit::Role::Button
+                label == "Theme guide" && *role == egui::accesskit::Role::Button
             })
             .map(|(_, _, centre)| centre)
             .expect("the guide button is on the Settings page");
