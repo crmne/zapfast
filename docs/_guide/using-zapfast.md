@@ -199,15 +199,10 @@ again later.
 The sticker tab works like WhatsApp's: a row of tabs holds **Recent**
 (the clock), **Favorites** (the star), each of your packs, and **+** for
 adding more. ZapFast adds **Received** (the speech bubble) after Favorites.
-<<<<<<< HEAD
-Click a WebP sticker to send it. Animated stickers play on hover.
+Click a WebP sticker to send it; the picker stays open for the next one.
+Animated stickers play on hover.
 Lottie (`.was`) stickers received from WhatsApp also play here; sending
 and favoriting `.was` require native wire-format support and are not offered.
-||||||| ccac2c45
-Click a sticker to send it. Animated stickers play on hover.
-=======
-Click a sticker to send it; the picker stays open for the next one. Animated stickers play on hover.
->>>>>>> origin/main
 
 **Recent** holds the stickers you sent, not the ones you received.
 Right-click one to take it out of Recent here and on your phone. A sticker
