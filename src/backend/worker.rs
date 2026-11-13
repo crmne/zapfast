@@ -7874,7 +7874,7 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Save attachment")
-                        .set_file_name(&name);
+                        .set_file_name(replace_bidi_format(&name));
                     if let Some(downloads) = directories::UserDirs::new()
                         .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
                     {
@@ -7884,8 +7884,8 @@ impl Worker {
                     let Some(target) = dialog.save_file() else {
                         return;
                     };
-                    let event = match std::fs::copy(&source, &target) {
-                        Ok(_) => Event::Info(format!(
+                    let event = match copy_unless_same_file(&source, &target) {
+                        Ok(()) => Event::Info(format!(
                             "Saved {}",
                             target.file_name().map_or_else(
                                 || name.clone(),
@@ -12301,6 +12301,22 @@ fn extension_for(mime: &str, file_name: Option<&str>) -> String {
     })
 }
 
+/// Characters that reorder how a file manager draws a name, so a stem can
+/// look like it ends in another extension. They are not `is_control`.
+fn is_bidi_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// The name with each bidi formatting character replaced by `_`.
+pub(crate) fn replace_bidi_format(name: &str) -> String {
+    name.chars()
+        .map(|c| if is_bidi_format(c) { '_' } else { c })
+        .collect()
+}
+
 /// A document's own name in the reader's download folder, made safe for
 /// every platform's file system: no path, no characters Windows refuses, no
 /// device names, no leading dot, at most 120 characters before a validated
@@ -12313,7 +12329,10 @@ fn named_media_path(dir: &Path, mime: &str, file_name: &str) -> Option<PathBuf> 
     let stem: String = stem
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if c.is_control()
+                || is_bidi_format(c)
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
@@ -12352,11 +12371,39 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
     dir.join(format!("{stem}.{extension}"))
 }
 
+/// Copy `source` to `target`, skipping a target that is the source itself:
+/// `fs::copy` truncates the destination first, which would empty the file.
+fn copy_unless_same_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    if is_same_file(source, target) {
+        return Ok(());
+    }
+    std::fs::copy(source, target).map(|_| ())
+}
+
+/// Whether both paths already name one existing file, through links or case.
+fn is_same_file(source: &Path, target: &Path) -> bool {
+    let (Ok(source_path), Ok(target_path)) = (source.canonicalize(), target.canonicalize()) else {
+        return false;
+    };
+    if source_path == target_path {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(source), std::fs::metadata(target)) {
+            return a.dev() == b.dev() && a.ino() == b.ino();
+        }
+    }
+    false
+}
+
 /// Reserve each destination atomically, including when another save is racing
 /// us. Checking existence before fs::copy could still overwrite a user's file.
 fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
     use std::io::ErrorKind;
-    let name = Path::new(name)
+    let name = replace_bidi_format(name);
+    let name = Path::new(&name)
         .file_name()
         .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
     let path = Path::new(name);
@@ -14933,6 +14980,59 @@ mod tests {
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
     }
 
+    /// Every bidi formatting character is replaced in a suggested or copied name.
+    #[test]
+    fn bidi_characters_are_replaced_in_every_suggested_name() {
+        let bidi = ('\u{202A}'..='\u{202E}')
+            .chain('\u{2066}'..='\u{2069}')
+            .chain(['\u{061C}', '\u{200E}', '\u{200F}']);
+        for c in bidi {
+            assert!(is_bidi_format(c), "U+{:04X}", c as u32);
+            assert_eq!(replace_bidi_format(&format!("a{c}b.pdf")), "a_b.pdf");
+            let name = format!("invoice{c}fdp.pdf");
+            assert_eq!(
+                named_media_path(Path::new("/d"), "application/pdf", &name),
+                Some(PathBuf::from("/d/invoice_fdp.pdf")),
+                "U+{:04X}",
+                c as u32
+            );
+        }
+        assert_eq!(replace_bidi_format("דוח – تقرير.pdf"), "דוח – تقرير.pdf");
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.pdf");
+        std::fs::write(&source, b"synthetic").unwrap();
+        let saved = save_album_copy(&source, root.path(), "photo\u{202E}gpj.png").unwrap();
+        assert_eq!(saved.file_name().unwrap(), "photo_gpj.png");
+    }
+
+    /// Saving an attachment into its own folder under its own name keeps its bytes.
+    #[test]
+    fn saving_an_attachment_onto_itself_keeps_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("report.pdf");
+        std::fs::write(&source, b"synthetic").unwrap();
+        copy_unless_same_file(&source, &source).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+        let spelled = root.path().join(".").join("report.pdf");
+        copy_unless_same_file(&source, &spelled).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link.pdf");
+            std::os::unix::fs::symlink(&source, &link).unwrap();
+            copy_unless_same_file(&source, &link).unwrap();
+            assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+            let hard = root.path().join("hard.pdf");
+            std::fs::hard_link(&source, &hard).unwrap();
+            copy_unless_same_file(&source, &hard).unwrap();
+            assert_eq!(std::fs::read(&hard).unwrap(), b"synthetic");
+        }
+        let other = root.path().join("other.pdf");
+        copy_unless_same_file(&source, &other).unwrap();
+        assert_eq!(std::fs::read(&other).unwrap(), b"synthetic");
+    }
+
     /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
     #[test]
     fn failed_album_backfill_retries_without_losing_downloaded_media() {
@@ -15657,6 +15757,23 @@ mod tests {
         assert_eq!(
             named("COM1.txt.pdf"),
             Some(PathBuf::from("/downloads/_COM1.txt.pdf"))
+        );
+        // Bidi formatting characters would reorder the name a file manager shows.
+        assert_eq!(
+            named("invoice\u{202E}fdp.pdf"),
+            Some(PathBuf::from("/downloads/invoice_fdp.pdf"))
+        );
+        assert_eq!(
+            named("a\u{2066}b\u{2069}.pdf"),
+            Some(PathBuf::from("/downloads/a_b_.pdf"))
+        );
+        assert_eq!(
+            named("x\u{200F}y\u{200E}z\u{061C}.pdf"),
+            Some(PathBuf::from("/downloads/x_y_z_.pdf"))
+        );
+        assert_eq!(
+            named("דוח שנתי – تقرير.pdf"),
+            Some(PathBuf::from("/downloads/דוח שנתי – تقرير.pdf"))
         );
         assert_eq!(named("..."), None);
         assert_eq!(named(" .pdf"), None);

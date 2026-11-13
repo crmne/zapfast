@@ -217,7 +217,7 @@ fn one_line(text: &str) -> String {
 /// Builds a bounded filename component without separators, control characters or dot-only names.
 /// The caller adds a numeric prefix to keep ZIP entries unique.
 fn safe_name(name: &str) -> String {
-    let name: String = name
+    let name: String = crate::backend::replace_bidi_format(name)
         .chars()
         .take(100)
         .map(|c| {
@@ -454,6 +454,33 @@ mod tests {
             .read_to_end(&mut bytes)
             .unwrap();
         assert_eq!(bytes, b"fixture bytes");
+    }
+
+    /// A document name with a bidi override cannot disguise its extension in the ZIP.
+    #[test]
+    fn zip_entry_names_replace_bidi_format_characters() {
+        let archive = fixture();
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.pdf");
+        std::fs::write(&source, b"fixture bytes").unwrap();
+        archive
+            .insert_message(
+                &document("bidi", Some(source), "invoice\u{202E}fdp.exe"),
+                None,
+            )
+            .unwrap();
+        let target = directory.path().join("chat.zip");
+        archive
+            .export_chat(CHAT, &target, true, &AtomicBool::new(false), |_| {})
+            .unwrap();
+        let zip = zip::ZipArchive::new(std::fs::File::open(target).unwrap()).unwrap();
+        let entry = zip
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .find(|name| name.starts_with("media/"))
+            .unwrap();
+        assert!(entry.ends_with("-invoice_fdp.exe"), "{entry}");
+        assert!(!entry.chars().any(|c| c == '\u{202E}'));
     }
 
     /// Cancelled exports preserve the destination and remove their temporary files.
