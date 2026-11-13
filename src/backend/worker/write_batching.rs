@@ -191,6 +191,7 @@ fn synthetic_history(chats: usize, messages: usize, per_chunk: usize) -> Vec<Par
             push_names: Vec::new(),
             lids: Vec::new(),
             stickers: Vec::new(),
+            statuses: Vec::new(),
         });
     }
     chunks

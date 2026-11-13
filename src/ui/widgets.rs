@@ -1270,6 +1270,73 @@ pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
     ui.painter().rect_filled(card, radius, color);
 }
 
+/// A full-width audience choice with an outlined radio and supporting text.
+pub fn radio_option(
+    ui: &mut Ui,
+    palette: &Palette,
+    label: &str,
+    hint: &str,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 82.0), Sense::click());
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::RadioButton,
+            ui.is_enabled(),
+            selected,
+            label,
+        )
+    });
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 12.0, palette.surface_hover);
+    }
+    theme::focus_outline(ui, response.id, rect, 12.0);
+    let centre = pos2(rect.left() + 20.0, rect.top() + 27.0);
+    ui.painter().circle_stroke(
+        centre,
+        7.5,
+        Stroke::new(
+            1.5,
+            if selected {
+                palette.accent
+            } else {
+                palette.secondary
+            },
+        ),
+    );
+    if selected {
+        ui.painter().circle_filled(centre, 4.0, palette.accent);
+    }
+    let title = line(
+        ui,
+        label,
+        theme::regular(14.0),
+        palette.text,
+        rect.width() - 62.0,
+        1,
+    );
+    title.paint(
+        ui,
+        pos2(rect.left() + 46.0, rect.top() + 17.0),
+        palette.text,
+    );
+    let detail = line(
+        ui,
+        hint,
+        theme::regular(12.5),
+        palette.secondary,
+        rect.width() - 62.0,
+        2,
+    );
+    detail.paint(
+        ui,
+        pos2(rect.left() + 46.0, rect.top() + 39.0),
+        palette.secondary,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A round check box for a picking list, as WhatsApp draws one: an outlined
 /// circle in the secondary text colour, the accent with a white check once
 /// picked. It takes no room in the layout, so it can sit on top of its row.
@@ -1284,20 +1351,98 @@ pub fn round_check(
     label: &str,
 ) -> bool {
     let id = ui.id().with(("round-check", key));
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let response = ui.interact(rect, id, sense);
+    let response = ui.interact(
+        rect,
+        id,
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    selection_check(ui, palette, rect, response, checked, label, false)
+}
+
+/// A labelled checkbox using the same outlined square as contact selection.
+pub fn checkbox(ui: &mut Ui, palette: &Palette, checked: &mut bool, label: &str) -> egui::Response {
+    let text = line(
+        ui,
+        label,
+        theme::regular(14.0),
+        palette.text,
+        ui.available_width().max(24.0),
+        1,
+    );
+    let (rect, response) = ui.allocate_exact_size(vec2(text.size().x + 32.0, 28.0), Sense::click());
+    let check = Rect::from_center_size(
+        pos2(rect.left() + 12.0, rect.center().y),
+        egui::Vec2::splat(24.0),
+    );
+    if selection_check(ui, palette, check, response.clone(), *checked, label, true) {
+        *checked = !*checked;
+    }
+    text.paint(
+        ui,
+        pos2(rect.left() + 30.0, rect.center().y - text.size().y / 2.0),
+        palette.text,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The square variant used in the Status audience picker.
+pub fn square_check(
+    ui: &Ui,
+    palette: &Palette,
+    rect: Rect,
+    key: &str,
+    checked: bool,
+    label: &str,
+) -> bool {
+    let response = ui.interact(rect, ui.id().with(("square-check", key)), Sense::click());
+    selection_check(ui, palette, rect, response, checked, label, true)
+}
+
+fn selection_check(
+    ui: &Ui,
+    palette: &Palette,
+    rect: Rect,
+    response: egui::Response,
+    checked: bool,
+    label: &str,
+    square: bool,
+) -> bool {
+    let id = response.id;
+    let enabled = response.enabled() && response.sense.senses_click();
     theme::reveal_focus(&response);
-    theme::focus_outline(ui, id, rect.expand(3.0), rect.width() / 2.0 + 3.0);
+    theme::focus_outline(
+        ui,
+        id,
+        rect.expand(3.0),
+        if square {
+            5.0
+        } else {
+            rect.width() / 2.0 + 3.0
+        },
+    );
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, checked, label)
     });
     if ui.is_rect_visible(rect) {
         let radius = rect.width() / 2.0 - 1.0;
-        if checked {
+        if square {
+            let box_rect = rect.shrink(3.0);
+            if checked {
+                ui.painter().rect_filled(box_rect, 2.0, palette.accent);
+                theme::paint_icon(ui, Icon::Check, box_rect, 12.0, palette.on_accent);
+            } else {
+                ui.painter().rect_stroke(
+                    box_rect,
+                    2.0,
+                    Stroke::new(1.5, palette.secondary),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        } else if checked {
             ui.painter()
                 .circle_filled(rect.center(), radius, palette.accent);
             theme::paint_icon(ui, Icon::Check, rect, rect.width() * 0.7, Color32::WHITE);

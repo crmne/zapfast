@@ -899,6 +899,7 @@ mod tests {
                     push_names: Vec::new(),
                     lids: Vec::new(),
                     stickers: Vec::new(),
+                    statuses: Vec::new(),
                 },
                 false,
             );
@@ -1017,6 +1018,7 @@ mod tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             false,
         );

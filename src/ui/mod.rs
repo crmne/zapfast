@@ -28,6 +28,7 @@ pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod settings;
+pub mod status;
 pub mod update;
 mod voice_bar;
 pub mod widgets;
@@ -137,7 +138,7 @@ fn list_pane_only(app: &App) -> bool {
     match app.page {
         Page::Chats => app.current_chat().is_none(),
         Page::Calls => app.current_chat().is_none() || !app.call_picked(),
-        Page::Settings | Page::Wallpaper => false,
+        Page::Status | Page::Settings | Page::Wallpaper => false,
     }
 }
 
@@ -150,6 +151,10 @@ fn announce(app: &mut App, ctx: &egui::Context) {
 /// The chat list, or the open chat or page with the list beside it unless
 /// the window is narrow.
 fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
+    if app.page == Page::Status {
+        status::show(app, ui);
+        return;
+    }
     if list_only {
         chats::full_show(app, ui);
         return;
@@ -189,6 +194,8 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 egui::Rect::from_min_size(top.min, vec2(top.width(), theme::TOP_BAR_HEIGHT)),
             );
             match app.page {
+                // Status takes the whole window, drawn above.
+                Page::Status => {}
                 Page::Settings => settings::show(app, ui),
                 Page::Chats => conversation::show(app, ui),
                 // The open chat stays beside the call history.

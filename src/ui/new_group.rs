@@ -178,13 +178,28 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
 /// The people picked so far, each a chip that lets them go when clicked.
 fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
     let palette = app.palette;
+    if let Some(id) = selection_chips(app, ui, &palette, members, 140.0) {
+        app.actions.push(Action::ToggleNewGroupMember(id));
+    }
+}
+
+/// Selected contacts, shared by group creation and the Status audience picker.
+pub(super) fn selection_chips(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    members: &[String],
+    label_width: f32,
+) -> Option<String> {
+    let mut removed = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         for id in members {
             let name = app.display_name(id);
             let picture = app.avatar(id);
             let label = crate::i18n::gettext(app.locale, "Remove {name}").replace("{name}", &name);
-            let line = super::widgets::line(ui, &name, theme::medium(13.0), palette.text, 140.0, 1);
+            let line =
+                super::widgets::line(ui, &name, theme::medium(13.0), palette.text, label_width, 1);
             let avatar = 22.0;
             let size = vec2(4.0 + avatar + 6.0 + line.size().x + 6.0 + 12.0 + 8.0, 30.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -202,7 +217,7 @@ fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
                     pos2(rect.left() + 4.0 + avatar / 2.0, rect.center().y),
                     egui::Vec2::splat(avatar),
                 );
-                super::widgets::paint_avatar(ui, &palette, face, &name, id, picture.as_deref());
+                super::widgets::paint_avatar(ui, palette, face, &name, id, picture.as_deref());
                 line.paint(
                     ui,
                     pos2(face.right() + 6.0, rect.center().y - line.size().y / 2.0),
@@ -219,15 +234,31 @@ fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
                 .on_hover_text(&label)
                 .clicked()
             {
-                app.actions.push(Action::ToggleNewGroupMember(id.clone()));
+                removed = Some(id.clone());
             }
         }
     });
+    removed
 }
 
 /// One contact with its check box. The row and the box both pick.
 fn member_row(app: &mut App, ui: &mut egui::Ui, id: &str, picked: bool) {
     let palette = app.palette;
+    if selectable_contact_row(app, ui, &palette, id, picked, false) {
+        app.actions
+            .push(Action::ToggleNewGroupMember(id.to_owned()));
+    }
+}
+
+/// Shared selectable contact row; Status places the check before the avatar.
+pub(super) fn selectable_contact_row(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    palette: &theme::Palette,
+    id: &str,
+    picked: bool,
+    check_left: bool,
+) -> bool {
     let name = app.display_name(id);
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
@@ -245,22 +276,40 @@ fn member_row(app: &mut App, ui: &mut egui::Ui, id: &str, picked: bool) {
         .data_mut(|data| data.insert_temp(member_row_id(id), rect));
     let mut toggled = false;
     if ui.is_rect_visible(rect) {
-        if response.hovered() || picked {
+        if response.hovered() || (picked && !check_left) {
             super::widgets::dialog_row_highlight(ui, rect, palette.surface_hover);
         }
         let check = Rect::from_center_size(
-            pos2(rect.right() - 18.0, rect.center().y),
-            egui::Vec2::splat(20.0),
+            pos2(
+                if check_left {
+                    rect.left() + 18.0
+                } else {
+                    rect.right() - 18.0
+                },
+                rect.center().y,
+            ),
+            egui::Vec2::splat(if check_left { 24.0 } else { 20.0 }),
         );
-        toggled = super::widgets::round_check(ui, &palette, check, id, picked, true, &name);
+        toggled = if check_left {
+            super::widgets::square_check(ui, palette, check, id, picked, &name)
+        } else {
+            super::widgets::round_check(ui, palette, check, id, picked, true, &name)
+        };
         let avatar = Rect::from_center_size(
-            pos2(rect.left() + 23.0, rect.center().y),
-            egui::Vec2::splat(38.0),
+            pos2(
+                rect.left() + if check_left { 64.0 } else { 23.0 },
+                rect.center().y,
+            ),
+            egui::Vec2::splat(if check_left { 40.0 } else { 38.0 }),
         );
         let picture = app.avatar(id);
-        super::widgets::paint_avatar(ui, &palette, avatar, &name, id, picture.as_deref());
-        let left = rect.left() + 50.0;
-        let width = rect.width() - 90.0;
+        super::widgets::paint_avatar(ui, palette, avatar, &name, id, picture.as_deref());
+        let left = rect.left() + if check_left { 90.0 } else { 50.0 };
+        let width = if check_left {
+            (rect.right() - 16.0 - left).max(20.0)
+        } else {
+            rect.width() - 90.0
+        };
         let detail = crate::model::phone_of(id).map(crate::util::phone);
         let line = super::widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
         match detail.filter(|phone| *phone != name) {
@@ -277,14 +326,10 @@ fn member_row(app: &mut App, ui: &mut egui::Ui, id: &str, picked: bool) {
             ),
         }
     }
-    if response
+    response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
         || toggled
-    {
-        app.actions
-            .push(Action::ToggleNewGroupMember(id.to_owned()));
-    }
 }
 
 fn naming(app: &mut App, ui: &mut egui::Ui) {
