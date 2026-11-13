@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use egui::ColorImage;
@@ -53,6 +53,9 @@ const PREVIEW_SHORT_SIDE: usize = 180;
 const VIDEO_FPS: u32 = TOP_TIER.fps;
 /// RTP video clock (90 kHz) divided by the capture cadence.
 const VIDEO_TS_STRIDE: u32 = 90_000 / VIDEO_FPS;
+/// How long a call may ring here with no word of how it ended. WhatsApp stops ringing an
+/// unanswered call well within this, so a call still ringing past it lost its ending.
+pub const RING_LIMIT: Duration = Duration::from_secs(120);
 /// How often the decoder, while it waits for the peer's first keyframe, asks for one again.
 const FIRST_KEYFRAME_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
 /// After a frame failed to reach the engine, how long before another keyframe is tried.
@@ -1643,6 +1646,9 @@ pub struct Call {
     /// When the call was placed or began to ring, Unix seconds: the time its
     /// entry in the chat carries.
     began: i64,
+    /// When the call was made here, on the monotonic clock: how long a ring has lasted is measured
+    /// from it, so a change to the computer's clock never ends or prolongs one.
+    rang: std::time::Instant,
     /// The roster of a group call; `None` for a one-to-one call.
     group: Option<GroupRoster>,
     /// The task joining a call link, until it has joined: hanging up stops it.
@@ -1943,6 +1949,7 @@ impl Call {
                     .is_some_and(VideoPipeline::camera_running),
                 peer_video_request: None,
                 began: crate::util::now(),
+                rang: std::time::Instant::now(),
                 video_pipe,
                 remote_video: false,
                 microphone,
@@ -1990,6 +1997,7 @@ impl Call {
             camera_wanted: false,
             peer_video_request: None,
             began: crate::util::now(),
+            rang: std::time::Instant::now(),
             group,
             join_task: None,
         }
@@ -2072,6 +2080,7 @@ impl Call {
                     .is_some_and(VideoPipeline::camera_running),
                 peer_video_request: None,
                 began: crate::util::now(),
+                rang: std::time::Instant::now(),
                 video_pipe,
                 remote_video: false,
                 microphone: None,
@@ -2185,6 +2194,7 @@ impl Call {
                     .is_some_and(VideoPipeline::camera_running),
                 peer_video_request: None,
                 began: crate::util::now(),
+                rang: std::time::Instant::now(),
                 video_pipe,
                 remote_video: false,
                 microphone: None,
@@ -2310,6 +2320,7 @@ impl Call {
             camera_wanted: false,
             peer_video_request: None,
             began: crate::util::now(),
+            rang: std::time::Instant::now(),
             group: None,
             join_task: None,
         }
@@ -3138,6 +3149,36 @@ impl Call {
             CallOutcome::NoAnswer
         };
         self.ended_by(outcome)
+    }
+
+    /// Whether a call ringing here has rung longer than [`RING_LIMIT`]: the stanza that ended it
+    /// never arrived, lost to a dropped connection or a missed event, and it is over all the same.
+    pub fn ring_lapsed(&self, now: std::time::Instant) -> bool {
+        self.phase == CallPhase::Incoming && now.saturating_duration_since(self.rang) > RING_LIMIT
+    }
+
+    /// Puts a call's ring `ago` in the past, for tests of what a long ring does.
+    #[cfg(test)]
+    pub fn rang_ago(&mut self, ago: Duration) {
+        self.rang = Instant::now() - ago;
+    }
+
+    /// Ends a call whose ring lapsed (see [`Call::ring_lapsed`]) as a missed call.
+    ///
+    /// Left alone, it would hold the account's one call slot for good, and every later offer would
+    /// be refused as busy: the caller hears one ring and the call drops, until ZapFast restarts.
+    pub fn lapse_ring(&mut self) -> Option<CallUpdate> {
+        if self.phase != CallPhase::Incoming {
+            return None;
+        }
+        log::warn!(
+            "[CALL] the ring lapsed with no word of its end call_id={}",
+            self.call_id
+        );
+        self.phase = CallPhase::Failed;
+        self.outcome = Some(CallOutcome::Missed);
+        self.cleanup();
+        Some(self.update())
     }
 
     /// The call was resolved on another of the account's devices (`elsewhere` says how), or the
@@ -4701,6 +4742,7 @@ mod tests {
             camera_wanted: false,
             peer_video_request: None,
             began: crate::util::now(),
+            rang: std::time::Instant::now(),
             group: None,
             join_task: None,
         }
@@ -5285,6 +5327,34 @@ mod tests {
             Some(started),
             "an answered call keeps its start"
         );
+    }
+
+    #[test]
+    fn a_ring_that_outlives_any_offer_ends_as_a_missed_call() {
+        let mut call = dialing();
+        call.direction = CallDirection::Incoming;
+        call.phase = CallPhase::Incoming;
+        let rang = call.rang;
+        assert!(
+            !call.ring_lapsed(rang + RING_LIMIT),
+            "still within the ring"
+        );
+        assert!(
+            call.ring_lapsed(rang + RING_LIMIT + Duration::from_secs(1)),
+            "rang past any offer"
+        );
+
+        let update = call.lapse_ring().expect("the lapsed ring ends");
+        assert_eq!(update.phase, CallPhase::Failed);
+        assert_eq!(update.outcome, Some(CallOutcome::Missed));
+        assert!(
+            call.lapse_ring().is_none(),
+            "an ended call does not end twice"
+        );
+
+        // Only a call ringing here lapses: one we placed or one that is up runs as long as it runs.
+        let placed = dialing();
+        assert!(!placed.ring_lapsed(placed.rang + RING_LIMIT * 10));
     }
 
     #[test]

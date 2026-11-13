@@ -560,7 +560,9 @@ The call screen opens as soon as you press the button and says
 Hanging up before then cancels the call before it reaches them. An incoming call takes over the
 window with the caller's picture and name, and **Accept** and **Decline**. It
 also raises a desktop notification and plays a ringtone until it is answered, declined,
-or given up, so a window hidden in the tray does not hide the call. The
+or given up, so a window hidden in the tray does not hide the call. If word
+that a call ended never arrives (a dropped connection can lose it), a call
+still ringing after two minutes is filed as missed, so the next call rings. The
 ringtone follows your notification sound: with the sound set to **None**, or
 notifications off, a call shows without ringing. A call in a
 muted, archived, or locked chat stays as quiet as a message in it. A locked
