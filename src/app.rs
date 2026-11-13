@@ -3264,7 +3264,8 @@ impl App {
         if !chat.is_group() {
             return Vec::new();
         }
-        let needle = query.trim().to_lowercase();
+        let query = query.trim();
+        let needle = crate::util::search_key(query);
         let digits: String = query.chars().filter(char::is_ascii_digit).collect();
         let mut found: Vec<(String, String)> = self
             .participant_list(chat)
@@ -3274,11 +3275,9 @@ impl App {
                     return false;
                 }
                 if needle.is_empty() {
-                    return true;
+                    return query.is_empty();
                 }
-                name.trim_start_matches('~')
-                    .to_lowercase()
-                    .contains(&needle)
+                self.cached_key(name.trim_start_matches('~'), |key| key.contains(&needle))
                     || (!digits.is_empty()
                         && id
                             .split('@')
@@ -25792,6 +25791,49 @@ mod tests {
 
         let direct = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         assert!(app.mention_candidates(&direct, "").is_empty());
+    }
+
+    #[test]
+    fn mention_suggestions_ignore_accents_and_case() {
+        let mut app = app();
+        let mut chat = group_chat(0);
+        chat.participants = vec!["1@s.whatsapp.net".into(), "2@s.whatsapp.net".into()];
+        app.contacts.insert(
+            "1@s.whatsapp.net".into(),
+            crate::model::Contact {
+                id: "1@s.whatsapp.net".into(),
+                full_name: Some("José".into()),
+                first_name: None,
+                push_name: None,
+            },
+        );
+        app.contacts.insert(
+            "2@s.whatsapp.net".into(),
+            crate::model::Contact {
+                id: "2@s.whatsapp.net".into(),
+                full_name: Some("Ana".into()),
+                first_name: None,
+                push_name: None,
+            },
+        );
+        for query in ["jose", "JOSE", "josé", "JOSÉ"] {
+            let offered = app.mention_candidates(&chat, query);
+            assert_eq!(offered.len(), 1, "{query}");
+            assert_eq!(offered[0].1, "José", "{query}");
+        }
+        assert!(app.mention_candidates(&chat, "joseph").is_empty());
+    }
+
+    #[test]
+    fn a_mention_query_of_accents_alone_suggests_no_one() {
+        let app = app();
+        let chat = group_chat(3);
+        assert!(app.mention_candidates(&chat, "\u{301}").is_empty());
+        assert!(app.mention_candidates(&chat, "\u{e38}").is_empty());
+
+        let offered = app.mention_candidates(&chat, " ");
+        assert_eq!(offered.len(), 4);
+        assert_eq!(offered[0].0, crate::mentions::ALL_ID);
     }
 
     #[test]

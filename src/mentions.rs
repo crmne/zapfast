@@ -132,8 +132,12 @@ pub fn rewrite_alias(text: &mut String, alias: &str) -> bool {
 ///
 /// An empty query matches, and so does a prefix of `all` or of `alias`.
 pub fn everyone_query_matches(query: &str, alias: &str) -> bool {
-    let query = query.trim().trim_start_matches('@').to_lowercase();
-    query.is_empty() || ALL_USER.starts_with(&query) || alias.to_lowercase().starts_with(&query)
+    let query = query.trim().trim_start_matches('@');
+    let key = crate::util::search_key(query);
+    if key.is_empty() {
+        return query.is_empty();
+    }
+    ALL_USER.starts_with(&key) || crate::util::search_key(alias).starts_with(&key)
 }
 
 fn token_end(text: &str, at: usize, token: &str, ignore_case: bool) -> Option<usize> {
@@ -220,6 +224,19 @@ mod tests {
         let mut already = "ping @all".to_owned();
         assert!(rewrite_alias(&mut already, "todos"));
         assert_eq!(already, "ping @all");
+    }
+
+    #[test]
+    fn the_picker_query_ignores_accents() {
+        assert!(everyone_query_matches("tôd", "todos"));
+        assert!(everyone_query_matches("tod", "Tódos"));
+    }
+
+    #[test]
+    fn a_picker_query_of_accents_alone_matches_nothing() {
+        assert!(!everyone_query_matches("\u{301}", "todos"));
+        assert!(!everyone_query_matches("@\u{301}", "all"));
+        assert!(everyone_query_matches(" ", "todos"));
     }
 
     #[test]
