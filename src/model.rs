@@ -641,6 +641,20 @@ impl Message {
             && !(self.from_me && matches!(self.status, Delivery::Pending | Delivery::Failed))
     }
 
+    /// Whether a group admin may delete this message for everyone on its
+    /// sender's behalf: someone else's message in a group, from a person the
+    /// revoke can name, and neither a notice nor an entry only this computer
+    /// has (a call record). The server checks the admin rights.
+    pub fn admin_revocable(&self) -> bool {
+        !self.from_me
+            && !local_message_id(&self.id)
+            && ChatKind::from_id(&self.chat) == ChatKind::Group
+            && !matches!(self.content, Content::DisappearingTimer { .. })
+            && self.sender.split_once('@').is_some_and(|(user, server)| {
+                !user.is_empty() && matches!(server, "s.whatsapp.net" | "lid")
+            })
+    }
+
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
         (!self.from_me

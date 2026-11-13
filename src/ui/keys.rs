@@ -509,6 +509,7 @@ fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec
     let record = matches!(message.content, crate::model::Content::Call { .. });
     let mut actions = Vec::new();
     let mut revoke_refused = None;
+    let moderator = app.moderates(chat);
     ctx.input_mut(|input| {
         if take_exact(input, Modifiers::SHIFT, Key::F10) {
             actions.push(Action::OpenMessageMenu(id.to_owned()));
@@ -540,7 +541,7 @@ fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec
         } else if take_delete(input, Modifiers::SHIFT) {
             // Never a deletion: the confirmation that "Delete for everyone"
             // opens, where the menu offers it.
-            match view::revoke_blocker(message, crate::util::now()) {
+            match view::revoke_blocker(message, crate::util::now(), moderator) {
                 None => actions.push(view::delete_for_everyone_action(chat, id)),
                 Some(blocker) => revoke_refused = Some(blocker),
             }

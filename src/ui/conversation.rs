@@ -7170,7 +7170,12 @@ fn viewer_file(message: &Message) -> Option<&Path> {
 }
 
 /// Checks every selected message's revoke eligibility with one scan of loaded history.
-fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> bool {
+fn selection_can_revoke(
+    messages: &[Message],
+    selected: &[String],
+    now: i64,
+    moderator: bool,
+) -> bool {
     if selected.is_empty() {
         return false;
     }
@@ -7178,7 +7183,7 @@ fn selection_can_revoke(messages: &[Message], selected: &[String], now: i64) -> 
         selected.iter().map(String::as_str).collect();
     for message in messages {
         if remaining.remove(message.id.as_str()) {
-            if !message.from_me
+            if !(message.from_me || moderator && message.admin_revocable())
                 || matches!(
                     message.content,
                     Content::Revoked | Content::DisappearingTimer { .. }
@@ -7208,7 +7213,7 @@ fn selection_menu(
         &view.palette,
         view.locale,
         &view.chat.id,
-        selection_can_revoke(messages, selected, view.now),
+        selection_can_revoke(messages, selected, view.now, view.chat.can_manage_group()),
         selected,
         actions,
     );
@@ -7513,7 +7518,7 @@ fn context_menu(
     let can_edit = message.from_me
         && matches!(message.content, Content::Text { .. })
         && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
-    let can_revoke = revoke_blocker(message, view.now).is_none();
+    let can_revoke = revoke_blocker(message, view.now, view.chat.can_manage_group()).is_none();
     if can_edit
         && widgets::menu_item(
             ui,
@@ -7856,9 +7861,14 @@ impl RevokeBlocker {
 }
 
 /// Why `message` cannot be deleted for everyone at `now`, or None when the
-/// message menu offers "Delete for everyone" for it.
-pub(crate) fn revoke_blocker(message: &Message, now: i64) -> Option<RevokeBlocker> {
-    if !message.from_me {
+/// message menu offers "Delete for everyone" for it. `moderator` says we
+/// administer the group, which lets us delete its members' messages too.
+pub(crate) fn revoke_blocker(
+    message: &Message,
+    now: i64,
+    moderator: bool,
+) -> Option<RevokeBlocker> {
+    if !message.from_me && !(moderator && message.admin_revocable()) {
         Some(RevokeBlocker::NotOurs)
     } else if matches!(message.content, Content::Revoked) {
         Some(RevokeBlocker::Deleted)
@@ -11727,7 +11737,12 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                 egui::Popup::open_id(ui.ctx(), delete.id.with("popup"));
             }
             let can_revoke = app.conversations.get(chat).is_some_and(|conversation| {
-                selection_can_revoke(&conversation.messages, selected, crate::util::now())
+                selection_can_revoke(
+                    &conversation.messages,
+                    selected,
+                    crate::util::now(),
+                    app.moderates(chat),
+                )
             });
             let labels = [
                 crate::i18n::gettext(app.locale, "Delete for everyone"),
@@ -11849,21 +11864,27 @@ mod tests {
     fn delete_for_everyone_is_for_our_own_recent_messages() {
         let window = crate::app::REVOKE_WINDOW.as_secs() as i64;
         let ours = message(Content::text("Synthetic message"));
-        assert_eq!(revoke_blocker(&ours, window), None, "at the limit");
+        assert_eq!(revoke_blocker(&ours, window, false), None, "at the limit");
         assert_eq!(
-            revoke_blocker(&ours, window + 1),
+            revoke_blocker(&ours, window + 1, false),
             Some(RevokeBlocker::TooOld)
         );
         let theirs = Message {
             from_me: false,
             ..ours.clone()
         };
-        assert_eq!(revoke_blocker(&theirs, 0), Some(RevokeBlocker::NotOurs));
+        assert_eq!(
+            revoke_blocker(&theirs, 0, false),
+            Some(RevokeBlocker::NotOurs)
+        );
         let deleted = Message {
             content: Content::Revoked,
             ..ours
         };
-        assert_eq!(revoke_blocker(&deleted, 0), Some(RevokeBlocker::Deleted));
+        assert_eq!(
+            revoke_blocker(&deleted, 0, false),
+            Some(RevokeBlocker::Deleted)
+        );
     }
 
     /// Each reason Shift+Delete gives goes through gettext as its own
@@ -11934,6 +11955,100 @@ mod tests {
         );
     }
 
+    /// In a group we administer, "Delete for everyone" reaches the members'
+    /// messages too, as WhatsApp's own apps offer it, but never a notice,
+    /// a message already deleted, or one past the time limit. Elsewhere,
+    /// someone else's message stays out of reach.
+    #[test]
+    fn a_group_admin_may_delete_members_messages_for_everyone() {
+        let window = crate::app::REVOKE_WINDOW.as_secs() as i64;
+        let member = Message {
+            chat: "120363000000000000@g.us".into(),
+            sender: "5511900000000@s.whatsapp.net".into(),
+            from_me: false,
+            ..message(Content::text("Synthetic message"))
+        };
+        assert_eq!(revoke_blocker(&member, 0, true), None);
+        assert_eq!(revoke_blocker(&member, window, true), None, "at the limit");
+        assert_eq!(
+            revoke_blocker(&member, window + 1, true),
+            Some(RevokeBlocker::TooOld)
+        );
+        assert_eq!(
+            revoke_blocker(&member, 0, false),
+            Some(RevokeBlocker::NotOurs),
+            "not an admin"
+        );
+        let lid = Message {
+            sender: "123456789@lid".into(),
+            ..member.clone()
+        };
+        assert_eq!(revoke_blocker(&lid, 0, true), None, "a LID sender");
+        let deleted = Message {
+            content: Content::Revoked,
+            ..member.clone()
+        };
+        assert_eq!(
+            revoke_blocker(&deleted, 0, true),
+            Some(RevokeBlocker::Deleted)
+        );
+        let notice = Message {
+            content: Content::DisappearingTimer { seconds: 0 },
+            ..member.clone()
+        };
+        assert_eq!(
+            revoke_blocker(&notice, 0, true),
+            Some(RevokeBlocker::NotOurs)
+        );
+        let unnamed = Message {
+            sender: String::new(),
+            ..member.clone()
+        };
+        assert_eq!(
+            revoke_blocker(&unnamed, 0, true),
+            Some(RevokeBlocker::NotOurs)
+        );
+        let call = Message {
+            id: format!("{}synthetic", crate::model::CALL_ENTRY_PREFIX),
+            ..member.clone()
+        };
+        assert_eq!(
+            revoke_blocker(&call, 0, true),
+            Some(RevokeBlocker::NotOurs),
+            "a call record never reached WhatsApp"
+        );
+        let direct = Message {
+            chat: "5511900000000@s.whatsapp.net".into(),
+            ..member
+        };
+        assert_eq!(
+            revoke_blocker(&direct, 0, true),
+            Some(RevokeBlocker::NotOurs),
+            "a 1:1 chat has no admins"
+        );
+    }
+
+    #[test]
+    fn a_group_admin_may_delete_a_selection_with_members_messages() {
+        let now = crate::util::now();
+        let ours = Message {
+            id: "ours".into(),
+            chat: "120363000000000000@g.us".into(),
+            timestamp: now,
+            ..message(Content::text("Synthetic message"))
+        };
+        let member = Message {
+            id: "member".into(),
+            sender: "5511900000000@s.whatsapp.net".into(),
+            from_me: false,
+            ..ours.clone()
+        };
+        let selected = vec!["ours".into(), "member".into()];
+        let messages = [ours, member];
+        assert!(selection_can_revoke(&messages, &selected, now, true));
+        assert!(!selection_can_revoke(&messages, &selected, now, false));
+    }
+
     #[test]
     fn batch_revoke_requires_every_selected_message_to_be_eligible() {
         let now = crate::util::now();
@@ -11962,30 +12077,34 @@ mod tests {
         assert!(selection_can_revoke(
             &[first.clone(), second.clone()],
             &selected,
-            now
+            now,
+            false
         ));
         second.from_me = false;
         assert!(!selection_can_revoke(
             &[first.clone(), second.clone()],
             &selected,
-            now
+            now,
+            false
         ));
         second.from_me = true;
         second.timestamp = now - crate::app::REVOKE_WINDOW.as_secs() as i64 - 1;
         assert!(!selection_can_revoke(
             &[first.clone(), second.clone()],
             &selected,
-            now
+            now,
+            false
         ));
         second.timestamp = now;
         second.content = Content::Revoked;
         assert!(!selection_can_revoke(
             &[first.clone(), second],
             &selected,
-            now
+            now,
+            false
         ));
-        assert!(!selection_can_revoke(&[first], &selected, now));
-        assert!(!selection_can_revoke(&[], &[], now));
+        assert!(!selection_can_revoke(&[first], &selected, now, false));
+        assert!(!selection_can_revoke(&[], &[], now, false));
     }
 
     #[test]

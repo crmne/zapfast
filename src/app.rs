@@ -3574,9 +3574,16 @@ impl App {
             && crate::util::now() - message.timestamp <= EDIT_WINDOW.as_secs() as i64
     }
 
-    /// Whether an outgoing message can still be revoked for everyone.
+    /// Whether we administer `chat`, a group, so we may delete its members'
+    /// messages for everyone.
+    pub fn moderates(&self, chat: &str) -> bool {
+        self.chat(chat).is_some_and(Chat::can_manage_group)
+    }
+
+    /// Whether a message can still be revoked for everyone: our own, or a
+    /// member's in a group we administer.
     pub fn can_revoke(&self, message: &Message) -> bool {
-        message.from_me
+        (message.from_me || self.moderates(&message.chat) && message.admin_revocable())
             && !matches!(message.content, Content::Revoked)
             && crate::util::now() - message.timestamp <= REVOKE_WINDOW.as_secs() as i64
     }
