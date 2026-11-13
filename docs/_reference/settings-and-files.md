@@ -312,7 +312,10 @@ opens the other.
 
 With **Check for updates** on, ZapFast asks GitHub once a day for a newer
 release. **Update** in the banner downloads and verifies it, and **Restart to
-update** installs it when convenient. Downloads are checked against the
+update** installs it when convenient. The banner is a notice, not a demand: the
+cross beside **Update** closes it, and it stays closed for that version. The
+update itself stays in **Settings**, and a newer release brings the banner
+back. Downloads are checked against the
 release's SHA-256 checksums, whose manifest must carry a valid Ed25519
 publisher signature; a missing or invalid signature stops the update. The
 updater keeps a backup and restores it if the new version cannot start.

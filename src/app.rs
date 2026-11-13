@@ -3519,6 +3519,14 @@ impl App {
             .count()
     }
 
+    /// Whether the update banner shows: there is an update, and the user has
+    /// not closed this one. A newer release brings its banner back.
+    pub fn update_banner_shows(&self) -> bool {
+        self.update.as_ref().is_some_and(|update| {
+            self.settings.dismissed_update.as_deref() != Some(update.version.as_str())
+        })
+    }
+
     /// Unarchived chats with unread messages that a filter would list.
     pub fn unread_chats(&self, filter: ChatFilter) -> usize {
         self.chats
@@ -4876,7 +4884,10 @@ impl App {
             }
             Event::UpdateAvailable { version, url } => {
                 let notice = crate::updates::Release { version, url };
-                if self.update.as_ref() != Some(&notice) {
+                // A version the user closed in the banner says nothing.
+                if self.update.as_ref() != Some(&notice)
+                    && self.settings.dismissed_update.as_deref() != Some(notice.version.as_str())
+                {
                     self.toast(format!("ZapFast {} is available", notice.version));
                 }
                 self.update = Some(notice);
@@ -9581,6 +9592,16 @@ impl App {
                 self.inspect_update();
             }
             Action::CloseUpdate => self.show_update = false,
+            Action::DismissUpdate => {
+                // The banner stays away until a newer release comes: the
+                // version is remembered, so the update stays in Settings.
+                if let Some(release) = self.update.clone()
+                    && self.settings.dismissed_update.as_deref() != Some(release.version.as_str())
+                {
+                    self.settings.dismissed_update = Some(release.version);
+                    self.mark_settings_dirty();
+                }
+            }
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(
@@ -18958,6 +18979,66 @@ mod tests {
             Palette::light(),
             "no picture came: applied anyway"
         );
+    }
+
+    /// The update banner can be closed, and stays closed for that version:
+    /// a newer release brings its banner back.
+    #[test]
+    fn a_closed_update_stays_away_until_a_newer_one_comes() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        let ctx = egui::Context::default();
+        app.update = Some(crate::updates::Release {
+            version: "99.0.0".into(),
+            url: "https://github.com/crmne/zapfast/releases/latest".into(),
+        });
+        assert!(app.update_banner_shows());
+        app.apply(Action::DismissUpdate, &ctx);
+        assert_eq!(app.settings.dismissed_update.as_deref(), Some("99.0.0"));
+        assert!(!app.update_banner_shows(), "the banner stays closed");
+        // The update itself is still there, in Settings.
+        assert!(app.update.is_some());
+        // The dismissal is written down, so it is still there next time.
+        app.save_settings();
+        assert!(app.files.flush(std::time::Duration::from_secs(10)));
+        let saved = crate::settings::Settings::load(&app.dirs.settings_file());
+        assert_eq!(saved.dismissed_update.as_deref(), Some("99.0.0"));
+        app.update = Some(crate::updates::Release {
+            version: "99.1.0".into(),
+            url: "https://github.com/crmne/zapfast/releases/latest".into(),
+        });
+        assert!(app.update_banner_shows(), "a newer release says so");
+    }
+
+    /// A version the user closed says nothing: the toast stays away too.
+    #[test]
+    fn a_closed_update_says_nothing() {
+        let mut app = app();
+        app.settings.dismissed_update = Some("99.0.0".into());
+        app.apply_backend_event(
+            Event::UpdateAvailable {
+                version: "99.0.0".into(),
+                url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            },
+            true,
+        );
+        assert!(
+            app.toasts.is_empty(),
+            "the toast stays away: {:?}",
+            app.toasts
+        );
+        // A newer release does say so.
+        app.apply_backend_event(
+            Event::UpdateAvailable {
+                version: "99.1.0".into(),
+                url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            },
+            true,
+        );
+        assert_eq!(app.toasts.len(), 1, "the newer release is announced");
     }
 
     #[test]
