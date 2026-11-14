@@ -1361,20 +1361,29 @@ pub(crate) fn still(path: &Path, side: u32) -> Option<Still> {
     still_from(std::io::BufReader::new(file), size, side)
 }
 
-/// [`still`] of an MP4 of `size` bytes read from `reader`.
+/// [`still`] of an MP4 of `size` bytes read from `reader`. Once its header
+/// reads, its length is known, whatever becomes of the picture.
 fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32) -> Option<Still> {
     let mut mp4 = mp4::Mp4Reader::read_header(reader, size).ok()?;
     let length = mp4.duration();
+    let picture = first_picture(&mut mp4, STILL_AT.min(length / 2), side);
+    Some(Still { picture, length })
+}
+
+/// An upright picture no larger than `side` from `at` into `mp4`'s video,
+/// or `None` when it has no H.264 video that decodes there.
+fn first_picture<R: std::io::Read + std::io::Seek>(
+    mp4: &mut mp4::Mp4Reader<R>,
+    at: Duration,
+    side: u32,
+) -> Option<ColorImage> {
     let (track_id, timeline, parameters, turns) = {
         let track = mp4
             .tracks()
             .values()
             .find(|track| track.track_type().ok() == Some(mp4::TrackType::Video))?;
         if track.media_type().ok() != Some(mp4::MediaType::H264) {
-            return Some(Still {
-                picture: None,
-                length,
-            });
+            return None;
         }
         let mut parameters = Vec::new();
         crate::animation::push_annex_b(&mut parameters, track.sequence_parameter_set().ok()?);
@@ -1387,7 +1396,6 @@ fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32)
             quarter_turns(matrix.a, matrix.b, matrix.c, matrix.d),
         )
     };
-    let at = STILL_AT.min(length / 2);
     // As in `decode`: no flush after each packet, or B-frames stop it.
     let mut decoder = openh264::decoder::Decoder::with_api_config(
         openh264::OpenH264API::from_source(),
@@ -1409,10 +1417,7 @@ fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32)
         if let Ok(Some(yuv)) = decoder.decode(&annex_b) {
             let shown = timeline.time(order.pop().unwrap_or_default());
             if shown >= at {
-                return Some(Still {
-                    picture: picture(&yuv, turns, side),
-                    length,
-                });
+                return picture(&yuv, turns, side);
             }
             if shown + FRAME >= at {
                 held = picture(&yuv, turns, side);
@@ -1423,18 +1428,12 @@ fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32)
         for yuv in &rest {
             let shown = timeline.time(order.pop().unwrap_or_default());
             if shown >= at {
-                return Some(Still {
-                    picture: picture(yuv, turns, side),
-                    length,
-                });
+                return picture(yuv, turns, side);
             }
             held = picture(yuv, turns, side);
         }
     }
-    Some(Still {
-        picture: held,
-        length,
-    })
+    held
 }
 
 /// Frames this close before a seek target are converted, so the picture
@@ -2026,6 +2025,25 @@ mod tests {
         assert_eq!(quarter_turns(0, 0x10000, -0x10000, 0), 1);
         assert_eq!(quarter_turns(-0x10000, 0, 0, -0x10000), 2);
         assert_eq!(quarter_turns(0, -0x10000, 0x10000, 0), 3);
+    }
+
+    #[test]
+    fn a_staged_video_keeps_its_length_when_its_picture_cannot_be_read() {
+        // The sample with no sequence parameter set in its avcC: the header
+        // and the length read, the picture cannot. numOfSequenceParameterSets
+        // is the low five bits after the version, profile, compatibility,
+        // level and NAL length bytes.
+        let mut bytes = std::fs::read(SAMPLE).unwrap();
+        let avcc = bytes
+            .windows(4)
+            .position(|name| name == b"avcC")
+            .expect("the sample is H.264");
+        bytes[avcc + 9] &= 0xe0;
+        let size = bytes.len() as u64;
+        let still = still_from(std::io::Cursor::new(bytes), size, 1024)
+            .expect("the header reads, so the length is known");
+        assert_eq!(still.length.as_secs_f32().round(), 3.0);
+        assert!(still.picture.is_none());
     }
 
     #[test]
