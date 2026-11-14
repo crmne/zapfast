@@ -894,6 +894,19 @@ impl Archive {
         Ok(())
     }
 
+    /// Whether a read-state write for this chat is still waiting to reach the
+    /// phone. A failed or backed-off sync leaves it set.
+    pub fn pending_read(&self, id: &str) -> Result<Option<i64>> {
+        self.connection
+            .query_row(
+                "SELECT pending_read FROM chats WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
+    }
+
     pub fn pending_reads(&self) -> Result<Vec<(String, i64)>> {
         self.connection
             .prepare("SELECT id, pending_read FROM chats WHERE pending_read IS NOT NULL")?

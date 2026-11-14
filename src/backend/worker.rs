@@ -9971,8 +9971,13 @@ impl Worker {
         let _ = self.archive.mark_read(&chat);
         self.emit_chat(&chat);
         // A chat marked unread with nothing pending still tells the phone it
-        // was read, which is what takes the phone's mark off.
-        if row.unread == 0 && !row.marked_unread {
+        // was read, which is what takes the phone's mark off. A sync that has
+        // not reached the phone yet is queued again, so a backed-off or failed
+        // read is not stranded on an already-read chat.
+        if row.unread == 0
+            && !row.marked_unread
+            && self.archive.pending_read(&chat).ok().flatten().is_none()
+        {
             return;
         }
         let _ = self.archive.queue_read_sync(&chat);
@@ -23307,6 +23312,37 @@ mod receipt_tests {
             .await;
         assert!(worker.archive.pending_reads().unwrap().is_empty());
         assert!(worker.read_sync.ready(Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn reopening_an_already_read_chat_rearms_a_pending_read() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("a", 100), None, None);
+        worker.mark_read(PEER.into(), false);
+        assert_eq!(
+            worker.archive.pending_reads().unwrap(),
+            vec![(PEER.into(), 100)]
+        );
+        worker.archive.mark_read_through(PEER, 200).unwrap();
+        worker.mark_read(PEER.into(), false);
+        assert_eq!(
+            worker.archive.pending_reads().unwrap(),
+            vec![(PEER.into(), 200)],
+            "a pending read is requeued with the latest position"
+        );
+    }
+
+    #[tokio::test]
+    async fn reopening_an_already_read_chat_with_nothing_pending_leaves_the_queue_empty() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("a", 100), None, None);
+        worker.mark_read(PEER.into(), false);
+        worker.archive.finish_read_sync(PEER, 100).unwrap();
+        worker.mark_read(PEER.into(), false);
+        assert!(
+            worker.archive.pending_reads().unwrap().is_empty(),
+            "nothing pending stays queued"
+        );
     }
 
     fn marked(worker: &Worker) -> bool {
