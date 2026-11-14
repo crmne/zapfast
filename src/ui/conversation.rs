@@ -11557,11 +11557,20 @@ fn voice_player(
         })
 }
 
-/// Voice-recording controls and live waveform.
+/// Voice-recording controls and live waveform. While paused, the take so
+/// far can be played back and scrubbed, and recording resumed.
 fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
+    use crate::audio::State;
     let palette = app.palette;
-    let (elapsed, levels, listening) = match app.recording.as_ref() {
-        Some(recorder) => (recorder.elapsed(), recorder.levels(), recorder.listening()),
+    let locale = app.locale;
+    let (elapsed, levels, listening, paused, playback) = match app.recording.as_ref() {
+        Some(recorder) => (
+            recorder.elapsed(),
+            recorder.levels(),
+            recorder.listening(),
+            recorder.is_paused(),
+            recorder.playback(),
+        ),
         None => return,
     };
     // As tall as the one-line composer it replaces, so the field keeps its
@@ -11576,7 +11585,9 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
         .max(COMPOSER_CONTROL);
     let button = row_height;
     // As in WhatsApp: discard at the start, the light and the time, the
-    // waveform across the rest, and send at the end.
+    // waveform across the rest, then pause and send at the end. Paused, the
+    // light gives way to playback, the time follows the waveform, and the
+    // microphone records again.
     ui.allocate_ui_with_layout(
         vec2(ui.available_width().max(0.0), row_height),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -11595,39 +11606,168 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.actions.push(Action::CancelRecording);
             }
-            // The light pulses red once sound arrives; while the microphone
-            // wakes it stays dim, and the time at zero.
-            let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
-            let light = if listening {
-                let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
-                palette.danger.gamma_multiply(pulse)
+            let time = theme::tabular(fastframe_fonts::Weight::Medium, 14.0);
+            if paused {
+                let (icon, label) = if playback.state == State::Playing {
+                    (Icon::Pause, crate::i18n::gettext(locale, "Pause playback"))
+                } else {
+                    (Icon::Play, crate::i18n::gettext(locale, "Play recording"))
+                };
+                if theme::circle_button(
+                    ui,
+                    icon,
+                    button,
+                    palette.surface,
+                    palette.surface_hover,
+                    palette.text,
+                    &label,
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::PlayRecording);
+                }
             } else {
-                palette.secondary.gamma_multiply(0.5)
-            };
-            ui.painter().circle_filled(dot.center(), 5.0, light);
-            theme::text(
-                ui,
-                crate::util::duration(elapsed.as_secs() as u32),
-                theme::tabular(fastframe_fonts::Weight::Medium, 14.0),
-                palette.text,
-            );
-            // Recent audio levels, newest on the right against send.
+                // The light pulses red once sound arrives; while the
+                // microphone wakes it stays dim, and the time at zero.
+                let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                let light = if listening {
+                    let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
+                    palette.danger.gamma_multiply(pulse)
+                } else {
+                    palette.secondary.gamma_multiply(0.5)
+                };
+                ui.painter().circle_filled(dot.center(), 5.0, light);
+                theme::text(
+                    ui,
+                    crate::util::duration(elapsed.as_secs() as u32),
+                    time.clone(),
+                    palette.text,
+                );
+            }
             let spacing = ui.spacing().item_spacing.x;
-            let wave_width = (ui.available_width() - button - spacing).max(0.0);
-            let (rect, _) = ui.allocate_exact_size(vec2(wave_width, 28.0), Sense::hover());
+            // Paused, the time sits between the waveform and the controls.
+            let shown_time = if matches!(playback.state, State::Playing | State::Paused) {
+                playback.position
+            } else {
+                elapsed
+            };
+            let time_text = crate::util::duration(shown_time.as_secs() as u32);
+            let time_width = if paused {
+                ui.painter()
+                    .layout_no_wrap(time_text.clone(), time.clone(), palette.text)
+                    .size()
+                    .x
+                    + spacing
+            } else {
+                0.0
+            };
+            let wave_width =
+                (ui.available_width() - 2.0 * (button + spacing) - time_width).max(0.0);
+            let sense = if paused {
+                Sense::click()
+            } else {
+                Sense::hover()
+            };
+            let (rect, response) = ui.allocate_exact_size(vec2(wave_width, 28.0), sense);
             ui.ctx()
                 .data_mut(|data| data.insert_temp(recording_wave_id(), rect));
             let pitch = 3.0;
             let count = (rect.width() / pitch).floor() as usize;
-            let shown = &levels[levels.len().saturating_sub(count)..];
-            for (index, level) in shown.iter().enumerate() {
-                let height = 2.0_f32 + (level * 4.0).min(1.0) * 24.0;
-                let x = rect.right() - (shown.len() - index) as f32 * pitch + 1.0;
-                ui.painter().rect_filled(
-                    Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(2.0, height)),
-                    1.0,
-                    palette.accent,
-                );
+            let bar = |level: f32| 2.0_f32 + (level * 4.0).min(1.0) * 24.0;
+            if paused {
+                // The whole take across the width, the part played in accent.
+                let fraction = if playback.total > Duration::ZERO {
+                    playback.position.as_secs_f32() / playback.total.as_secs_f32()
+                } else {
+                    0.0
+                };
+                let played_until = rect.left() + fraction * rect.width();
+                let active = matches!(playback.state, State::Playing | State::Paused);
+                let quiet = palette.secondary.gamma_multiply(0.7);
+                if count > 0 && !levels.is_empty() {
+                    for index in 0..count {
+                        let from = index * levels.len() / count;
+                        let to = ((index + 1) * levels.len() / count).max(from + 1);
+                        let level = levels[from..to.min(levels.len())]
+                            .iter()
+                            .fold(0.0_f32, |peak, level| peak.max(*level));
+                        let x = rect.left() + index as f32 * pitch + 1.0;
+                        let colour = if active && x <= played_until {
+                            palette.accent
+                        } else {
+                            quiet
+                        };
+                        ui.painter().rect_filled(
+                            Rect::from_center_size(
+                                egui::pos2(x, rect.center().y),
+                                vec2(2.0, bar(level)),
+                            ),
+                            1.0,
+                            colour,
+                        );
+                    }
+                }
+                if active && rect.width() >= 10.0 {
+                    let knob = played_until.clamp(rect.left() + 5.0, rect.right() - 5.0);
+                    ui.painter().circle_filled(
+                        egui::pos2(knob, rect.center().y),
+                        5.0,
+                        palette.accent,
+                    );
+                }
+                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                    && rect.width() > 0.0
+                {
+                    let fraction = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                    app.actions.push(Action::SeekRecording(fraction));
+                }
+                theme::text(ui, time_text, time, palette.text);
+                if theme::circle_button(
+                    ui,
+                    Icon::Mic,
+                    button,
+                    palette.surface,
+                    palette.surface_hover,
+                    palette.danger,
+                    &crate::i18n::gettext(locale, "Resume recording"),
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::ResumeRecording);
+                }
+            } else {
+                // Recent audio levels, newest on the right against pause.
+                let shown = &levels[levels.len().saturating_sub(count)..];
+                for (index, level) in shown.iter().enumerate() {
+                    let x = rect.right() - (shown.len() - index) as f32 * pitch + 1.0;
+                    ui.painter().rect_filled(
+                        Rect::from_center_size(
+                            egui::pos2(x, rect.center().y),
+                            vec2(2.0, bar(*level)),
+                        ),
+                        1.0,
+                        palette.accent,
+                    );
+                }
+                // Nothing to pause until the microphone delivers sound.
+                let pause = ui
+                    .add_enabled_ui(listening, |ui| {
+                        theme::circle_button(
+                            ui,
+                            Icon::Pause,
+                            button,
+                            palette.surface,
+                            palette.surface_hover,
+                            palette.text,
+                            &crate::i18n::gettext(locale, "Pause recording"),
+                        )
+                    })
+                    .inner;
+                if pause.clicked() {
+                    app.actions.push(Action::PauseRecording);
+                }
             }
             if theme::circle_button(
                 ui,

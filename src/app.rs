@@ -8595,6 +8595,9 @@ impl App {
                 // One sound at a time, and the clip the reader picked wins
                 // over one a run is still fetching.
                 self.video.stop();
+                if let Some(recorder) = self.recording.as_mut() {
+                    recorder.hold_playback();
+                }
                 self.voice_wanted = None;
                 self.voice_chat = self.open_chat.clone();
                 self.voice_clip_chat = self.open_chat.clone();
@@ -8642,6 +8645,18 @@ impl App {
                 self.send_recording();
                 self.refocus_composer(ctx);
             }
+            Action::PauseRecording => {
+                if let Some(recorder) = self.recording.as_mut() {
+                    recorder.pause();
+                }
+            }
+            Action::ResumeRecording => {
+                if let Some(recorder) = self.recording.as_mut() {
+                    recorder.resume();
+                }
+            }
+            Action::PlayRecording => self.play_recording(None),
+            Action::SeekRecording(fraction) => self.play_recording(Some(fraction)),
             Action::DiscardUnsentVoice => self.unsent_voice = None,
             Action::CancelUpload(id) => {
                 // Too late if the worker has committed the send: the strip
@@ -10790,13 +10805,21 @@ impl App {
             self.recording = None;
             self.recording_failed(&error);
         }
+        if let Some(Err(error)) = self.recording.as_mut().map(Recorder::poll_playback) {
+            self.toast_error(error);
+        }
         // The playback bar, the recording light and the waveform only show
         // progress, so they step while a screen reader is attached.
         let stepped = crate::motion::screen_reader_attached(ctx);
         if let Some(recorder) = &self.recording {
             recorder.set_stepped(stepped);
         }
-        if self.player.is_playing() || self.recording.is_some() {
+        // A paused take sits still, unless it is playing back or its
+        // playback is still being prepared.
+        let recording_moves = self.recording.as_ref().is_some_and(|recorder| {
+            !recorder.is_paused() || recorder.is_playing_back() || recorder.so_far().is_none()
+        });
+        if self.player.is_playing() || recording_moves {
             self.waker.wake_after(if stepped {
                 crate::motion::STEP
             } else {
@@ -10949,6 +10972,9 @@ impl App {
     /// Plays or pauses audio and sends the first played receipt when needed.
     fn play_voice(&mut self, message: String, path: PathBuf) {
         self.video.stop();
+        if let Some(recorder) = self.recording.as_mut() {
+            recorder.hold_playback();
+        }
         self.voice_wanted = None;
         self.voice_chat = self.open_chat.clone();
         self.voice_clip_chat = self.open_chat.clone();
@@ -11368,6 +11394,38 @@ impl App {
                 self.follow_sent_chat();
             }
             Err(error) => self.recording_failed(&error),
+        }
+    }
+
+    /// Plays or pauses a paused recording, or plays it from `fraction`. One
+    /// sound at a time: a voice message or video that is playing pauses.
+    fn play_recording(&mut self, fraction: Option<f32>) {
+        let Some(recorder) = self.recording.as_mut() else {
+            return;
+        };
+        if !recorder.is_paused() {
+            return;
+        }
+        let played = match fraction {
+            Some(fraction) => recorder.seek_playback(fraction),
+            None => recorder.toggle_playback(),
+        };
+        if let Err(error) = played {
+            self.toast_error(error);
+            return;
+        }
+        if self
+            .recording
+            .as_ref()
+            .is_some_and(Recorder::is_playing_back)
+        {
+            self.video.stop();
+            self.voice_wanted = None;
+            if self.player.is_playing()
+                && let Err(error) = self.player.toggle_current()
+            {
+                self.toast_error(error);
+            }
         }
     }
 
@@ -22575,6 +22633,80 @@ mod tests {
             matches!(&staged.item, Pending::File(path) if *path == staying),
             "the late result did not replace the picture that moved into its place"
         );
+    }
+
+    #[test]
+    fn a_paused_recording_resumes_and_sends_as_one_message() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.recording = Some(Recorder::simulated(app.waker.clone()));
+        let segment = crate::voice::RATE as usize / 20;
+        let recorded = |app: &App| app.recording.as_ref().map_or(0, |r| r.levels().len());
+        let wait = |app: &App, ready: &dyn Fn(&App) -> bool| {
+            let started = std::time::Instant::now();
+            while !ready(app) && started.elapsed() < Duration::from_secs(2) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(ready(app));
+        };
+        // Longer than the half second a voice message needs at the least.
+        wait(&app, &|app| recorded(app) >= 8);
+        app.apply(Action::PauseRecording, &ctx);
+        wait(&app, &|app| {
+            app.recording.as_ref().is_some_and(|r| r.so_far().is_some())
+        });
+        let before = recorded(&app);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(recorded(&app), before, "nothing is recorded while paused");
+        app.apply(Action::ResumeRecording, &ctx);
+        assert!(app.recording.as_ref().is_some_and(|r| !r.is_paused()));
+        wait(&app, &|app| recorded(app) >= before + 6);
+        app.apply(Action::SendRecording, &ctx);
+        assert!(app.recording.is_none());
+        let sent = match commands.try_recv() {
+            Ok(Command::SendVoice {
+                chat: sent,
+                samples,
+                ..
+            }) if sent == chat => samples,
+            other => panic!("expected the voice message, got {other:?}"),
+        };
+        assert!(sent.len() >= (before + 6) * segment, "both parts are sent");
+        assert!(commands.try_recv().is_err(), "as one message");
+    }
+
+    #[test]
+    fn discarding_a_paused_recording_drops_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.recording = Some(Recorder::paused_rehearsal());
+        // Recording only moves on while it records: a paused take is still.
+        app.apply(Action::CancelRecording, &ctx);
+        assert!(app.recording.is_none());
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn playback_of_a_recording_waits_for_a_pause() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let ctx = egui::Context::default();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        app.recording = Some(Recorder::rehearsal());
+        app.apply(Action::PlayRecording, &ctx);
+        app.apply(Action::SeekRecording(0.5), &ctx);
+        let recorder = app.recording.as_ref().unwrap();
+        assert!(!recorder.is_playing_back());
+        assert_eq!(recorder.playback().state, crate::audio::State::Idle);
     }
 
     #[test]
