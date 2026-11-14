@@ -92,7 +92,8 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 `--demo-page video-expanded` the video playing in the full-window viewer, and
 `video-playing` or `note-playing` starts one of them, silently.
 `--demo-page staged-video` stages a clip and a photo to send, with the clip's
-still under review, and `staged-video-playing` plays the clip there, silently.
+still under review, and `staged-video-playing` plays the clip there, silently;
+`staged-video-unplayable` stages an MP4 the review cannot show, with Open file.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,

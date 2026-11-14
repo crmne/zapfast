@@ -479,6 +479,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if !detail.is_empty() {
                 body.label(egui::RichText::new(detail.join(" · ")).color(palette.secondary));
             }
+            // The player here decodes H.264 only: another codec, or a file it
+            // cannot read, can still be checked in the system's player.
+            if let Pending::File(path) = &item.item
+                && is_video(&item.item)
+            {
+                body.add_space(10.0);
+                let open = crate::i18n::gettext(app.locale, "Open file");
+                if theme::soft_button(&mut body, &palette, Some(Icon::ExternalLink), &open, false)
+                    .tab_stop(Stop::ReviewPlay)
+                    .clicked()
+                {
+                    actions.push(Action::OpenFile(path.clone()));
+                }
+            }
         }
     }
     app.actions.extend(actions);

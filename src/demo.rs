@@ -3885,6 +3885,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     });
                 }
             }
+            // An MP4 the review cannot show: no file behind the name, as a
+            // codec the player does not decode leaves no still either.
+            "staged-video-unplayable" => {
+                let clip = app.dirs.media_cache_dir().join("Rehearsal in HEVC.mp4");
+                app.stage(crate::app::Pending::File(clip));
+                app.composer = "Does this one open for you?".into();
+            }
             // Opens the cropper on a sample picture. The demo has no worker
             // to read a picture's size, so it is read here instead.
             "crop" => {
@@ -9840,6 +9847,7 @@ mod tests {
             "staged",
             "staged-video",
             "staged-video-playing",
+            "staged-video-unplayable",
             "view-once-off",
             "view-once",
             "view-once,light",
@@ -13002,6 +13010,36 @@ mod tests {
         app.actions.push(crate::model::Action::RemovePending(0));
         render(&mut app, &ctx);
         assert_eq!(app.video.message(), None, "removing it stops it");
+    }
+
+    /// A staged MP4 the review cannot show, such as another codec or a file
+    /// it cannot read, still goes as a video and opens in the system's player.
+    #[test]
+    fn attachment_review_offers_the_system_player_for_a_video_it_cannot_show() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let unreadable = app.dirs.media_cache_dir().join("Not really a video.mp4");
+        app.stage(crate::app::Pending::File(unreadable));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.pending[0].video.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the answer that there is no still arrives"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            render(&mut app, &ctx);
+        }
+        let labels = accessible_labels(&mut app, &ctx);
+        assert!(
+            labels.iter().any(|label| label == "Open file"),
+            "it can be checked in the system's player: {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|label| label == "Play"),
+            "nothing here could play it"
+        );
     }
 
     #[test]
