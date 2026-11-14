@@ -52,10 +52,10 @@ pub fn international_phone_with_default(
         return None;
     }
     // An international dialling prefix is not a local trunk zero.
-    if let Some(rest) = digits.strip_prefix("00") {
-        if !rest.is_empty() {
-            return international_phone(rest);
-        }
+    if let Some(rest) = digits.strip_prefix("00")
+        && !rest.is_empty()
+    {
+        return international_phone(rest);
     }
     // A leading trunk zero is not part of an international number.
     let national = digits.strip_prefix('0').unwrap_or(&digits);
