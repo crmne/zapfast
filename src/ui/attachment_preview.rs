@@ -127,10 +127,11 @@ fn still(ui: &egui::Ui, staged: &mut Staged) -> Option<egui::TextureHandle> {
     video.texture.clone()
 }
 
-/// How long a staged video plays, as its tile and stage say it.
+/// How long a staged video plays, as its tile and stage say it: in whole
+/// seconds, as the player's controls count it, so the two agree.
 fn length_label(staged: &Staged) -> Option<String> {
     let length = staged.video.as_ref()?.length?;
-    Some(crate::util::duration(length.as_secs_f32().round() as u32))
+    Some(crate::util::duration(length.as_secs() as u32))
 }
 
 /// A tile's sign that it holds a video, with the video's length once known.
