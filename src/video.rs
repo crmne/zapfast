@@ -1188,6 +1188,16 @@ impl Timeline {
             .max()
             .unwrap_or(1)
     }
+
+    /// The samples to decode for a still shown at `time`: from the keyframe
+    /// before it to [`STILL_SLACK`] past it, so a clip whose frames do not
+    /// decode is not read to its end.
+    fn still_samples(&self, time: Duration) -> std::ops::RangeInclusive<u32> {
+        let last = self.ticks(time + STILL_SLACK);
+        // Samples are numbered from 1, so this count is the last one's number.
+        let end = self.starts.partition_point(|&start| start <= last) as u32;
+        self.first_sample(time)..=end
+    }
 }
 
 /// Presentation times of samples sent to the decoder, handed back in
@@ -1338,6 +1348,10 @@ pub struct Still {
 /// How far into a video its still is taken, at most: half of a shorter one.
 const STILL_AT: Duration = Duration::from_secs(1);
 
+/// How far past its moment a still is looked for. Reordered frames come out
+/// a few frames late, well within it.
+const STILL_SLACK: Duration = Duration::from_secs(1);
+
 /// Reads the length of the MP4 at `path` and a picture from it no larger
 /// than `side`, decoding only from the keyframe before that picture, so a
 /// long video costs no more than a short one.
@@ -1351,7 +1365,7 @@ pub(crate) fn still(path: &Path, side: u32) -> Option<Still> {
 fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32) -> Option<Still> {
     let mut mp4 = mp4::Mp4Reader::read_header(reader, size).ok()?;
     let length = mp4.duration();
-    let (track_id, count, timeline, parameters, turns) = {
+    let (track_id, timeline, parameters, turns) = {
         let track = mp4
             .tracks()
             .values()
@@ -1368,7 +1382,6 @@ fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32)
         let matrix = &track.trak.tkhd.matrix;
         (
             track.track_id(),
-            track.sample_count(),
             Timeline::of(track),
             parameters,
             quarter_turns(matrix.a, matrix.b, matrix.c, matrix.d),
@@ -1386,7 +1399,7 @@ fn still_from<R: std::io::Read + std::io::Seek>(reader: R, size: u64, side: u32)
     let mut order = Reorder::default();
     // The newest frame just before `at`, in case the video ends before it.
     let mut held = None;
-    for sample_id in timeline.first_sample(at)..=count {
+    for sample_id in timeline.still_samples(at) {
         let Ok(Some(sample)) = mp4.read_sample(track_id, sample_id) else {
             break;
         };
@@ -2013,6 +2026,24 @@ mod tests {
         assert_eq!(quarter_turns(0, 0x10000, -0x10000, 0), 1);
         assert_eq!(quarter_turns(-0x10000, 0, 0, -0x10000), 2);
         assert_eq!(quarter_turns(0, -0x10000, 0x10000, 0), 3);
+    }
+
+    #[test]
+    fn a_still_decodes_from_its_keyframe_to_shortly_after_it() {
+        // An hour at 60 frames a second, with a keyframe every two seconds.
+        let timeline = Timeline {
+            timescale: 600,
+            starts: (0..216_000).map(|frame| frame * 10).collect(),
+            sync: (0..1_800).map(|key| key * 120 + 1).collect(),
+            shift: 0,
+        };
+        let samples = timeline.still_samples(Duration::from_secs(1));
+        assert_eq!(*samples.start(), 1, "from the keyframe before the still");
+        assert_eq!(
+            *samples.end(),
+            121,
+            "to a second past it, however long the clip, so frames that do not decode end it there"
+        );
     }
 
     #[test]
