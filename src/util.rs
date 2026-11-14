@@ -24,6 +24,55 @@ pub fn international_phone(input: &str) -> Option<String> {
     (!bracket && (7..=15).contains(&digits.len()) && !digits.starts_with('0')).then_some(digits)
 }
 
+/// Like [`international_phone`], but may prepend a default country code when
+/// the input is a local number (for example one leading `0`) that the strict
+/// validator would reject. The default code is only used after strict
+/// validation fails, so already-international numbers are unchanged.
+pub fn international_phone_with_default(
+    input: &str,
+    default_country_code: Option<&str>,
+) -> Option<String> {
+    if let Some(digits) = international_phone(input) {
+        return Some(digits);
+    }
+    let default = default_country_code?;
+    let input = input.trim();
+    let mut digits = String::new();
+    let mut bracket = false;
+    for character in input.chars() {
+        match character {
+            '0'..='9' => digits.push(character),
+            ' ' | '-' => {}
+            '(' if !bracket => bracket = true,
+            ')' if bracket => bracket = false,
+            _ => return None,
+        }
+    }
+    if bracket || digits.is_empty() {
+        return None;
+    }
+    // A leading trunk zero is not part of an international number.
+    let national = digits.strip_prefix('0').unwrap_or(&digits);
+    if national.is_empty() {
+        return None;
+    }
+    international_phone(&format!("{default}{national}"))
+}
+
+/// Extracts the leading ITU-T country calling code from an already
+/// international digit string, such as an account id.
+pub fn country_code_of(international_digits: &str) -> Option<String> {
+    let digits: String = international_digits
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let len = country_code_len(&digits);
+    (len > 0 && len <= digits.len()).then(|| digits[..len].to_owned())
+}
+
 /// File-loader identifier for a native path. egui requires a slash after
 /// `file://` on Windows or it interprets a drive path as a UNC hostname.
 /// Keep native characters: egui's loader does not percent-decode URLs.
@@ -686,7 +735,7 @@ pub fn phone(digits: &str) -> String {
 ///
 /// The codes are prefix-free: only 1 and 7 have one digit, the two-digit
 /// codes are listed here, and every other code has three.
-fn country_code_len(digits: &str) -> usize {
+pub fn country_code_len(digits: &str) -> usize {
     const TWO_DIGITS: [&str; 44] = [
         "20", "27", "30", "31", "32", "33", "34", "36", "39", "40", "41", "43", "44", "45", "46",
         "47", "48", "49", "51", "52", "53", "54", "55", "56", "57", "58", "60", "61", "62", "63",
@@ -1516,5 +1565,27 @@ mod international_phone_tests {
         ] {
             assert!(super::international_phone(input).is_none(), "{input}");
         }
+    }
+
+    #[test]
+    fn a_default_country_code_adapts_a_local_number_with_a_trunk_zero() {
+        assert_eq!(
+            super::international_phone_with_default("0123456789", Some("1")),
+            Some("1123456789".to_owned())
+        );
+        assert_eq!(
+            super::international_phone_with_default("+1 (555) 123-4567", Some("55")),
+            Some("15551234567".to_owned())
+        );
+        assert!(super::international_phone_with_default("0123456789", None).is_none());
+        assert!(super::international_phone_with_default("not a number", Some("1")).is_none());
+    }
+
+    #[test]
+    fn country_code_of_reads_the_account_country_code() {
+        assert_eq!(super::country_code_of("15551234567"), Some("1".to_owned()));
+        assert_eq!(super::country_code_of("5511999999999"), Some("55".to_owned()));
+        assert_eq!(super::country_code_of("15550001234@s.whatsapp.net"), Some("1".to_owned()));
+        assert!(super::country_code_of("").is_none());
     }
 }

@@ -9196,7 +9196,11 @@ impl App {
                 last,
                 to_phone,
             } => {
-                let Some(phone) = crate::util::international_phone(&phone) else {
+                let default_country = crate::util::country_code_of(&self.account().id.0);
+                let Some(phone) = crate::util::international_phone_with_default(
+                    &phone,
+                    default_country.as_deref(),
+                ) else {
                     self.toast_error(
                         crate::i18n::gettext(
                             self.locale,
