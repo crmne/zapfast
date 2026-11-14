@@ -51,6 +51,12 @@ pub fn international_phone_with_default(
     if bracket || digits.is_empty() {
         return None;
     }
+    // An international dialling prefix is not a local trunk zero.
+    if let Some(rest) = digits.strip_prefix("00") {
+        if !rest.is_empty() {
+            return international_phone(rest);
+        }
+    }
     // A leading trunk zero is not part of an international number.
     let national = digits.strip_prefix('0').unwrap_or(&digits);
     if national.is_empty() {
@@ -1577,6 +1583,10 @@ mod international_phone_tests {
             super::international_phone_with_default("+1 (555) 123-4567", Some("55")),
             Some("15551234567".to_owned())
         );
+        assert_eq!(
+            super::international_phone_with_default("00442079460958", Some("1")),
+            Some("442079460958".to_owned())
+        );
         assert!(super::international_phone_with_default("0123456789", None).is_none());
         assert!(super::international_phone_with_default("not a number", Some("1")).is_none());
     }
@@ -1584,8 +1594,14 @@ mod international_phone_tests {
     #[test]
     fn country_code_of_reads_the_account_country_code() {
         assert_eq!(super::country_code_of("15551234567"), Some("1".to_owned()));
-        assert_eq!(super::country_code_of("5511999999999"), Some("55".to_owned()));
-        assert_eq!(super::country_code_of("15550001234@s.whatsapp.net"), Some("1".to_owned()));
+        assert_eq!(
+            super::country_code_of("5511999999999"),
+            Some("55".to_owned())
+        );
+        assert_eq!(
+            super::country_code_of("15550001234@s.whatsapp.net"),
+            Some("1".to_owned())
+        );
         assert!(super::country_code_of("").is_none());
     }
 }

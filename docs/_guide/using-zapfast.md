@@ -705,9 +705,12 @@ available in the notice.
 To message someone without saving their number, open **New chat**, choose
 **Add contact**, enter the number with its country code, leave the name blank,
 and choose **Message**. A leading `+`, spaces, hyphens and brackets are fine;
-anything else, such as an extension, is refused rather than dropped. ZapFast
-asks WhatsApp whether the number is registered before it opens the chat, and
-a failed check can be retried. Add a name instead to save the contact.
+anything else, such as an extension, is refused rather than dropped. A number
+without a country code may use the signed-in account's country code when it
+starts with a local trunk zero; international dialling prefixes (`00`) are
+accepted as international numbers. ZapFast asks WhatsApp whether the number is
+registered before it opens the chat, and a failed check can be retried. Add a
+name instead to save the contact.
 
 To make a group, open **New chat** and choose **New group**. Each contact gets a
 check box: search for a name, check the person, and search for the next; the
