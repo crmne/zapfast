@@ -4,10 +4,13 @@
 //! quotes, `* ` lists, links, phone numbers, email addresses, and named
 //! `@mentions`. Emoji go through [`crate::emoji`].
 
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use egui::text::LayoutJob;
+use egui::epaint::text::ByteRangeExt;
+use egui::text::{ByteIndex, LayoutJob, LayoutSection};
 use egui::{Color32, FontId, Galley, Pos2, Stroke, TextFormat};
 use fastframe_text::snap_to_pixels;
 
@@ -68,6 +71,19 @@ struct Span {
     mention: bool,
     /// Paints a quoted line's bar and indent.
     quote: bool,
+    /// Markup itself, such as a `*` around bold: a draft shows it, a
+    /// message leaves it out.
+    marker: bool,
+}
+
+impl Span {
+    fn marker(text: impl Into<String>) -> Self {
+        Span {
+            text: text.into(),
+            marker: true,
+            ..Default::default()
+        }
+    }
 }
 
 /// Lays text out within `max_width`.
@@ -229,7 +245,135 @@ pub fn name_mentions(text: &str, mentions: &[Mention]) -> String {
     plain(text, mentions)
 }
 
+/// How a stretch of a draft looks while it is typed.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Look {
+    marker: bool,
+    bold: bool,
+    italic: bool,
+    strike: bool,
+    mono: bool,
+}
+
+/// Shows a draft's markup in its editor layout while it is typed: bold,
+/// italic, strikethrough and monospace (in `mono`) as a sent message shows
+/// them, with the markers kept in place in `markers`. Every character keeps
+/// its place, so carets and selections still match the buffer. Emoji, which
+/// the editor paints over transparent glyphs, are left whole.
+pub fn style_draft(job: &mut LayoutJob, markers: Color32, mono: &FontId) {
+    type Looks = Rc<[(Range<usize>, Look)]>;
+    thread_local! {
+        // The composer lays its draft out several times a frame and again on
+        // every repaint, so each draft is parsed once.
+        static LAST: RefCell<(String, Looks)> = RefCell::default();
+    }
+    let looks = LAST.with_borrow_mut(|(text, looks)| {
+        if *text != job.text {
+            *looks = draft_looks(&job.text).into();
+            text.clone_from(&job.text);
+        }
+        Rc::clone(looks)
+    });
+    if looks.is_empty() {
+        return;
+    }
+    let old = std::mem::take(&mut job.sections);
+    let mut sections = Vec::with_capacity(old.len() + 2 * looks.len());
+    let mut next = 0;
+    for section in old {
+        let Range { start, end } = section.byte_range.as_usize();
+        while looks.get(next).is_some_and(|(range, _)| range.end <= start) {
+            next += 1;
+        }
+        // Splitting an emoji would shape its parts apart.
+        if section.format.color == Color32::TRANSPARENT {
+            sections.push(section);
+            continue;
+        }
+        let piece = |range: Range<usize>, format: TextFormat| LayoutSection {
+            leading_space: if range.start == start {
+                section.leading_space
+            } else {
+                0.0
+            },
+            byte_range: ByteIndex(range.start)..ByteIndex(range.end),
+            format,
+        };
+        let mut at = start;
+        for (range, look) in &looks[next..] {
+            if range.start >= end {
+                break;
+            }
+            if range.start > at {
+                sections.push(piece(at..range.start, section.format.clone()));
+                at = range.start;
+            }
+            let stop = range.end.min(end);
+            sections.push(piece(
+                at..stop,
+                draft_format(&section.format, *look, markers, mono),
+            ));
+            at = stop;
+        }
+        if at < end {
+            sections.push(piece(at..end, section.format.clone()));
+        }
+    }
+    job.sections = sections;
+}
+
+/// The byte ranges of a draft that do not look like plain text.
+fn draft_looks(text: &str) -> Vec<(Range<usize>, Look)> {
+    let mut looks = Vec::new();
+    let mut at = 0;
+    for span in draft(text) {
+        let end = at + span.text.len();
+        let look = Look {
+            marker: span.marker,
+            bold: span.bold,
+            italic: span.italic,
+            strike: span.strike,
+            mono: span.mono,
+        };
+        if end > at && look != Look::default() {
+            looks.push((at..end, look));
+        }
+        at = end;
+    }
+    debug_assert_eq!(at, text.len(), "a draft's spans cover its text");
+    if at != text.len() {
+        looks.clear();
+    }
+    looks
+}
+
+fn draft_format(base: &TextFormat, look: Look, markers: Color32, mono: &FontId) -> TextFormat {
+    let mut format = base.clone();
+    if look.marker {
+        format.color = markers;
+    } else if look.mono {
+        format.font_id = mono.clone();
+    } else if look.bold {
+        format.font_id = theme::bold(format.font_id.size);
+    }
+    format.italics |= look.italic;
+    if look.strike {
+        format.strikethrough = Stroke::new(1.0, format.color);
+    }
+    format
+}
+
 fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
+    spans(text, mentions, false)
+}
+
+/// A draft as typed: its spans hold every character of `text`, markers
+/// included, and quote and list markers stay as they were typed.
+fn draft(text: &str) -> Vec<Span> {
+    spans(text, &[], true)
+}
+
+fn spans(text: &str, mentions: &[Mention], typed: bool) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut in_block = false;
     let mut first = true;
@@ -245,6 +389,9 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
         // A standalone ``` toggles a block. Inline ``` is handled below.
         if trimmed.trim() == "```" {
             in_block = !in_block;
+            if typed {
+                spans.push(Span::marker(line));
+            }
             continue;
         }
         if in_block {
@@ -261,8 +408,9 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
             quote = true;
             content = rest;
             spans.push(Span {
-                text: "▎ ".to_owned(),
+                text: if typed { "> " } else { "▎ " }.to_owned(),
                 quote: true,
+                marker: typed,
                 ..Default::default()
             });
         }
@@ -273,7 +421,11 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
             .find_map(|marker| body.strip_prefix(marker));
         if let Some(rest) = bullet {
             spans.push(Span {
-                text: format!("{}•  ", &content[..indent]),
+                text: if typed {
+                    content[..content.len() - rest.len()].to_owned()
+                } else {
+                    format!("{}•  ", &content[..indent])
+                },
                 quote,
                 ..Default::default()
             });
@@ -281,7 +433,10 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
         }
         for mut span in inline(content) {
             span.quote = quote;
-            if span.mono {
+            if span.marker && !typed {
+                continue;
+            }
+            if typed || span.mono {
                 spans.push(span);
             } else {
                 spans.extend(link_and_mention(span, mentions));
@@ -321,11 +476,13 @@ fn inline(line: &str) -> Vec<Span> {
             && close > i + 3
         {
             flush(&mut run, &mut spans, flags);
+            spans.push(Span::marker("```"));
             spans.push(Span {
                 text: chars[i + 3..close].iter().collect(),
                 mono: true,
                 ..Default::default()
             });
+            spans.push(Span::marker("```"));
             i = close + 3;
             continue;
         }
@@ -335,11 +492,13 @@ fn inline(line: &str) -> Vec<Span> {
             let close = i + 1 + close;
             if close > i + 1 {
                 flush(&mut run, &mut spans, flags);
+                spans.push(Span::marker("`"));
                 spans.push(Span {
                     text: chars[i + 1..close].iter().collect(),
                     mono: true,
                     ..Default::default()
                 });
+                spans.push(Span::marker("`"));
                 i = close + 1;
                 continue;
             }
@@ -353,12 +512,14 @@ fn inline(line: &str) -> Vec<Span> {
             if flags[index] {
                 if is_closer(&chars, i) {
                     flush(&mut run, &mut spans, flags);
+                    spans.push(Span::marker(c));
                     flags[index] = false;
                     i += 1;
                     continue;
                 }
             } else if is_opener(&chars, i) && has_closer(&chars, i + 1, c) {
                 flush(&mut run, &mut spans, flags);
+                spans.push(Span::marker(c));
                 flags[index] = true;
                 i += 1;
                 continue;
@@ -800,6 +961,211 @@ mod tests {
                 ("code".into(), false, false, false, true),
             ]
         );
+    }
+
+    fn draft_kinds(text: &str) -> Vec<(String, bool, bool, bool, bool, bool)> {
+        draft(text)
+            .into_iter()
+            .map(|span| {
+                let Span {
+                    text,
+                    marker,
+                    bold,
+                    italic,
+                    strike,
+                    mono,
+                    ..
+                } = span;
+                (text, marker, bold, italic, strike, mono)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_draft_keeps_every_character() {
+        for text in [
+            "a *bold* and _it_ and ~no~ and `code`",
+            "inline ```mono``` text",
+            "*_both_* ~*nested*~",
+            "```\nlet x = 1;\n  ```  \nafter",
+            "```\nunclosed block",
+            "> *quoted*\n- one\n  * two\n• three",
+            "2 * 3 = 6, snake_case_name, *unclosed, a**b*",
+            "café *crème* ~مرحبا~ 👍🏽 *שלום*",
+            "visit https://example.com/a_b_c and mail me@example.com",
+            "",
+            "\n\n",
+        ] {
+            let spans = draft(text);
+            let kept: String = spans.iter().map(|span| span.text.as_str()).collect();
+            assert_eq!(kept, text);
+        }
+    }
+
+    #[test]
+    fn a_draft_styles_what_its_message_styles() {
+        // Quotes and lists are left out: a message redraws their markers.
+        for text in [
+            "a *bold* and _it_ and ~no~ and `code`",
+            "inline ```mono``` text",
+            "*_both_* ~*nested*~",
+            "```\nlet x = 1;\n```\nafter",
+            "2 * 3 = 6, snake_case_name, *unclosed, a**b*",
+            "café *crème* ~مرحبا~ 👍🏽",
+        ] {
+            let shown: Vec<_> = parse(text, &[])
+                .into_iter()
+                .flat_map(|span| {
+                    let style = (span.bold, span.italic, span.strike, span.mono);
+                    span.text
+                        .chars()
+                        .map(move |c| (c, style))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let typed: Vec<_> = draft(text)
+                .into_iter()
+                .filter(|span| !span.marker)
+                .flat_map(|span| {
+                    let style = (span.bold, span.italic, span.strike, span.mono);
+                    span.text
+                        .chars()
+                        .map(move |c| (c, style))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(typed, shown, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_draft_marks_its_markers() {
+        assert_eq!(
+            draft_kinds("a *b* ~c~ `d`"),
+            vec![
+                ("a ".into(), false, false, false, false, false),
+                ("*".into(), true, false, false, false, false),
+                ("b".into(), false, true, false, false, false),
+                ("*".into(), true, false, false, false, false),
+                (" ".into(), false, false, false, false, false),
+                ("~".into(), true, false, false, false, false),
+                ("c".into(), false, false, false, true, false),
+                ("~".into(), true, false, false, false, false),
+                (" ".into(), false, false, false, false, false),
+                ("`".into(), true, false, false, false, false),
+                ("d".into(), false, false, false, false, true),
+                ("`".into(), true, false, false, false, false),
+            ]
+        );
+        // A closing marker followed by the same character as text.
+        assert_eq!(
+            draft_kinds("*a**"),
+            vec![
+                ("*".into(), true, false, false, false, false),
+                ("a".into(), false, true, false, false, false),
+                ("*".into(), true, false, false, false, false),
+                ("*".into(), false, false, false, false, false),
+            ]
+        );
+        // A quote's marker is markup; a list's bullet is text.
+        let quoted = draft_kinds("> - item");
+        assert_eq!(quoted[0], ("> ".into(), true, false, false, false, false));
+        assert_eq!(quoted[1], ("- ".into(), false, false, false, false, false));
+        // Fences are markup; the block between them is monospace.
+        let block = draft_kinds("```\ncode\n```");
+        assert_eq!(block[0], ("```".into(), true, false, false, false, false));
+        assert_eq!(block[2], ("code".into(), false, false, false, false, true));
+        assert_eq!(block[4], ("```".into(), true, false, false, false, false));
+    }
+
+    #[test]
+    fn styling_a_draft_keeps_its_text_and_leaves_emoji_alone() {
+        let format = TextFormat::simple(theme::regular(15.0), Color32::WHITE);
+        let hidden = TextFormat {
+            color: Color32::TRANSPARENT,
+            ..format.clone()
+        };
+        let markers = Color32::GRAY;
+        // As the editor job lays it out: emoji in their own transparent sections.
+        let mut job = LayoutJob::default();
+        job.append("x *b", 0.0, format.clone());
+        job.append("👍", 0.0, hidden.clone());
+        job.append("ld* ~gone~ _it_ `m`", 0.0, format.clone());
+        let text = job.text.clone();
+        let mono = FontId::monospace(16.0);
+        style_draft(&mut job, markers, &mono);
+        assert_eq!(job.text, text);
+        let mut at = 0;
+        for section in &job.sections {
+            assert_eq!(section.byte_range.start.0, at, "sections tile the text");
+            assert!(section.byte_range.end.0 > at, "no empty sections here");
+            at = section.byte_range.end.0;
+        }
+        assert_eq!(at, text.len());
+        let format_at = |needle: &str| {
+            let start = text.find(needle).unwrap();
+            job.sections
+                .iter()
+                .find(|section| section.byte_range.as_usize().contains(&start))
+                .unwrap()
+                .format
+                .clone()
+        };
+        assert_eq!(format_at("x ").font_id, theme::regular(15.0));
+        assert_eq!(format_at("x ").color, Color32::WHITE);
+        assert_eq!(format_at("*b").color, markers);
+        assert_eq!(format_at("b👍").font_id, theme::bold(15.0));
+        assert_eq!(format_at("👍"), hidden);
+        assert_eq!(format_at("ld*").font_id, theme::bold(15.0));
+        assert_eq!(format_at("* ~").color, markers);
+        assert_eq!(
+            format_at("gone").strikethrough,
+            Stroke::new(1.0, Color32::WHITE)
+        );
+        assert!(format_at("it_").italics);
+        assert_eq!(format_at("m`").font_id, mono);
+        assert_eq!(format_at("`m").color, markers);
+    }
+
+    #[test]
+    fn a_draft_without_markup_keeps_its_sections() {
+        let format = TextFormat::simple(theme::regular(15.0), Color32::WHITE);
+        let mut job = LayoutJob::single_section("2 * 3 = 6".to_owned(), format);
+        let before = job.sections.clone();
+        style_draft(&mut job, Color32::GRAY, &FontId::monospace(15.0));
+        assert_eq!(job.sections, before);
+    }
+
+    #[test]
+    fn a_keycap_emoji_stays_whole() {
+        // The keycap's own asterisk reads as an opener, as it does in a message.
+        let format = TextFormat::simple(theme::regular(15.0), Color32::WHITE);
+        let hidden = TextFormat {
+            color: Color32::TRANSPARENT,
+            ..format.clone()
+        };
+        let keycap = "*\u{fe0f}\u{20e3}";
+        let mut job = LayoutJob::default();
+        job.append(keycap, 0.0, hidden.clone());
+        job.append(" call me*", 0.0, format);
+        style_draft(&mut job, Color32::GRAY, &FontId::monospace(15.0));
+        assert_eq!(job.sections[0].byte_range.as_usize(), 0..keycap.len());
+        assert_eq!(job.sections[0].format, hidden);
+    }
+
+    #[test]
+    fn each_draft_is_styled_by_its_own_text() {
+        let format = TextFormat::simple(theme::regular(15.0), Color32::WHITE);
+        let mono = FontId::monospace(15.0);
+        let styled = |text: &str| {
+            let mut job = LayoutJob::single_section(text.to_owned(), format.clone());
+            style_draft(&mut job, Color32::GRAY, &mono);
+            job.sections.len()
+        };
+        assert_eq!(styled("a *b* c"), 5);
+        assert_eq!(styled("a *b* c"), 5);
+        assert_eq!(styled("plain"), 1);
+        assert_eq!(styled("a *b* c"), 5);
     }
 
     #[test]
