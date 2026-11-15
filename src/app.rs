@@ -1817,6 +1817,17 @@ impl App {
         &self.accounts[self.active]
     }
 
+    /// Country code of the account's own number, used as the default for
+    /// local phone-number input. `None` when the account is not linked or
+    /// uses a privacy id.
+    pub fn default_country_code(&self) -> Option<String> {
+        self.account()
+            .me
+            .as_deref()
+            .and_then(crate::model::phone_of)
+            .and_then(crate::util::country_code_of)
+    }
+
     pub fn account_mut(&mut self) -> &mut Account {
         &mut self.accounts[self.active]
     }
@@ -9196,7 +9207,11 @@ impl App {
                 last,
                 to_phone,
             } => {
-                let Some(phone) = crate::util::international_phone(&phone) else {
+                let default_country = self.default_country_code();
+                let Some(phone) = crate::util::international_phone_with_default(
+                    &phone,
+                    default_country.as_deref(),
+                ) else {
                     self.toast_error(
                         crate::i18n::gettext(
                             self.locale,

@@ -2035,7 +2035,12 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
         .inner;
     // A leading plus, spaces, hyphens and brackets are formatting; anything
     // else (an extension, a letter) would change the number, so it is refused.
-    let digits = crate::util::international_phone(&app.new_contact_phone).unwrap_or_default();
+    let default_country = app.default_country_code();
+    let digits = crate::util::international_phone_with_default(
+        &app.new_contact_phone,
+        default_country.as_deref(),
+    )
+    .unwrap_or_default();
     let ready = !digits.is_empty() && !app.new_contact_pending;
     let named = !app.new_contact_name.trim().is_empty() || !app.new_contact_last.trim().is_empty();
     let submitted =
