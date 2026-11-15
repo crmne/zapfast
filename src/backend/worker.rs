@@ -72,8 +72,9 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::UploadGate;
 use crate::model::{
-    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, DeadlineTrust, Delivery,
+    Ephemeral, Gif, GifError, GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef,
+    Message, Quoted, Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -1421,10 +1422,34 @@ struct FileSendOptions {
 /// What a server ack settles.
 #[derive(Clone)]
 enum AwaitingAck {
-    /// One of our sent messages, not yet placed at the server's time.
-    Message(ChatId),
+    /// One of our sent messages, not yet placed at the server's time, and the
+    /// timer it carried, whose deadline moves with the stamp.
+    Message(ChatId, Option<u32>),
     /// A direct disappearing-timer change, not yet accepted.
     Timer(disappearing::TimerAck),
+}
+
+/// What filing a message says about when it disappears.
+#[derive(Clone, Copy, Default)]
+struct Expires {
+    /// The message's own statement, when it has one.
+    ephemeral: Option<Ephemeral>,
+    /// Where the time a counted timer counts from came from.
+    counted: DeadlineTrust,
+}
+
+impl Expires {
+    /// A message whose time this device cannot vouch for: one we are still
+    /// sending, or one received off a stanza whose `t` may have been replaced
+    /// by the library's clock (a broken stanza, or a PDO recovery). Its counted
+    /// deadline is the weakest kind, so anything the server answered replaces
+    /// it.
+    fn counted(ephemeral: Option<Ephemeral>) -> Self {
+        Self {
+            ephemeral,
+            ..Self::default()
+        }
+    }
 }
 
 struct Worker {
@@ -1888,6 +1913,16 @@ struct ParsedMessage {
     /// original's secret (#582). The worker opens it before filing, and the
     /// row's body comes from it; one it cannot open is not filed.
     sealed_edit: Option<SealedEdit>,
+    /// What the phone's own entry said about when this message disappears.
+    ephemeral: Option<Ephemeral>,
+    /// The entry's own time, when the phone stated one. A timer the entry
+    /// counts from the message itself counts from this, never from the row's
+    /// placeholder for a missing time.
+    expiry_from: Option<i64>,
+    /// What to trust a timer counted from `expiry_from` as. A message of ours
+    /// that the entry does not show WhatsApp taking is only provisional: its
+    /// time is the phone's own, and the ack will correct it.
+    expiry_trust: DeadlineTrust,
 }
 
 /// An encrypted MESSAGE_EDIT from history, still to be opened. Its message
@@ -2357,7 +2392,9 @@ impl Worker {
             return;
         }
         match self.awaiting_ack.get(&ack.id).cloned() {
-            Some(AwaitingAck::Message(chat)) => self.place_sent_message(chat, ack),
+            Some(AwaitingAck::Message(chat, duration)) => {
+                self.place_sent_message(chat, ack, duration)
+            }
             Some(AwaitingAck::Timer(_)) => self.settle_timer_ack(ack),
             // An ack can outrun the completion that names the timer change it
             // belongs to; hold it briefly, bounded in time and count.
@@ -2369,11 +2406,22 @@ impl Worker {
     /// Only the first ack with a time counts: a resend after a retry receipt
     /// is acked again, later, and must not move the message down the chat.
     /// An ack without a usable time leaves the message waiting for one.
-    fn place_sent_message(&mut self, chat: ChatId, ack: &wa_events::ServerAck) {
+    fn place_sent_message(
+        &mut self,
+        chat: ChatId,
+        ack: &wa_events::ServerAck,
+        duration: Option<u32>,
+    ) {
         let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
             return;
         };
-        match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
+        // The mapping may have learned this chat's phone number since the send,
+        // moving the row to the chat it is filed under now.
+        let chat: ChatId = self.canonical_str(&chat);
+        match self
+            .archive
+            .restamp_sent(&chat, &ack.id, at.timestamp(), duration)
+        {
             Ok(changed) => {
                 self.awaiting_ack.remove(&ack.id);
                 if changed {
@@ -3604,6 +3652,27 @@ impl Worker {
         push_name: Option<&str>,
         poll_baseline: bool,
     ) {
+        self.archive_list_message_expiring(
+            list,
+            message,
+            raw,
+            push_name,
+            poll_baseline,
+            Expires::default(),
+        );
+    }
+
+    /// [`Self::archive_list_message`], with what the message's own entry said
+    /// about when it disappears.
+    fn archive_list_message_expiring(
+        &mut self,
+        list: Option<String>,
+        message: Message,
+        raw: Option<Vec<u8>>,
+        push_name: Option<&str>,
+        poll_baseline: bool,
+        expires: Expires,
+    ) {
         let (chat, id) = (message.chat.clone(), message.id.clone());
         if let Some(list) = &list {
             let held = matches!(self.archive.message(&chat, &id), Ok(Some(_)));
@@ -3621,7 +3690,7 @@ impl Worker {
                 self.early.wait_reaction(reaction);
             }
         }
-        self.archive_message(message, raw, push_name, poll_baseline);
+        self.archive_message_expiring(message, raw, push_name, poll_baseline, expires);
         if let Some(list) = list
             && let Err(error) = self.archive.set_broadcast_list(&chat, &id, &list)
         {
@@ -5339,12 +5408,13 @@ impl Worker {
                 Err(_) => false,
             };
         let id = row.id.clone();
-        self.archive_list_message(
+        self.archive_list_message_expiring(
             list,
             row,
             Some(message.encode_to_vec()),
             push_name.as_deref(),
             poll_baseline,
+            Expires::counted(Ephemeral::timed(base.get_ephemeral_expiration())),
         );
         if sent_elsewhere {
             self.settle_early_receipts(&chat, &id);
@@ -5922,6 +5992,17 @@ impl Worker {
         self.archive_message(message, raw, push_name, false);
     }
 
+    /// [`Self::store_message`], with the timer the message was sent under.
+    fn store_expiring_message(
+        &mut self,
+        message: Message,
+        raw: Option<Vec<u8>>,
+        push_name: Option<&str>,
+        ephemeral: Option<Ephemeral>,
+    ) {
+        self.archive_message_expiring(message, raw, push_name, false, Expires::counted(ephemeral));
+    }
+
     /// The phone's "Keep chats archived" once it has said, else Settings'.
     /// A stored setting that could not be read is read again here, and
     /// keeps chats archived while it stays unreadable.
@@ -5949,6 +6030,19 @@ impl Worker {
         push_name: Option<&str>,
         poll_baseline: bool,
     ) {
+        self.archive_message_expiring(message, raw, push_name, poll_baseline, Expires::default());
+    }
+
+    /// [`Self::archive_message`], also filing what the message's own entry said
+    /// about when it disappears.
+    fn archive_message_expiring(
+        &mut self,
+        message: Message,
+        raw: Option<Vec<u8>>,
+        push_name: Option<&str>,
+        poll_baseline: bool,
+        expires: Expires,
+    ) {
         if self.predates_removal(&message.chat, message.timestamp)
             || self.message_was_removed(&message.chat, &message.id)
         {
@@ -5973,7 +6067,13 @@ impl Worker {
             message.content.keep_local_paths(&existing.content);
             keep_live_location_notice(&mut message.content, existing);
         }
-        if let Err(error) = self.archive.insert_message(&message, raw.as_deref()) {
+        let deadline = expires
+            .ephemeral
+            .and_then(|ephemeral| ephemeral.expiry(Some(message.timestamp), expires.counted));
+        if let Err(error) =
+            self.archive
+                .insert_message_with_expiry(&message, raw.as_deref(), deadline)
+        {
             log::warn!("could not store a message: {error}");
             return;
         }
@@ -5981,7 +6081,10 @@ impl Worker {
         if message.from_me && message.status == Delivery::Pending {
             self.awaiting_ack.insert(
                 message.id.clone(),
-                AwaitingAck::Message(message.chat.clone()),
+                AwaitingAck::Message(
+                    message.chat.clone(),
+                    expires.ephemeral.and_then(|ephemeral| ephemeral.duration),
+                ),
             );
         }
         self.retire_local_call_twins(&message);
@@ -6564,10 +6667,14 @@ impl Worker {
                         (Content::LiveLocation { .. }, Content::LiveLocation { .. })
                     ) && existing.content != row.content;
                 }
-                if let Err(error) = self
-                    .archive
-                    .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
-                {
+                let expiry = message.ephemeral.and_then(|ephemeral| {
+                    ephemeral.expiry(message.expiry_from, message.expiry_trust)
+                });
+                if let Err(error) = self.archive.insert_message_with_expiry(
+                    &row,
+                    (!keep_raw).then_some(raw.as_slice()),
+                    expiry,
+                ) {
                     failed += 1;
                     log::warn!("could not store a history message: {error}");
                 } else {
@@ -8897,6 +9004,8 @@ impl Worker {
                 }
             }
             Command::Sent { chat, id, error } => {
+                // Pending replies are keyed by the chat as it was known when one
+                // was sent, which a merge since then may have renamed.
                 let completed = self.interactive_sending.iter().find_map(
                     |((pending_chat, source), pending_id)| {
                         (pending_chat == &chat && pending_id == &id).then(|| source.clone())
@@ -8918,6 +9027,9 @@ impl Worker {
                     }
                     return;
                 }
+                // The row may have moved to its phone id since the send, as the
+                // ack path also allows for.
+                let chat: ChatId = self.canonical_str(&chat);
                 let status = match &error {
                     Some(_) => Delivery::Failed,
                     None => Delivery::Sent,
@@ -8925,6 +9037,11 @@ impl Worker {
                 if error.is_some() {
                     // A failed send is never acked; a retry stores the row again.
                     self.awaiting_ack.remove(&id);
+                    // Its deadline was counted from our clock, and WhatsApp
+                    // never took the message, so nothing is known about it.
+                    if let Err(failure) = self.archive.forget_provisional_expiry(&chat, &id) {
+                        log::warn!("could not forget a failed message's deadline: {failure}");
+                    }
                 }
                 let _ = self
                     .archive
@@ -9556,7 +9673,12 @@ impl Worker {
             forwarded: false,
             thumbnail,
         };
-        self.store_message(row, Some(message.encode_to_vec()), None);
+        self.store_expiring_message(
+            row,
+            Some(message.encode_to_vec()),
+            None,
+            Ephemeral::timed(expiration),
+        );
         tokio::spawn(send_outgoing(
             client,
             self.commands.clone(),
@@ -9674,7 +9796,12 @@ impl Worker {
             forwarded: false,
             thumbnail: None,
         };
-        self.store_message(row, Some(message.encode_to_vec()), None);
+        self.store_expiring_message(
+            row,
+            Some(message.encode_to_vec()),
+            None,
+            Ephemeral::timed(expiration),
+        );
         tokio::spawn(send_outgoing(
             client,
             self.commands.clone(),
@@ -9837,6 +9964,9 @@ impl Worker {
             let _ = self
                 .archive
                 .set_status(&job.0, &id, Delivery::Failed, crate::util::now());
+            if let Err(error) = self.archive.forget_provisional_expiry(&job.0, &id) {
+                log::warn!("could not forget an unsent forward's deadline: {error}");
+            }
             self.emit_message(&job.0, &id);
             self.emit_chat(&job.0);
             if !reported_read_only {
@@ -9881,6 +10011,9 @@ impl Worker {
         let mut chats = HashSet::new();
         for (chat, id) in &messages {
             let _ = self.archive.set_status(chat, id, Delivery::Failed, at);
+            if let Err(error) = self.archive.forget_provisional_expiry(chat, id) {
+                log::warn!("could not forget an unsent forward's deadline: {error}");
+            }
             self.emit_message(chat, id);
             chats.insert(chat.clone());
         }
@@ -9952,7 +10085,12 @@ impl Worker {
             thumbnail,
         );
         row.forwarded = !own;
-        self.store_message(row, Some(message.encode_to_vec()), None);
+        self.store_expiring_message(
+            row,
+            Some(message.encode_to_vec()),
+            None,
+            Ephemeral::timed(expiration),
+        );
         Some((id, message, expiration))
     }
 
@@ -11864,7 +12002,7 @@ impl Worker {
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let raw = attachment_archive_raw(&message);
         let id = row.id.clone();
-        self.store_message(row, Some(raw), None);
+        self.store_expiring_message(row, Some(raw), None, Ephemeral::timed(expiration));
         tokio::spawn(send_outgoing(
             client,
             self.commands.clone(),
@@ -14144,6 +14282,14 @@ fn fill_from_edit(message: &mut ParsedMessage, body: &wa::Message, secret: Vec<u
     message.raw = body.encode_to_vec();
     message.poll_secret = Some(secret);
     message.edited = true;
+    // The snapshot is the whole message, timer included: an entry whose envelope
+    // named only the start still gets its length here, and one that named
+    // nothing gets whatever the body carries.
+    if let Some(timer) = Ephemeral::timed(base.get_ephemeral_expiration()) {
+        let mut filled = message.ephemeral.unwrap_or_default();
+        filled.fill_missing_duration(&timer);
+        message.ephemeral = Some(filled);
+    }
     true
 }
 
@@ -14161,6 +14307,47 @@ fn history_quote(base: &wa::Message) -> Option<Quoted> {
         sender_name: None,
         summary: content.as_ref().map(Content::summary).unwrap_or_default(),
     })
+}
+
+/// What a history entry says about when its message disappears: the phone's
+/// own deadline when it sent one, else when the timer started and how long it
+/// ran, else the timer the message's own body carries. A start without a
+/// length says nothing usable on its own.
+fn history_ephemeral(info: &wa::WebMessageInfo, base: &wa::Message) -> Option<Ephemeral> {
+    let mut entry = Ephemeral {
+        absolute: info.ephemeral_expiration_timestamp.map(|at| at as i64),
+        started_at: info.ephemeral_start_timestamp.map(|at| at as i64),
+        duration: info.ephemeral_duration.filter(|seconds| *seconds > 0),
+    };
+    // The body carries the timer too, so an entry whose envelope names only the
+    // start still has a length to count from it.
+    if let Some(timer) = Ephemeral::timed(base.get_ephemeral_expiration()) {
+        entry.fill_missing_duration(&timer);
+    }
+    // A start alone places nothing yet, but a snapshot opened later may carry
+    // the length that completes it, so the start is kept until then.
+    let stated = entry.absolute.is_some() || entry.started_at.is_some() || entry.duration.is_some();
+    stated.then_some(entry)
+}
+
+/// What a timer counted from a history entry's own time rests on.
+///
+/// A received message's time is WhatsApp's. One of ours only is once the entry
+/// shows the server took it: a phone-synced `PENDING` or `ERROR` entry, or one
+/// without a status at all, carries the phone's own clock, and the ack will
+/// bring the server's.
+fn history_trust(info: &wa::WebMessageInfo, from_me: bool) -> DeadlineTrust {
+    use wa::web_message_info::Status;
+    let accepted = !from_me
+        || matches!(
+            info.status,
+            Some(Status::SERVER_ACK | Status::DELIVERY_ACK | Status::READ | Status::PLAYED)
+        );
+    if accepted {
+        DeadlineTrust::Server
+    } else {
+        DeadlineTrust::Provisional
+    }
 }
 
 /// Converts supported protocol message content into local display types, retaining quoted source metadata.
@@ -14217,6 +14404,11 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                     poll_votes: Vec::new(),
                     receipts: Vec::new(),
                     sealed_edit: None,
+                    // A stub the phone filed without a body says nothing about
+                    // a deadline.
+                    ephemeral: None,
+                    expiry_from: info.message_timestamp.map(|at| at as i64),
+                    expiry_trust: DeadlineTrust::Server,
                 });
                 continue;
             }
@@ -14526,6 +14718,9 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                 Vec::new()
             },
             sealed_edit: sealed,
+            ephemeral: history_ephemeral(info, base),
+            expiry_from: info.message_timestamp.map(|at| at as i64),
+            expiry_trust: history_trust(info, from_me),
         });
     }
     let last_activity = conversation
@@ -19778,13 +19973,22 @@ mod receipt_tests {
                 ])
                 .unwrap();
             worker.forward_queue = Some(queue);
-            worker.store_message(
+            worker.store_expiring_message(
                 Message {
                     status: Delivery::Pending,
                     ..own_message("queued", 1)
                 },
                 None,
                 None,
+                Ephemeral::timed(Some(600)),
+            );
+            assert!(
+                worker
+                    .archive
+                    .message_deadline(PEER, "queued")
+                    .unwrap()
+                    .is_some(),
+                "the forward was prepared under a timer"
             );
             match unavailable {
                 "locked" => worker.archive.set_locked(PEER, true).unwrap(),
@@ -19808,6 +20012,13 @@ mod receipt_tests {
                     .unwrap()
                     .status,
                 Delivery::Failed
+            );
+            // It never reached WhatsApp, so the deadline our clock counted is
+            // not the phone's answer and is dropped.
+            assert_eq!(
+                worker.archive.message_deadline(PEER, "queued").unwrap(),
+                None,
+                "{unavailable}"
             );
         }
         let (mut worker, events, _inbox, _wa) = worker();
@@ -20612,6 +20823,158 @@ mod receipt_tests {
         );
     }
 
+    /// A history entry's own expiry is what the archive keeps: the phone's
+    /// absolute answer, else the timer it started and how long it ran.
+    #[test]
+    fn history_files_each_message_deadline_from_its_own_entry() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let text = || {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some("Synthetic text".into());
+            proto
+        };
+        let mut stated = history_entry(PEER, "stated", false, None, text(), Vec::new(), None);
+        if let Some(info) = stated.message.as_option_mut() {
+            info.ephemeral_expiration_timestamp = Some(9_000);
+            info.ephemeral_start_timestamp = Some(100);
+            info.ephemeral_duration = Some(600);
+        }
+        let mut counted = history_entry(PEER, "counted", false, None, text(), Vec::new(), None);
+        if let Some(info) = counted.message.as_option_mut() {
+            info.ephemeral_start_timestamp = Some(500);
+            info.ephemeral_duration = Some(600);
+        }
+        let mut startless = history_entry(PEER, "startless", false, None, text(), Vec::new(), None);
+        if let Some(info) = startless.message.as_option_mut() {
+            info.ephemeral_start_timestamp = Some(500);
+        }
+        // The timer may also be only in the message body, as an entry whose
+        // envelope stated nothing still carries what was sent.
+        let in_body = {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some("Synthetic text".into());
+            assert!(proto.set_ephemeral_expiration(86_400));
+            proto
+        };
+        // An envelope that names only the start still has a length in the body,
+        // and counts from the start rather than from the message's time.
+        let mut start_with_body = history_entry(
+            PEER,
+            "start-and-body",
+            false,
+            None,
+            in_body.clone(),
+            Vec::new(),
+            None,
+        );
+        if let Some(info) = start_with_body.message.as_option_mut() {
+            info.ephemeral_start_timestamp = Some(500);
+        }
+        // A timer in the body of an entry that states no time of its own has
+        // nothing to count from.
+        let mut untimed = history_entry(
+            PEER,
+            "untimed",
+            false,
+            None,
+            in_body.clone(),
+            Vec::new(),
+            None,
+        );
+        if let Some(info) = untimed.message.as_option_mut() {
+            info.message_timestamp = None;
+        }
+        file_history_entries(
+            &mut worker,
+            vec![
+                stated,
+                counted,
+                startless,
+                history_entry(
+                    PEER,
+                    "in-body",
+                    false,
+                    None,
+                    in_body.clone(),
+                    Vec::new(),
+                    None,
+                ),
+                start_with_body,
+                untimed,
+                history_entry(PEER, "plain", false, None, text(), Vec::new(), None),
+            ],
+        );
+        let deadline = |id: &str| worker.archive.message_deadline(PEER, id).unwrap();
+        assert_eq!(deadline("stated"), Some(9_000));
+        assert_eq!(deadline("counted"), Some(1_100));
+        assert_eq!(deadline("in-body"), Some(100 + 86_400));
+        assert_eq!(deadline("start-and-body"), Some(500 + 86_400));
+        // A timer the phone recorded the start of rests on its own time, which
+        // outranks a deadline counted from a message time this device cannot
+        // vouch for; one counted from the entry's time is only as good as that
+        // time being WhatsApp's.
+        let trust = |id: &str| {
+            worker
+                .archive
+                .message_expiry(PEER, id)
+                .unwrap()
+                .map(|expiry| expiry.trust)
+        };
+        assert_eq!(trust("stated"), Some(DeadlineTrust::Stated));
+        assert_eq!(trust("in-body"), Some(DeadlineTrust::Server));
+        assert_eq!(trust("counted"), Some(DeadlineTrust::Server));
+        // A start with no length places nothing, and an entry that says
+        // nothing keeps none: unknown is not "never expires".
+        assert_eq!(deadline("startless"), None);
+        assert_eq!(deadline("untimed"), None);
+        assert_eq!(deadline("plain"), None);
+    }
+
+    /// A message received in a timed chat counts its deadline from the time
+    /// the message was sent, not from when this device happened to receive it.
+    #[test]
+    fn a_live_message_files_the_deadline_its_own_timer_counts() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let timed = {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some("Synthetic text".into());
+            assert!(proto.set_ephemeral_expiration(86_400));
+            proto
+        };
+        let mut info = MessageInfo {
+            id: "timed".into(),
+            source: MessageSource {
+                chat: PEER.parse().unwrap(),
+                sender: PEER.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(1_000).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(timed), &info);
+        assert_eq!(
+            worker.archive.message_expiry(PEER, "timed").unwrap(),
+            Some(crate::model::Expiry {
+                at: 1_000 + 86_400,
+                // The stanza's own `t` may already be the library's clock when
+                // it was missing or broken, so this is the weakest kind and a
+                // server-answered record replaces it.
+                trust: DeadlineTrust::Provisional,
+            })
+        );
+        info.id = "plain".into();
+        let plain = {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some("Synthetic text".into());
+            proto
+        };
+        worker.ingest(&Arc::new(plain), &info);
+        assert_eq!(
+            worker.archive.message_deadline(PEER, "plain").unwrap(),
+            None
+        );
+    }
+
     #[test]
     fn reaction_emoji_prefers_text_then_grouping_key() {
         assert_eq!(
@@ -21308,6 +21671,16 @@ mod receipt_tests {
     /// one made before linking (#582). The author edits, so the author is
     /// both the original's sender and the editor.
     fn sealed_edit(target: &str, author: &str, secret: &[u8], text: &str) -> wa::Message {
+        sealed_edit_with(target, author, secret, wa::Message::text(text))
+    }
+
+    /// A sealed edit whose edited body is `edited`, for a timer it carries.
+    fn sealed_edit_with(
+        target: &str,
+        author: &str,
+        secret: &[u8],
+        edited: wa::Message,
+    ) -> wa::Message {
         use whatsapp_rust::wacore::message_edit::{MessageEditContext, encrypt_message_edit};
         let inner = {
             let mut proto = wa::Message::default();
@@ -21319,7 +21692,7 @@ mod receipt_tests {
                     proto.id = Some(target.into());
                     proto
                 });
-                proto.edited_message = MessageField::some(wa::Message::text(text));
+                proto.edited_message = MessageField::some(edited);
                 proto
             });
             proto
@@ -21376,6 +21749,55 @@ mod receipt_tests {
         assert!(parsed.messages[0].edited);
         assert!(parsed.messages[0].sealed_edit.is_some());
         assert!(parsed.messages[0].poll_secret.is_none());
+    }
+
+    /// A sealed edit's body can be the only place its timer has a length, so
+    /// the entry's recorded start has to survive until the edit is opened.
+    #[test]
+    fn a_sealed_edit_counts_its_deadline_from_the_start_its_entry_recorded() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let secret = vec![9u8; 32];
+        let mut entry = history_entry(
+            PEER,
+            "edit-envelope",
+            false,
+            None,
+            sealed_edit_with("original-id", PEER, &secret, timed_text(600)),
+            Vec::new(),
+            Some(secret.clone()),
+        );
+        if let Some(info) = entry.message.as_option_mut() {
+            info.ephemeral_start_timestamp = Some(500);
+        }
+        file_history_entries(&mut worker, vec![entry]);
+        assert_eq!(
+            worker
+                .archive
+                .message_deadline(PEER, "original-id")
+                .unwrap(),
+            Some(500 + 600),
+            "counted from the recorded start, not the message's time"
+        );
+        // An unedited replay of the same message cannot move that answer.
+        file_history_entries(
+            &mut worker,
+            vec![history_entry(
+                PEER,
+                "original-id",
+                false,
+                None,
+                timed_text(600),
+                Vec::new(),
+                None,
+            )],
+        );
+        assert_eq!(
+            worker
+                .archive
+                .message_deadline(PEER, "original-id")
+                .unwrap(),
+            Some(500 + 600)
+        );
     }
 
     #[test]
@@ -23440,6 +23862,193 @@ mod receipt_tests {
         );
         worker.server_ack(&ack("other", "receipt", 90));
         assert_eq!(stamp(&worker, "other"), 300);
+    }
+
+    /// A message we are sending counts its deadline from our clock, and the
+    /// server's ack moves that same deadline to the time WhatsApp took it.
+    #[tokio::test]
+    async fn a_timed_send_moves_its_counted_deadline_to_the_servers_time() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_expiring_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("timed", 200)
+            },
+            None,
+            None,
+            Ephemeral::timed(Some(600)),
+        );
+        assert_eq!(
+            worker.archive.message_deadline(PEER, "timed").unwrap(),
+            Some(200 + 600)
+        );
+        let ack = |at: i64| {
+            wa_events::ServerAck::builder()
+                .id("timed".to_owned())
+                .class("message".to_owned())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                .build()
+        };
+        worker.server_ack(&ack(140));
+        assert_eq!(
+            worker.archive.message_deadline(PEER, "timed").unwrap(),
+            Some(140 + 600)
+        );
+        // A send WhatsApp refused never took the message, so the deadline our
+        // clock counted is dropped rather than kept as if it were the phone's.
+        worker.store_expiring_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("refused", 300)
+            },
+            None,
+            None,
+            Ephemeral::timed(Some(600)),
+        );
+        worker
+            .handle_command(Command::Sent {
+                chat: PEER.into(),
+                id: "refused".into(),
+                error: Some("offline".into()),
+            })
+            .await;
+        assert_eq!(
+            worker.archive.message_deadline(PEER, "refused").unwrap(),
+            None
+        );
+    }
+
+    /// The phone's own copy of a message we are still sending is not evidence
+    /// that WhatsApp took it, so its time cannot overrule the real ack.
+    #[tokio::test]
+    async fn a_pending_copy_from_the_phone_cannot_claim_the_servers_time() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_expiring_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+            Ephemeral::timed(Some(600)),
+        );
+        let mut entry = history_entry(PEER, "mine", true, None, timed_text(600), Vec::new(), None);
+        if let Some(info) = entry.message.as_option_mut() {
+            info.message_timestamp = Some(300);
+            info.status = Some(wa::web_message_info::Status::PENDING);
+        }
+        file_history_entries(&mut worker, vec![entry]);
+        assert_eq!(
+            worker.archive.message_expiry(PEER, "mine").unwrap(),
+            Some(crate::model::Expiry {
+                at: 300 + 600,
+                trust: DeadlineTrust::Provisional,
+            }),
+            "a pending phone copy is not the server's time"
+        );
+        worker.server_ack(&ack_of("mine", 140));
+        assert_eq!(
+            worker.archive.message_expiry(PEER, "mine").unwrap(),
+            Some(crate::model::Expiry {
+                at: 140 + 600,
+                trust: DeadlineTrust::Server,
+            }),
+            "the ack still corrects it"
+        );
+    }
+
+    /// Learning a privacy id moves the row to another chat while the send is
+    /// still in flight; its ack still has to find it there.
+    #[tokio::test]
+    async fn an_ack_after_a_privacy_id_merge_corrects_the_moved_deadline() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let lid = PEER_LID;
+        worker
+            .archive
+            .upsert_chat(&Chat::new(lid.to_owned(), "Fixture".to_owned()))
+            .unwrap();
+        worker.store_expiring_message(
+            Message {
+                chat: lid.to_owned(),
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+            Ephemeral::timed(Some(600)),
+        );
+        worker.learn_pair(&lid.parse().unwrap(), &PEER.parse().unwrap());
+        assert!(
+            worker.archive.message(lid, "mine").unwrap().is_none(),
+            "the row moved to the phone id"
+        );
+        assert!(worker.archive.message(PEER, "mine").unwrap().is_some());
+        worker.server_ack(&ack_of("mine", 140));
+        assert_eq!(
+            worker.archive.message_expiry(PEER, "mine").unwrap(),
+            Some(crate::model::Expiry {
+                at: 140 + 600,
+                trust: DeadlineTrust::Server,
+            })
+        );
+    }
+
+    /// A refused send after a privacy-id merge has to reach the row where the
+    /// merge put it, or a guess at its deadline survives a message WhatsApp
+    /// never took.
+    #[tokio::test]
+    async fn a_refused_send_after_a_privacy_id_merge_clears_the_moved_deadline() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let lid = PEER_LID;
+        worker
+            .archive
+            .upsert_chat(&Chat::new(lid.to_owned(), "Fixture".to_owned()))
+            .unwrap();
+        worker.store_expiring_message(
+            Message {
+                chat: lid.to_owned(),
+                status: Delivery::Pending,
+                ..own_message("mine", 300)
+            },
+            None,
+            None,
+            Ephemeral::timed(Some(600)),
+        );
+        worker.learn_pair(&lid.parse().unwrap(), &PEER.parse().unwrap());
+        worker
+            .handle_command(Command::Sent {
+                chat: lid.to_owned(),
+                id: "mine".to_owned(),
+                error: Some("offline".into()),
+            })
+            .await;
+        assert_eq!(worker.archive.message_deadline(PEER, "mine").unwrap(), None);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .status,
+            Delivery::Failed
+        );
+    }
+
+    /// A server acknowledgement for `id` placed at `at`.
+    fn ack_of(id: &str, at: i64) -> wa_events::ServerAck {
+        wa_events::ServerAck::builder()
+            .id(id.to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+            .build()
+    }
+
+    /// A text whose body carries a timer of `seconds`.
+    fn timed_text(seconds: u32) -> wa::Message {
+        let mut proto = wa::Message::default();
+        proto.conversation = Some("Synthetic text".into());
+        assert!(proto.set_ephemeral_expiration(seconds));
+        proto
     }
 
     #[test]
@@ -25864,6 +26473,9 @@ mod chat_removal_tests {
                         poll_votes: Vec::new(),
                         receipts: Vec::new(),
                         sealed_edit: None,
+                        ephemeral: None,
+                        expiry_from: Some(at),
+                        expiry_trust: DeadlineTrust::Server,
                     })
                     .collect(),
                 revoked: Vec::new(),

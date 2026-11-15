@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{
-    Chat, ChatKind, Contact, Content, Delivery, GroupSettings, LastMessage, MediaItem, Message,
+    Chat, ChatKind, Contact, Content, DeadlineTrust, Delivery, Expiry, GroupSettings, LastMessage,
+    MediaItem, Message,
 };
 
 mod broadcast_lists;
@@ -233,7 +234,22 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
+    // When this message disappears, per its own entry. NULL when the phone
+    // said nothing, which is never read as "never expires".
+    ("messages", "expires_at", "INTEGER"),
+    // What `expires_at` rests on, as `DeadlineTrust`: a stronger value for the
+    // same message replaces a weaker one, and an equal one only fills a gap.
+    // Anything below `Server` is a guess about the time and cannot carry a
+    // deletion on its own; see `DeadlineTrust::Provisional`.
+    ("messages", "expires_trust", "INTEGER NOT NULL DEFAULT 0"),
 ];
+
+/// Indexes on columns the migration list adds, so they follow it. A fresh
+/// archive gets those columns from the same list, never from the schema above.
+const MIGRATED_INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS messages_expiring ON messages (expires_at)
+    WHERE expires_at IS NOT NULL;
+";
 
 /// One copy of a message that a merge meets twice, as stored.
 struct MessageCopy {
@@ -508,6 +524,7 @@ impl Archive {
             }
         }
         connection.execute_batch(broadcast_lists::INDEX)?;
+        connection.execute_batch(MIGRATED_INDEXES)?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -810,6 +827,38 @@ impl Archive {
             )
             .optional()
             .map(Option::flatten)
+    }
+
+    /// When the message at `chat`/`id` disappears, as its own entry said.
+    /// `None` when the phone never said, which is not "never expires" but
+    /// "nothing is known", so nothing may be swept on it.
+    ///
+    /// [`Self::message_expiry`] also says what the deadline rests on, which is
+    /// what decides whether it may carry a deletion.
+    pub fn message_deadline(&self, chat: &str, id: &str) -> Result<Option<i64>> {
+        Ok(self.message_expiry(chat, id)?.map(|expiry| expiry.at))
+    }
+
+    /// The deadline stored for a message and what it rests on, when there is
+    /// one. The trust is what a later record has to beat to change it, and what
+    /// an expiry sweep has to weigh before deleting: only `Server` and `Stated`
+    /// deadlines rest on a time WhatsApp stated, while `Provisional` may count
+    /// from a delivery time the library substituted for the message's own.
+    pub fn message_expiry(&self, chat: &str, id: &str) -> Result<Option<Expiry>> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT expires_at, expires_trust FROM messages WHERE chat = ?1 AND id = ?2",
+                params![chat, id],
+                |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(at, trust)| {
+            at.map(|at| Expiry {
+                at,
+                trust: DeadlineTrust::from_rank(trust),
+            })
+        }))
     }
 
     pub fn mark_read(&self, id: &str) -> Result<()> {
@@ -1241,8 +1290,8 @@ impl Archive {
         )?;
         let copies = self.duplicate_copies(&lid_chat, &phone_chat)?;
         transaction.execute(
-            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list)
-             SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list
+            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list, expires_at, expires_trust)
+             SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list, expires_at, expires_trust
              FROM messages WHERE chat = ?1 AND timestamp > COALESCE(
                 (SELECT through FROM chat_removals WHERE chat = ?2), -1)
              ON CONFLICT(chat, id) DO UPDATE SET
@@ -1260,6 +1309,18 @@ impl Archive {
                 delivered_at = COALESCE(messages.delivered_at, excluded.delivered_at),
                 read_at = COALESCE(messages.read_at, excluded.read_at),
                 history_order = COALESCE(messages.history_order, excluded.history_order),
+                -- Merge order says nothing about which copy was written later, so
+                -- unlike ingestion the weakest class keeps the canonical copy
+                -- here: neither provisional value is better evidence than the
+                -- other, and picking by merge direction would be arbitrary.
+                expires_at = CASE
+                    WHEN excluded.expires_trust > messages.expires_trust
+                        THEN excluded.expires_at
+                    WHEN excluded.expires_trust = messages.expires_trust
+                        THEN COALESCE(messages.expires_at, excluded.expires_at)
+                    ELSE messages.expires_at
+                END,
+                expires_trust = MAX(messages.expires_trust, excluded.expires_trust),
                 broadcast_list = COALESCE(messages.broadcast_list, excluded.broadcast_list)",
             params![lid_chat, phone_chat],
         )?;
@@ -1561,12 +1622,36 @@ impl Archive {
     /// keeps the reactions already stored. Inserting a message is therefore one
     /// write instead of a read followed by a write.
     pub fn insert_message(&self, message: &Message, raw: Option<&[u8]>) -> Result<()> {
+        self.insert_message_with_expiry(message, raw, None)
+    }
+
+    /// Stores `message` together with the expiry its own entry stated.
+    ///
+    /// A deadline resting on better evidence replaces one resting on worse
+    /// evidence for the same message, and one resting on worse evidence never
+    /// replaces a better one, so nothing but the server's own answer can overrule
+    /// what the phone stated. Two deadlines of the same evidence class keep the
+    /// first answer, except the weakest class: a deadline counted from a time
+    /// this device cannot vouch for is only a guess, so the newest guess stands
+    /// and a later delivery with the server's own time can correct one counted
+    /// from this device's clock. Without an `expiry` a stored deadline is left
+    /// alone.
+    pub fn insert_message_with_expiry(
+        &self,
+        message: &Message,
+        raw: Option<&[u8]>,
+        expiry: Option<Expiry>,
+    ) -> Result<()> {
         if self.message_removed(&message.chat, &message.id)? {
             return Ok(());
         }
+        let expires_at = expiry.map(|expiry| expiry.at);
+        let trust = expiry
+            .map_or(DeadlineTrust::Provisional, |expiry| expiry.trust)
+            .rank();
         self.connection.execute(
-            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?19)
+            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, expires_at, expires_trust)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?19, ?20, ?21)
              ON CONFLICT(chat, id) DO UPDATE SET
                 history_order = COALESCE(excluded.history_order, messages.history_order),
                 sender_name = COALESCE(excluded.sender_name, sender_name),
@@ -1587,7 +1672,16 @@ impl Archive {
                 mentions = excluded.mentions,
                 forwarded = excluded.forwarded,
                 delivered_at = COALESCE(delivered_at, excluded.delivered_at),
-                read_at = COALESCE(read_at, excluded.read_at)",
+                read_at = COALESCE(read_at, excluded.read_at),
+                expires_at = CASE
+                    WHEN ?21 > messages.expires_trust THEN excluded.expires_at
+                    WHEN ?21 < messages.expires_trust THEN messages.expires_at
+                    -- A guess at the weakest evidence: the newest one stands, so
+                    -- a delivery stamped by the server repairs one counted here.
+                    WHEN ?21 = 0 THEN COALESCE(excluded.expires_at, messages.expires_at)
+                    ELSE COALESCE(messages.expires_at, excluded.expires_at)
+                END,
+                expires_trust = MAX(messages.expires_trust, ?21)",
             params![
                 message.chat,
                 message.id,
@@ -1612,6 +1706,8 @@ impl Archive {
                 // An explicit failure still writes over a further state.
                 status_rank(Delivery::Failed),
                 message.history_order,
+                expires_at,
+                trust,
             ],
         )?;
         if matches!(message.content, Content::Image { motion: None, .. }) {
@@ -2580,13 +2676,27 @@ impl Archive {
     /// ahead. Returns whether the stamp changed.
     /// The chat's activity follows: an activity time this message set moves
     /// to the chat's newest message, and later activity stays.
-    pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
+    ///
+    /// A deadline this archive counted from the local stamp moves to the
+    /// server's, since the message's timer counts from when WhatsApp took it,
+    /// and is trusted as counting from a server time from then on. A deadline
+    /// the phone stated, or none at all, is left where it is.
+    pub fn restamp_sent(
+        &self,
+        chat: &str,
+        id: &str,
+        timestamp: i64,
+        duration: Option<u32>,
+    ) -> Result<bool> {
+        let duration = duration.filter(|seconds| *seconds > 0).map(i64::from);
         let transaction = self.connection.unchecked_transaction()?;
+        // The row is found even when the server's stamp is the one it already
+        // has: sending and acceptance within the same second is ordinary, and a
+        // counted deadline still has to become a server-answered one.
         let Some(old) = transaction
             .query_row(
-                "SELECT timestamp FROM messages
-                 WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND timestamp != ?3",
-                params![chat, id, timestamp],
+                "SELECT timestamp FROM messages WHERE chat = ?1 AND id = ?2 AND from_me = 1",
+                params![chat, id],
                 |row| row.get::<_, i64>(0),
             )
             .optional()?
@@ -2594,18 +2704,39 @@ impl Archive {
             return Ok(false);
         };
         transaction.execute(
-            "UPDATE messages SET timestamp = ?3 WHERE chat = ?1 AND id = ?2",
-            params![chat, id, timestamp],
+            "UPDATE messages SET timestamp = ?3,
+                 expires_at = CASE
+                     WHEN ?4 IS NOT NULL AND expires_trust = 0 AND expires_at IS NOT NULL
+                     THEN ?3 + ?4 ELSE expires_at END,
+                 expires_trust = CASE
+                     WHEN ?4 IS NOT NULL AND expires_trust = 0 AND expires_at IS NOT NULL
+                     THEN 1 ELSE expires_trust END
+             WHERE chat = ?1 AND id = ?2",
+            params![chat, id, timestamp, duration],
         )?;
-        transaction.execute(
-            "UPDATE chats SET last_activity = MAX(?3, CASE WHEN last_activity = ?2
-                 THEN COALESCE((SELECT MAX(timestamp) FROM messages WHERE chat = ?1), ?3)
-                 ELSE last_activity END)
-             WHERE id = ?1",
-            params![chat, old, timestamp],
-        )?;
+        if old != timestamp {
+            transaction.execute(
+                "UPDATE chats SET last_activity = MAX(?3, CASE WHEN last_activity = ?2
+                     THEN COALESCE((SELECT MAX(timestamp) FROM messages WHERE chat = ?1), ?3)
+                     ELSE last_activity END)
+                 WHERE id = ?1",
+                params![chat, old, timestamp],
+            )?;
+        }
         transaction.commit()?;
-        Ok(true)
+        Ok(old != timestamp)
+    }
+
+    /// Drops a deadline counted from a message's local stamp, for one that
+    /// never reached WhatsApp: its expiry is unknown, and a guess would delete
+    /// a message the phone never took.
+    pub fn forget_provisional_expiry(&self, chat: &str, id: &str) -> Result<()> {
+        self.connection.execute(
+            "UPDATE messages SET expires_at = NULL, expires_trust = 0
+             WHERE chat = ?1 AND id = ?2 AND expires_trust = 0",
+            params![chat, id],
+        )?;
+        Ok(())
     }
 
     /// Marks an incoming message as played and returns whether it was not yet.
@@ -3162,6 +3293,11 @@ pub(crate) mod tests {
                 Some(expected)
             );
         }
+    }
+
+    /// A deadline resting on `trust`, for the archive cases below.
+    pub(crate) fn expiry(at: i64, trust: DeadlineTrust) -> Expiry {
+        Expiry { at, trust }
     }
 
     pub(crate) fn message(chat: &str, id: &str, timestamp: i64, from_me: bool) -> Message {
@@ -5189,6 +5325,285 @@ pub(crate) mod tests {
         assert_eq!(archive.chat(chat).unwrap().unwrap().unread, 2);
     }
 
+    /// A deadline resting on the phone's own answer replaces one counted from
+    /// a server time, which replaces one counted from our clock. Equal ones
+    /// only fill a missing deadline, so a repeat cannot move an expiry.
+    #[test]
+    fn a_better_supported_deadline_replaces_a_weaker_one_and_equal_ones_fill_once() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let row = message(chat, "timed", 1_000, false);
+        let deadline = |id: &str| archive.message_expiry(chat, id).unwrap();
+        let provisional = super::tests::expiry(1_000 + 600, DeadlineTrust::Provisional);
+        assert_eq!(deadline("timed"), None);
+        archive
+            .insert_message_with_expiry(&row, None, Some(provisional))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(provisional));
+        // A stronger source for the same message replaces the weaker answer.
+        let served = super::tests::expiry(1_000 + 7 * 86_400, DeadlineTrust::Server);
+        archive
+            .insert_message_with_expiry(&row, None, Some(served))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(served));
+        // A weaker one afterwards changes nothing.
+        archive
+            .insert_message_with_expiry(&row, None, Some(provisional))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(served));
+        // Another answer of the same class only fills a missing deadline, so a
+        // replay cannot extend or shorten what is already known.
+        let other_served = super::tests::expiry(1_000 + 600, DeadlineTrust::Server);
+        archive
+            .insert_message_with_expiry(&row, None, Some(other_served))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(served));
+        // The phone's own value takes over from anything counted, and then
+        // only it can replace it, first come first kept.
+        let stated = super::tests::expiry(9_000, DeadlineTrust::Stated);
+        archive
+            .insert_message_with_expiry(&row, None, Some(stated))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(stated));
+        let later_stated = super::tests::expiry(9_500, DeadlineTrust::Stated);
+        archive
+            .insert_message_with_expiry(&row, None, Some(later_stated))
+            .unwrap();
+        assert_eq!(deadline("timed"), Some(stated));
+        // A repeat without any expiry leaves that alone.
+        archive.insert_message(&row, None).unwrap();
+        assert_eq!(deadline("timed"), Some(stated));
+        // A message the phone said nothing about keeps none.
+        archive
+            .insert_message(&message(chat, "plain", 2_000, false), None)
+            .unwrap();
+        assert_eq!(deadline("plain"), None);
+    }
+
+    /// The server's stamp on a message we sent also moves the deadline this
+    /// archive counted from our own clock, and leaves a stated one alone even
+    /// when the two happen to be equal.
+    #[test]
+    fn restamping_a_sent_message_moves_only_the_deadline_it_counted() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let row = message(chat, "mine", 200, true);
+        let counted = super::tests::expiry(200 + 600, DeadlineTrust::Provisional);
+        archive
+            .insert_message_with_expiry(&row, None, Some(counted))
+            .unwrap();
+        assert!(archive.restamp_sent(chat, "mine", 140, Some(600)).unwrap());
+        assert_eq!(
+            archive.message_deadline(chat, "mine").unwrap(),
+            Some(140 + 600)
+        );
+        // The same arithmetic as the counted deadline, but the phone stated it,
+        // so it stays where the phone put it.
+        let stated = message(chat, "stated", 200, true);
+        let stated_at = super::tests::expiry(200 + 600, DeadlineTrust::Stated);
+        archive
+            .insert_message_with_expiry(&stated, None, Some(stated_at))
+            .unwrap();
+        assert!(
+            archive
+                .restamp_sent(chat, "stated", 140, Some(600))
+                .unwrap()
+        );
+        assert_eq!(
+            archive.message_deadline(chat, "stated").unwrap(),
+            Some(200 + 600)
+        );
+    }
+
+    /// A deadline counted from this device's clock is a guess, so a later
+    /// delivery that carries WhatsApp's own time for the same message replaces
+    /// it. This is what repairs a send whose ack was lost to a restart.
+    #[test]
+    fn a_later_delivery_corrects_a_deadline_counted_from_our_clock() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        // Our clock is ahead of WhatsApp's: the row was stamped 200 for a
+        // message the server took at 140.
+        let ours = message(chat, "mine", 200, true);
+        archive
+            .insert_message_with_expiry(
+                &ours,
+                None,
+                Some(super::tests::expiry(200 + 600, DeadlineTrust::Provisional)),
+            )
+            .unwrap();
+        // The delivery of that same message arrives with the server's time.
+        let delivered = message(chat, "mine", 140, true);
+        archive
+            .insert_message_with_expiry(
+                &delivered,
+                None,
+                Some(super::tests::expiry(140 + 600, DeadlineTrust::Provisional)),
+            )
+            .unwrap();
+        assert_eq!(
+            archive.message_deadline(chat, "mine").unwrap(),
+            Some(140 + 600)
+        );
+        // Repeats of that delivery change nothing, and a repeat that states no
+        // deadline does not clear it.
+        archive
+            .insert_message_with_expiry(
+                &delivered,
+                None,
+                Some(super::tests::expiry(140 + 600, DeadlineTrust::Provisional)),
+            )
+            .unwrap();
+        archive.insert_message(&delivered, None).unwrap();
+        assert_eq!(
+            archive.message_deadline(chat, "mine").unwrap(),
+            Some(140 + 600)
+        );
+        // Better evidence still only keeps the first answer of its own class.
+        archive
+            .insert_message_with_expiry(
+                &delivered,
+                None,
+                Some(super::tests::expiry(9_000, DeadlineTrust::Server)),
+            )
+            .unwrap();
+        archive
+            .insert_message_with_expiry(
+                &delivered,
+                None,
+                Some(super::tests::expiry(9_500, DeadlineTrust::Server)),
+            )
+            .unwrap();
+        assert_eq!(archive.message_deadline(chat, "mine").unwrap(), Some(9_000));
+    }
+
+    /// An ack that arrives in the same second the message was stamped still
+    /// turns our counted deadline into a server-answered one, so a later cleanup
+    /// cannot drop what WhatsApp accepted.
+    #[test]
+    fn a_same_second_ack_still_promotes_the_counted_deadline() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let row = message(chat, "mine", 200, true);
+        let counted = super::tests::expiry(200 + 600, DeadlineTrust::Provisional);
+        archive
+            .insert_message_with_expiry(&row, None, Some(counted))
+            .unwrap();
+        // The server accepted it at the very second we stamped it, so the
+        // timestamp does not change.
+        assert!(!archive.restamp_sent(chat, "mine", 200, Some(600)).unwrap());
+        assert_eq!(
+            archive.message_expiry(chat, "mine").unwrap(),
+            Some(super::tests::expiry(200 + 600, DeadlineTrust::Server))
+        );
+        // WhatsApp took the message, so nothing may call this deadline a guess.
+        archive.forget_provisional_expiry(chat, "mine").unwrap();
+        assert_eq!(
+            archive.message_deadline(chat, "mine").unwrap(),
+            Some(200 + 600)
+        );
+        // A second ack changes nothing more.
+        assert!(!archive.restamp_sent(chat, "mine", 200, Some(600)).unwrap());
+        assert_eq!(
+            archive.message_deadline(chat, "mine").unwrap(),
+            Some(200 + 600)
+        );
+    }
+
+    /// A merge has no chronology, so two guesses at the same message keep the
+    /// canonical copy rather than whichever side the merge happened to favour.
+    #[test]
+    fn merging_two_guesses_keeps_the_canonical_copy() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "100@lid";
+        let phone = "100@s.whatsapp.net";
+        archive.ensure_chat(phone, "Fixture").unwrap();
+        archive.ensure_chat(lid, "Fixture").unwrap();
+        let row = message(phone, "both", 1_000, false);
+        let canonical = super::tests::expiry(1_600, DeadlineTrust::Provisional);
+        archive
+            .insert_message_with_expiry(&row, None, Some(canonical))
+            .unwrap();
+        let mut under_lid = row.clone();
+        under_lid.chat = lid.into();
+        archive
+            .insert_message_with_expiry(
+                &under_lid,
+                None,
+                Some(super::tests::expiry(1_200, DeadlineTrust::Provisional)),
+            )
+            .unwrap();
+        archive.put_lid("100", "100").unwrap();
+        assert_eq!(
+            archive.message_expiry(phone, "both").unwrap(),
+            Some(canonical)
+        );
+    }
+
+    /// A send that never reached WhatsApp carries no deadline: its timer counted
+    /// from a clock the phone never took.
+    #[test]
+    fn a_failed_send_forgets_the_deadline_our_clock_counted() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let row = message(chat, "mine", 200, true);
+        let counted = super::tests::expiry(200 + 600, DeadlineTrust::Provisional);
+        archive
+            .insert_message_with_expiry(&row, None, Some(counted))
+            .unwrap();
+        archive.forget_provisional_expiry(chat, "mine").unwrap();
+        assert_eq!(archive.message_deadline(chat, "mine").unwrap(), None);
+        // A deadline the phone stated is not ours to forget.
+        let stated = message(chat, "stated", 200, true);
+        let stated_at = super::tests::expiry(9_000, DeadlineTrust::Stated);
+        archive
+            .insert_message_with_expiry(&stated, None, Some(stated_at))
+            .unwrap();
+        archive.forget_provisional_expiry(chat, "stated").unwrap();
+        assert_eq!(
+            archive.message_deadline(chat, "stated").unwrap(),
+            Some(9_000)
+        );
+    }
+
+    /// A privacy-id merge keeps the best supported deadline of the two copies.
+    #[test]
+    fn merging_a_privacy_id_chat_keeps_the_better_supported_deadline() {
+        let archive = Archive::in_memory().unwrap();
+        let lid = "100@lid";
+        let phone = "100@s.whatsapp.net";
+        archive.ensure_chat(phone, "Fixture").unwrap();
+        archive.ensure_chat(lid, "Fixture").unwrap();
+        let row = message(phone, "both", 1_000, false);
+        archive
+            .insert_message_with_expiry(
+                &row,
+                None,
+                Some(super::tests::expiry(1_600, DeadlineTrust::Server)),
+            )
+            .unwrap();
+        let mut under_lid = row.clone();
+        under_lid.chat = lid.into();
+        archive
+            .insert_message_with_expiry(
+                &under_lid,
+                None,
+                Some(super::tests::expiry(9_000, DeadlineTrust::Stated)),
+            )
+            .unwrap();
+        archive.put_lid("100", "100").unwrap();
+        assert_eq!(
+            archive.message_deadline(phone, "both").unwrap(),
+            Some(9_000)
+        );
+        assert!(archive.message(lid, "both").unwrap().is_none());
+    }
+
     #[test]
     fn a_sent_message_restamped_with_the_server_time_sorts_before_a_later_reply() {
         let archive = Archive::in_memory().unwrap();
@@ -5206,12 +5621,12 @@ pub(crate) mod tests {
             ids(archive.messages(chat, None, 10).unwrap()),
             ["reply", "mine"]
         );
-        assert!(archive.restamp_sent(chat, "mine", 140).unwrap());
-        assert!(!archive.restamp_sent(chat, "mine", 140).unwrap());
+        assert!(archive.restamp_sent(chat, "mine", 140, None).unwrap());
+        assert!(!archive.restamp_sent(chat, "mine", 140, None).unwrap());
         // The chat's activity came from our message and now follows the reply.
         assert_eq!(archive.chat(chat).unwrap().unwrap().last_activity, 150);
         // Only our own messages are restamped.
-        assert!(!archive.restamp_sent(chat, "reply", 100).unwrap());
+        assert!(!archive.restamp_sent(chat, "reply", 100, None).unwrap());
         assert_eq!(
             archive.message(chat, "reply").unwrap().unwrap().timestamp,
             150
