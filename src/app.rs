@@ -4757,6 +4757,8 @@ impl App {
                 }
             }
             Event::Info(message) => self.toast(message),
+            // The reader asked for these files, so show where they went.
+            Event::FilesSaved(folder) => self.actions.push(Action::OpenFolder(folder)),
             Event::ClipboardImage(result) => {
                 self.handle_clipboard_image(result, write_clipboard_image);
             }
@@ -8053,6 +8055,42 @@ impl App {
             }
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
+            }
+            Action::SaveSelectedFiles { chat, messages } => {
+                // A file not here yet shows its download in its bubble while
+                // the worker fetches it; the worker reports the save.
+                let mut coming = 0usize;
+                if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    for id in &messages {
+                        let Some(message) = conversation.message_mut(id) else {
+                            continue;
+                        };
+                        if message.content.file().is_none() {
+                            continue;
+                        }
+                        let Some(media) = message.content.media_mut() else {
+                            continue;
+                        };
+                        if media.path.is_none() {
+                            coming += 1;
+                            media.state = MediaState::Downloading;
+                        }
+                    }
+                }
+                self.backend.send(Command::SaveFiles { chat, messages });
+                self.selection = None;
+                self.sweep = None;
+                if coming > 0 {
+                    self.toast(
+                        crate::i18n::ngettext(
+                            self.locale,
+                            "Downloading {count} file to save with the others…",
+                            "Downloading {count} files to save with the others…",
+                            coming as u32,
+                        )
+                        .replace("{count}", &coming.to_string()),
+                    );
+                }
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {
@@ -14914,6 +14952,19 @@ mod tests {
             !std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::MarkRead { .. })),
             "no read receipt for a chat nobody is looking at"
+        );
+    }
+
+    /// Files saved together from a selection open their folder.
+    #[test]
+    fn saved_files_open_their_folder() {
+        let mut app = app();
+        let folder = std::path::PathBuf::from("/fixture/+15550001111/Alice");
+        app.apply_backend_event(Event::FilesSaved(folder.clone()), false);
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenFolder(path) if *path == folder))
         );
     }
 

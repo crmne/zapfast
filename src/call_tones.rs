@@ -1,15 +1,14 @@
 //! The tones a call makes on this side: the ringback heard while the peer's phone rings, and the
 //! ringtone of an incoming call.
 //!
-//! Both are synthesised here rather than bundled. Pidgin, whose message sounds ZapFast plays,
-//! ships no call or ring sound (its `share/sounds/` holds only alert, login, logout, receive and
-//! send), and a tone made in code needs no licence note of its own.
+//! The ringback is synthesised here; the ringtone is Apple's Reflection, bundled as
+//! `assets/sounds/ringtone.wav` (see `assets/sounds/README.md`).
 //!
 //! - The ringback is the ETSI one (ETSI ES 201 970, ITU-T E.180): 425 Hz, one second on and four
 //!   off. It is what most of Europe hears from a ringing line, and WhatsApp's own clients play a
 //!   ringback of that shape while the other phone rings.
-//! - The ringtone is two soft bell notes, E5 then B4, played twice and followed by a rest, every
-//!   [`RINGTONE_CYCLE`]: the cadence the ring of an unanswered call already had.
+//! - The ringtone is the bundled clip, 48 kHz mono 16-bit PCM, repeated back to back as a phone
+//!   repeats it.
 //!
 //! One cycle of each is rendered once into a buffer and repeated by rodio on the default output,
 //! on a thread of its own, so opening the device never waits on the interface thread. Each tone
@@ -31,14 +30,10 @@ const RINGBACK_ON: f32 = 1.0;
 const RINGBACK_OFF: f32 = 4.0;
 /// How loud the ringback is: a line tone, quieter than the ringtone.
 const RINGBACK_LEVEL: f32 = 0.18;
-/// How long one ring of the ringtone takes, rest included.
-pub const RINGTONE_CYCLE: Duration = Duration::from_secs(3);
-/// The ringtone's notes: E5 and B4, a fourth apart, and when each starts within the cycle.
-const RINGTONE_NOTES: [(f32, f32); 4] =
-    [(0.0, 659.25), (0.4, 493.88), (0.9, 659.25), (1.3, 493.88)];
-/// How long each note may ring before it is faded out, in seconds.
-const NOTE_LENGTH: f32 = 0.6;
-const RINGTONE_LEVEL: f32 = 0.28;
+/// The ringtone: Apple's Reflection, 48 kHz mono 16-bit PCM WAV.
+const RINGTONE_WAV: &[u8] = include_bytes!("../assets/sounds/ringtone.wav");
+/// How loud the ringtone plays, against the clip as recorded.
+const RINGTONE_LEVEL: f32 = 1.2;
 /// The fade at either end of a tone, which keeps it from clicking.
 const EDGE: f32 = 0.02;
 /// How long a stopped tone takes to fade out.
@@ -211,28 +206,44 @@ fn ringback() -> Vec<f32> {
 }
 
 fn ringtone() -> Vec<f32> {
-    let rate = RATE as f32;
-    let total = (RINGTONE_CYCLE.as_secs_f32() * rate) as usize;
-    let mut samples = vec![0.0f32; total];
-    for (start, frequency) in RINGTONE_NOTES {
-        let first = (start * rate) as usize;
-        let length = (NOTE_LENGTH * rate) as usize;
-        for (offset, sample) in samples[first..(first + length).min(total)]
-            .iter_mut()
-            .enumerate()
-        {
-            let t = offset as f32 / rate;
-            // A struck bell: a quick rise, a decay, and a fade at the end of its slot so the
-            // next note starts from silence. Two quiet overtones give it some body.
-            let attack = (t / 0.008).min(1.0);
-            let decay = (-t / 0.18).exp();
-            let envelope = attack * decay * edge(t, NOTE_LENGTH);
-            let phase = TAU * frequency * t;
-            let bell = phase.sin() + 0.25 * (2.0 * phase).sin() + 0.08 * (3.0 * phase).sin();
-            *sample += RINGTONE_LEVEL * envelope * bell / 1.33;
-        }
+    let mut samples = wav_samples(RINGTONE_WAV);
+    // Fade both ends so the loop never clicks where it joins.
+    let length = samples.len() as f32 / RATE as f32;
+    for (index, sample) in samples.iter_mut().enumerate() {
+        *sample *= RINGTONE_LEVEL * edge(index as f32 / RATE as f32, length);
     }
     samples
+}
+
+/// The samples of a mono 16-bit PCM WAV at [`RATE`], as floats; empty if it is not one.
+fn wav_samples(wav: &[u8]) -> Vec<f32> {
+    let mut rest = wav.get(12..).unwrap_or_default();
+    let mut format_ok = false;
+    while rest.len() >= 8 {
+        let id = &rest[..4];
+        let size = u32::from_le_bytes([rest[4], rest[5], rest[6], rest[7]]) as usize;
+        let body = rest.get(8..8 + size).unwrap_or(&rest[8..]);
+        match id {
+            b"fmt " if body.len() >= 16 => {
+                let channels = u16::from_le_bytes([body[2], body[3]]);
+                let rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+                let bits = u16::from_le_bytes([body[14], body[15]]);
+                format_ok = channels == 1 && rate == RATE && bits == 16;
+            }
+            b"data" if format_ok => {
+                return body
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| f32::from(i16::from_le_bytes(*pair)) / 32_768.0)
+                    .collect();
+            }
+            _ => {}
+        }
+        // Chunks are padded to an even length.
+        rest = rest.get(8 + size + (size & 1)..).unwrap_or_default();
+    }
+    Vec::new()
 }
 
 /// A raised-cosine fade over [`EDGE`] at both ends of a span of `length` seconds.
@@ -272,18 +283,23 @@ mod tests {
                 samples[samples.len() - 1].abs() < 1e-3,
                 "{tone:?} ends silent"
             );
-            assert!(samples.iter().all(|s| s.abs() < 0.5), "{tone:?} stays soft");
-            // No step between neighbouring samples is large enough to click.
-            let jump = samples
-                .windows(2)
-                .map(|pair| (pair[1] - pair[0]).abs())
-                .fold(0.0f32, f32::max);
-            assert!(jump < 0.05, "{tone:?} jumps by {jump}");
+            assert!(
+                samples.iter().all(|s| s.abs() < 0.9),
+                "{tone:?} never clips"
+            );
         }
-        assert_eq!(
-            cycle(Tone::Ringtone).len() as f32,
-            RINGTONE_CYCLE.as_secs_f32() * RATE as f32
-        );
+        // No step between neighbouring samples of the ringback is large enough to click.
+        let jump = cycle(Tone::Ringback)
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(jump < 0.05, "the ringback jumps by {jump}");
+    }
+
+    #[test]
+    fn the_bundled_ringtone_decodes_to_a_few_seconds() {
+        let seconds = cycle(Tone::Ringtone).len() as f32 / RATE as f32;
+        assert!((2.0..30.0).contains(&seconds), "{seconds} s");
     }
 
     #[test]

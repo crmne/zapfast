@@ -9,9 +9,12 @@ pub use fastframe_update::{
     CHECK_INTERVAL, DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported,
     Updater,
 };
-use fastframe_update::{MacConfig, ReqwestTransport, UpdateConfig};
+use fastframe_update::{MacConfig, MacTarget, ReqwestTransport, UpdateConfig};
 
-/// ZapFast's releases and the names its installations have had.
+/// This fork's releases (iddhi-sulakshana/zapfast, published by
+/// `scripts/release-fork.sh`) and the names its installations have had. They
+/// are signed with the fork's own key, so upstream's releases, which would
+/// drop the fork's changes, are never offered.
 pub const CONFIG: UpdateConfig = UpdateConfig {
     // Cask and bundle names from before the rename. This also accepts
     // fastsapp-* marker files and `fastsapp <version>` answers, which no
@@ -23,11 +26,10 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
         legacy_bundle_names: &["FastsApp.app"],
     },
     publisher_key: Some(include_str!("../assets/update-public-key.hex")),
-    // The next release key, backed up outside GitHub. Releases stay signed
-    // with the current key until installs trust this one too.
-    additional_publisher_keys: &[include_str!("../assets/update-public-key-next.hex")],
+    // The fork builds on an Apple silicon Mac: one arm64 disk image.
+    mac_target: MacTarget::Arm64Only,
     ..UpdateConfig::new(
-        "crmne/zapfast",
+        "iddhi-sulakshana/zapfast",
         "ZapFast",
         "zapfast",
         env!("CARGO_PKG_VERSION"),

@@ -57,6 +57,9 @@ Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
 become `_`.
+**Download N files** in a selection of messages copies the selected files into
+the same `<account>/<chat name>` folder, inside your Downloads folder when no
+download folder is chosen, once every one of them has downloaded.
 
 On macOS, settings, state, and the logs are in
 `~/Library/Application Support/me.paolino.zapfast` and the caches in

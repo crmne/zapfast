@@ -751,6 +751,13 @@ pub enum Command {
     SaveAttachments {
         files: Vec<(std::path::PathBuf, String)>,
     },
+    /// Saves the files of these selected messages together in the chat's
+    /// folder under the account's number, downloading the ones not here yet
+    /// first.
+    SaveFiles {
+        chat: ChatId,
+        messages: Vec<String>,
+    },
     /// Reads and decodes an image file off the UI thread for clipboard writing.
     PrepareClipboardImage(PathBuf),
     /// Deletes an imported pack directory.
@@ -1569,6 +1576,9 @@ pub enum Event {
     },
     /// Informational toast message.
     Info(String),
+    /// Selected messages' files were saved together into this folder, which
+    /// the window opens in the file manager.
+    FilesSaved(PathBuf),
     /// A decoded image ready to be written to the clipboard on the interface thread.
     ClipboardImage(Result<crate::model::DecodedImage, String>),
     /// A newer release than this build exists.

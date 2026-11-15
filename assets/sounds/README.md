@@ -1,8 +1,8 @@
-# Notification sounds
+# Notification and call sounds
 
-`receive.wav` (one-to-one chats) and `alert.wav` (groups) are Pidgin's
-message sounds, copied unmodified from `share/sounds/` in the Pidgin 2.14.14
-source release (<https://pidgin.im>). Pidgin distributes them under the GNU
-General Public License, version 2; the full text is in `THIRD-PARTY-NOTICES.md` at the repository root.
-They remain under that license. The rest of ZapFast is MIT-licensed; these
-two files are separate data files that ZapFast plays, not part of its code.
+`receive.wav` (one-to-one chats) is Apple's **Tri-Tone**, `alert.wav`
+(groups) is Apple's **Note**, and `ringtone.wav` (incoming calls) is Apple's
+**Reflection**. They were converted with `afconvert` from the tones macOS
+ships in `ToneLibrary.framework`. They are Apple's copyrighted sounds, used
+here for a personal build only; they are not covered by ZapFast's MIT
+licence and should not be redistributed.

@@ -60,6 +60,7 @@ mod new_group;
 mod poll_history;
 mod polls;
 mod prefetch;
+mod save_files;
 mod star_recovery;
 mod sticker_pace;
 mod stickers;
@@ -1071,6 +1072,7 @@ pub async fn run(
         poll_sending: HashSet::new(),
         prefetch: prefetch::State::default(),
         chat_export: chat_export::State::default(),
+        file_saves: save_files::State::default(),
         older_serial: 0,
         late_older: VecDeque::new(),
         older_ids_match: false,
@@ -1486,6 +1488,8 @@ struct Worker {
     /// Serial background phone-history prefetch.
     prefetch: prefetch::State,
     chat_export: chat_export::State,
+    /// Selected files waiting for their downloads before they are saved.
+    file_saves: save_files::State,
     /// Numbers phone-history requests, so a send result or a late answer is
     /// matched to the request it belongs to rather than to whichever request
     /// the chat has now.
@@ -3174,26 +3178,31 @@ impl Worker {
     /// drive does not stop downloads.
     fn download_dir(&self, chat: &str) -> PathBuf {
         if let Some(root) = &self.download_folder {
-            let chat = self.canonical_str(chat);
-            let name = self
-                .contact_name(&chat)
-                .or_else(|| {
-                    self.archive
-                        .chat(&chat)
-                        .ok()
-                        .flatten()
-                        .map(|chat| chat.name)
-                })
-                .unwrap_or_else(|| self.chat_name(&chat, None));
-            let account =
-                download_folders::account_folder(root, &self.dirs.id, self.me_pn.as_deref());
-            let folder = download_folders::chat_folder(&self.archive, &account, &chat, &name);
+            let folder = self.chat_download_folder(root, chat);
             if download_folders::create_folder(root, &folder).is_ok() {
                 return folder;
             }
             log::warn!("the download folder is unavailable; using the cache");
         }
         self.dirs.media_cache_dir()
+    }
+
+    /// Where `root` keeps this chat's files: `<account>/<chat>`, named by the
+    /// account's number and the chat's name. Nothing is created here.
+    fn chat_download_folder(&self, root: &Path, chat: &str) -> PathBuf {
+        let chat = self.canonical_str(chat);
+        let name = self
+            .contact_name(&chat)
+            .or_else(|| {
+                self.archive
+                    .chat(&chat)
+                    .ok()
+                    .flatten()
+                    .map(|chat| chat.name)
+            })
+            .unwrap_or_else(|| self.chat_name(&chat, None));
+        let account = download_folders::account_folder(root, &self.dirs.id, self.me_pn.as_deref());
+        download_folders::chat_folder(&self.archive, &account, &chat, &name)
     }
 
     fn set_online(&mut self, online: bool) {
@@ -7916,6 +7925,7 @@ impl Worker {
                     }
                 });
             }
+            Command::SaveFiles { chat, messages } => self.save_files(chat, messages),
             Command::SaveAttachments { files } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
@@ -10523,12 +10533,14 @@ impl Worker {
                 .insert((chat.clone(), id.clone()));
         }
         let result_ok = result.is_ok();
+        let settled = result.clone();
         self.emit(Event::Media {
             card,
-            chat,
-            message: id,
+            chat: chat.clone(),
+            message: id.clone(),
             result,
         });
+        self.file_save_settled(&chat, &id, card, &settled);
         if retried && !for_picker && result_ok {
             self.emit_stickers();
         }
@@ -20134,6 +20146,7 @@ mod receipt_tests {
             poll_sending: HashSet::new(),
             prefetch: prefetch::State::default(),
             chat_export: chat_export::State::default(),
+            file_saves: save_files::State::default(),
             older_serial: 0,
             late_older: VecDeque::new(),
             older_ids_match: false,
