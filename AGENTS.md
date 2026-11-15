@@ -87,8 +87,8 @@ protocol. These notes are for coding agents and new contributors.
   Views draw the active account through `App`'s `Deref` to `Account`.
   A navigation rail (`src/ui/rail.rs`) runs down the left of the chat list
   on every platform, 52 points wide and a shade darker than the list:
-  Chats and Calls at the top, the one on screen lit (Calls and Starred
-  are left through Chats or Escape, never toggled); Starred, Archived and
+  Chats, Calls and Status at the top, the one on screen lit (Calls, Status
+  and Starred are left through Chats or Escape, never toggled); Starred, Archived and
   Locked (while there are such chats; they open in the list column),
   Settings and our own avatar at the bottom. While the list is hidden the
   chats' avatars fill it between the two (`chats::compact_list`); beside the

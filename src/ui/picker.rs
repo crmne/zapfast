@@ -109,7 +109,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         |ui| match tab {
                             PickerTab::Emoji => emoji_tab(app, ui, &palette),
                             PickerTab::Gifs => gif_tab(app, ui, &palette),
-                            PickerTab::Stickers => sticker_tab(app, ui, &palette),
+                            PickerTab::Stickers => {
+                                if let Some(path) =
+                                    sticker_tab(app, ui, &palette, StickerTarget::Chat)
+                                {
+                                    app.actions.push(Action::SendSticker(path));
+                                }
+                            }
                         },
                     );
                     // Keep the tabs at the bottom when content is short.
@@ -410,6 +416,78 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .iter()
         .any(|emoji| emojis::get(emoji).is_some());
     category_tabs(app, ui, palette, "emoji-grid", "Recent", has_recent);
+}
+
+/// What Status keeps of its own emoji grid, apart from the chat picker's.
+#[derive(Clone, Default)]
+struct StatusEmoji {
+    search: String,
+    selected: usize,
+    focus: bool,
+}
+
+fn status_emoji_id() -> egui::Id {
+    egui::Id::new("status-emoji-state")
+}
+
+/// Starts the Status emoji grid afresh: empty search, focused.
+pub(super) fn open_status_emoji(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            status_emoji_id(),
+            StatusEmoji {
+                focus: true,
+                ..StatusEmoji::default()
+            },
+        )
+    });
+}
+
+/// The shared searchable emoji grid for Status text and replies. Its search
+/// and selection are swapped in for the call, so the chat picker's survive.
+pub(super) fn status_emoji(app: &mut App, ui: &mut egui::Ui) -> Option<String> {
+    let palette = app.palette;
+    let own = ui
+        .ctx()
+        .data(|data| data.get_temp::<StatusEmoji>(status_emoji_id()))
+        .unwrap_or_default();
+    let search = std::mem::replace(&mut app.picker_search, own.search);
+    let selected = std::mem::replace(&mut app.emoji_selected, own.selected);
+    let focus = std::mem::replace(&mut app.picker_focus, own.focus);
+    let jump = app.emoji_jump.take();
+    let picked = emoji_grid(
+        app,
+        ui,
+        &palette,
+        "status-emoji-search",
+        "status-emoji-grid",
+        "Recent",
+    );
+    let own = StatusEmoji {
+        search: std::mem::replace(&mut app.picker_search, search),
+        selected: std::mem::replace(&mut app.emoji_selected, selected),
+        focus: std::mem::replace(&mut app.picker_focus, focus),
+    };
+    app.emoji_jump = jump;
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(status_emoji_id(), own));
+    picked
+}
+
+/// The same sticker shelves and animated tiles as the chat picker. Status
+/// has no Add page, so it shows Recent in its place and leaves the chat
+/// picker's shelf as it was.
+pub(super) fn status_stickers(app: &mut App, ui: &mut egui::Ui) -> Option<PathBuf> {
+    let palette = app.palette;
+    let adding = app.sticker_shelf == StickerShelf::Add;
+    if adding {
+        app.sticker_shelf = StickerShelf::Recent;
+    }
+    let picked = sticker_tab(app, ui, &palette, StickerTarget::Status);
+    if adding && app.sticker_shelf == StickerShelf::Recent {
+        app.sticker_shelf = StickerShelf::Add;
+    }
+    picked
 }
 
 fn reaction_picker(app: &mut App, ctx: &egui::Context) {
@@ -1219,10 +1297,13 @@ pub fn shelf_tab_id(shelf: &StickerShelf) -> egui::Id {
 }
 
 /// The row of tabs under the search field. Packs show their first sticker.
-fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette, target: StickerTarget) {
     let current = app.sticker_shelf.clone();
     let locale = app.locale;
-    let shelves = shelf_entries(&app.sticker_packs);
+    let mut shelves = shelf_entries(&app.sticker_packs);
+    if target == StickerTarget::Status {
+        shelves.retain(|shelf| *shelf != StickerShelf::Add);
+    }
     let mut picked = None;
     egui::ScrollArea::horizontal()
         .id_salt("sticker-shelves")
@@ -1311,7 +1392,18 @@ fn shelf_hint(ui: &mut egui::Ui, palette: &Palette, text: &str) {
     });
 }
 
-fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StickerTarget {
+    Chat,
+    Status,
+}
+
+fn sticker_tab(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    target: StickerTarget,
+) -> Option<PathBuf> {
     let locale = app.locale;
     search_box(
         ui,
@@ -1320,13 +1412,13 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         &mut app.sticker_search,
         &gettext(locale, "Search by emoji, word, or pack"),
     );
-    shelf_strip(app, ui, palette);
+    shelf_strip(app, ui, palette, target);
     ui.add_space(2.0);
     let query = app.sticker_search.trim().to_owned();
     let shelf = app.sticker_shelf.clone();
     if query.is_empty() && shelf == StickerShelf::Add {
         add_page(app, ui, palette);
-        return;
+        return None;
     }
     let local: Vec<StickerPack> = app
         .sticker_packs
@@ -1391,39 +1483,39 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 &gettext(locale, "Stickers people send you appear here."),
             ),
             StickerShelf::Pack(_) => {
-                let Some(pack) = app.selected_pack().cloned() else {
-                    return;
-                };
+                let pack = app.selected_pack().cloned()?;
                 ui.horizontal(|ui| {
                     theme::text(ui, &pack.name, theme::semibold(13.0), palette.text);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let remove = theme::icon_button(
-                            ui,
-                            Icon::Trash,
-                            15.0,
-                            palette.dim,
-                            palette.danger,
-                            &gettext(locale, "Remove this pack"),
-                        );
-                        ui.ctx()
-                            .data_mut(|data| data.insert_temp(remove_pack_id(), remove.rect));
-                        if remove.clicked() {
-                            delete_pack = Some((pack.name.clone(), pack.dir.clone()));
-                        }
-                        if !pack.stickers.is_empty()
-                            && theme::icon_button(
+                    if target == StickerTarget::Chat {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let remove = theme::icon_button(
                                 ui,
-                                Icon::Forward,
+                                Icon::Trash,
                                 15.0,
                                 palette.dim,
-                                palette.text,
-                                &gettext(locale, "Send this pack to the chat"),
-                            )
-                            .clicked()
-                        {
-                            share_pack = Some(pack.dir.clone());
-                        }
-                    });
+                                palette.danger,
+                                &gettext(locale, "Remove this pack"),
+                            );
+                            ui.ctx()
+                                .data_mut(|data| data.insert_temp(remove_pack_id(), remove.rect));
+                            if remove.clicked() {
+                                delete_pack = Some((pack.name.clone(), pack.dir.clone()));
+                            }
+                            if !pack.stickers.is_empty()
+                                && theme::icon_button(
+                                    ui,
+                                    Icon::Forward,
+                                    15.0,
+                                    palette.dim,
+                                    palette.text,
+                                    &gettext(locale, "Send this pack to the chat"),
+                                )
+                                .clicked()
+                            {
+                                share_pack = Some(pack.dir.clone());
+                            }
+                        });
+                    }
                 });
                 if pack.stickers.is_empty() {
                     shelf_hint(
@@ -1466,9 +1558,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             StickerShelf::Add => {}
         }
     }
-    if let Some(path) = choices.send {
-        app.actions.push(Action::SendSticker(path));
-    }
+    let send = choices.send;
     if let Some(path) = choices.save {
         app.actions.push(Action::SaveSticker(path));
     }
@@ -1495,6 +1585,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if let Some(dir) = share_pack {
         app.actions.push(Action::ShareStickerPack(dir));
     }
+    send
 }
 
 /// The page behind the strip's plus: import packs, start a pack, or make a
@@ -2128,7 +2219,11 @@ mod pack_tests {
                 events,
                 ..Default::default()
             },
-            |ui| sticker_tab(app, ui, &palette),
+            |ui| {
+                if let Some(path) = sticker_tab(app, ui, &palette, StickerTarget::Chat) {
+                    app.actions.push(Action::SendSticker(path));
+                }
+            },
         );
         output.textures_delta.clear();
     }

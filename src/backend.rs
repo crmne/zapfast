@@ -142,6 +142,41 @@ pub struct SendTurn {
 
 #[derive(Debug)]
 pub enum Command {
+    MarkStatusSeen {
+        sender: String,
+        id: String,
+    },
+    DeleteStatus(String),
+    SaveStatusAudience(crate::status::Audience),
+    RenderStatusPhoto {
+        target: crate::app::AttachmentId,
+        revision: u64,
+        path: PathBuf,
+        scene: crate::photo::Scene,
+        apply: bool,
+    },
+    PickStatusMedia {
+        token: u64,
+    },
+    PublishStatus {
+        draft: crate::status::Draft,
+        audience: crate::status::Audience,
+    },
+    ReplyStatusSticker {
+        sender: String,
+        id: String,
+        path: PathBuf,
+    },
+    ReplyStatus {
+        sender: String,
+        id: String,
+        text: String,
+        reaction: bool,
+    },
+    DownloadStatus {
+        sender: String,
+        id: String,
+    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,
@@ -1178,6 +1213,41 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    StatusLocalState {
+        seen: Vec<(String, String)>,
+        viewers: Vec<(String, Vec<crate::status::Viewer>)>,
+    },
+    StatusViews {
+        id: String,
+        viewers: Vec<crate::status::Viewer>,
+    },
+    StatusDeletable(Vec<String>),
+    StatusDeleted {
+        id: String,
+        result: Result<(), String>,
+    },
+    StatusAudiences(crate::status::AudienceLists),
+    StatusAudienceSaved(Result<(), String>),
+    StatusPhotoPreview {
+        target: crate::app::AttachmentId,
+        revision: u64,
+        result: Result<crate::photo::Preview, String>,
+    },
+    /// Status updates, kept in the encrypted archive for up to 24 hours and never
+    /// as chat rows.
+    Statuses(Vec<crate::status::Item>),
+    StatusPicked {
+        token: u64,
+        path: Option<PathBuf>,
+    },
+    StatusPublished(Result<(), String>),
+    StatusReplied {
+        sender: String,
+        id: String,
+        text: String,
+        reaction: bool,
+        result: Result<(), String>,
+    },
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,
@@ -1647,6 +1717,30 @@ pub enum GroupAnswer {
     },
 }
 
+/// Renders a Status photo's markup, as a preview or (with `apply`) into a file in
+/// `edited`. Blocking: the worker and the demo both run it off the interface thread.
+pub(crate) fn render_status_photo(
+    target: crate::app::AttachmentId,
+    revision: u64,
+    path: &std::path::Path,
+    scene: &crate::photo::Scene,
+    apply: bool,
+    edited: &std::path::Path,
+) -> Event {
+    if apply {
+        Event::PictureEdited {
+            target,
+            result: crate::photo::write(path, scene, edited),
+        }
+    } else {
+        Event::StatusPhotoPreview {
+            target,
+            revision,
+            result: crate::photo::preview(path, scene),
+        }
+    }
+}
+
 /// What WhatsApp said about one person in a member change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberAnswer {
@@ -1756,10 +1850,14 @@ pub struct Backend {
     demo_events: Option<std::sync::mpsc::Sender<Event>>,
     #[cfg(any(test, feature = "demo"))]
     demo_waker: Waker,
+    #[cfg(any(test, feature = "demo"))]
+    demo_media_dir: Option<PathBuf>,
 }
 
 impl Backend {
     pub fn spawn(dirs: AccountDirs, waker: Waker) -> Self {
+        #[cfg(any(test, feature = "demo"))]
+        let demo_media_dir = Some(dirs.media_cache_dir());
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -1794,6 +1892,8 @@ impl Backend {
             demo_events: None,
             #[cfg(any(test, feature = "demo"))]
             demo_waker: Waker::default(),
+            #[cfg(any(test, feature = "demo"))]
+            demo_media_dir,
         }
     }
 
@@ -1814,6 +1914,8 @@ impl Backend {
                 demo_events: Some(event_tx.clone()),
                 #[cfg(any(test, feature = "demo"))]
                 demo_waker: Waker::default(),
+                #[cfg(any(test, feature = "demo"))]
+                demo_media_dir: None,
             },
             event_tx,
         )
@@ -1854,6 +1956,12 @@ impl Backend {
         self.offline = offline;
     }
 
+    /// Keep native offline picture edits in the demo's own temporary cache.
+    #[cfg(any(test, feature = "demo"))]
+    pub fn set_demo_media_dir(&mut self, dir: PathBuf) {
+        self.demo_media_dir = Some(dir);
+    }
+
     pub fn is_offline(&self) -> bool {
         self.offline
     }
@@ -1861,6 +1969,136 @@ impl Backend {
     /// Queue runtime work, or handle local preview work in an offline demo.
     pub fn send(&self, command: Command) {
         if self.offline && !matches!(command, Command::Shutdown) {
+            #[cfg(any(test, feature = "demo"))]
+            match &command {
+                Command::InspectPicture { target, path } if self.demo_media_dir.is_some() => {
+                    if let Some(events) = self.demo_events.clone() {
+                        let (target, path, waker) =
+                            (*target, path.clone(), self.demo_waker.clone());
+                        std::thread::spawn(move || {
+                            let result = std::fs::read(path)
+                                .map_err(|error| error.to_string())
+                                .and_then(|bytes| picture_edit::inspect(&bytes));
+                            let _ = events.send(Event::PictureInspected { target, result });
+                            waker.wake();
+                        });
+                    }
+                }
+                Command::ApplyPictureEdit {
+                    target,
+                    source,
+                    width,
+                    height,
+                    crop,
+                    turns,
+                } => {
+                    if let (Some(events), Some(dir)) =
+                        (self.demo_events.clone(), self.demo_media_dir.clone())
+                    {
+                        let (target, source, width, height, crop, turns, waker) = (
+                            *target,
+                            source.clone(),
+                            *width,
+                            *height,
+                            *crop,
+                            *turns,
+                            self.demo_waker.clone(),
+                        );
+                        std::thread::spawn(move || {
+                            let result = picture_edit::write(
+                                &source,
+                                width,
+                                height,
+                                crop,
+                                turns,
+                                &dir.join("edited"),
+                            );
+                            let _ = events.send(Event::PictureEdited { target, result });
+                            waker.wake();
+                        });
+                    }
+                }
+                Command::DeleteStatus(id) => self.deliver_demo_event(Event::StatusDeleted {
+                    id: id.clone(),
+                    result: Err("Offline demo: nothing was deleted".into()),
+                }),
+                Command::SaveStatusAudience(_) => {
+                    self.deliver_demo_event(Event::StatusAudienceSaved(Ok(())))
+                }
+                Command::RenderStatusPhoto {
+                    target,
+                    revision,
+                    path,
+                    scene,
+                    apply,
+                } => {
+                    if let (Some(events), Some(dir)) =
+                        (self.demo_events.clone(), self.demo_media_dir.clone())
+                    {
+                        let (target, revision, path, scene, apply, waker) = (
+                            *target,
+                            *revision,
+                            path.clone(),
+                            scene.clone(),
+                            *apply,
+                            self.demo_waker.clone(),
+                        );
+                        std::thread::spawn(move || {
+                            let event = render_status_photo(
+                                target,
+                                revision,
+                                &path,
+                                &scene,
+                                apply,
+                                &dir.join("edited"),
+                            );
+                            let _ = events.send(event);
+                            waker.wake();
+                        });
+                    }
+                }
+                Command::PublishStatus { .. } => self.deliver_demo_event(Event::StatusPublished(
+                    Err("Offline demo: nothing was published. Your draft has been kept".into()),
+                )),
+                Command::ReplyStatusSticker { sender, id, .. } => {
+                    self.deliver_demo_event(Event::StatusReplied {
+                        sender: sender.clone(),
+                        id: id.clone(),
+                        text: String::new(),
+                        reaction: false,
+                        result: Err("Offline demo: no sticker was sent".into()),
+                    })
+                }
+                Command::ReplyStatus {
+                    sender,
+                    id,
+                    text,
+                    reaction,
+                } => self.deliver_demo_event(Event::StatusReplied {
+                    sender: sender.clone(),
+                    id: id.clone(),
+                    text: text.clone(),
+                    reaction: *reaction,
+                    result: Err("Offline demo: no reply was sent".into()),
+                }),
+                Command::PickStatusMedia { token } => {
+                    if let Some(events) = self.demo_events.clone() {
+                        let token = *token;
+                        let waker = self.demo_waker.clone();
+                        std::thread::spawn(move || {
+                            let path = rfd::FileDialog::new()
+                                .add_filter(
+                                    "Photos and videos",
+                                    &["jpg", "jpeg", "png", "webp", "mp4"],
+                                )
+                                .pick_file();
+                            let _ = events.send(Event::StatusPicked { token, path });
+                            waker.wake();
+                        });
+                    }
+                }
+                _ => {}
+            }
             #[cfg(any(test, feature = "demo"))]
             if let Command::PreparePicturePreview {
                 target,

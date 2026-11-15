@@ -31,6 +31,8 @@ mod reconcile;
 #[cfg(test)]
 mod reconcile_tests;
 mod stars;
+mod statuses;
+pub use statuses::StatusRecord;
 mod stickers;
 pub use polls::PollVote;
 pub use stars::Starred;
@@ -495,6 +497,7 @@ impl Archive {
         connection.execute_batch(stickers::SCHEMA)?;
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
+        connection.execute_batch(statuses::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
@@ -2875,7 +2878,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM status_updates; DELETE FROM status_revocations; DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }

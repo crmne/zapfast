@@ -550,6 +550,102 @@ the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 When someone else records a voice message, a microphone replaces the typing dots.
 
+## Status
+
+Choose **Status** in the left navigation rail to see updates received live or
+included in your phone's history synchronization. **More options > Search contacts** searches by name. Choose a contact to open
+their first unseen update. Green segments around their photo show unseen
+updates; contacts whose updates have all been opened move to **Viewed**.
+This viewed state is saved locally until the update expires and is not sent to WhatsApp.
+
+The viewer centres the update on a dark background, with one progress segment
+per update. Text and photos advance after five seconds; video and voice
+updates use their media duration. The arrows move between updates and then
+contacts. **Space** or the pause button pauses playback, and holding the
+mouse button pauses while you look. **Escape** or Close returns to the list.
+Video has a mute control. Text keeps its background colour, photos keep their
+aspect ratio, and captions sit over the image. A small blurred media preview
+fills the background. Unsupported videos use the
+system player. Closing the viewer stops playback.
+
+Selecting a media update downloads it; **Retry** retries a failed download.
+Each attachment is limited to 16 MiB, including unknown lengths. The
+viewer retains up to 1,024 updates per account, prioritizing your own posts.
+Updates and their local viewed state are stored separately from chats in the
+account's encrypted archive and restored on restart. Updates expire 24 hours
+after publication; received deletions also prevent delayed sync from restoring
+them. Cached media is reused while available and fetched again when needed.
+Viewing creates no chat or message in your conversation history.
+
+When you link ZapFast, the phone sends the updates it has, including your own.
+After that, ZapFast sees updates as they arrive: one posted while ZapFast was
+closed doesn't appear when it opens again, because WhatsApp doesn't queue
+Status updates for a linked device, and the protocol library has no way to
+fetch them later.
+
+Viewing does not send a view receipt, mark its author's chat as read, or
+create a notification. Blocked contacts and updates from locked chats stay
+hidden. **More options > Hide updates from this contact** hides that contact's
+updates for this session; **Show hidden updates** restores them.
+
+**Publishing.** Choose **My status**, the plus button, **Text status**, or
+**Photo and video**. Text updates support emoji, background colours and three
+font styles. Photos and MP4 videos support a caption and a preview. The editor
+keeps your draft after an error. Text and captions are limited to 700 characters,
+and media to 16 MiB. Photos reuse the attachment editor for cropping and
+rotation, with undo and redo before publication. The original file is preserved.
+The thumbnail lets you remove or replace the selected media. The photo canvas
+adds effects, a pen and highlighter with colour and width controls, text boxes
+with the same font choices as text updates, rectangles, ellipses, arrows and
+regional blur. Undo/redo covers these operations; **Done** keeps the result and
+**Cancel** keeps the previous photo. Cropping from this canvas first keeps its
+markup. Rendering runs off the interface thread with a bounded preview.
+**Photo quality** chooses Standard (up to 1600 px) or HD (up to 4096 px, higher
+JPEG quality), without enlarging smaller photos. This controls the encoded
+photo; it does not claim WhatsApp's own HD metadata badge. Video trimming,
+sticker overlays and multiple attachments are not supported yet.
+
+Before the first publication, choose its **Status audience**: saved contacts,
+saved contacts except those selected, or only selected saved contacts. This
+choice and the two independent selective lists are remembered in the account's
+encrypted archive. When no local choice exists, a supported simple audience
+available from the linked phone is used; unknown or custom-list modes remain
+unset. These choices do not change the phone's default privacy setting.
+An absent choice never means all contacts.
+The two selective options open a contact picker inside the same dialog. Search
+by name or number, select contacts, remove selected chips, and confirm with the
+green check. Going back cancels that selection. An empty **Only share with**
+selection cannot be confirmed. Opening privacy from the Status list keeps its
+options in the list pane and opens the same contact picker when needed.
+Unknown contacts, blocked contacts and your own account are not recipients.
+Publishing needs a connection and a loaded blocklist. A timeout may mean the
+server received the update; check your phone before retrying.
+
+**Your updates.** My status shows its update thumbnail and a segmented ring,
+recognizing both linked account identifiers. Its viewer offers pause and sound
+controls where applicable. The views panel lists read/played receipts received
+by this device and retained until the update expires; it cannot recover views
+that it never received. Deleting
+requires confirmation and the original recipient list captured when this app
+published the update. Posts received from another device without that audience
+cannot be deleted here. A timeout keeps the update visible until confirmed.
+
+**Replies and reactions.** Type in the reply field, open its emoji or sticker
+panel, or choose an emoji from the heart menu. The sticker panel reuses your
+recent, favorite, received and locally installed stickers. Selecting a sticker
+replies to the Status author and keeps any typed text. Sticker animations play
+on hover while the window is focused. Status uses the same theme, sidebar
+width and navigation highlight as Chats and Calls. Playback pauses while you
+write or use a menu. Text and sticker replies quote the Status in the author's
+chat and follow that chat's disappearing-message timer. Its pending, sent or failed state appears in the chat as for other
+messages. A failed reply keeps its text. Emoji use WhatsApp's Status reaction
+API; a separate Status like, reporting and channel-specific actions are not
+implemented here. Viewing receipts are not yet sent.
+
+The offline demo lets you inspect these screens, choose local media and edit
+drafts; publishing and replies return an explicit offline message and send
+nothing to WhatsApp.
+
 ## Calls
 
 The phone and camera buttons in a one-to-one chat's header start a voice or a
