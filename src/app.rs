@@ -6339,10 +6339,9 @@ impl App {
         {
             self.fetch_older(&id, false);
         }
-        if self
-            .chat(&id)
-            .is_some_and(|chat| chat.unread > 0 || chat.marked_unread)
-        {
+        // Reopen reads a chat even when it is already read, so a read sync
+        // that failed or backed off is re-armed instead of being stranded.
+        if self.chat(&id).is_some() {
             self.mark_read(&id);
         }
         if self.settings.last_chat.as_deref() != Some(id.as_str()) {
