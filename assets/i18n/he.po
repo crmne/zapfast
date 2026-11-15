@@ -249,12 +249,12 @@ msgstr "90 יום"
 #: src/util.rs:325
 #, rust-format
 msgid "{name} turned off disappearing messages"
-msgstr "{name} כיבה/ה את ההודעות הנעלמות"
+msgstr "ההודעות הנעלמות כובו על ידי {name}"
 
 #: src/util.rs:329
 #, rust-format
 msgid "{name} changed the disappearing messages setting to {duration}"
-msgstr "{name} שינה/תה את הגדרת ההודעות הנעלמות ל-{duration}"
+msgstr "הגדרת ההודעות הנעלמות שונתה ל-{duration} על ידי {name}"
 
 #: src/util.rs:356
 #, rust-format
@@ -424,11 +424,11 @@ msgstr "הודעה לעצמך"
 #: src/ui/chats.rs:1620 src/ui/conversation.rs:1008
 #, rust-format
 msgid "{name} is recording audio…"
-msgstr "{name} מקליט/ה הודעה קולית…"
+msgstr "{name} בהקלטת הודעה קולית…"
 
 #: src/ui/chats.rs:1625 src/ui/conversation.rs:1028
 msgid "recording audio…"
-msgstr "מקליט/ה הודעה קולית…"
+msgstr "בהקלטת הודעה קולית…"
 
 #: src/ui/chats.rs:1639
 msgid "Draft:"
@@ -725,7 +725,7 @@ msgstr "הודעה ננעצה"
 #: src/ui/conversation.rs:2867
 #, rust-format
 msgid "{} pinned a message"
-msgstr "{} נעץ/נעצה הודעה"
+msgstr "הודעה נעוצה על ידי {}"
 
 #: src/ui/conversation.rs:3613 src/notify.rs:19
 #, rust-format
@@ -1491,9 +1491,7 @@ msgstr "להסיר מהקבוצה?"
 msgid ""
 "{name} will no longer receive messages from {group}. You can add them again "
 "later."
-msgstr ""
-"{name} לא יקבל/תקבל יותר הודעות מ-{group}. אפשר להוסיף אותו/ה שוב מאוחר "
-"יותר."
+msgstr "ההודעות מ-{group} לא יגיעו עוד אל {name}. אפשר להוסיף שוב מאוחר יותר."
 
 #: src/ui/dialogs.rs:1740
 msgid "Leave this channel?"
@@ -2423,8 +2421,8 @@ msgid ""
 "{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller} מתקשר/ת אל {group}. ZapFast עדיין לא יכול להצטרף לשיחות קבוצתיות: "
-"יש לענות בטלפון."
+"שיחה מ-{caller} אל {group}. ZapFast עדיין לא יכול להצטרף לשיחות קבוצתיות: יש"
+" לענות בטלפון."
 
 #: src/app/calls.rs:628
 #, rust-format
@@ -2432,7 +2430,7 @@ msgid ""
 "{caller} is calling you and others. ZapFast can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} מתקשר/ת אליך ואל אחרים. ZapFast עדיין לא יכול להצטרף לשיחות "
+"שיחה מ-{caller} אליך ואל אחרים. ZapFast עדיין לא יכול להצטרף לשיחות "
 "קבוצתיות: יש לענות בטלפון."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
@@ -2636,8 +2634,8 @@ msgid ""
 "Not sent: the message you’re replying to isn’t available on this computer. "
 "Cancel the reply to send without a quote."
 msgstr ""
-"לא נשלח: ההודעה שאת/ה מגיב/ה אליה אינה זמינה במחשב הזה. יש לבטל את התגובה "
-"כדי לשלוח ללא ציטוט."
+"לא נשלח: ההודעה שמגיבים אליה אינה זמינה במחשב הזה. יש לבטל את התגובה כדי "
+"לשלוח ללא ציטוט."
 
 #: src/app.rs:5748 src/app.rs:6795
 msgid "Not sent: view-once mode is available for one photo at a time."
@@ -2785,9 +2783,7 @@ msgstr "ניהול תוויות…"
 msgid ""
 "Labels stay on this computer. They do not reach your phone or anyone you "
 "chat with."
-msgstr ""
-"התוויות נשארות במחשב הזה. הן לא מגיעות לטלפון שלך או לאנשים שאיתם את/ה "
-"מתכתב/ת."
+msgstr "התוויות נשארות במחשב הזה. הן לא מגיעות לטלפון או לאנשים בשיחות שלך."
 
 #: src/ui/labels.rs:267
 msgid "New label"
@@ -3611,7 +3607,7 @@ msgstr "שם הקבוצה (חובה)"
 #, rust-format
 msgid "{count} member besides you"
 msgid_plural "{count} members besides you"
-msgstr[0] "משתתף/ת {count} מלבדך"
+msgstr[0] "{count} משתתף/ת מלבדך"
 msgstr[1] "{count} משתתפים מלבדך"
 
 #: src/ui/new_group.rs:445
@@ -3709,12 +3705,12 @@ msgstr "לא ניתן היה להוסיף את {names} לקבוצה."
 #: src/group_admin.rs:308
 #, rust-format
 msgid "{name} is now a group admin."
-msgstr "{name} הוא/היא עכשיו מנהל/ת הקבוצה."
+msgstr "הרשאות ניהול הוענקו ל-{name}."
 
 #: src/group_admin.rs:309
 #, rust-format
 msgid "{name} is no longer a group admin."
-msgstr "{name} הוא/היא כבר לא מנהל/ת הקבוצה."
+msgstr "הרשאות הניהול של {name} הוסרו."
 
 #: src/group_admin.rs:310
 #, rust-format
@@ -3786,7 +3782,7 @@ msgstr "הצבעות קודמות עדיין לא נטענו"
 #, rust-format
 msgid "{} voter"
 msgid_plural "{} voters"
-msgstr[0] "מצביע/ה {}"
+msgstr[0] "{} מצביע/ה"
 msgstr[1] "{} מצביעים"
 
 #: src/ui/polls.rs:351
