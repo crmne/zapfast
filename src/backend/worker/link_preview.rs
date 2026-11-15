@@ -465,7 +465,8 @@ fn head_end_after(body: &[u8], scanned: usize) -> Option<usize> {
 /// How much of `head` runs through the last `>` that closes a tag. A `>`
 /// inside a quoted attribute value closes nothing, so a cut there cannot leave
 /// half a value for `parse_page` to read as a title. The text of a script, a
-/// style or a title is not markup, so its `<` and quotes open nothing either.
+/// style, a title or a comment is not markup, so its `<` and quotes open
+/// nothing either.
 fn whole_tags_end(head: &[u8]) -> usize {
     scan_tags(head).whole
 }
@@ -510,6 +511,17 @@ fn scan_tags(head: &[u8]) -> TagScan {
                 after_equals = true;
             } else if !byte.is_ascii_whitespace() {
                 after_equals = false;
+            }
+        } else if head[at..].starts_with(b"<!--") {
+            // A comment's text is not markup: skip it through its `-->`.
+            match head[at + 2..].windows(3).position(|found| found == b"-->") {
+                Some(length) => {
+                    at += 2 + length + 3;
+                    whole = at;
+                    continue;
+                }
+                // The rest is the comment's text, not a tag.
+                None => break,
             }
         } else if byte == b'<' {
             tag_start = Some(at);
@@ -805,12 +817,13 @@ mod tests {
         assert_eq!(meta.description, None);
     }
 
-    /// Through the whole preview, a stalled page still gives its title, and its
-    /// picture is skipped because no time is left.
+    /// Through the whole preview, a stalled page still gives its title by its
+    /// deadline. Its picture is on this machine, which `fetch_image` refuses
+    /// without contacting it, so no public network is needed.
     #[tokio::test]
     async fn a_stalled_page_still_gives_a_preview() {
         let sent = format!(
-            "<html><head><meta property=\"og:image\" content=\"https://i.example.com/v.jpg\">{STALLED}"
+            "<html><head><meta property=\"og:image\" content=\"http://127.0.0.1/v.jpg\">{STALLED}"
         );
         let url = local_page(sent, 100_000).await;
         // Reading stops `PARSE_TIME` before this, 300 ms from now.
@@ -823,8 +836,10 @@ mod tests {
         )
         .await
         .expect("a preview from what came");
+        // `timeout_at` returns once its deadline has passed, so allow the
+        // scheduler a moment past it.
         assert!(
-            tokio::time::Instant::now() <= deadline,
+            tokio::time::Instant::now() <= deadline + Duration::from_millis(100),
             "parsed within the time"
         );
         assert_eq!(preview.preview.url, url.to_string());
@@ -957,6 +972,13 @@ mod tests {
         let meta = parse_page(&html, &base());
         assert_eq!(meta.title.as_deref(), Some("Kept"));
         assert_eq!(meta.description, None);
+
+        // A quote in a comment opens no value, so the tags after it stay.
+        let page = "<head><!-- set x='1 here --><meta property=\"og:title\" content=\"Kept\">";
+        let html = read_whole(page).await;
+        assert_eq!(html, page);
+        let meta = parse_page(&html, &base());
+        assert_eq!(meta.title.as_deref(), Some("Kept"));
 
         let html = read_whole("<head><title>Fast > slow, a<b").await;
         assert_eq!(html, "<head><title>Fast > slow, a<b");
