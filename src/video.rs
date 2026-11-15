@@ -1405,7 +1405,10 @@ fn first_picture<R: std::io::Read + std::io::Seek>(
     .ok()?;
     let _ = decoder.decode(&parameters);
     let mut order = Reorder::default();
-    // The newest frame just before `at`, in case the video ends before it.
+    // What shows if no frame reaches `at`: the newest just before it, else
+    // the first decoded, so a single frame, or a tail that stops decoding,
+    // still leaves a picture. Each conversion is a full frame's work, so the
+    // frames in between are not converted.
     let mut held = None;
     for sample_id in timeline.still_samples(at) {
         let Ok(Some(sample)) = mp4.read_sample(track_id, sample_id) else {
@@ -1419,7 +1422,7 @@ fn first_picture<R: std::io::Read + std::io::Seek>(
             if shown >= at {
                 return picture(&yuv, turns, side);
             }
-            if shown + FRAME >= at {
+            if held.is_none() || shown + FRAME >= at {
                 held = picture(&yuv, turns, side);
             }
         }
@@ -2044,6 +2047,21 @@ mod tests {
             .expect("the header reads, so the length is known");
         assert_eq!(still.length.as_secs_f32().round(), 3.0);
         assert!(still.picture.is_none());
+    }
+
+    #[test]
+    fn a_still_falls_back_to_the_last_frame_before_its_moment() {
+        // A moment past the sample's end, as a clip with one frame at its
+        // start has: no frame shows at or near it, so the last one before it
+        // stands in.
+        let file = std::fs::File::open(SAMPLE).unwrap();
+        let size = file.metadata().unwrap().len();
+        let mut mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size).unwrap();
+        let picture = first_picture(&mut mp4, Duration::from_secs(10), 1024);
+        assert_eq!(
+            picture.expect("the last frame before the moment").size,
+            [320, 180]
+        );
     }
 
     #[test]
