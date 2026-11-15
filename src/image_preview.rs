@@ -397,6 +397,8 @@ mod tests {
             video: false,
             path: None,
             thumbnail: None,
+            sender: String::new(),
+            sender_name: None,
         }
     }
 

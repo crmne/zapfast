@@ -1164,6 +1164,11 @@ pub struct MediaItem {
     pub path: Option<std::path::PathBuf>,
     /// The stored thumbnail, drawn instead of decoding the file.
     pub thumbnail: Option<Vec<u8>>,
+    /// The message's sender, carried so the viewer's header can name them
+    /// even when the message is no longer loaded in memory.
+    pub sender: String,
+    /// Group sender's push name at receipt time, if any.
+    pub sender_name: Option<String>,
 }
 
 impl MediaItem {
@@ -1182,6 +1187,8 @@ impl MediaItem {
         content: &Content,
         thumbnail: Option<&[u8]>,
         exists: impl Fn(&Path) -> bool,
+        sender: &str,
+        sender_name: Option<&str>,
     ) -> Vec<MediaItem> {
         let item = |card, video, path, thumbnail: Option<&[u8]>| MediaItem {
             id: id.to_owned(),
@@ -1190,6 +1197,8 @@ impl MediaItem {
             video,
             path,
             thumbnail: thumbnail.map(<[u8]>::to_vec),
+            sender: sender.to_owned(),
+            sender_name: sender_name.map(str::to_owned),
         };
         if let Some(kind) = content.gallery_kind() {
             let path = content
@@ -1240,6 +1249,8 @@ impl MediaItem {
             &message.content,
             message.thumbnail.as_deref(),
             Path::is_file,
+            &message.sender,
+            message.sender_name.as_deref(),
         )
     }
 }

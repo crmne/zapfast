@@ -498,9 +498,11 @@ videos and interactive-card images run along the bottom: click one, press the
 Left and Right arrow keys, or hover over the viewer and click the previous and
 next arrows at the window’s edges to move between them. Downloaded photos and
 videos get a small local preview when the message did not include a thumbnail.
-Very large sources may keep a placeholder in the strip to limit memory use. The
-header replies, reacts,
-forwards, saves or downloads, and shows the message in the chat. A click on the
+Very large sources may keep a placeholder in the strip to limit memory use. In a
+group the header names the sender before the group’s own name, so an album that
+mixes several people’s pictures says who sent the one on screen; a one-to-one
+chat keeps its person’s name. The header replies, reacts, forwards, saves or
+downloads, and shows the message in the chat. A click on the
 empty space around the picture, or Escape, closes the viewer. It also closes
 when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's

@@ -2255,7 +2255,7 @@ impl Archive {
         // The query walks the newest first, so the page is turned back round:
         // the strip and the stepping both read oldest to newest.
         let mut list = self.gallery_query(
-            "SELECT id, timestamp, content, thumbnail FROM messages
+            "SELECT id, timestamp, content, thumbnail, sender, sender_name FROM messages
              WHERE chat = ?1 AND json_valid(content)
              AND json_extract(content, '$.kind') IN ('image', 'video', 'interactive')
              ORDER BY timestamp DESC, rowid DESC",
@@ -2296,7 +2296,7 @@ impl Archive {
         let ahead = limit / 2;
         let behind = limit - ahead;
         let mut list = self.gallery_query(
-            "SELECT id, timestamp, content, thumbnail FROM messages
+            "SELECT id, timestamp, content, thumbnail, sender, sender_name FROM messages
              WHERE chat = ?1 AND json_valid(content)
              AND json_extract(content, '$.kind') IN ('image', 'video', 'interactive')
              AND (timestamp < ?2 OR (timestamp = ?2 AND rowid <= ?3))
@@ -2307,7 +2307,7 @@ impl Archive {
         )?;
         list.reverse();
         let mut newer = self.gallery_query(
-            "SELECT id, timestamp, content, thumbnail FROM messages
+            "SELECT id, timestamp, content, thumbnail, sender, sender_name FROM messages
              WHERE chat = ?1 AND json_valid(content)
              AND json_extract(content, '$.kind') IN ('image', 'video', 'interactive')
              AND (timestamp > ?2 OR (timestamp = ?2 AND rowid > ?3))
@@ -2343,14 +2343,16 @@ impl Archive {
             let timestamp: i64 = row.get(1)?;
             let raw: String = row.get(2)?;
             let thumbnail: Option<Vec<u8>> = row.get(3)?;
-            Ok((id, timestamp, raw, thumbnail))
+            let sender: String = row.get(4)?;
+            let sender_name: Option<String> = row.get(5)?;
+            Ok((id, timestamp, raw, thumbnail, sender, sender_name))
         })?;
         let mut list = Vec::new();
         for row in rows {
             if list.len() >= limit {
                 break;
             }
-            let (id, timestamp, raw, thumbnail) = row?;
+            let (id, timestamp, raw, thumbnail, sender, sender_name) = row?;
             let content: Content = serde_json::from_str(&raw).unwrap_or(Content::Unsupported {
                 what: "unreadable".into(),
             });
@@ -2360,6 +2362,8 @@ impl Archive {
                 &content,
                 thumbnail.as_deref(),
                 Path::is_file,
+                &sender,
+                sender_name.as_deref(),
             );
             // A carousel's cards stay in their own order once the page is
             // turned back round.
