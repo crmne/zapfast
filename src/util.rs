@@ -35,7 +35,6 @@ pub fn international_phone_with_default(
     if let Some(digits) = international_phone(input) {
         return Some(digits);
     }
-    let default = default_country_code?;
     let input = input.trim();
     let mut digits = String::new();
     let mut bracket = false;
@@ -51,12 +50,14 @@ pub fn international_phone_with_default(
     if bracket || digits.is_empty() {
         return None;
     }
-    // An international dialling prefix is not a local trunk zero.
+    // An international dialling prefix is an already-international number and
+    // does not need a default country code.
     if let Some(rest) = digits.strip_prefix("00")
         && !rest.is_empty()
     {
         return international_phone(rest);
     }
+    let default = default_country_code?;
     // A leading trunk zero is not part of an international number.
     let national = digits.strip_prefix('0').unwrap_or(&digits);
     if national.is_empty() {
@@ -1588,6 +1589,10 @@ mod international_phone_tests {
             Some("442079460958".to_owned())
         );
         assert!(super::international_phone_with_default("0123456789", None).is_none());
+        assert_eq!(
+            super::international_phone_with_default("00442079460958", None),
+            Some("442079460958".to_owned())
+        );
         assert!(super::international_phone_with_default("not a number", Some("1")).is_none());
     }
 
