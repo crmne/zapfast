@@ -1166,8 +1166,9 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             info
         });
         // The two buttons sit on one line, so the row is no taller than the
-        // ones below it.
-        ui.horizontal(|ui| {
+        // ones below it. They wrap only when a narrow window leaves them
+        // no room, instead of overflowing the row.
+        ui.horizontal_wrapped(|ui| {
             if theme::soft_button(
                 ui,
                 &palette,
