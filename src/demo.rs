@@ -11906,6 +11906,116 @@ mod tests {
         assert_eq!(opened, ["https://example.org/notes"]);
     }
 
+    /// A phone number in the description is not a link to open: clicking
+    /// it says nothing, where the open-a-link path would refuse the
+    /// `tel:` scheme with an error.
+    #[test]
+    fn group_description_phone_number_is_not_opened() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[1].id)
+            .unwrap()
+            .group_description = Some("Call +1 (212) 555-1212 to RSVP".into());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..8 {
+            frame_sized(&mut app, &ctx, 800.0, Vec::new());
+        }
+        let links = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<Vec<(String, egui::Rect)>>(
+                    crate::ui::info::group_description_links_id(),
+                )
+            })
+            .expect("the links are drawn")
+        };
+        let (url, rect) = links(&ctx)
+            .first()
+            .expect("a phone number in the description")
+            .clone();
+        assert_eq!(url, "tel:+12125551212");
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(rect.center())]);
+        let rect = links(&ctx)
+            .first()
+            .expect("a phone number in the description")
+            .1;
+        let pos = rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut opened = Vec::new();
+        for events in [vec![press(true)], vec![press(false)]] {
+            let output = draw(&mut app, events);
+            for command in output.platform_output.commands {
+                if let egui::OutputCommand::OpenUrl(url) = command {
+                    opened.push(url.url);
+                }
+            }
+        }
+        assert!(opened.is_empty(), "nothing opens: {opened:?}");
+        assert!(
+            app.toasts
+                .iter()
+                .all(|toast| !toast.message.contains("cannot be opened")),
+            "no link error: {:?}",
+            app.toasts
+        );
+    }
+
+    /// The description's copy row stands behind the messages: a copy of
+    /// only a message's emoji puts that emoji back, not the
+    /// description's, even though the panel is drawn first.
+    #[test]
+    fn group_description_copy_row_stands_behind_the_messages() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        for _ in 0..4 {
+            frame_sized(&mut app, &ctx, 800.0, Vec::new());
+        }
+        let rows = app.copy_rows.lock().unwrap();
+        let description_at = rows
+            .iter()
+            .position(|row| row.body.contains("Rust meetups in Berlin"))
+            .expect("the description's row is registered");
+        assert!(
+            rows[..description_at]
+                .iter()
+                .any(|row| row.body.contains("Save me a seat")),
+            "the messages are registered before it"
+        );
+        let copied = crate::emoji::PLACEHOLDER.to_string();
+        assert_eq!(
+            crate::transcript::refine(&copied, &rows).as_deref(),
+            Some("🙏"),
+            "the message's emoji comes back, not the description's"
+        );
+    }
+
     #[test]
     fn group_description_can_be_selected_and_copied_with_line_breaks_and_emoji() {
         let mut app = app();

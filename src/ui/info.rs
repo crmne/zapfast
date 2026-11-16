@@ -2242,15 +2242,23 @@ fn description_body(app: &mut App, ui: &mut egui::Ui, description: &str) {
     );
     crate::markup::paint_selectable(ui, &laid, &response, rect.min, palette.text, true);
     // The emoji are placeholders in the galley: the copy puts them back.
-    app.copy_rows
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .push(crate::transcript::Row {
-            body: laid.galley.text().to_owned(),
-            placements: laid.placements().to_vec(),
-            ..Default::default()
-        });
-    // A link opens in a browser, as it does in a message.
+    // The row is only staged here, in the view's own temp data: the app
+    // registers it after the frame's views, behind every message row, so
+    // a copy taken from a message keeps resolving against the messages
+    // first, as it did before the description joined in.
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            description_copy_row_id(),
+            crate::transcript::Row {
+                body: laid.galley.text().to_owned(),
+                placements: laid.placements().to_vec(),
+                ..Default::default()
+            },
+        );
+    });
+    // A link opens in a browser, as it does in a message. A phone number
+    // is not opened here: messages give it a menu of its own, and the
+    // open-a-link path refuses the `tel:` scheme with an error.
     if !laid.links.is_empty()
         && let Some(pos) = response.hover_pos()
         && laid.galley.rows.iter().any(|row| {
@@ -2258,7 +2266,9 @@ fn description_body(app: &mut App, ui: &mut egui::Ui, description: &str) {
         })
     {
         let cursor = laid.galley.cursor_from_pos(pos - rect.min);
-        if let Some(url) = laid.link_at(cursor.index.0) {
+        if let Some(url) = laid.link_at(cursor.index.0)
+            && !url.starts_with("tel:")
+        {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             if response.clicked() {
                 app.actions.push(Action::OpenUrl(url.to_owned()));
@@ -2284,6 +2294,12 @@ fn description_body(app: &mut App, ui: &mut egui::Ui, description: &str) {
 #[cfg(any(test, feature = "demo"))]
 pub(crate) fn group_description_links_id() -> egui::Id {
     egui::Id::new("group-description-links")
+}
+
+/// The description's staged copy row, which the app registers behind the
+/// frame's message rows once the views are drawn.
+pub(crate) fn description_copy_row_id() -> egui::Id {
+    egui::Id::new("group-description-copy-row")
 }
 
 /// The group name being typed. Returns `Some(true)` when Enter or the check
