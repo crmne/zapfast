@@ -3205,10 +3205,8 @@ impl Worker {
     /// or the chat id for a group, then the day the message was sent.
     fn media_folder(&self, chat: &str) -> PathBuf {
         let chat = self.canonical_str(chat);
-        let folder = crate::model::phone_of(&chat).map_or_else(
-            || sanitize(&chat),
-            |digits| format!("+{digits}"),
-        );
+        let folder = crate::model::phone_of(&chat)
+            .map_or_else(|| sanitize(&chat), |digits| format!("+{digits}"));
         self.dirs.media_cache_dir().join(folder)
     }
 
