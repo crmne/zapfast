@@ -464,6 +464,7 @@ fn inline(line: &str) -> Vec<Span> {
             });
         }
     };
+    let closers = last_closers(&chars);
     let mut i = 0;
     let triple = |at: usize| {
         at + 2 < chars.len() && chars[at] == '`' && chars[at + 1] == '`' && chars[at + 2] == '`'
@@ -517,7 +518,7 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(&chars, i + 1, c) {
+            } else if is_opener(&chars, i) && closers[index].is_some_and(|close| close > i) {
                 flush(&mut run, &mut spans, flags);
                 spans.push(Span::marker(c));
                 flags[index] = true;
@@ -546,8 +547,16 @@ fn is_closer(chars: &[char], i: usize) -> bool {
     before_ok && after_ok
 }
 
-fn has_closer(chars: &[char], from: usize, marker: char) -> bool {
-    (from..chars.len()).any(|j| chars[j] == marker && is_closer(chars, j))
+/// Where `*`, `_` and `~` can last close in the line. An opener pairs only
+/// when one can close after it, so this answers that with one comparison
+/// rather than a scan of the rest of the line per opener, which made a long
+/// line of unclosed markers quadratic.
+fn last_closers(chars: &[char]) -> [Option<usize>; 3] {
+    ['*', '_', '~'].map(|marker| {
+        (0..chars.len())
+            .rev()
+            .find(|&at| chars[at] == marker && is_closer(chars, at))
+    })
 }
 
 /// Splits a plain span around web addresses and mentions.
@@ -1166,6 +1175,46 @@ mod tests {
         assert_eq!(styled("a *b* c"), 5);
         assert_eq!(styled("plain"), 1);
         assert_eq!(styled("a *b* c"), 5);
+    }
+
+    /// For every line of up to six characters from these, an opener finds a
+    /// closer exactly where a scan of the rest of the line finds one.
+    #[test]
+    fn closers_match_a_scan_of_the_rest_of_the_line() {
+        let scan = |chars: &[char], from: usize, marker: char| {
+            (from..chars.len()).any(|at| chars[at] == marker && is_closer(chars, at))
+        };
+        let alphabet = ['*', '_', '~', 'a', ' '];
+        for length in 0..=6u32 {
+            for mut code in 0..alphabet.len().pow(length) {
+                let chars: Vec<char> = (0..length)
+                    .map(|_| {
+                        let c = alphabet[code % alphabet.len()];
+                        code /= alphabet.len();
+                        c
+                    })
+                    .collect();
+                let closers = last_closers(&chars);
+                for (index, marker) in ['*', '_', '~'].into_iter().enumerate() {
+                    for at in 0..chars.len() {
+                        assert_eq!(
+                            closers[index].is_some_and(|close| close > at),
+                            scan(&chars, at + 1, marker),
+                            "{chars:?} at {at}, {marker}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A long line of markers that never close stays literal, and parsing it
+    /// takes one pass over the line rather than one per marker.
+    #[test]
+    fn a_long_line_of_unclosed_markers_stays_literal() {
+        let text = "_a ".repeat(20_000);
+        assert_eq!(plain(&text, &[]), text);
+        assert!(draft(&text).iter().all(|span| !span.marker));
     }
 
     #[test]
