@@ -273,11 +273,7 @@ impl Palette {
     /// opaque.
     pub fn rail(&self) -> Color32 {
         let sidebar = self.sidebar();
-        let shade = if self.dark {
-            DARK_RAIL_SHADE
-        } else {
-            RAIL_SHADE
-        };
+        let shade = self.rail_shade();
         let keep = 1.0 - shade;
         let channel = |value: u8| (f32::from(value) * keep).round() as u8;
         Color32::from_rgba_premultiplied(
@@ -286,6 +282,22 @@ impl Palette {
             channel(sidebar.b()),
             (f32::from(sidebar.a()) + (255.0 - f32::from(sidebar.a())) * shade).round() as u8,
         )
+    }
+
+    /// The black the rail lays over the chat list's colour: [`Palette::rail`]
+    /// is [`Palette::sidebar`] with this over it, translucent sidebar or not.
+    /// For a rail painted in the list's colour with its own shade over only
+    /// part of it.
+    pub fn rail_veil(&self) -> Color32 {
+        Color32::from_black_alpha((self.rail_shade() * 255.0).round() as u8)
+    }
+
+    fn rail_shade(&self) -> f32 {
+        if self.dark {
+            DARK_RAIL_SHADE
+        } else {
+            RAIL_SHADE
+        }
     }
 
     /// The conversation's background on a vibrant theme: mostly `color`,
@@ -1594,6 +1606,24 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rail's veil over the chat list's colour is the rail's colour, so
+    /// a rail drawn that way matches one filled with it.
+    #[test]
+    fn the_rail_veil_over_the_sidebar_is_the_rail() {
+        for palette in [
+            Palette::dark(),
+            Palette::light(),
+            Palette::messages(),
+            Palette::messages_light(),
+        ] {
+            let veiled = palette.sidebar().blend(palette.rail_veil());
+            let rail = palette.rail();
+            for (a, b) in veiled.to_array().into_iter().zip(rail.to_array()) {
+                assert!(a.abs_diff(b) <= 1, "{veiled:?} against {rail:?}");
+            }
+        }
+    }
 
     /// Timers count in Inter's tabular figures whatever face draws the
     /// rest, and fall back like the interface text of their weight.

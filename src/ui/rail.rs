@@ -34,9 +34,18 @@ const GAP: f32 = 8.0;
 const MIN_AVATARS: f32 = 64.0;
 /// Width of the line between the destinations and the chats' avatars.
 const DIVIDER: f32 = 24.0;
-/// How far below the window's top the macOS traffic lights end, centred as
-/// they are in the 60-point title bar, with a little room under them.
-const LIGHTS_CLEARANCE: f32 = theme::TOP_BAR_HEIGHT / 2.0 + 12.0;
+/// Room around a destination's plate inside the rail's shade: what the
+/// rail leaves at the plate's sides, and, where the shade starts under the
+/// window buttons, above the first one too.
+const CAP_INSET: f32 = (WIDTH - PLATE) / 2.0;
+/// Rounding of the shade's top corner beside the chat list: concentric with
+/// the lit plate under it, whose corners are `theme::RADIUS + 2`
+/// (`widgets::highlight_card`), `CAP_INSET` away.
+const CAP_CORNER: u8 = theme::RADIUS + 2 + CAP_INSET as u8;
+/// Where the first destination's cell starts under the window buttons:
+/// below the bar the buttons are centred in, as tall as the headers, with
+/// its plate `CAP_INSET` under that, list shown or hidden.
+const FIRST_CELL: f32 = theme::TOP_BAR_HEIGHT + CAP_INSET - (CELL - PLATE) / 2.0;
 
 /// Where the rail was laid out, for layout tests.
 pub(crate) fn rect_id() -> egui::Id {
@@ -156,14 +165,27 @@ impl Destination {
 /// offers to show it again and stands beside the conversation.
 pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
     let palette = app.palette;
+    // Beside the chat list, the window buttons at the rail's top reach past
+    // it over the list's header. That top then takes the list's colour, so
+    // the buttons sit on the header's surface rather than across the line
+    // between the two shades, and the rail's own shade starts under them.
+    let capped = !hidden
+        && !super::macos_title_strip(app, ui.ctx())
+        && theme::traffic_light_inset(ui.ctx()) > 0.0;
+    let fill = if capped {
+        palette.sidebar()
+    } else {
+        palette.rail()
+    };
     // Its own panel id: sharing the list's would hand that resizable panel
     // this narrow width, and it would save it as the list's width.
     let panel = egui::Panel::left("chat-rail")
         .resizable(false)
         .exact_size(WIDTH)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin::ZERO));
+        .frame(Frame::new().fill(fill).inner_margin(Margin::ZERO));
     let response = panel.show(ui, |ui| {
+        let whole = ui.max_rect();
         // The avatars keep the spacing they always had; the rest is tight.
         let row_gap = ui.spacing().item_spacing.y;
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -171,15 +193,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         if super::macos_title_strip(app, ui.ctx()) {
             // The lights have a strip of their own above the rail. Its
             // destinations stay where they are beside the list.
-            let below = (LIGHTS_CLEARANCE - super::title_strip_height(ui.ctx())).max(GAP);
+            let below = (FIRST_CELL - super::title_strip_height(ui.ctx())).max(GAP);
             let (strip, _) = ui.allocate_exact_size(vec2(width, below), Sense::hover());
             super::titlebar_drag(ui, strip);
         } else if theme::traffic_light_inset(ui.ctx()) > 0.0 {
             // The traffic lights, or the caption buttons ZapFast draws where
             // the desktop puts them on the left (GNOME's round ones end 42
-            // points down), take the rail's top; it starts under them.
-            let (strip, _) = ui.allocate_exact_size(vec2(width, LIGHTS_CLEARANCE), Sense::hover());
+            // points down), take the rail's top: the whole bar they are
+            // centred in, as much room under them as over them, ending
+            // where the conversation's header does.
+            let (strip, _) =
+                ui.allocate_exact_size(vec2(width, theme::TOP_BAR_HEIGHT), Sense::hover());
             super::titlebar_drag(ui, strip);
+            if capped {
+                // The rail's shade over the list's colour is the rail's own
+                // colour, translucent sidebar or not. Rounded where it meets
+                // the header, it reads as a tab under the buttons.
+                let shade = Rect::from_min_max(egui::pos2(whole.left(), strip.bottom()), whole.max);
+                ui.painter().rect_filled(
+                    shade,
+                    egui::CornerRadius {
+                        ne: CAP_CORNER,
+                        ..Default::default()
+                    },
+                    palette.rail_veil(),
+                );
+            }
+            // The first plate as far from the shade's top as from its sides.
+            ui.add_space(FIRST_CELL - strip.height());
         } else {
             ui.add_space(GAP);
         }
