@@ -1526,6 +1526,56 @@ fn person_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Size of the community mark before a chat row's name.
+const COMMUNITY_MARK: f32 = 15.0;
+
+/// The mark a community chat wears in the list, and what hovering it says:
+/// the community itself, its announcement group (which WhatsApp names after
+/// the community, so the two read alike), or a group linked to it, named
+/// when the community is among the account's chats.
+pub fn community_mark(app: &App, chat: &Chat) -> Option<(Icon, String)> {
+    use crate::model::Community;
+    let community = chat.community.as_ref()?;
+    let parent = community
+        .id(&chat.id)
+        .and_then(|id| app.chat(id))
+        .map(|parent| app.chat_title(parent))
+        .filter(|name| !name.trim().is_empty());
+    let named = |text: std::borrow::Cow<'static, str>| {
+        text.replace("{community}", parent.as_deref().unwrap_or_default())
+    };
+    let locale = app.locale;
+    Some(match community {
+        Community::None => return None,
+        Community::Parent => (
+            Icon::Community,
+            crate::i18n::gettext(locale, "Community").into_owned(),
+        ),
+        Community::Announcements(_) => (
+            Icon::Megaphone,
+            if parent.is_some() {
+                named(crate::i18n::gettext(
+                    locale,
+                    "Announcements of the {community} community",
+                ))
+            } else {
+                crate::i18n::gettext(locale, "Community announcements").into_owned()
+            },
+        ),
+        Community::Group(_) => (
+            Icon::Community,
+            if parent.is_some() {
+                named(crate::i18n::gettext(
+                    locale,
+                    "Group in the {community} community",
+                ))
+            } else {
+                crate::i18n::gettext(locale, "Group in a community").into_owned()
+            },
+        ),
+    })
+}
+
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -1597,14 +1647,25 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             stamp_galley.clone(),
             stamp_color,
         );
-        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        // A community, or a group in one, wears its mark before the name,
+        // which names the community on hover.
+        let mut name_left = left;
+        if let Some((icon, label)) = community_mark(app, chat) {
+            let icon_rect =
+                Rect::from_min_size(pos2(left, name_top + 2.0), Vec2::splat(COMMUNITY_MARK));
+            theme::paint_icon(ui, icon, icon_rect, COMMUNITY_MARK, palette.dim);
+            ui.interact(icon_rect, response.id.with("community"), Sense::hover())
+                .on_hover_text(label);
+            name_left += COMMUNITY_MARK + 5.0;
+        }
+        let name_width = (right - stamp_galley.size().x - 8.0 - name_left).max(0.0);
         let name_font = if unread {
             theme::semibold(14.5)
         } else {
             theme::medium(14.5)
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
-        name.paint(ui, pos2(left, name_top), palette.text);
+        name.paint(ui, pos2(name_left, name_top), palette.text);
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;

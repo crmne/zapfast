@@ -315,6 +315,14 @@ or clearing it keeps its draft priority until you leave again. Within each
 group, chats keep their usual latest-message order. The Favorites chip keeps
 the phone's favorites order below pins.
 
+Groups that belong to a WhatsApp community carry a small mark before their
+name in the chat list: a megaphone on the community's announcement group,
+which WhatsApp names after the community, and a community sign on the
+community itself and its other groups. Hovering the mark names the community
+when it is among your chats. Groups already in your list are checked once
+after updating, a couple at a time, so the marks can take a few minutes to
+appear.
+
 While a file or pasted picture goes out, a strip above the composer names it
 and shows how much has been sent and, after the first second, about how long
 the rest takes; it leaves when the file has gone, or if the send fails. Its

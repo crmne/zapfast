@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{
-    Chat, ChatKind, Contact, Content, Delivery, GroupSettings, LastMessage, MediaItem, Message,
+    Chat, ChatKind, Community, Contact, Content, Delivery, GroupSettings, LastMessage, MediaItem,
+    Message,
 };
 
 mod broadcast_lists;
@@ -182,7 +183,7 @@ const CHAT_COLUMNS: &str =
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
                     c.info_locked, c.group_admin, c.group_description, c.voice_speed,
-                    c.group_settings";
+                    c.group_settings, c.community";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -230,6 +231,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "voice_speed", "REAL"),
     // A group's permissions and admins as JSON; NULL until its metadata says.
     ("chats", "group_settings", "TEXT"),
+    // Where a group sits in a community, as JSON; NULL until its metadata says.
+    ("chats", "community", "TEXT"),
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
@@ -342,6 +345,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         group_settings: row
             .get::<_, Option<String>>(27)?
             .and_then(|settings| serde_json::from_str(&settings).ok()),
+        community: row
+            .get::<_, Option<String>>(28)?
+            .and_then(|community| serde_json::from_str(&community).ok()),
     })
 }
 
@@ -608,6 +614,18 @@ impl Archive {
             params![
                 id,
                 serde_json::to_string(settings).unwrap_or_else(|_| "{}".into())
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records where a group sits in a community, as its metadata says.
+    pub fn set_community(&self, id: &str, community: &Community) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET community = ?2 WHERE id = ?1",
+            params![
+                id,
+                serde_json::to_string(community).unwrap_or_else(|_| "null".into())
             ],
         )?;
         Ok(())
@@ -4120,6 +4138,34 @@ pub(crate) mod tests {
             .set_group_info(id, Some("Rust"), &["1@s.whatsapp.net".into()], false)
             .unwrap();
         assert_eq!(archive.chat(id).unwrap().unwrap().info_locked, Some(true));
+    }
+
+    /// An archive from before communities were read migrates every group as
+    /// unknown, and a group's place persists once its metadata says.
+    #[test]
+    fn community_migrates_as_unknown_and_persists() {
+        let connection = Connection::open_in_memory().expect("opens");
+        connection.execute_batch(SCHEMA).expect("the older schema");
+        connection
+            .execute_batch(
+                "INSERT INTO chats (id, name, kind) VALUES ('1-2@g.us', 'Rust', 'group');",
+            )
+            .expect("row");
+        let archive = Archive::prepare(connection).expect("the migration adds the column");
+        let id = "1-2@g.us";
+        assert_eq!(archive.chat(id).unwrap().unwrap().community, None);
+        for community in [
+            Community::None,
+            Community::Parent,
+            Community::Announcements("3-4@g.us".into()),
+            Community::Group("3-4@g.us".into()),
+        ] {
+            archive.set_community(id, &community).unwrap();
+            assert_eq!(
+                archive.chat(id).unwrap().unwrap().community,
+                Some(community)
+            );
+        }
     }
 
     /// An archive from before the history-start mark migrates every chat as

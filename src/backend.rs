@@ -1110,6 +1110,8 @@ pub enum Command {
         subject_generation: u64,
         /// The group's permissions and admins.
         settings: crate::model::GroupSettings,
+        /// Where the group sits in a community.
+        community: crate::model::Community,
         /// The chat's management generation when this metadata was asked
         /// for. A snapshot older than a permission or member change made here
         /// cannot undo it.
