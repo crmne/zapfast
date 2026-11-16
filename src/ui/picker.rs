@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use egui::{
     Align, Align2, CornerRadius, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2,
@@ -218,6 +219,26 @@ pub fn first_page(recent: &[String]) -> Vec<&'static str> {
         .collect()
 }
 
+/// An emoji's English search keywords from Unicode CLDR, lower case and
+/// separated by " | ", or nothing for an emoji CLDR does not annotate.
+/// `scripts/update-emoji-keywords.py` regenerates the data.
+fn keywords(emoji: &emojis::Emoji) -> &'static str {
+    static KEYWORDS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+        // The data names each emoji without its presentation selectors.
+        let by_plain: HashMap<&str, &str> = include_str!("../../assets/emoji/keywords-en.tsv")
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .collect();
+        emojis::iter()
+            .filter_map(|emoji| {
+                let plain = crate::sticker_search::plain(emoji.as_str());
+                Some((emoji.as_str(), *by_plain.get(plain.as_str())?))
+            })
+            .collect()
+    });
+    KEYWORDS.get(emoji.as_str()).copied().unwrap_or_default()
+}
+
 fn rows_for(
     query: &str,
     recent: &[String],
@@ -238,15 +259,27 @@ fn rows_for(
         }
     };
     if !query.is_empty() {
-        let found: Vec<&'static str> = emoji::catalogue()
-            .filter(|emoji| {
-                emoji.name().to_lowercase().contains(&query)
-                    || emoji
-                        .shortcodes()
-                        .any(|code| code.to_lowercase().contains(&query))
+        // Every word of the query must be in the name, a shortcode or a
+        // keyword: CLDR lists the words of a phrase as separate keywords.
+        let mut found: Vec<(bool, &'static str)> = emoji::catalogue()
+            .filter_map(|emoji| {
+                let name = emoji.name().to_lowercase();
+                let named = |word: &str| {
+                    name.contains(word)
+                        || emoji
+                            .shortcodes()
+                            .any(|code| code.to_lowercase().contains(word))
+                };
+                let keywords = keywords(emoji);
+                let mut words = query.split_whitespace();
+                let by_name = words.clone().all(named);
+                let found = by_name || words.all(|word| named(word) || keywords.contains(word));
+                found.then_some((by_name, emoji.as_str()))
             })
-            .map(|emoji| emoji.as_str())
             .collect();
+        // Matches by name stay first, in the order they had before keywords.
+        found.sort_by_key(|(by_name, _)| !by_name);
+        let found: Vec<&'static str> = found.into_iter().map(|(_, emoji)| emoji).collect();
         if found.is_empty() {
             rows.push(Row::Header("Nothing matches"));
         } else {
@@ -871,10 +904,8 @@ mod emoji_tests {
         assert_eq!(move_emoji_selection(24, 25, 10, Key::ArrowRight), 24);
     }
 
-    #[test]
-    fn search_finds_emoji_by_name_and_shortcode() {
-        let rows = rows_for("crab", &[], 8, "Recent");
-        let found: Vec<&str> = rows
+    fn found(query: &str) -> Vec<&'static str> {
+        rows_for(query, &[], 8, "Recent")
             .iter()
             .filter_map(|row| match row {
                 Row::Emoji { values, .. } => Some(values.as_slice()),
@@ -882,8 +913,32 @@ mod emoji_tests {
             })
             .flatten()
             .copied()
-            .collect();
-        assert!(found.contains(&"🦀"), "{found:?}");
+            .collect()
+    }
+
+    #[test]
+    fn search_finds_emoji_by_name_and_shortcode() {
+        assert!(found("crab").contains(&"🦀"), "{:?}", found("crab"));
+    }
+
+    #[test]
+    fn search_finds_emoji_by_keyword_after_those_it_names() {
+        // Neither word is in the name or a shortcode of 😂.
+        assert!(found("lol").contains(&"😂"));
+        assert!(found("funny tear").contains(&"😂"));
+        // 🤟 has "love" in its name; 😍, earlier in the list, only as a keyword.
+        let love = found("love");
+        let at = |emoji| love.iter().position(|found| *found == emoji).unwrap();
+        assert!(at("🤟") < at("😍"), "{love:?}");
+        assert!(found("zzzz").is_empty());
+    }
+
+    #[test]
+    fn nearly_every_emoji_has_keywords() {
+        let missing = emoji::catalogue()
+            .filter(|emoji| keywords(emoji).is_empty())
+            .count();
+        assert!(missing < 20, "{missing} emoji without keywords");
     }
 
     #[test]

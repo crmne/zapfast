@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::model::StickerPack;
 
 /// The same emoji with or without its presentation selector compares equal.
-fn plain(emoji: &str) -> String {
+pub(crate) fn plain(emoji: &str) -> String {
     emoji.chars().filter(|c| *c != '\u{fe0f}').collect()
 }
 
