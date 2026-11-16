@@ -566,6 +566,10 @@ fn is_staging(path: &Path) -> bool {
 
 /// Removes incomplete, unreferenced downloads left by an interrupted process.
 fn discard_attachment_staging(dir: &Path) {
+    discard_attachment_staging_below(dir, 0);
+}
+
+fn discard_attachment_staging_below(dir: &Path, depth: u8) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return,
@@ -583,6 +587,10 @@ fn discard_attachment_staging(dir: &Path) {
             && let Err(_) = std::fs::remove_file(entry.path())
         {
             log::warn!("could not remove incomplete attachment");
+        } else if depth < 2
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            discard_attachment_staging_below(&entry.path(), depth + 1);
         }
     }
 }
@@ -2573,12 +2581,14 @@ impl Worker {
     /// The file of this name in the media cache, if the attachment has one.
     fn cached_copy(&self, chat: &str, path: &Path) -> Option<PathBuf> {
         let name = path.file_name()?;
-        let cache = self.dirs.media_cache_dir();
-        let mut candidates = vec![cache.join(name)];
-        if let Ok(days) = std::fs::read_dir(self.media_folder(chat)) {
-            candidates.extend(days.flatten().map(|day| day.path().join(name)));
+        let flat = self.dirs.media_cache_dir().join(name);
+        if flat.exists() {
+            return Some(flat);
         }
-        candidates.into_iter().find(|copy| copy.exists())
+        let days = std::fs::read_dir(self.media_folder(chat)).ok()?;
+        days.flatten()
+            .map(|day| day.path().join(name))
+            .find(|copy| copy.exists())
     }
 
     /// Mends one attachment the reader failed to open, as `relocate_media`
@@ -15635,6 +15645,29 @@ mod tests {
             b"complete attachment"
         );
         std::fs::remove_dir_all(&directory).expect("removes staging directory");
+    }
+
+    #[test]
+    fn cached_media_lookup_finds_both_layouts() {
+        let (worker, _events, _, _) = receipt_tests::worker();
+        let chat = "200@s.whatsapp.net";
+        let cache = worker.dirs.media_cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let flat = cache.join("photo.jpg");
+        std::fs::write(&flat, b"flat").unwrap();
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/photo.jpg")),
+            Some(flat.clone())
+        );
+        std::fs::remove_file(&flat).unwrap();
+        let day = worker.media_folder(chat).join("2026-11-16");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join("photo.jpg"), b"nested").unwrap();
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/photo.jpg")),
+            Some(day.join("photo.jpg"))
+        );
+        assert_eq!(worker.cached_copy(chat, Path::new("somewhere/missing.jpg")), None);
     }
 
     #[test]
