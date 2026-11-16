@@ -1195,7 +1195,7 @@ mod tests {
         // again: the removal barrier outlives the notice's own id.
         worker
             .archive
-            .remove_chat_through(PEER, 300, false)
+            .remove_chat_through(PEER, 300, false, 0)
             .unwrap();
         worker.ingest(&raw, &info);
         assert!(
@@ -1306,7 +1306,7 @@ mod tests {
         // The chat was cleared through 300: anything at or before then is gone.
         worker
             .archive
-            .remove_chat_through(chat, 300, false)
+            .remove_chat_through(chat, 300, false, 0)
             .unwrap();
         let update = wa_events::GroupUpdate::builder()
             .group_jid(chat.parse().unwrap())
@@ -1345,7 +1345,7 @@ mod tests {
         // Cleared through 200, then the phone's Off at 150 finally arrives.
         worker
             .archive
-            .remove_chat_through(group, 200, false)
+            .remove_chat_through(group, 200, false, 0)
             .unwrap();
         let update = wa_events::GroupUpdate::builder()
             .group_jid(group.parse().unwrap())
@@ -1388,7 +1388,7 @@ mod tests {
         worker.archive.ensure_chat(group, "Weekend plans").unwrap();
         worker
             .archive
-            .remove_chat_through(group, 300, true)
+            .remove_chat_through(group, 300, true, 0)
             .unwrap();
         let update = wa_events::GroupUpdate::builder()
             .group_jid(group.parse().unwrap())

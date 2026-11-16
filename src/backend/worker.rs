@@ -2137,7 +2137,7 @@ impl Worker {
     }
 
     /// Deletes a chat and stops everything that could still bring it back.
-    fn remove_chat(&mut self, chat: &str, through: i64, delete_media: bool) {
+    fn remove_chat(&mut self, chat: &str, through: i64, delete_media: bool, at: i64) {
         // A group we left would otherwise keep being asked for metadata and
         // log a 403 or 404 for every attempt.
         self.group_info_queue.retain(|id| id != chat);
@@ -2145,7 +2145,7 @@ impl Worker {
         self.group_info_requested.remove(chat);
         self.group_info_tries.remove(chat);
         self.cancel_chat_export_for(chat);
-        match self.archive.remove_chat_through(chat, through, true) {
+        match self.archive.remove_chat_through(chat, through, true, at) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
                 self.late_older.retain(|late| late.chat != chat);
@@ -2182,9 +2182,9 @@ impl Worker {
 
     /// Empties a chat while keeping it listed.
     /// Empties a chat through `through`; false when the archive could not.
-    fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
+    fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool, at: i64) -> bool {
         self.cancel_chat_export_for(chat);
-        match self.archive.remove_chat_through(chat, through, false) {
+        match self.archive.remove_chat_through(chat, through, false, at) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
                 self.late_older.retain(|late| late.chat != chat);
@@ -2216,6 +2216,30 @@ impl Worker {
             .ok()
             .flatten()
             .is_some_and(|through| timestamp <= through)
+    }
+
+    /// Whether a chat was deleted and nothing newer, a message or a clear, has
+    /// brought it back. The phone's app state keeps a deleted chat's archive,
+    /// pin, mute, lock and read settings, and a newly linked device receives
+    /// them after the deletion; they must not file the chat again. They wait
+    /// in the archive until a newer message or call files it, the read state
+    /// only when it covers a message newer than the deletion.
+    fn removed_outright(&self, chat: &str) -> bool {
+        matches!(self.archive.deleted(chat), Ok(true))
+            && matches!(self.archive.chat(chat), Ok(None))
+    }
+
+    /// When a deletion or clear the phone confirmed for us was made, in
+    /// milliseconds. The phone removes whatever the clocks say, so it is never
+    /// older than a removal already stored, which a phone whose clock runs
+    /// ahead can date after now.
+    fn removal_made_here(&self, chat: &str) -> i64 {
+        self.archive
+            .removed_at(chat)
+            .ok()
+            .flatten()
+            .map_or(i64::MIN, |made| made.saturating_add(1))
+            .max(jiff::Timestamp::now().as_millisecond())
     }
 
     /// Blocks a deleted message's replay, failing closed if the barrier cannot be read.
@@ -2290,15 +2314,18 @@ impl Worker {
 
     fn emit_chat(&self, id: &str) {
         match self.archive.chat(id) {
-            Ok(Some(mut chat)) => {
-                if chat.locked {
-                    self.cancel_chat_export_for(id);
-                }
-                self.polish_chat(&mut chat);
-                self.emit(Event::ChatUpdated(Box::new(chat)));
-            }
+            Ok(Some(chat)) => self.emit_listed_chat(chat),
             _ => self.cancel_chat_export_for(id),
         }
+    }
+
+    /// Sends the window a chat row already read from the archive.
+    fn emit_listed_chat(&self, mut chat: Chat) {
+        if chat.locked {
+            self.cancel_chat_export_for(&chat.id);
+        }
+        self.polish_chat(&mut chat);
+        self.emit(Event::ChatUpdated(Box::new(chat)));
     }
 
     /// Hands the chat's viewer album to the interface, centred on `around`
@@ -4285,7 +4312,12 @@ impl Worker {
                         .touch_activity(&chat, update.timestamp.timestamp());
                     self.emit_chat(&chat);
                 }
-                if let GroupNotificationAction::Description { description, .. } = &*update.action {
+                // A description set before the group was deleted is not new
+                // activity, so it does not file the group again.
+                if let GroupNotificationAction::Description { description, .. } = &*update.action
+                    && (self.archive.chat(&chat).ok().flatten().is_some()
+                        || !self.predates_removal(&chat, update.timestamp.timestamp()))
+                {
                     *self.description_generation.entry(chat.clone()).or_default() += 1;
                     self.ensure_chat(&chat, None);
                     if self
@@ -4387,23 +4419,27 @@ impl Worker {
             }
             E::ArchiveUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let archived = update.action.archived.unwrap_or(false);
+                let at = update.timestamp.timestamp_millis();
+                if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_archived_at(&chat, archived, at);
+                    return;
+                }
                 // The update can arrive before history creates the chat.
                 self.ensure_chat(&chat, None);
-                let _ = self.archive.set_archived_at(
-                    &chat,
-                    update.action.archived.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
-                );
+                let _ = self.archive.set_archived_at(&chat, archived, at);
                 self.emit_chat(&chat);
             }
             E::PinUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let pinned = update.action.pinned.unwrap_or(false);
+                let at = update.timestamp.timestamp_millis();
+                if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_pinned_at(&chat, pinned, at);
+                    return;
+                }
                 self.ensure_chat(&chat, None);
-                let _ = self.archive.set_pinned_at(
-                    &chat,
-                    update.action.pinned.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
-                );
+                let _ = self.archive.set_pinned_at(&chat, pinned, at);
                 self.emit_chat(&chat);
             }
             E::MuteUpdate(update) => {
@@ -4414,15 +4450,18 @@ impl Worker {
                 if chat.ends_with("@newsletter") && matches!(self.archive.chat(&chat), Ok(None)) {
                     return;
                 }
-                self.ensure_chat(&chat, None);
                 let until = if update.action.muted.unwrap_or(false) {
                     Some(seconds(update.action.mute_end_timestamp.unwrap_or(0)))
                 } else {
                     None
                 };
-                let _ =
-                    self.archive
-                        .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
+                let at = update.timestamp.timestamp_millis();
+                if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_muted_at(&chat, until, at);
+                    return;
+                }
+                self.ensure_chat(&chat, None);
+                let _ = self.archive.set_muted_at(&chat, until, at);
                 self.emit_chat(&chat);
             }
             E::RemoveRecentStickerUpdate(update) => self.recent_sticker_removed(update),
@@ -4431,11 +4470,14 @@ impl Worker {
             E::StarUpdate(update) => self.star_update(update),
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
-                self.ensure_chat(&chat, None);
                 let locked = update.action.locked.unwrap_or(false);
-                let _ =
-                    self.archive
-                        .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());
+                let at = update.timestamp.timestamp_millis();
+                if self.removed_outright(&chat) {
+                    let _ = self.archive.retain_locked_at(&chat, locked, at);
+                    return;
+                }
+                self.ensure_chat(&chat, None);
+                let _ = self.archive.set_locked_at(&chat, locked, at);
                 self.emit_chat(&chat);
             }
             E::DeleteChatUpdate(update) => {
@@ -4449,7 +4491,12 @@ impl Worker {
                         .and_then(|range| range.last_message_timestamp),
                     update.timestamp.timestamp(),
                 );
-                self.remove_chat(&chat, through, update.delete_media);
+                self.remove_chat(
+                    &chat,
+                    through,
+                    update.delete_media,
+                    update.timestamp.timestamp_millis(),
+                );
             }
             E::ClearChatUpdate(update) => {
                 log::info!("chat removal: received clear update");
@@ -4462,7 +4509,12 @@ impl Worker {
                         .and_then(|range| range.last_message_timestamp),
                     update.timestamp.timestamp(),
                 );
-                let _ = self.empty_chat(&chat, through, update.delete_media);
+                let _ = self.empty_chat(
+                    &chat,
+                    through,
+                    update.delete_media,
+                    update.timestamp.timestamp_millis(),
+                );
             }
             E::DeleteMessageForMeUpdate(update) => {
                 self.canonical_sync_chat(&update.chat_jid).await;
@@ -4479,13 +4531,20 @@ impl Worker {
             }
             E::MarkChatAsReadUpdate(update) => {
                 let chat = self.canonical(&update.jid);
+                let read = update.action.read.unwrap_or(true);
+                let through = update
+                    .action
+                    .message_range
+                    .as_option()
+                    .and_then(|range| range.last_message_timestamp);
+                if self.removed_outright(&chat) {
+                    if read && let Some(through) = through {
+                        let _ = self.archive.retain_read_through(&chat, seconds(through));
+                    }
+                    return;
+                }
                 self.ensure_chat(&chat, None);
-                if update.action.read.unwrap_or(true) {
-                    let through = update
-                        .action
-                        .message_range
-                        .as_option()
-                        .and_then(|range| range.last_message_timestamp);
+                if read {
                     if let Some(through) = through {
                         let _ = self.archive.mark_read_through(&chat, seconds(through));
                     } else {
@@ -5123,6 +5182,8 @@ impl Worker {
             }
             _ => chat,
         };
+        // A message older than its chat's deletion, or deleted for me, is not
+        // filed, so its timer does not file the chat either.
         if let Some(expiration) = base.get_ephemeral_expiration()
             && list.is_none()
             && self
@@ -5131,6 +5192,9 @@ impl Worker {
                 .ok()
                 .flatten()
                 .is_none()
+            && (self.archive.chat(&chat).ok().flatten().is_some()
+                || !(self.predates_removal(&chat, info.timestamp.timestamp())
+                    || self.message_was_removed(&chat, &info.id)))
         {
             self.ensure_chat(&chat, push_name.as_deref());
             let _ = self.archive.set_ephemeral(&chat, expiration, 0);
@@ -6297,8 +6361,12 @@ impl Worker {
             let existing = self.archive.chat(&id).ok().flatten();
             if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
                 chat.messages.retain(|message| message.timestamp > through);
-                // Nothing newer than the deletion: leave the chat deleted.
-                if existing.is_none() && chat.messages.is_empty() {
+                // Nothing newer than the deletion: leave the chat deleted. A
+                // cleared chat stays listed on the phone.
+                if existing.is_none()
+                    && chat.messages.is_empty()
+                    && !matches!(self.archive.deleted(&id), Ok(false))
+                {
                     continue;
                 }
             }
@@ -8574,7 +8642,8 @@ impl Worker {
                 through,
             } => {
                 if deleted {
-                    self.remove_chat(&chat, through, true);
+                    let at = self.removal_made_here(&chat);
+                    self.remove_chat(&chat, through, true, at);
                 } else {
                     log::warn!("the phone did not delete a chat");
                     self.emit(Event::Error(
@@ -8630,7 +8699,8 @@ impl Worker {
                 through,
             } => {
                 if cleared {
-                    if !self.empty_chat(&chat, through, true) {
+                    let at = self.removal_made_here(&chat);
+                    if !self.empty_chat(&chat, through, true, at) {
                         // The phone has cleared it; say so rather than leave
                         // the messages here looking as if nothing happened.
                         self.emit(Event::Error(
@@ -9808,10 +9878,16 @@ impl Worker {
     }
 
     /// A locked chat accepts messages written in it, but never a forward:
-    /// the picker does not list it, so one aimed there was locked meanwhile.
+    /// the picker does not list it, so one aimed there was locked meanwhile,
+    /// or deleted with a lock the phone keeps, which the forward's copy would
+    /// file again.
     fn forward_writable(&self, chat: &str) -> bool {
         self.destination_writable(chat)
-            && !matches!(self.archive.chat(chat), Ok(Some(chat)) if chat.locked)
+            && match self.archive.chat(chat) {
+                Ok(Some(chat)) => !chat.locked,
+                Ok(None) => matches!(self.archive.kept_lock(chat), Ok(false)),
+                Err(_) => false,
+            }
     }
 
     /// Skips destinations that became unwritable while waiting, marking their
@@ -18957,7 +19033,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(deleted, "Deleted").unwrap();
         worker
             .archive
-            .remove_chat_through(deleted, 200, true)
+            .remove_chat_through(deleted, 200, true, 0)
             .unwrap();
         assert!(worker.archive.chat(deleted).unwrap().is_none());
         worker.handle_wa_event(Arc::new(notice(deleted, 150))).await;
@@ -18975,6 +19051,60 @@ mod receipt_tests {
             500,
             "an older notice never moves activity back"
         );
+    }
+
+    /// A description notice older than a group's deletion leaves the group
+    /// deleted, and a newer one files it again. A group cleared but still
+    /// listed takes an older one.
+    #[tokio::test]
+    async fn group_description_notice_respects_removal() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let notice = |group: &str, at: i64| {
+            wa_events::Event::GroupUpdate(
+                wa_events::GroupUpdate::builder()
+                    .group_jid(group.parse().unwrap())
+                    .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                    .is_lid_addressing_mode(false)
+                    .action(Box::new(
+                        GroupNotificationAction::description()
+                            .id(format!("description-{at}"))
+                            .maybe_description(Some(format!("Set at {at}")))
+                            .build(),
+                    ))
+                    .build(),
+            )
+        };
+        let description = |worker: &Worker, group: &str| {
+            worker
+                .archive
+                .chat(group)
+                .unwrap()
+                .and_then(|chat| chat.group_description)
+        };
+        let (mut worker, _events, _inbox, _wa) = worker();
+
+        let deleted = "123-111@g.us";
+        worker.archive.ensure_chat(deleted, "Deleted").unwrap();
+        worker
+            .archive
+            .remove_chat_through(deleted, 200, true, 0)
+            .unwrap();
+        worker.handle_wa_event(Arc::new(notice(deleted, 150))).await;
+        assert!(
+            worker.archive.chat(deleted).unwrap().is_none(),
+            "a notice older than the deletion does not refile the group"
+        );
+        worker.handle_wa_event(Arc::new(notice(deleted, 250))).await;
+        assert_eq!(description(&worker, deleted).as_deref(), Some("Set at 250"));
+
+        let cleared = "123-222@g.us";
+        worker.archive.ensure_chat(cleared, "Cleared").unwrap();
+        worker
+            .archive
+            .remove_chat_through(cleared, 200, false, 0)
+            .unwrap();
+        worker.handle_wa_event(Arc::new(notice(cleared, 150))).await;
+        assert_eq!(description(&worker, cleared).as_deref(), Some("Set at 150"));
     }
 
     #[test]
@@ -21758,7 +21888,7 @@ mod receipt_tests {
         assert_eq!(changes(&events), [PEER], "a deleted document");
         worker.delete_message_here(PEER, "plain");
         assert!(changes(&events).is_empty(), "a deleted plain text");
-        assert!(worker.empty_chat(PEER, i64::MAX, false));
+        assert!(worker.empty_chat(PEER, i64::MAX, false, 0));
         assert_eq!(changes(&events), [PEER], "a cleared chat");
     }
 
@@ -25171,7 +25301,10 @@ mod receipt_tests {
             .insert_message(&received_from(LIST, "m", 100, PEER), None)
             .unwrap();
         worker.archive.bump_unread(LIST).unwrap();
-        worker.archive.remove_chat_through(PEER, 500, true).unwrap();
+        worker
+            .archive
+            .remove_chat_through(PEER, 500, true, 0)
+            .unwrap();
         worker.adopt_broadcast_lists();
         let chat = worker.archive.chat(PEER).unwrap();
         assert!(
@@ -25225,7 +25358,10 @@ mod receipt_tests {
     fn what_the_list_chat_removed_does_not_come_back_in_the_senders_chat() {
         let (mut worker, _e, _i, _w) = worker();
         worker.archive.ensure_chat(LIST, "1234567890").unwrap();
-        worker.archive.remove_chat_through(LIST, 150, true).unwrap();
+        worker
+            .archive
+            .remove_chat_through(LIST, 150, true, 0)
+            .unwrap();
         worker
             .archive
             .confirm_message_removal(ME, &[LIST.to_owned()], "deleted")
@@ -25391,7 +25527,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(LIST, "1234567890").unwrap();
         worker
             .archive
-            .remove_chat_through(LIST, 1000, true)
+            .remove_chat_through(LIST, 1000, true, 0)
             .unwrap();
         worker.ingest(
             &Arc::new(wa::Message::text("Hello fixture")),
@@ -25409,7 +25545,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(LIST, "1234567890").unwrap();
         worker
             .archive
-            .remove_chat_through(LIST, 150, false)
+            .remove_chat_through(LIST, 150, false, 0)
             .unwrap();
         worker.ingest(
             &Arc::new(wa::Message::text("Hello fixture")),
@@ -25433,7 +25569,7 @@ mod receipt_tests {
         worker.archive.ensure_chat(PEER, "Peer").unwrap();
         worker
             .archive
-            .remove_chat_through(PEER, 150, false)
+            .remove_chat_through(PEER, 150, false, 0)
             .unwrap();
         worker.adopt_broadcast_lists();
         assert!(worker.archive.message(LIST, "old").unwrap().is_some());
@@ -25894,7 +26030,7 @@ mod chat_removal_tests {
         worker.apply_history(history(CHAT, &[100, 200]), true);
         assert!(worker.archive.chat(CHAT).expect("chat").is_some());
 
-        worker.remove_chat(CHAT, 200, false);
+        worker.remove_chat(CHAT, 200, false, 0);
         // A phone-history page requested before the deletion lands afterwards.
         worker.apply_history(history(CHAT, &[50, 150, 200]), false);
         assert!(worker.archive.chat(CHAT).expect("chat").is_none());
@@ -25909,7 +26045,7 @@ mod chat_removal_tests {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         worker.apply_history(history(CHAT, &[100, 200]), true);
 
-        assert!(worker.empty_chat(CHAT, 200, false));
+        assert!(worker.empty_chat(CHAT, 200, false, 0));
         worker.apply_history(history(CHAT, &[150]), false);
         assert!(worker.archive.chat(CHAT).expect("chat").is_some());
         assert!(stored(&worker, CHAT).is_empty());
@@ -26235,10 +26371,10 @@ mod chat_removal_tests {
                 .collect()
         };
         changes(&events);
-        worker.remove_chat(CHAT, 200, false);
+        worker.remove_chat(CHAT, 200, false, 0);
         assert_eq!(stored(&worker, CHAT), ["text"], "the newer text survives");
         assert_eq!(changes(&events), [CHAT], "the deleted picture is reported");
-        worker.remove_chat(CHAT, i64::MAX, false);
+        worker.remove_chat(CHAT, i64::MAX, false, 0);
         assert!(worker.archive.chat(CHAT).expect("chat").is_none());
         assert!(
             events
@@ -26252,7 +26388,7 @@ mod chat_removal_tests {
     fn a_live_message_older_than_the_deletion_is_dropped() {
         let (mut worker, _events, _, _) = receipt_tests::worker();
         worker.archive.ensure_chat(CHAT, "Somebody").expect("chat");
-        worker.remove_chat(CHAT, 200, false);
+        worker.remove_chat(CHAT, 200, false, 0);
 
         let late = crate::archive::tests::message(CHAT, "late", 150, false);
         worker.store_message(late, None, None);
@@ -26271,7 +26407,7 @@ mod chat_removal_tests {
         worker.request_group_info(group, false);
         assert_eq!(worker.group_info_queue.len(), 1);
 
-        worker.remove_chat(group, 100, false);
+        worker.remove_chat(group, 100, false, 0);
         assert!(worker.group_info_queue.is_empty());
         assert!(!worker.group_info_requested.contains(group));
 
@@ -26284,6 +26420,681 @@ mod chat_removal_tests {
         worker.pump_group_info();
         assert!(worker.group_info_queue.is_empty());
         assert!(worker.group_info_retry.is_empty());
+    }
+
+    /// The phone's deletion of a chat, through `through`, as app state sends it.
+    async fn phone_deletes(worker: &mut Worker, chat: &str, through: i64) {
+        phone_deletes_at(worker, chat, through, 300).await;
+    }
+
+    /// The phone's deletion of a chat through `through`, made at `at`.
+    async fn phone_deletes_at(worker: &mut Worker, chat: &str, through: i64, at: u64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::DeleteChatUpdate(
+                wa_events::DeleteChatUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .delete_media(false)
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(at)).into())
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::DeleteChatAction::default();
+                        proto.message_range = Some({
+                            let mut proto =
+                                wa::sync_action_value::SyncActionMessageRange::default();
+                            proto.last_message_timestamp = Some(through);
+                            proto
+                        })
+                        .into();
+                        proto
+                    }))
+                    .from_full_sync(true)
+                    .build(),
+            )))
+            .await;
+    }
+
+    /// The phone's clear of a chat, made at `at`, as app state sends it:
+    /// through `through`, or without a message range.
+    async fn phone_clears(worker: &mut Worker, chat: &str, through: Option<i64>, at: u64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::ClearChatUpdate(
+                wa_events::ClearChatUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .delete_starred(false)
+                    .delete_media(false)
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(at)).into())
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::ClearChatAction::default();
+                        proto.message_range = through
+                            .map(|through| {
+                                let mut proto =
+                                    wa::sync_action_value::SyncActionMessageRange::default();
+                                proto.last_message_timestamp = Some(through);
+                                proto
+                            })
+                            .into();
+                        proto
+                    }))
+                    .from_full_sync(true)
+                    .build(),
+            )))
+            .await;
+    }
+
+    /// The phone's read of a chat through `through`, as app state sends it.
+    async fn phone_reads(worker: &mut Worker, chat: &str, through: i64) {
+        worker
+            .handle_wa_event(Arc::new(wa_events::Event::MarkChatAsReadUpdate(
+                wa_events::MarkChatAsReadUpdate::builder()
+                    .jid(chat.parse().unwrap())
+                    .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(400)).into())
+                    .from_full_sync(false)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
+                        proto.read = Some(true);
+                        proto.message_range =
+                            Some(whatsapp_rust::message_range(through, None, Vec::new())).into();
+                        proto
+                    }))
+                    .build(),
+            )))
+            .await;
+    }
+
+    /// A chat's archive, pin, mute, lock and read settings, made at `at`, as
+    /// the phone's app state hands them to a device it links.
+    fn phone_settings(chat: &str, at: u64) -> Vec<wa_events::Event> {
+        let jid: Jid = chat.parse().unwrap();
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(at);
+        vec![
+            wa_events::Event::MuteUpdate(
+                wa_events::MuteUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MuteAction::default();
+                        proto.muted = Some(true);
+                        proto.mute_end_timestamp = Some(-1);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::ArchiveUpdate(
+                wa_events::ArchiveUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::ArchiveChatAction::default();
+                        proto.archived = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::PinUpdate(
+                wa_events::PinUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::PinAction::default();
+                        proto.pinned = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::LockChatUpdate(
+                wa_events::LockChatUpdate::builder()
+                    .jid(jid.clone())
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::LockChatAction::default();
+                        proto.locked = Some(true);
+                        proto
+                    }))
+                    .build(),
+            ),
+            wa_events::Event::MarkChatAsReadUpdate(
+                wa_events::MarkChatAsReadUpdate::builder()
+                    .jid(jid)
+                    .timestamp(at.into())
+                    .from_full_sync(true)
+                    .action(Box::new({
+                        let mut proto = wa::sync_action_value::MarkChatAsReadAction::default();
+                        proto.read = Some(false);
+                        proto
+                    }))
+                    .build(),
+            ),
+        ]
+    }
+
+    /// A newly linked device receives the phone's deletions before the
+    /// settings it still keeps for the deleted chats (`regular_high` syncs
+    /// before `regular_low`), whether or not history filed the chat first.
+    #[tokio::test]
+    async fn settings_the_phone_kept_do_not_bring_back_a_deleted_chat() {
+        for chat in [CHAT, "120363000000000001@g.us"] {
+            for filed_first in [true, false] {
+                let (mut worker, _events, _, _) = receipt_tests::worker();
+                if filed_first {
+                    worker.apply_history(history(chat, &[100, 200]), true);
+                }
+                phone_deletes(&mut worker, chat, 200).await;
+                for event in phone_settings(chat, 250) {
+                    let kind = event.kind();
+                    worker.handle_wa_event(Arc::new(event)).await;
+                    assert!(
+                        worker.archive.chat(chat).unwrap().is_none(),
+                        "{kind:?} brought back {chat}, filed first: {filed_first}"
+                    );
+                }
+                worker.apply_history(history(chat, &[100, 200]), false);
+                assert!(worker.archive.chat(chat).unwrap().is_none());
+                assert!(worker.group_info_queue.is_empty());
+            }
+        }
+    }
+
+    /// A chat cleared rather than deleted, or back with a newer message, is
+    /// still there to take them.
+    #[tokio::test]
+    async fn a_chat_still_listed_after_a_removal_takes_the_phones_settings() {
+        for cleared in [true, false] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            worker.apply_history(history(CHAT, &[100, 200]), true);
+            if cleared {
+                assert!(worker.empty_chat(CHAT, 200, false, 0));
+            } else {
+                phone_deletes(&mut worker, CHAT, 200).await;
+                worker.apply_history(history(CHAT, &[300]), false);
+            }
+            for event in phone_settings(CHAT, 400) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            let chat = worker.archive.chat(CHAT).unwrap().expect("still listed");
+            assert!(chat.archived && chat.pinned && chat.locked && chat.marked_unread);
+            assert_eq!(chat.muted_until, Some(0));
+        }
+    }
+
+    /// A chat the phone cleared stays listed there, also when the clear
+    /// reaches a newly linked device before history files the chat. In
+    /// either order, a clear made after a deletion leaves the chat listed,
+    /// and a deletion made after the clear, or with it, does not, whatever
+    /// their removal points: a clear without a message range ends at its own
+    /// time, past the messages a later deletion's range names.
+    #[tokio::test]
+    async fn a_chat_cleared_before_history_files_it_stays_listed() {
+        for (deleted_at, listed) in [
+            (None, true),
+            (Some(400), true),
+            (Some(500), false),
+            (Some(600), false),
+        ] {
+            for cleared_through in [Some(200), None] {
+                for clear_first in [true, false] {
+                    for settings in [true, false] {
+                        let case = format!(
+                            "deleted at {deleted_at:?}, cleared through {cleared_through:?}, \
+                             clear first: {clear_first}, settings: {settings}"
+                        );
+                        let (mut worker, _events, _, _) = receipt_tests::worker();
+                        if clear_first {
+                            phone_clears(&mut worker, CHAT, cleared_through, 500).await;
+                        }
+                        if let Some(at) = deleted_at {
+                            phone_deletes_at(&mut worker, CHAT, 200, at).await;
+                        }
+                        if !clear_first {
+                            phone_clears(&mut worker, CHAT, cleared_through, 500).await;
+                        }
+                        if settings {
+                            for event in phone_settings(CHAT, 700) {
+                                worker.handle_wa_event(Arc::new(event)).await;
+                            }
+                        } else {
+                            worker.apply_history(history(CHAT, &[100, 200]), false);
+                        }
+                        let chat = worker.archive.chat(CHAT).unwrap();
+                        assert_eq!(chat.is_some(), listed, "{case}");
+                        assert!(stored(&worker, CHAT).is_empty(), "{case}");
+                        if settings && listed {
+                            assert!(chat.expect("listed").locked, "{case}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The phone's read of a message newer than a chat's deletion can reach
+    /// us before the message. It waits without filing the chat and covers the
+    /// message once it files the chat again; a read of only the deleted
+    /// messages is dropped.
+    #[tokio::test]
+    async fn a_read_past_a_deletion_covers_the_message_that_brings_the_chat_back() {
+        for (read_through, unread) in [(300, [0, 1]), (150, [1, 2])] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            phone_reads(&mut worker, CHAT, read_through).await;
+            assert!(
+                worker.archive.chat(CHAT).unwrap().is_none(),
+                "{read_through}"
+            );
+            for (at, unread) in [(250, unread[0]), (350, unread[1])] {
+                worker.archive_message(
+                    crate::archive::tests::message(CHAT, &format!("m{at}"), at, false),
+                    None,
+                    None,
+                    false,
+                );
+                assert_eq!(
+                    worker
+                        .archive
+                        .chat(CHAT)
+                        .unwrap()
+                        .expect("filed again")
+                        .unread,
+                    unread,
+                    "read through {read_through}, message at {at}"
+                );
+            }
+        }
+    }
+
+    /// The phone can read a chat past the messages we have before the chat
+    /// is deleted through them. That read outlives the deletion and covers
+    /// the late message that files the chat again.
+    #[tokio::test]
+    async fn a_read_ahead_of_a_deleted_chats_messages_covers_the_message_that_brings_it_back() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        phone_reads(&mut worker, CHAT, 300).await;
+        worker
+            .handle_command(Command::ChatDeleted {
+                chat: CHAT.into(),
+                deleted: true,
+                through: 200,
+            })
+            .await;
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
+        for (at, unread) in [(250, 0), (350, 1)] {
+            worker.archive_message(
+                crate::archive::tests::message(CHAT, &format!("m{at}"), at, false),
+                None,
+                None,
+                false,
+            );
+            assert_eq!(
+                worker
+                    .archive
+                    .chat(CHAT)
+                    .unwrap()
+                    .expect("filed again")
+                    .unread,
+                unread,
+                "message at {at}"
+            );
+        }
+    }
+
+    /// A message older than a chat's deletion that carries a disappearing
+    /// timer does not file the chat for its timer; a newer one does.
+    #[tokio::test]
+    async fn an_older_message_with_a_timer_leaves_a_deleted_chat_deleted() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        phone_deletes(&mut worker, CHAT, 200).await;
+        for (at, listed) in [(150, false), (250, true)] {
+            let message = wa::Message::text_with_context(format!("sent at {at}"), {
+                let mut proto = wa::ContextInfo::default();
+                proto.expiration = Some(86_400);
+                proto
+            });
+            let info = MessageInfo {
+                id: format!("m{at}").into(),
+                source: MessageSource {
+                    chat: CHAT.parse().unwrap(),
+                    sender: CHAT.parse().unwrap(),
+                    ..Default::default()
+                },
+                timestamp: whatsapp_rust::wacore::time::from_secs(at).unwrap(),
+                ..Default::default()
+            };
+            worker.ingest(&Arc::new(message), &info);
+            assert_eq!(
+                worker.archive.chat(CHAT).unwrap().is_some(),
+                listed,
+                "message at {at}"
+            );
+        }
+        assert_eq!(stored(&worker, CHAT), ["m250"]);
+        assert_eq!(
+            worker.archive.ephemeral_expiration(CHAT).unwrap(),
+            Some(86_400)
+        );
+    }
+
+    /// A message deleted for me before its chat was deleted does not file
+    /// the chat for its timer when it is delivered again.
+    #[tokio::test]
+    async fn a_message_deleted_for_me_with_a_timer_leaves_a_deleted_chat_deleted() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 300]), true);
+        worker.archive.delete_message(CHAT, "m300").unwrap();
+        phone_deletes(&mut worker, CHAT, 100).await;
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
+
+        let message = wa::Message::text_with_context("sent at 300".to_owned(), {
+            let mut proto = wa::ContextInfo::default();
+            proto.expiration = Some(86_400);
+            proto
+        });
+        let info = MessageInfo {
+            id: "m300".into(),
+            source: MessageSource {
+                chat: CHAT.parse().unwrap(),
+                sender: CHAT.parse().unwrap(),
+                ..Default::default()
+            },
+            timestamp: whatsapp_rust::wacore::time::from_secs(300).unwrap(),
+            ..Default::default()
+        };
+        worker.ingest(&Arc::new(message), &info);
+        assert!(worker.archive.chat(CHAT).unwrap().is_none());
+    }
+
+    /// A deleted chat that a newer message, call or history files again
+    /// takes the settings the phone kept for it, so a chat locked on the
+    /// phone does not come back unlocked.
+    #[tokio::test]
+    async fn a_deleted_chat_filed_again_takes_the_settings_the_phone_kept() {
+        for refile in ["message", "call", "history"] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            for event in phone_settings(CHAT, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "{refile}");
+            match refile {
+                "message" => worker.archive_message(
+                    crate::archive::tests::message(CHAT, "m300", 300, false),
+                    None,
+                    None,
+                    false,
+                ),
+                "call" => {
+                    let mut record = wa::CallLogRecord::default();
+                    record.call_result = Some(wa::call_log_record::CallResult::MISSED);
+                    record.start_time = Some(300);
+                    let peer: Jid = CHAT.parse().unwrap();
+                    worker.call_log_entry("LATER", Some(&peer), Some(false), &record);
+                }
+                _ => {
+                    worker.apply_history(history(CHAT, &[300]), false);
+                }
+            }
+            let chat = worker.archive.chat(CHAT).unwrap().expect("filed again");
+            assert!(chat.locked && chat.pinned && chat.archived, "{refile}");
+            assert_eq!(chat.muted_until, Some(0), "{refile}");
+        }
+    }
+
+    /// A call that rings in a chat the phone deleted but keeps locked files
+    /// the chat, locked, before the window hears of the call, so the window
+    /// holds the call as "Locked chat" instead of ringing with the caller's
+    /// name and photo; the call is filed in it once, as it ends.
+    #[tokio::test]
+    async fn a_call_ringing_in_a_deleted_locked_chat_files_it_locked_first() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, direct_offer, group_offer, member};
+        // A group's offer rings on the phone only, a person's here.
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, chat, 200).await;
+            for event in phone_settings(chat, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(chat).unwrap().is_none(), "{chat}");
+            events.try_iter().for_each(drop);
+
+            let offer = if chat == GROUP {
+                group_offer(vec![member("200000000000001", true)])
+            } else {
+                direct_offer(CHAT)
+            };
+            worker.call_signaling(&offer).await;
+            let told: Vec<Event> = events.try_iter().collect();
+            let filed = told.iter().position(|event| {
+                matches!(event, Event::ChatUpdated(listed) if listed.id == chat && listed.locked)
+            });
+            let rang = told
+                .iter()
+                .position(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_)));
+            assert!(rang.is_some(), "{chat} rings");
+            assert!(
+                filed < rang && filed.is_some(),
+                "{chat} is filed locked first"
+            );
+
+            assert!(worker.call_resolved(CALL_ID, None), "{chat}");
+            assert_eq!(worker.archive.call_log(10).unwrap().len(), 1, "{chat}");
+            assert_eq!(stored(&worker, chat).len(), 1, "{chat}");
+            assert!(worker.archive.chat(chat).unwrap().expect("filed").locked);
+        }
+    }
+
+    /// An offer dates from the server's time for it, not from when the worker
+    /// heard of it, so one the library hands over late is still from before a
+    /// deletion after it. An offer no newer than the deletion, in the same
+    /// second too, leaves the chat deleted, as it rings and as it ends. The
+    /// window never hears of it while the phone keeps the chat locked, since
+    /// nothing would hide the caller of a chat it does not list.
+    #[tokio::test]
+    async fn a_call_from_before_a_deletion_never_shows_a_locked_chats_caller() {
+        use crate::calls::test_offers::{CALL_ID, GROUP, direct_offer, group_offer, member};
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            for locked in [true, false] {
+                for offered in [150, 200] {
+                    let case = format!("{chat}, locked: {locked}, offered at {offered}");
+                    let (mut worker, events, _, _) = receipt_tests::worker();
+                    phone_deletes(&mut worker, chat, 200).await;
+                    if locked {
+                        for event in phone_settings(chat, 250) {
+                            worker.handle_wa_event(Arc::new(event)).await;
+                        }
+                    }
+                    events.try_iter().for_each(drop);
+
+                    let mut offer = if chat == GROUP {
+                        group_offer(vec![member("200000000000001", true)])
+                    } else {
+                        direct_offer(CHAT)
+                    };
+                    offer.timestamp =
+                        Some((std::time::UNIX_EPOCH + Duration::from_secs(offered)).into());
+                    worker.call_signaling(&offer).await;
+                    assert!(worker.archive.chat(chat).unwrap().is_none(), "{case}");
+                    let rang = events
+                        .try_iter()
+                        .any(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_)));
+                    assert_eq!(rang, !locked, "{case}");
+
+                    worker.call_resolved(CALL_ID, None);
+                    assert!(worker.archive.chat(chat).unwrap().is_none(), "{case}");
+                    assert!(worker.archive.call_log(10).unwrap().is_empty(), "{case}");
+                }
+            }
+        }
+    }
+
+    /// A call newer than the deletion of a chat the phone keeps locked, whose
+    /// chat cannot be filed again, never reaches the window either.
+    #[tokio::test]
+    async fn a_call_whose_locked_chat_cannot_be_filed_again_is_withheld() {
+        use crate::calls::test_offers::{GROUP, direct_offer, group_offer, member};
+        let _off = crate::calls::override_group_calls(false);
+        for chat in [CHAT, GROUP] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            phone_deletes(&mut worker, chat, 200).await;
+            for event in phone_settings(chat, 250) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            worker.archive.execute_for_tests(
+                "CREATE TRIGGER refuse_chats BEFORE INSERT ON chats
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            );
+            events.try_iter().for_each(drop);
+
+            let offer = if chat == GROUP {
+                group_offer(vec![member("200000000000001", true)])
+            } else {
+                direct_offer(CHAT)
+            };
+            worker.call_signaling(&offer).await;
+            assert!(worker.archive.chat(chat).unwrap().is_none(), "{chat}");
+            assert!(
+                !events
+                    .try_iter()
+                    .any(|event| matches!(event, Event::Call(_) | Event::PhoneOnlyCall(_))),
+                "{chat}"
+            );
+            assert!(worker.call.is_none() && worker.phone_only_calls.is_empty());
+
+            // Nor does its entry reach the Calls page once it ends.
+            worker.file_call_entry(calls::CallEntry {
+                chat: chat.into(),
+                caller: None,
+                call_id: "withheld-entry".into(),
+                from_me: false,
+                timestamp: 300,
+                video: false,
+                status: crate::calls::CallOutcome::Missed,
+                duration: 0,
+                group: chat == GROUP,
+                participants: None,
+            });
+            assert!(worker.archive.call_log(10).unwrap().is_empty(), "{chat}");
+            assert!(stored(&worker, chat).is_empty(), "{chat}");
+        }
+    }
+
+    /// The window can pick a chat listed unlocked for a forward just before
+    /// the worker hears that the phone deleted it and keeps it locked. The
+    /// forward is refused before its copy files the chat again, locked, and
+    /// before anything is sent; a chat deleted without a lock still takes one.
+    #[tokio::test]
+    async fn a_forward_to_a_deleted_chat_the_phone_keeps_locked_is_refused() {
+        for locked in [true, false] {
+            let (mut worker, events, _, _) = receipt_tests::worker();
+            worker.archive.ensure_chat(CHAT, "Somebody").unwrap();
+            phone_deletes(&mut worker, CHAT, 200).await;
+            if locked {
+                for event in phone_settings(CHAT, 250) {
+                    worker.handle_wa_event(Arc::new(event)).await;
+                }
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "{locked}");
+            assert_eq!(worker.forward_writable(CHAT), !locked, "{locked}");
+            if locked {
+                events.try_iter().for_each(drop);
+                worker
+                    .handle_command(Command::Forward {
+                        from_chat: "2@s.whatsapp.net".into(),
+                        messages: vec!["source".into()],
+                        to_chats: vec![CHAT.into()],
+                    })
+                    .await;
+                assert!(events.try_iter().any(|event| matches!(
+                    event,
+                    Event::Error(error) if error == "This conversation is read-only in ZapFast"
+                )));
+                assert!(worker.archive.chat(CHAT).unwrap().is_none());
+            }
+        }
+    }
+
+    /// A lock the phone keeps for a chat deleted under its privacy id reaches
+    /// the phone number's chat listed here as soon as the two are known to be
+    /// one, not at the next unrelated update.
+    #[tokio::test]
+    async fn a_lock_kept_under_a_privacy_id_reaches_the_listed_chat_at_once() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Somebody").unwrap();
+        let lid = "200000000000001@lid";
+        phone_deletes(&mut worker, lid, 200).await;
+        for event in phone_settings(lid, 250) {
+            worker.handle_wa_event(Arc::new(event)).await;
+        }
+        events.try_iter().for_each(drop);
+        worker.learn_lid("200000000000001", "4915700000001");
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::BlocklistMapped { chats, .. }
+                if chats.iter().any(|listed| listed.id == CHAT && listed.locked)
+        )));
+    }
+
+    /// The archive, pin, mute and lock a chat had here when it was deleted,
+    /// on the phone or with Delete chat here, come back with it like the ones
+    /// the phone sends after the deletion. At link time the phone's settings
+    /// can file the chat before its deletion is decoded.
+    #[tokio::test]
+    async fn a_chat_deleted_with_settings_takes_them_back_when_it_returns() {
+        for here in [false, true] {
+            let (mut worker, _events, _, _) = receipt_tests::worker();
+            for event in phone_settings(CHAT, 150) {
+                worker.handle_wa_event(Arc::new(event)).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().expect("filed").locked);
+            if here {
+                worker
+                    .handle_command(Command::ChatDeleted {
+                        chat: CHAT.into(),
+                        deleted: true,
+                        through: 200,
+                    })
+                    .await;
+            } else {
+                phone_deletes(&mut worker, CHAT, 200).await;
+            }
+            assert!(worker.archive.chat(CHAT).unwrap().is_none(), "here: {here}");
+            worker.archive_message(
+                crate::archive::tests::message(CHAT, "m300", 300, false),
+                None,
+                None,
+                false,
+            );
+            let chat = worker.archive.chat(CHAT).unwrap().expect("filed again");
+            assert!(chat.locked && chat.pinned && chat.archived, "here: {here}");
+            assert_eq!(chat.muted_until, Some(0), "here: {here}");
+        }
+    }
+
+    /// The phone's call log outlives a chat it deleted, and a newly linked
+    /// device receives it with history.
+    #[test]
+    fn a_call_from_before_a_deletion_does_not_bring_the_chat_back() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        worker.archive.ensure_chat(CHAT, "Somebody").expect("chat");
+        worker.remove_chat(CHAT, 200, false, 0);
+        let peer: Jid = CHAT.parse().unwrap();
+        let call = |at| {
+            let mut record = wa::CallLogRecord::default();
+            record.call_result = Some(wa::call_log_record::CallResult::MISSED);
+            record.start_time = Some(at);
+            record
+        };
+        worker.call_log_entry("BEFORE", Some(&peer), Some(false), &call(150));
+        assert!(worker.archive.chat(CHAT).expect("chat").is_none());
+
+        worker.call_log_entry("AFTER", Some(&peer), Some(false), &call(250));
+        assert_eq!(
+            stored(&worker, CHAT),
+            [format!("{}AFTER", crate::model::CALL_ENTRY_PREFIX)]
+        );
     }
 
     #[tokio::test]
@@ -26329,6 +27140,47 @@ mod chat_removal_tests {
                 .try_iter()
                 .any(|event| matches!(event, Event::ChatRemoved { chat } if chat == CHAT))
         );
+    }
+
+    #[tokio::test]
+    async fn a_chat_deleted_here_goes_after_a_clear_stamped_by_a_clock_ahead() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        worker.apply_history(history(CHAT, &[100, 200]), true);
+        let ahead = u64::try_from(jiff::Timestamp::now().as_second()).expect("time") + 3600;
+        phone_clears(&mut worker, CHAT, Some(200), ahead).await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
+
+        worker
+            .handle_command(Command::ChatDeleted {
+                chat: CHAT.into(),
+                deleted: true,
+                through: 200,
+            })
+            .await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_none());
+        assert!(worker.archive.deleted(CHAT).expect("removal"));
+    }
+
+    /// A chat the phone deleted with its clock ahead, then cleared here once a
+    /// newer message filed it again, stays listed when that deletion replays.
+    #[tokio::test]
+    async fn a_chat_cleared_here_goes_after_a_deletion_stamped_by_a_clock_ahead() {
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let ahead = u64::try_from(jiff::Timestamp::now().as_second()).expect("time") + 3600;
+        phone_deletes_at(&mut worker, CHAT, 200, ahead).await;
+        worker.apply_history(history(CHAT, &[300]), false);
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
+
+        worker
+            .handle_command(Command::ChatCleared {
+                chat: CHAT.into(),
+                cleared: true,
+                through: 300,
+            })
+            .await;
+        assert!(!worker.archive.deleted(CHAT).expect("removal"));
+        phone_deletes_at(&mut worker, CHAT, 200, ahead).await;
+        assert!(worker.archive.chat(CHAT).expect("chat").is_some());
     }
 
     #[tokio::test]

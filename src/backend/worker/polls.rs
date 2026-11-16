@@ -793,7 +793,7 @@ mod tests {
         // A removed chat drops the creation without archiving it.
         worker
             .archive
-            .remove_chat_through(&chat, 100, false)
+            .remove_chat_through(&chat, 100, false, 0)
             .unwrap();
         worker.ingest(&Arc::new(creation_archive(&content(), &[7; 32])), &info);
         assert!(

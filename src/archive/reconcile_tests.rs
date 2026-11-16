@@ -170,7 +170,7 @@ fn privacy_mapping_does_not_restore_metadata_of_removed_photos() {
     let archive = Archive::in_memory().unwrap();
     archive.ensure_chat(LID, "Fixture").unwrap();
     archive.ensure_chat(PHONE, "Fixture").unwrap();
-    archive.remove_chat_through(PHONE, 100, false).unwrap();
+    archive.remove_chat_through(PHONE, 100, false, 0).unwrap();
     for (id, at) in [("cleared", 100), ("deleted", 200), ("revoked", 200)] {
         let mut row = photo(LID, id);
         row.timestamp = at;
