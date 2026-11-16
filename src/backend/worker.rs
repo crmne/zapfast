@@ -587,9 +587,7 @@ fn discard_attachment_staging_below(dir: &Path, depth: u8) {
             && let Err(_) = std::fs::remove_file(entry.path())
         {
             log::warn!("could not remove incomplete attachment");
-        } else if depth < 2
-            && entry.file_type().is_ok_and(|kind| kind.is_dir())
-        {
+        } else if depth < 2 && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             discard_attachment_staging_below(&entry.path(), depth + 1);
         }
     }
@@ -15667,7 +15665,10 @@ mod tests {
             worker.cached_copy(chat, Path::new("somewhere/photo.jpg")),
             Some(day.join("photo.jpg"))
         );
-        assert_eq!(worker.cached_copy(chat, Path::new("somewhere/missing.jpg")), None);
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/missing.jpg")),
+            None
+        );
     }
 
     #[test]
