@@ -306,6 +306,9 @@ pub struct Chat {
     /// Who may do what in the group, and who its admins are; `None` until
     /// the group's metadata has said.
     pub group_settings: Option<GroupSettings>,
+    /// Where the group sits in a WhatsApp community; `None` until the
+    /// group's metadata has said.
+    pub community: Option<Community>,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
     /// Disappearing-message duration in seconds. `Some(0)` is the timer
@@ -340,6 +343,34 @@ pub struct GroupSettings {
     pub admins: Vec<String>,
     /// The creator (WhatsApp's super admin), under canonical chat ids.
     pub super_admins: Vec<String>,
+}
+
+/// Where a group sits in a WhatsApp community, as its metadata says. Kept in
+/// the archive with the chat so the chat list can mark community groups.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "role", content = "community", rename_all = "snake_case")]
+pub enum Community {
+    /// Not part of any community.
+    None,
+    /// The community itself (WhatsApp's parent group).
+    Parent,
+    /// The community's announcement group, which WhatsApp names after the
+    /// community; it holds the community's id.
+    Announcements(ChatId),
+    /// A group linked to the community whose id it holds.
+    Group(ChatId),
+}
+
+impl Community {
+    /// The id of the community this group belongs to, its own for the
+    /// community itself, or `None` outside any community.
+    pub fn id<'a>(&'a self, own: &'a str) -> Option<&'a str> {
+        match self {
+            Self::None => None,
+            Self::Parent => Some(own),
+            Self::Announcements(parent) | Self::Group(parent) => Some(parent),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -407,6 +438,7 @@ impl Chat {
             info_locked: None,
             admin: false,
             group_settings: None,
+            community: None,
             locked: false,
             ephemeral_expiration: None,
             labels: Vec::new(),

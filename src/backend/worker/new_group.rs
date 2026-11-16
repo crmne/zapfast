@@ -176,6 +176,10 @@ impl Worker {
             .archive
             .set_group_rights(&chat, group.info_locked, group.admin);
         let _ = self.archive.set_group_settings(&chat, &group.settings);
+        // A group made here belongs to no community.
+        let _ = self
+            .archive
+            .set_community(&chat, &crate::model::Community::None);
         let _ = self.archive.set_group_description(&chat, "");
         let _ = self.archive.touch_activity(&chat, group.created_at);
         self.emit_chat(&chat);

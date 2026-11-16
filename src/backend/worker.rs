@@ -72,8 +72,9 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::UploadGate;
 use crate::model::{
-    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Community, Contact, Content, Delivery, Gif,
+    GifError, GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted,
+    Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -3831,6 +3832,8 @@ impl Worker {
                     && (chat.group_description.is_some() || chat.left)
                     // Nor its permissions and admins, before group management.
                     && (chat.group_settings.is_some() || chat.left)
+                    // Nor its community, before the chat list marked them.
+                    && (chat.community.is_some() || chat.left)
             });
             if known {
                 return;
@@ -3843,6 +3846,22 @@ impl Worker {
             self.group_info_queue.push_front(id.to_owned());
         } else {
             self.group_info_queue.push_back(id.to_owned());
+        }
+    }
+
+    /// Queues the metadata of every group whose place in a community is not
+    /// known, as archives from before the chat list marked communities
+    /// hold: a quiet group would otherwise wait until something touched it.
+    /// `pump_group_info` paces the asking, and a group asked once this
+    /// session is not queued again.
+    fn recover_communities(&mut self) {
+        let Ok(chats) = self.archive.chats() else {
+            return;
+        };
+        for chat in chats {
+            if chat.is_group() && !chat.left && chat.community.is_none() {
+                self.request_group_info(&chat.id, false);
+            }
         }
     }
 
@@ -3937,6 +3956,7 @@ impl Worker {
                     let (participants, admin) =
                         new_group::group_members(&metadata.participants, &me, &lids);
                     let settings = group_admin::settings_of(&metadata, &lids);
+                    let community = group_admin::community_of(&metadata);
                     let numbers = new_group::known_numbers(&metadata.participants);
                     if !numbers.is_empty() {
                         let _ = commands.send(Command::LearnNumbers(numbers));
@@ -3967,6 +3987,7 @@ impl Worker {
                         admin,
                         subject_generation,
                         settings,
+                        community,
                         settings_generation,
                     });
                 }
@@ -4118,6 +4139,7 @@ impl Worker {
                 self.recover_first_names();
                 self.recover_stars();
                 self.recover_link_previews();
+                self.recover_communities();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
                 if let Some(client) = self.client.clone() {
@@ -8993,6 +9015,7 @@ impl Worker {
                 admin,
                 subject_generation,
                 settings,
+                community,
                 settings_generation,
             } => {
                 if request_generation != self.group_info_generation.get(&chat).copied().unwrap_or(0)
@@ -9027,6 +9050,16 @@ impl Worker {
                 let _ =
                     self.archive
                         .set_group_info(&chat, name.as_deref(), &participants, read_only);
+                // Nothing done here changes a group's community, so any
+                // snapshot is as good as the newest.
+                let community = match community {
+                    Community::Announcements(parent) => {
+                        Community::Announcements(self.canonical_str(&parent))
+                    }
+                    Community::Group(parent) => Community::Group(self.canonical_str(&parent)),
+                    other => other,
+                };
+                let _ = self.archive.set_community(&chat, &community);
                 if current {
                     let _ = self.archive.set_group_rights(&chat, info_locked, admin);
                     let _ = self.archive.set_group_settings(&chat, &settings);
@@ -18704,6 +18737,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -18733,6 +18767,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -18769,6 +18804,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -18794,6 +18830,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -18855,6 +18892,7 @@ mod receipt_tests {
                 admin: true,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -19022,6 +19060,7 @@ mod receipt_tests {
                     admin: false,
                     subject_generation: 0,
                     settings: Default::default(),
+                    community: crate::model::Community::None,
                     settings_generation: 0,
                 })
                 .await;
@@ -19121,6 +19160,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             })
             .await;
@@ -19190,6 +19230,7 @@ mod receipt_tests {
                 admin: false,
                 subject_generation: 0,
                 settings: Default::default(),
+                community: crate::model::Community::None,
                 settings_generation: 0,
             };
             worker.request_group_info(group, true);
@@ -19437,6 +19478,7 @@ mod receipt_tests {
             admin: false,
             subject_generation,
             settings: Default::default(),
+            community: crate::model::Community::None,
             settings_generation: 0,
         };
         worker

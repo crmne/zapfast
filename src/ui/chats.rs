@@ -1021,7 +1021,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
             let response = ui
-                .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                .push_id(("chat", &chat.id), |ui| row(app, ui, chat, true))
                 .inner;
             // Store the row rect for interaction tests.
             ui.ctx()
@@ -1158,7 +1158,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     }
     scroll_area.show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
         for chat in &chats[range] {
-            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+            ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat, true));
         }
     });
 }
@@ -1245,7 +1245,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                         continue;
                     }
                     let response = ui
-                        .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                        .push_id(("chat", &chat.id), |ui| row(app, ui, chat, false))
                         .inner;
                     if reveal {
                         response.scroll_to_me(None);
@@ -1526,7 +1526,61 @@ fn person_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+/// Size of the community mark before a chat row's name.
+const COMMUNITY_MARK: f32 = 15.0;
+
+/// The mark a community chat wears in the list, and what hovering it says:
+/// the community itself, its announcement group (which WhatsApp names after
+/// the community, so the two read alike), or a group linked to it, named
+/// when the community is among the account's chats and not locked away.
+pub fn community_mark(app: &App, chat: &Chat) -> Option<(Icon, String)> {
+    use crate::model::Community;
+    let community = chat.community.as_ref()?;
+    // A locked community stays unnamed while its folder is closed.
+    let parent = community
+        .id(&chat.id)
+        .and_then(|id| app.chat(id))
+        .filter(|parent| !parent.locked || app.locked_folder_open())
+        .map(|parent| app.chat_title(parent))
+        .filter(|name| !name.trim().is_empty());
+    let named = |text: std::borrow::Cow<'static, str>| {
+        text.replace("{community}", parent.as_deref().unwrap_or_default())
+    };
+    let locale = app.locale;
+    Some(match community {
+        Community::None => return None,
+        Community::Parent => (
+            Icon::Community,
+            crate::i18n::gettext(locale, "Community").into_owned(),
+        ),
+        Community::Announcements(_) => (
+            Icon::Megaphone,
+            if parent.is_some() {
+                named(crate::i18n::gettext(
+                    locale,
+                    "Announcements of the {community} community",
+                ))
+            } else {
+                crate::i18n::gettext(locale, "Community announcements").into_owned()
+            },
+        ),
+        Community::Group(_) => (
+            Icon::Community,
+            if parent.is_some() {
+                named(crate::i18n::gettext(
+                    locale,
+                    "Group in the {community} community",
+                ))
+            } else {
+                crate::i18n::gettext(locale, "Group in a community").into_owned()
+            },
+        ),
+    })
+}
+
+/// One chat in the list. `community` draws the community mark before the
+/// name; search results leave it out and keep the name's full width.
+fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat, community: bool) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
     // While searching, the result reached with the arrows is the selection;
@@ -1597,14 +1651,25 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             stamp_galley.clone(),
             stamp_color,
         );
-        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        // A community, or a group in one, wears its mark before the name,
+        // which names the community on hover.
+        let mut name_left = left;
+        if let Some((icon, label)) = community.then(|| community_mark(app, chat)).flatten() {
+            let icon_rect =
+                Rect::from_min_size(pos2(left, name_top + 2.0), Vec2::splat(COMMUNITY_MARK));
+            theme::paint_icon(ui, icon, icon_rect, COMMUNITY_MARK, palette.dim);
+            ui.interact(icon_rect, response.id.with("community"), Sense::hover())
+                .on_hover_text(label);
+            name_left += COMMUNITY_MARK + 5.0;
+        }
+        let name_width = (right - stamp_galley.size().x - 8.0 - name_left).max(0.0);
         let name_font = if unread {
             theme::semibold(14.5)
         } else {
             theme::medium(14.5)
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
-        name.paint(ui, pos2(left, name_top), palette.text);
+        name.paint(ui, pos2(name_left, name_top), palette.text);
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;
@@ -2473,6 +2538,31 @@ mod tests {
     use crate::paths::AppDirs;
     use crate::settings::Settings;
 
+    /// A community group's mark names its community, unless the community
+    /// is a locked chat whose folder is closed.
+    #[test]
+    fn the_community_mark_keeps_a_locked_community_unnamed() {
+        use crate::model::Community;
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let parent = "120363000000000002@g.us";
+        let mut group = Chat::new("120363000000000001@g.us".into(), "Builders".into());
+        group.community = Some(Community::Group(parent.into()));
+        let mut community = Chat::new(parent.into(), "Makers".into());
+        community.group_subject_known = true;
+        app.chats.push(community);
+        let label = |app: &App, group: &Chat| community_mark(app, group).map(|(_, label)| label);
+        assert_eq!(
+            label(&app, &group).as_deref(),
+            Some("Group in the Makers community")
+        );
+        app.chat_mut(parent).unwrap().locked = true;
+        assert_eq!(label(&app, &group).as_deref(), Some("Group in a community"));
+        group.community = Some(Community::None);
+        assert_eq!(label(&app, &group), None);
+    }
+
     #[test]
     fn chat_context_menu_stays_compact_in_wide_windows() {
         for width in [360.0, 1180.0, 2000.0] {
@@ -2493,7 +2583,7 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| response = Some(row(&mut app, ui, &chat)),
+                    |ui| response = Some(row(&mut app, ui, &chat, true)),
                 );
                 output.textures_delta.clear();
                 response.unwrap()
@@ -2537,7 +2627,7 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| response = Some(row(app, ui, chat)),
+                |ui| response = Some(row(app, ui, chat, true)),
             );
             output.textures_delta.clear();
             (response.unwrap(), output.shapes)
