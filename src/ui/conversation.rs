@@ -5224,6 +5224,7 @@ fn message_copy_row(
         marker,
         reactions,
         quote,
+        restore_only: false,
     }
 }
 

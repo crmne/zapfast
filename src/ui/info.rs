@@ -2252,6 +2252,9 @@ fn description_body(app: &mut App, ui: &mut egui::Ui, description: &str) {
             crate::transcript::Row {
                 body: laid.galley.text().to_owned(),
                 placements: laid.placements().to_vec(),
+                // Not a message: it restores its own emoji on a copy
+                // but never joins the multi-message annotation.
+                restore_only: true,
                 ..Default::default()
             },
         );
