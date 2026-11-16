@@ -3205,9 +3205,7 @@ impl Worker {
     /// or the chat id for a group, then the day the message was sent.
     fn media_folder(&self, chat: &str) -> PathBuf {
         let chat = self.canonical_str(chat);
-        let folder = crate::model::phone_of(&chat)
-            .map_or_else(|| sanitize(&chat), |digits| format!("+{digits}"));
-        self.dirs.media_cache_dir().join(folder)
+        self.dirs.media_cache_dir().join(media_folder_name(&chat))
     }
 
     fn set_online(&mut self, online: bool) {
@@ -12274,6 +12272,12 @@ fn seconds(timestamp: i64) -> i64 {
     }
 }
 
+/// The folder a chat's cached media goes in: its phone number, or the chat id
+/// when it has none, as in a group or a contact not yet mapped to a number.
+fn media_folder_name(chat: &str) -> String {
+    crate::model::phone_of(chat).map_or_else(|| sanitize(chat), |digits| format!("+{digits}"))
+}
+
 fn sanitize(id: &str) -> String {
     id.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -15631,6 +15635,13 @@ mod tests {
             b"complete attachment"
         );
         std::fs::remove_dir_all(&directory).expect("removes staging directory");
+    }
+
+    #[test]
+    fn cached_media_folders_name_contacts_by_number() {
+        assert_eq!(media_folder_name("200@s.whatsapp.net"), "+200");
+        assert_eq!(media_folder_name("120363@g.us"), "120363_g_us");
+        assert_eq!(media_folder_name("../x"), "___x");
     }
 
     #[test]
