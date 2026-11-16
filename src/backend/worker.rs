@@ -2574,11 +2574,11 @@ impl Worker {
     fn cached_copy(&self, chat: &str, path: &Path) -> Option<PathBuf> {
         let name = path.file_name()?;
         let cache = self.dirs.media_cache_dir();
-        // Chat folders are the current layout; files from before it sit at
-        // the cache root.
-        [cache.join(sanitize(chat)).join(name), cache.join(name)]
-            .into_iter()
-            .find(|copy| copy.exists())
+        let mut candidates = vec![cache.join(name)];
+        if let Ok(days) = std::fs::read_dir(self.media_folder(chat)) {
+            candidates.extend(days.flatten().map(|day| day.path().join(name)));
+        }
+        candidates.into_iter().find(|copy| copy.exists())
     }
 
     /// Mends one attachment the reader failed to open, as `relocate_media`
@@ -3198,9 +3198,18 @@ impl Worker {
             }
             log::warn!("the download folder is unavailable; using the cache");
         }
-        // Grouped per chat so one folder never holds every chat's media.
-        // The chat id keeps the folder stable when a chat is renamed.
-        self.dirs.media_cache_dir().join(sanitize(chat))
+        self.dirs.media_cache_dir()
+    }
+
+    /// Cached media is grouped per chat and per day: a contact's phone number,
+    /// or the chat id for a group, then the day the message was sent.
+    fn media_folder(&self, chat: &str) -> PathBuf {
+        let chat = self.canonical_str(chat);
+        let folder = crate::model::phone_of(&chat).map_or_else(
+            || sanitize(&chat),
+            |digits| format!("+{digits}"),
+        );
+        self.dirs.media_cache_dir().join(folder)
     }
 
     fn set_online(&mut self, online: bool) {
@@ -10334,10 +10343,18 @@ impl Worker {
             None
         };
         let dir = self.download_dir(&chat);
-        let cache = self.dirs.media_cache_dir();
+        let own_folder = dir != self.dirs.media_cache_dir();
+        // The cache groups each chat's media under the chat and the day the
+        // message was sent, so one folder never holds every chat's files.
+        let day = row
+            .as_ref()
+            .and_then(|row| crate::util::day_key(row.timestamp))
+            .map(|date| date.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        let cache = self.media_folder(&chat).join(day);
+        let dir = if own_folder { dir } else { cache.clone() };
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
-        let own_folder = !dir.starts_with(self.dirs.media_cache_dir());
         let commands = self.commands.clone();
         // A card's picture is small and has no ring of its own.
         let progress = card.is_none().then(|| {
@@ -17389,9 +17406,9 @@ mod tests {
         // A folder that cannot exist, such as one below a file, falls back.
         std::fs::write(root.join("file"), b"").unwrap();
         worker.download_folder = Some(root.join("file/inside"));
-        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir().join(sanitize(chat)));
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         worker.download_folder = None;
-        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir().join(sanitize(chat)));
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -17424,7 +17441,7 @@ mod tests {
         // An inaccessible nested chat folder also uses the ordinary cache.
         std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, b"blocked").unwrap();
-        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir().join(sanitize(chat)));
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
     }
 
     /// The account's folder is its phone number, whichever form of our own
@@ -17491,12 +17508,12 @@ mod tests {
                 .join("Alice");
         let account = folder.parent().unwrap();
         std::os::unix::fs::symlink(outside.path(), account).unwrap();
-        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir().join(sanitize(chat)));
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
         std::fs::remove_file(account).unwrap();
         std::fs::create_dir(account).unwrap();
         std::os::unix::fs::symlink(outside.path(), &folder).unwrap();
-        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir().join(sanitize(chat)));
+        assert_eq!(worker.download_dir(chat), worker.dirs.media_cache_dir());
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 
