@@ -555,6 +555,15 @@ pub fn populate(app: &mut App) {
                     ..Default::default()
                 },
             });
+            // Rust Berlin is a group in a community whose announcements
+            // Section 8 Berlin carries; the community itself is not a chat
+            // here, so the marks name no community.
+            const COMMUNITY: &str = "120363000000000099@g.us";
+            chat.community = Some(match sample.name {
+                "Rust Berlin" => crate::model::Community::Group(COMMUNITY.to_owned()),
+                "Section 8 Berlin" => crate::model::Community::Announcements(COMMUNITY.to_owned()),
+                _ => crate::model::Community::None,
+            });
             chat.group_description = Some(if sample.name == "Rust Berlin" {
                 "Rust meetups in Berlin 🦀\nShare projects, ask questions, and help each other learn.\nNext meetup: Thursday at 19:00.".to_owned()
             } else {

@@ -11,7 +11,7 @@
 use super::*;
 use crate::backend::{GroupAnswer, MemberAnswer};
 use crate::group_admin::{Added, Failure, InviteLink, MemberChange, Permission, Refusal};
-use crate::model::GroupSettings;
+use crate::model::{Community, GroupSettings};
 use whatsapp_rust::{
     GroupError, GroupMetadata, MemberAddMode, MemberLinkMode, MembershipApprovalMode,
     ParticipantChangeResponse,
@@ -456,6 +456,21 @@ pub(super) fn settings_of(
     settings
 }
 
+/// Where a group sits in a community, from its metadata. The parent's id is
+/// a group id, which needs no privacy-id mapping.
+pub(super) fn community_of(metadata: &GroupMetadata) -> Community {
+    if metadata.is_parent_group {
+        return Community::Parent;
+    }
+    match &metadata.parent_group_jid {
+        Some(parent) if metadata.is_default_sub_group => {
+            Community::Announcements(parent.to_string())
+        }
+        Some(parent) => Community::Group(parent.to_string()),
+        None => Community::None,
+    }
+}
+
 /// WhatsApp's per-person answers, under canonical chat ids.
 fn member_answers(
     answers: &[ParticipantChangeResponse],
@@ -531,6 +546,7 @@ mod tests {
     const ME: &str = "15550000000@s.whatsapp.net";
     const ADA: &str = "15550000001@s.whatsapp.net";
     const GRACE: &str = "15550000002@s.whatsapp.net";
+    const PARENT: &str = "120363000000000002@g.us";
 
     /// A worker with a group we are in, as an admin or not.
     fn group_worker(admin: bool) -> (Worker, std::sync::mpsc::Receiver<Event>) {
@@ -596,6 +612,65 @@ mod tests {
         // Unsaid modes are WhatsApp's default: admins only.
         let bare = settings_of(&GroupMetadata::new(GROUP.parse().unwrap()), &lids);
         assert!(!bare.members_add && !bare.members_share_link);
+    }
+
+    #[test]
+    fn metadata_reads_as_a_place_in_a_community() {
+        let mut metadata = GroupMetadata::new(GROUP.parse().unwrap());
+        assert_eq!(community_of(&metadata), Community::None);
+        metadata.parent_group_jid = Some(PARENT.parse().unwrap());
+        assert_eq!(community_of(&metadata), Community::Group(PARENT.into()));
+        metadata.is_default_sub_group = true;
+        assert_eq!(
+            community_of(&metadata),
+            Community::Announcements(PARENT.into())
+        );
+        let mut parent = GroupMetadata::new(PARENT.parse().unwrap());
+        parent.is_parent_group = true;
+        assert_eq!(community_of(&parent), Community::Parent);
+        assert_eq!(Community::Parent.id(PARENT), Some(PARENT));
+        assert_eq!(Community::Group(PARENT.into()).id(GROUP), Some(PARENT));
+        assert_eq!(Community::None.id(GROUP), None);
+    }
+
+    /// A group filed before communities were read is asked about once more,
+    /// paced like any other metadata, and not again once its place is known.
+    #[tokio::test]
+    async fn groups_filed_before_communities_ask_once() {
+        let (mut worker, _events) = group_worker(false);
+        worker.archive.set_group_description(GROUP, "").unwrap();
+        worker.request_group_info(GROUP, false);
+        assert!(worker.group_info_queue.contains(&GROUP.to_owned()));
+
+        worker.group_info_queue.clear();
+        worker.group_info_requested.clear();
+        worker
+            .archive
+            .set_community(GROUP, &Community::None)
+            .unwrap();
+        worker.request_group_info(GROUP, false);
+        assert!(worker.group_info_queue.is_empty(), "known now");
+    }
+
+    /// Connecting queues every quiet group whose community is unknown, and
+    /// leaves known and left groups alone.
+    #[tokio::test]
+    async fn connecting_asks_after_groups_with_an_unknown_community() {
+        let (mut worker, _events) = group_worker(false);
+        let known = "120363000000000003@g.us";
+        let left = "120363000000000004@g.us";
+        for id in [known, left] {
+            worker.archive.ensure_chat(id, "Other").unwrap();
+        }
+        worker
+            .archive
+            .set_community(known, &Community::None)
+            .unwrap();
+        worker.archive.set_left(left, true).unwrap();
+        worker.recover_communities();
+        assert_eq!(worker.group_info_queue, [GROUP.to_owned()]);
+        worker.recover_communities();
+        assert_eq!(worker.group_info_queue.len(), 1, "queued once");
     }
 
     #[test]
@@ -787,6 +862,7 @@ mod tests {
                 admin: true,
                 subject_generation: 0,
                 settings: GroupSettings::default(),
+                community: Community::Group(PARENT.into()),
                 settings_generation: before,
             })
             .await;
@@ -795,6 +871,11 @@ mod tests {
             filed.info_locked,
             Some(false),
             "the older snapshot is ignored"
+        );
+        assert_eq!(
+            filed.community,
+            Some(Community::Group(PARENT.into())),
+            "but nothing here changes its community, which it files"
         );
         assert!(filed.group_settings.unwrap().announce);
         assert_eq!(filed.participants, [ME, ADA], "and so are its members");
