@@ -7,7 +7,7 @@ use std::{
 };
 
 type Key = (ChatId, String);
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Requests {
     queue: VecDeque<(Key, Instant)>,
     active: Option<(Key, Instant)>,

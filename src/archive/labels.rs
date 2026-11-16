@@ -108,7 +108,7 @@ impl Archive {
 
     /// Deletes a label and takes it off every chat that wore it.
     pub fn delete_label(&self, id: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         transaction.execute(
             "DELETE FROM local_chat_labels WHERE label = ?1",
             params![id],
@@ -123,7 +123,7 @@ impl Archive {
     /// Ids of labels that no longer exist are skipped, so a menu drawn just
     /// before a delete cannot bring a label back onto a chat.
     pub fn set_chat_labels(&self, chat: &str, labels: &[String]) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         transaction.execute(
             "DELETE FROM local_chat_labels WHERE chat = ?1",
             params![chat],

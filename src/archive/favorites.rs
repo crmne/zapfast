@@ -50,7 +50,7 @@ pub(super) fn adopt_local_marks(connection: &Connection) -> Result<()> {
     if !legacy {
         return Ok(());
     }
-    let transaction = connection.unchecked_transaction()?;
+    let transaction = super::Scope::begin(connection)?;
     connection.execute_batch(
         "INSERT OR IGNORE INTO favorites (chat, jid, position)
              SELECT id, id, (SELECT COALESCE(MAX(position), -1) FROM favorites) + ROW_NUMBER() OVER (ORDER BY rowid)
@@ -86,7 +86,7 @@ impl Archive {
     /// Adds a favorite at the end of the list, or removes one, and queues the
     /// change for the phone. Returns whether anything changed.
     pub fn set_favorite(&self, chat: &str, favorite: bool) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         let changed = if favorite {
             self.connection.execute(
                 "INSERT OR IGNORE INTO favorites (chat, jid, position)
@@ -128,7 +128,7 @@ impl Archive {
         {
             return Ok(None);
         }
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         let before = self.favorites()?;
         self.connection.execute("DELETE FROM favorites", [])?;
         let mut seen = HashSet::new();
@@ -177,7 +177,7 @@ impl Archive {
     /// The phone accepted our list, made at `at`, holding every change up to
     /// `through`. Later changes stay queued.
     pub fn favorites_sent(&self, through: i64, at: i64) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Scope::begin(&self.connection)?;
         self.connection.execute(
             "DELETE FROM favorite_changes WHERE seq <= ?1",
             params![through],
@@ -191,11 +191,7 @@ impl Archive {
 
     /// Files a favorite made under a privacy id under the phone number.
     /// Returns whether one moved.
-    pub(super) fn move_favorite(
-        transaction: &rusqlite::Transaction<'_>,
-        from: &str,
-        to: &str,
-    ) -> Result<bool> {
+    pub(super) fn move_favorite(transaction: &Connection, from: &str, to: &str) -> Result<bool> {
         let moved = transaction.execute(
             "UPDATE OR IGNORE favorites SET chat = ?2 WHERE chat = ?1",
             params![from, to],
