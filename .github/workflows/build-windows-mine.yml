@@ -33,3 +33,15 @@ jobs:
 
       - name: Build
         run: cargo build --locked --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zapfast-media-folders
+          path: target/release/zapfast.exe
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: build-media-${{ github.run_number }}
+        run: gh release create "$env:TAG" "target/release/zapfast.exe" --title "$env:TAG" --notes "zapfast media-per-chat-folder ${{ github.sha }}"
