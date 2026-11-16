@@ -862,7 +862,8 @@ mod tests {
                 admin: true,
                 subject_generation: 0,
                 settings: GroupSettings::default(),
-                community: Community::Group(PARENT.into()),
+                // A device-qualified id comes back canonical.
+                community: Community::Group("120363000000000002:3@g.us".into()),
                 settings_generation: before,
             })
             .await;
@@ -875,7 +876,8 @@ mod tests {
         assert_eq!(
             filed.community,
             Some(Community::Group(PARENT.into())),
-            "but nothing here changes its community, which it files"
+            "but nothing here changes its community, which it files under \
+             the parent's canonical id"
         );
         assert!(filed.group_settings.unwrap().announce);
         assert_eq!(filed.participants, [ME, ADA], "and so are its members");

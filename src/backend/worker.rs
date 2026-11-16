@@ -74,8 +74,9 @@ use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::UploadGate;
 use crate::model::{
-    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Community, Contact, Content, Delivery, Gif,
+    GifError, GifPage, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted,
+    Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -9189,6 +9190,13 @@ impl Worker {
                         .set_group_info(&chat, name.as_deref(), &participants, read_only);
                 // Nothing done here changes a group's community, so any
                 // snapshot is as good as the newest.
+                let community = match community {
+                    Community::Announcements(parent) => {
+                        Community::Announcements(self.canonical_str(&parent))
+                    }
+                    Community::Group(parent) => Community::Group(self.canonical_str(&parent)),
+                    other => other,
+                };
                 let _ = self.archive.set_community(&chat, &community);
                 if current {
                     let _ = self.archive.set_group_rights(&chat, info_locked, admin);
