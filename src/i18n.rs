@@ -36,13 +36,15 @@ pub enum Locale {
     Turkish,
     #[serde(rename = "id")]
     Indonesian,
+    #[serde(rename = "jv")]
+    Javanese,
     #[serde(rename = "nl")]
     Dutch,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -54,6 +56,7 @@ impl Locale {
         Self::ChineseTraditional,
         Self::Turkish,
         Self::Indonesian,
+        Self::Javanese,
         Self::Dutch,
     ];
 
@@ -71,6 +74,7 @@ impl Locale {
             Self::ChineseTraditional => "繁體中文",
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
+            Self::Javanese => "Basa Jawa",
             Self::Dutch => "Nederlands",
         }
     }
@@ -97,6 +101,7 @@ impl Locale {
             "ru" => Self::Russian,
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
+            "jv" => Self::Javanese,
             "nl" => Self::Dutch,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
@@ -130,6 +135,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::ChineseTraditional => Some(&zh_hant::Translator),
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
+            Self::Javanese => Some(&jv::Translator),
             Self::Dutch => Some(&nl::Translator),
             Self::English => None,
         }
@@ -261,6 +267,8 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("id-ID"), Some(Locale::Indonesian));
         assert_eq!(Locale::from_system("id"), Some(Locale::Indonesian));
+        assert_eq!(Locale::from_system("jv-ID"), Some(Locale::Javanese));
+        assert_eq!(Locale::from_system("jv"), Some(Locale::Javanese));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
@@ -347,6 +355,11 @@ mod tests {
                 Locale::Indonesian,
                 "Balas secara pribadi",
                 "Pesan grup asli tidak tersedia",
+            ),
+            (
+                Locale::Javanese,
+                "Wangsuli kanthi pribadi",
+                "Pesen grup asli ora kasedhiya",
             ),
             (
                 Locale::Turkish,
@@ -597,6 +610,26 @@ mod tests {
         for (count, expected) in [(1, "{} anggota"), (2, "{} anggota"), (5, "{} anggota")] {
             assert_eq!(
                 ngettext(Locale::Indonesian, "{} member", "{} members", count),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn javanese_catalog_translates() {
+        assert_eq!(gettext(Locale::Javanese, "Chats"), "Obrolan");
+        assert_eq!(gettext(Locale::Javanese, "Search"), "Goleki");
+        assert_eq!(gettext(Locale::Javanese, "Settings"), "Setelan");
+        assert_eq!(gettext(Locale::Javanese, "Type a message"), "Ketik pesen");
+        assert_eq!(gettext(Locale::Javanese, "Monday"), "Senen");
+        assert_eq!(gettext(Locale::Javanese, "Yesterday"), "Wingi");
+    }
+
+    #[test]
+    fn javanese_plural_rules_cover_singular_and_plural() {
+        for (count, expected) in [(1, "{} anggota"), (2, "{} anggota"), (5, "{} anggota")] {
+            assert_eq!(
+                ngettext(Locale::Javanese, "{} member", "{} members", count),
                 expected
             );
         }
