@@ -2544,7 +2544,9 @@ impl Archive {
     }
 
     /// The oldest of a chat's `unread` newest incoming messages that mentions
-    /// us (under any id in `ours`) or everyone, and how many of them do.
+    /// us (under any id in `ours`) or everyone, and how many of them call for
+    /// us: those mentions plus replies to our own messages, which the app
+    /// badge counts as Slack counts thread replies.
     pub fn unread_mentions(
         &self,
         chat: &str,
@@ -2555,26 +2557,37 @@ impl Archive {
             return Ok((None, 0));
         }
         let mut statement = self.connection.prepare(
-            "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
+            "SELECT id, mentions, quoted FROM messages WHERE chat = ?1 AND from_me = 0
              AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC,
                       rowid DESC
              LIMIT ?2",
         )?;
         let rows = statement.query_map(params![chat, unread], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         let mut oldest = None;
         let mut count = 0u32;
         for row in rows {
-            let (id, mentions) = row?;
+            let (id, mentions, quoted) = row?;
             let mentions: Vec<crate::model::MentionRef> =
                 serde_json::from_str(&mentions).unwrap_or_default();
-            if mentions
+            let mentioned = mentions
                 .iter()
-                .any(|mention| crate::mentions::names_us(mention, ours))
-            {
+                .any(|mention| crate::mentions::names_us(mention, ours));
+            let replied = quoted
+                .and_then(|quoted| serde_json::from_str::<crate::model::Quoted>(&quoted).ok())
+                .is_some_and(|quoted| {
+                    quoted.chat.is_none() && crate::mentions::is_ours(&quoted.sender, ours)
+                });
+            if mentioned {
                 oldest = Some(id);
+            }
+            if mentioned || replied {
                 count = count.saturating_add(1);
             }
         }
@@ -6088,6 +6101,45 @@ pub(crate) mod tests {
             archive.unread_mentions(chat, 2, &ours).unwrap(),
             (Some("lid".to_owned()), 1)
         );
+    }
+
+    #[test]
+    fn unread_replies_to_us_count_for_the_badge() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1-3@g.us";
+        archive.ensure_chat(chat, "Club").expect("chat");
+        let me = "15550001111@s.whatsapp.net";
+        let quote = |sender: &str| crate::model::Quoted {
+            chat: None,
+            id: "q".into(),
+            sender: sender.into(),
+            sender_name: None,
+            summary: "hi".into(),
+            labelled: Some(false),
+            mentions: Vec::new(),
+        };
+        let mut to_us = message(chat, "to-us", 100, false);
+        to_us.quoted = Some(quote("15550001111:4@s.whatsapp.net"));
+        let mut to_lid = message(chat, "to-lid", 200, false);
+        to_lid.quoted = Some(quote("98765@lid"));
+        let mut to_other = message(chat, "to-other", 300, false);
+        to_other.quoted = Some(quote("15550002222@s.whatsapp.net"));
+        let mut both = message(chat, "both", 400, false);
+        both.quoted = Some(quote(me));
+        both.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: me.into(),
+        }];
+        for row in [to_us, to_lid, to_other, both] {
+            archive.insert_message(&row, None).expect("insert");
+        }
+        let ours = [me, "98765@lid"];
+        assert_eq!(
+            archive.unread_mentions(chat, 4, &ours).unwrap(),
+            (Some("both".to_owned()), 3),
+            "replies count once each, beside mentions, without becoming the jump target"
+        );
+        assert_eq!(archive.unread_mentions(chat, 4, &[]).unwrap(), (None, 0));
     }
 
     #[test]

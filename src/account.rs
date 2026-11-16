@@ -328,9 +328,9 @@ impl Account {
 
     /// What this account adds to the app badge, as Slack counts it: every
     /// unread message in a direct chat (one for a chat marked unread), every
-    /// unread mention in a group, and a dot for any other unread group or
+    /// unread mention of us or reply to our message in a group, and a dot for any other unread group or
     /// channel. Archived and locked chats stay out; a muted chat adds only its
-    /// mentions.
+    /// mentions and replies.
     pub fn badge_mark(&self) -> crate::notify::BadgeMark {
         let now = crate::util::now();
         self.chats

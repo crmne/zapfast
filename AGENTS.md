@@ -596,7 +596,8 @@ protocol. These notes are for coding agents and new contributors.
   The process Dock icon and unread badge use fastframe-dock; a Cargo run
   gets the embedded icon, while a packaged app keeps its bundle icon. The
   badge counts as Slack does (`Account::badge_mark`): unread messages in
-  direct chats plus unread mentions in groups, with a dot on macOS for
+  direct chats plus unread mentions of us and replies to our messages in
+  groups (`Archive::unread_mentions`), with a dot on macOS for
   other group or channel activity; it stays in ZapFast and survives window
   replacement. `macos::request_badge_permission` adds the badge to the
   notification permission, which fastframe-notifications asks without it.

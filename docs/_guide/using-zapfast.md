@@ -1003,11 +1003,11 @@ or Dash to Panel. Windows overlays a compact unread-message count on ZapFast's
 taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
 does not count toasts remaining in Windows notification history. The app icon
-counts what was said to you: every unread message in a direct chat and every
-unread mention in a group. A muted group still counts its mentions; a muted
-direct chat counts nothing. On macOS, a red badge on the
+counts what was said to you: every unread message in a direct chat, and every
+unread mention of you or reply to your message in a group. A muted group still
+counts its mentions and replies; a muted direct chat counts nothing. On macOS, a red badge on the
 Dock icon shows that number, or an empty red dot when only groups or channels
-that did not mention you are unread. The badge drops as you read each chat,
+that did not mention or reply to you are unread. The badge drops as you read each chat,
 not when you open ZapFast. The icon and
 badge stay with the app when its window is closed and reopened. A macOS
 source build run through Cargo uses ZapFast's icon too. Starting hidden
