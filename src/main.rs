@@ -791,6 +791,11 @@ impl Shell {
         app.background_frame(ctx);
         app.window_logic(ctx);
         #[cfg(target_os = "windows")]
+        if std::mem::take(&mut app.raise_window) && !raise_window(frame) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
             && let Some(at) = self.taskbar.show(
                 window,
@@ -863,6 +868,36 @@ impl Shell {
             // itself, since there is no backend to answer them.
             None => zapfast::demo::tour::respond(app),
         }
+    }
+}
+
+/// Restores and raises the window through Win32. winit's own focus presses
+/// and releases a synthetic Alt first, which other apps' global hotkeys see
+/// as Right Alt. A tray click or another launch lets this process come
+/// forward; returns whether the window is now in front, so the caller can
+/// fall back to winit's focus when Windows refuses.
+#[cfg(target_os = "windows")]
+fn raise_window(frame: &eframe::Frame) -> bool {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
+    };
+
+    let Ok(handle) = frame.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return false;
+    };
+    let hwnd = HWND(handle.hwnd.get() as *mut _);
+    // SAFETY: a live top-level window of this process, on its own thread.
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(hwnd);
+        GetForegroundWindow() == hwnd
     }
 }
 
