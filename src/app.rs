@@ -11472,6 +11472,18 @@ impl App {
             self.take_drops_and_pastes(ctx);
         }
         crate::ui::show(self, ui);
+        // The group description's copy row is registered only now, behind
+        // every message row drawn this frame: the info panel is drawn
+        // before the conversation, and a copy taken from a message must
+        // keep resolving against the messages first.
+        if let Some(row) = ctx.data_mut(|data| {
+            data.remove_temp::<crate::transcript::Row>(crate::ui::info::description_copy_row_id())
+        }) {
+            self.copy_rows
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(row);
+        }
         self.apply_actions(ctx);
         // After the view and its actions, so a change this frame starts the
         // pause from now. Nobody types behind the lock screen.

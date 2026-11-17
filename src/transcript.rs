@@ -44,6 +44,12 @@ pub struct Row {
     /// Preformatted reply context:
     /// `(replying to Roberta: "…")`.
     pub quote: Option<String>,
+    /// True for a row that is not a message, such as the group
+    /// description: its own copied text still gets its emoji back, but
+    /// the row never takes part in the multi-message annotation, where
+    /// its text completing a match could pin a message's header on a
+    /// selection that never touched that message.
+    pub restore_only: bool,
 }
 
 impl Row {
@@ -94,7 +100,19 @@ impl Row {
 /// `None` for unrelated or unchanged copied text.
 pub fn refine(copied: &str, rows: &[Row]) -> Option<String> {
     if let Some(annotated) = annotate(copied, rows) {
-        return Some(annotated);
+        // A copy taken from a non-message row can look like a span of
+        // messages when its text happens to join two of them, as a
+        // description reading "alpha\nbeta" does next to the messages
+        // "alpha" and "beta". That copy is one row's own text, so it
+        // keeps the single-row treatment below instead of borrowing
+        // the messages' headers.
+        let from_a_non_message = rows
+            .iter()
+            .filter(|row| row.restore_only)
+            .any(|row| row.body.contains(copied));
+        if !from_a_non_message {
+            return Some(annotated);
+        }
     }
     // Single-message selections only need emoji restored.
     if !copied.contains(crate::emoji::PLACEHOLDER) {
@@ -112,8 +130,15 @@ pub fn refine(copied: &str, rows: &[Row]) -> Option<String> {
 ///
 /// Matches egui's copied tail, complete middle bodies, and final head.
 pub fn annotate(copied: &str, rows: &[Row]) -> Option<String> {
-    for start in 0..rows.len() {
-        if let Some(lines) = walk(copied, &rows[start..])
+    // Only messages are matched: a non-message row completing the
+    // copied text would lend the span a header it did not earn.
+    let messages: Vec<Row> = rows
+        .iter()
+        .filter(|row| !row.restore_only)
+        .cloned()
+        .collect();
+    for start in 0..messages.len() {
+        if let Some(lines) = walk(copied, &messages[start..])
             && lines.len() >= 2
         {
             return Some(lines.join("\n"));
@@ -297,6 +322,53 @@ mod tests {
         assert_eq!(
             annotate(copied, &silent).as_deref(),
             Some("[9:00, 1/2/2026] Ada: the picture\n[9:02, 1/2/2026] Ada: after the picture")
+        );
+    }
+
+    #[test]
+    fn a_non_message_row_never_completes_a_match() {
+        let placeholder = crate::emoji::PLACEHOLDER;
+        let mut description = row("", &format!("beta {placeholder}"));
+        description.restore_only = true;
+        let rows = vec![
+            row("[9:00, 1/2/2026] Ada: ", "alpha"),
+            row("[9:01, 1/2/2026] Ada: ", "alpha\nbeta"),
+            description,
+        ];
+        // Copying the second message alone stays exactly as copied:
+        // the description's opening word must not complete a two-row
+        // match that puts the first message's header on it.
+        assert_eq!(annotate("alpha\nbeta", &rows), None);
+        assert_eq!(refine("alpha\nbeta", &rows), None);
+        // A span of both messages still gets a header each.
+        assert_eq!(
+            annotate("alpha\nalpha\nbeta", &rows).as_deref(),
+            Some("[9:00, 1/2/2026] Ada: alpha\n[9:01, 1/2/2026] Ada: alpha\nbeta")
+        );
+        // And a copy of the description itself still gets its emoji back.
+        assert_eq!(
+            refine(&format!("beta {placeholder}"), &rows).as_deref(),
+            Some("beta 🎉")
+        );
+    }
+
+    #[test]
+    fn a_non_message_copy_never_borrows_message_headers() {
+        let mut description = row("", "alpha\nbeta");
+        description.restore_only = true;
+        let rows = vec![
+            row("[9:00, 1/2/2026] Ada: ", "alpha"),
+            row("[9:01, 1/2/2026] Ada: ", "beta"),
+            row("[9:02, 1/2/2026] Ada: ", "gamma"),
+            description,
+        ];
+        // Copying the description stays exactly as copied, even though
+        // its text joins the first two messages.
+        assert_eq!(refine("alpha\nbeta", &rows), None);
+        // A span the description does not contain still annotates.
+        assert_eq!(
+            refine("beta\ngamma", &rows).as_deref(),
+            Some("[9:01, 1/2/2026] Ada: beta\n[9:02, 1/2/2026] Ada: gamma")
         );
     }
 
