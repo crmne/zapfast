@@ -36,7 +36,8 @@ Linux applications.
 Use Ctrl+Shift+V (Option+Shift+Command+V on macOS) to paste only text, even when
 the clipboard also offers a picture or copied files. If there is no text,
 this shortcut inserts nothing.
-Mentions in a group are written with `@`. Choose **all** to mention
+Mentions in a group are written with `@`. The member suggestions ignore
+accents and letter case, so `@jose` finds José. Choose **all** to mention
 everyone when the group's member list is available: the message shows `@all`,
 highlighted like any other mention.
 Portuguese also accepts `@todos`, and each other language accepts its own
