@@ -3292,6 +3292,9 @@ pub enum Action {
     Search(String),
     ShowUpdate,
     CloseUpdate,
+    /// Closes the update banner and remembers that, so it does not come
+    /// back for that version.
+    DismissUpdate,
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
