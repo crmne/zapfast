@@ -76,7 +76,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmResetInviteLink(_) | Dialog::ConfirmRemoveMember { .. } => 380.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
-            match dialog {
+            let contents = crate::rtl::top(ui);
+            ui.with_layout(contents, |ui| match dialog {
                 Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
                 Dialog::SendLocation(chat) => super::locations::send(app, ui, &chat),
                 Dialog::PollResults { chat, message } => {
@@ -143,7 +144,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmRemoveMember { chat, member } => {
                     confirm_remove_member(app, ui, &chat, &member)
                 }
-            }
+            });
         });
     #[cfg(any(test, feature = "demo"))]
     if matches!(app.dialog, Some(Dialog::Forward { .. })) {
@@ -175,7 +176,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         } => card.buttons.get(button),
         _ => None,
     });
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         let default_label = crate::i18n::gettext(app.locale, "Choose an option");
         let label = selected.map_or(default_label.as_ref(), |button| button.label.as_str());
         let heading = widgets::line(
@@ -188,7 +189,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         );
         let (rect, _) = ui.allocate_exact_size(heading.size(), Sense::hover());
         heading.paint(ui, rect.min, palette.text);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if theme::icon_button(
                 ui,
                 Icon::X,
@@ -402,7 +403,7 @@ fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
     }
     let ready = !app.chat_lock_entry.trim().is_empty()
         && (!setup || app.chat_lock_entry.trim() == app.chat_lock_confirm.trim());
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         let button_label = if setup {
             crate::i18n::gettext(app.locale, "Set code and open")
         } else {
@@ -451,7 +452,7 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
         theme::regular(13.0),
         palette.secondary,
     );
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if theme::pill_button(
             ui,
             &palette,
@@ -810,7 +811,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
 fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     if app.forward_reviewing {
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             if theme::pill_button(
                 ui,
                 &palette,
@@ -847,7 +848,7 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
             Action::ConfirmForward,
         )
     };
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         let button_width = ui
             .painter()
             .layout_no_wrap(label.to_string(), theme::semibold(13.0), palette.on_accent)
@@ -923,9 +924,9 @@ pub(crate) fn forwardable(chat: &crate::model::Chat) -> bool {
 
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
     let palette = app.palette;
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         theme::text(ui, label, theme::bold(18.0), palette.text);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let close = theme::icon_button(
                 ui,
                 Icon::X,
@@ -1060,7 +1061,7 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
 fn about(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     title(ui, app, &crate::i18n::gettext(app.locale, "About"));
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         let (logo, _) = ui.allocate_exact_size(egui::Vec2::splat(44.0), egui::Sense::hover());
         theme::mark(ui, logo.center(), 44.0);
         ui.vertical(|ui| {
@@ -1090,7 +1091,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         palette.secondary,
     );
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if theme::link(
             ui,
             crate::i18n::gettext(app.locale, "Source code"),
@@ -1179,7 +1180,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
     let (info, joining) = match &invite.state {
         InviteState::Loading => {
             title(ui, app, &crate::i18n::gettext(app.locale, "Group invite"));
-            ui.horizontal(|ui| {
+            crate::rtl::row(ui, |ui| {
                 crate::motion::egui_spinner(ui);
                 ui.label(
                     egui::RichText::new(crate::i18n::gettext(app.locale, "Looking up the group…"))
@@ -1224,8 +1225,8 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
         );
     }
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let label = match (member, info.approval) {
                 (true, _) => crate::i18n::gettext(app.locale, "Open chat"),
                 (false, true) => crate::i18n::gettext(app.locale, "Request to join"),
@@ -1259,8 +1260,8 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
 fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if theme::pill_button(
                 ui,
                 &palette,
@@ -1281,7 +1282,7 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
     let locale = app.locale;
     let Some((pack, publisher)) = app.sticker_preview.clone() else {
         title(ui, app, &crate::i18n::gettext(locale, "Sticker pack"));
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             theme::spinner(ui, 16.0, palette.accent);
             theme::text(
                 ui,
@@ -1304,8 +1305,8 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
             super::picker::sticker_preview_grid(ui, &palette, &pack.stickers, app.window_focused);
         });
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if theme::pill_button(
                 ui,
                 &palette,
@@ -1394,7 +1395,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
     let largest = draft.width.min(draft.height).max(1);
     let smallest = (largest / 8).max(1);
     let mut side = draft.crop.side;
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Size"),
@@ -1408,7 +1409,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
         draft.crop = draft.crop.resized(side, draft.width, draft.height);
     }
     if draft.transparent {
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             super::widgets::switch(ui, &palette, &mut draft.keep_transparent);
             theme::text(
                 ui,
@@ -1443,8 +1444,8 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
     app.sticker_draft = Some(draft);
     ui.add_space(10.0);
     let can_send = app.open_chat.is_some();
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if can_send
                 && theme::pill_button(ui, &palette, &crate::i18n::gettext(locale, "Send"), true)
                     .clicked()
@@ -1665,8 +1666,8 @@ pub(super) fn confirm_destructive(
     }
     ui.add_space(10.0);
     let cancel = crate::i18n::gettext(app.locale, "Cancel");
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let enabled = !matches!(app.dialog, Some(Dialog::ConfirmBlock { .. }))
                 || (app.is_connected() && app.blocklist.editable());
             if ui
@@ -1754,8 +1755,8 @@ fn confirm_remove_member(app: &mut App, ui: &mut egui::Ui, chat: &str, member: &
 fn confirm_buttons(app: &mut App, ui: &mut egui::Ui, label: &str, action: Action) {
     let palette = app.palette;
     let cancel = crate::i18n::gettext(app.locale, "Cancel");
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if danger_button(ui, app, label).clicked() {
                 app.actions.push(action);
             }
@@ -1814,8 +1815,8 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
         }
     }
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if theme::pill_button(
                 ui,
                 &palette,
@@ -1855,7 +1856,7 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            crate::rtl::row(ui, |ui| {
                 // Set the row height from the field instead of the shorter label.
                 ui.set_min_height(
                     ui.ctx()
@@ -1883,8 +1884,8 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
         });
     theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS));
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let ready = app.pair_phone.chars().filter(char::is_ascii_digit).count() >= 7;
             // Stay the main action, but look and read as unavailable until
             // the number is long enough.
@@ -1940,7 +1941,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             .corner_radius(CornerRadius::same(theme::RADIUS))
             .inner_margin(Margin::symmetric(12, 8))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                crate::rtl::row(ui, |ui| {
                     ui.set_min_height(
                         ui.ctx()
                             .fonts_mut(|fonts| fonts.row_height(&theme::regular(16.0)))
@@ -2052,7 +2053,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     );
     let to_phone = Some(app.new_contact_to_phone);
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if app.new_contact_pending {
             theme::spinner(ui, 16.0, palette.accent);
             theme::text(
@@ -2062,7 +2063,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
                 palette.secondary,
             );
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let (save, message) = ui
                 .add_enabled_ui(ready, |ui| {
                     let hint = if app.new_contact_pending {
@@ -2151,7 +2152,7 @@ pub(super) fn disappearing_timer_row(
         text: text.to_owned(),
         rect: Rect::NOTHING,
     };
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(((ui.available_width() - ICON - GAP - line.size().x) / 2.0).max(0.0));
         let (slot, _) = ui.allocate_exact_size(vec2(ICON, height), Sense::hover());

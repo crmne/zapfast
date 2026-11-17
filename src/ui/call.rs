@@ -309,8 +309,15 @@ fn corner_buttons(
         ui.horizontal(|ui| {
             if call.phase.is_live() {
                 let back = gettext(locale, "Hide the call screen").into_owned();
-                if theme::icon_button(ui, Icon::ArrowLeft, 20.0, corner_tint, corner_hover, &back)
-                    .clicked()
+                if theme::icon_button(
+                    ui,
+                    crate::rtl::back_icon(ui),
+                    20.0,
+                    corner_tint,
+                    corner_hover,
+                    &back,
+                )
+                .clicked()
                 {
                     app.actions.push(Action::LeaveCallSurface);
                 }

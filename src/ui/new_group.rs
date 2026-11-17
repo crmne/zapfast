@@ -36,7 +36,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
     ui.horizontal(|ui| {
         if theme::icon_button(
             ui,
-            Icon::ArrowLeft,
+            crate::rtl::back_icon(ui),
             16.0,
             palette.secondary,
             palette.text,

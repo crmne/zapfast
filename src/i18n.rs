@@ -79,6 +79,11 @@ impl Locale {
         }
     }
 
+    /// True for languages written right to left.
+    pub fn is_rtl(self) -> bool {
+        matches!(self, Self::Arabic)
+    }
+
     /// Maps a system language tag (BCP 47 or POSIX) to a supported locale by
     /// its language subtag, so `pt-PT` and `pt_BR` both resolve to Portuguese.
     /// Chinese is the exception: its script decides, so a reader who asked for
@@ -164,6 +169,14 @@ pub fn resolve(interface_language: Option<Locale>) -> Locale {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn right_to_left_locales_are_marked() {
+        assert!(Locale::Arabic.is_rtl());
+        assert!(!Locale::English.is_rtl());
+        assert!(!Locale::PortugueseBrazil.is_rtl());
+        assert!(!Locale::Dutch.is_rtl());
+    }
 
     #[test]
     fn dutch_is_detected_and_preserved_as_a_language_choice() {

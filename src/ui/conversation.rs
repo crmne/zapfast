@@ -132,10 +132,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // beside the conversation: it casts the same shadow across it, from
     // under the header down. A narrow window has no list beside it.
     if !super::narrow(ui.ctx()) {
+        let beside = if crate::rtl::enabled(ui) {
+            header.right()
+        } else {
+            header.left()
+        };
         widgets::paint_shadow_beside(
             ui,
             &app.palette,
-            header.left(),
+            beside,
             header.bottom(),
             ui.max_rect().bottom(),
         );
@@ -453,22 +458,38 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
             let room = super::caption_room(ui.ctx(), ui.max_rect(), HEADER_MIN_CONTENT);
             ui.add_space(room.top);
             let narrow = super::narrow(ui.ctx());
-            let row = ui.horizontal(|ui| {
+            let rtl = crate::rtl::enabled(ui);
+            let (mut start_room, mut end_room) = if rtl {
+                (room.right, room.left)
+            } else {
+                (room.left, room.right)
+            };
+            let row = crate::rtl::row(ui, |ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
                 // With no chat list beside it, the header clears the traffic
-                // lights itself.
+                // lights itself. They stay on the window's physical left.
                 if narrow && theme::macos_chrome(ui.ctx()) {
-                    ui.add_space(theme::traffic_light_inset(ui.ctx()));
+                    let lights = theme::traffic_light_inset(ui.ctx());
+                    if rtl {
+                        end_room += lights;
+                    } else {
+                        start_room += lights;
+                    }
                 } else if app.sidebar_mode() == crate::model::SidebarDisplayMode::CollapsedIconsOnly
                     && app.page == crate::model::Page::Chats
                     && !super::macos_title_strip(app, ui.ctx())
                 {
                     // Beside the rail alone, the lights reach over this header,
                     // unless they have the strip above it.
-                    ui.add_space(super::rail::lights_overhang(ui.ctx()));
+                    let over = super::rail::lights_overhang(ui.ctx());
+                    if rtl {
+                        end_room += over;
+                    } else {
+                        start_room += over;
+                    }
                 }
-                ui.add_space(room.left);
+                ui.add_space(start_room);
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
                 let call_here = app.call_live_here(&chat.id);
@@ -482,7 +503,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 } else {
                     0.0
                 };
-                let extra = room.right + caption_gap(room.right);
+                let extra = end_room + caption_gap(end_room);
                 let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
                 // In a narrow pane, or on vibrant glass, which takes more room,
                 // Search and the call buttons go into More rather than push
@@ -509,7 +530,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 (ui.available_width() - right_controls).max(80.0),
                                 HEADER_ROW,
                             ),
-                            Layout::left_to_right(Align::Center),
+                            crate::rtl::start(ui, Align::Center),
                             |ui| {
                                 let avatar_response = widgets::avatar(
                                     ui,
@@ -547,7 +568,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         // Center the name on the avatar.
                                         ui.allocate_ui_with_layout(
                                             vec2(width, 40.0),
-                                            Layout::left_to_right(Align::Center),
+                                            crate::rtl::start(ui, Align::Center),
                                             |ui| {
                                                 text = widgets::rich_text(
                                                     ui,
@@ -575,7 +596,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                                     40.0
                                                 },
                                             ),
-                                            Layout::top_down(Align::Min),
+                                            Layout::top_down(crate::rtl::align(ui)),
                                             |ui| {
                                                 text = widgets::rich_text(
                                                     ui,
@@ -589,7 +610,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                                 )
                                                 .rect;
                                                 ui.with_layout(
-                                                    Layout::bottom_up(Align::Min),
+                                                    Layout::bottom_up(crate::rtl::align(ui)),
                                                     |ui| {
                                                         text = text.union(
                                                             widgets::rich_text(
@@ -650,8 +671,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     crate::i18n::gettext(app.locale, "Leave group")
                 };
                 let select_messages_label = crate::i18n::gettext(app.locale, "Select messages");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(room.right + caption_gap(room.right));
+                ui.with_layout(crate::rtl::end(ui), |ui| {
+                    ui.add_space(end_room + caption_gap(end_room));
                     // Each button on a vibrant window floats on its own glass,
                     // with room around it.
                     if palette.vibrant() {
@@ -955,7 +976,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         };
                         let back = theme::icon_button(
                             ui,
-                            Icon::ArrowLeft,
+                            crate::rtl::back_icon(ui),
                             18.0,
                             palette.secondary,
                             palette.text,
@@ -1607,7 +1628,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         let palette = app.palette;
                         let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
                             ui.set_width(ui.available_width().max(0.0));
-                            ui.horizontal(|ui| {
+                            crate::rtl::row(ui, |ui| {
                                 ui.vertical(|ui| {
                                     ui.set_max_width((ui.available_width() - 40.0).max(0.0));
                                     widgets::rich_text(
@@ -1617,7 +1638,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                         palette.secondary,
                                     );
                                 });
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.with_layout(crate::rtl::end(ui), |ui| {
                                     if theme::icon_button(
                                         ui, Icon::X, 16.0, palette.secondary, palette.text,
                                         "Cancel reply (Esc)",
@@ -1724,7 +1745,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
-                Layout::left_to_right(Align::Max),
+                crate::rtl::start(ui, Align::Max),
                 |ui| {
                 // The plus sits in the field's rounded left end, centred as
                 // the send button is in the right one.
@@ -2141,7 +2162,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                     }
                     theme::text(ui, &hint, theme::regular(11.0), palette.dim);
                     // Open the shortcut list without consuming typed `?`.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.with_layout(crate::rtl::end(ui), |ui| {
                         if theme::icon_button(
                             ui,
                             Icon::Keyboard,
@@ -2363,10 +2384,10 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
     let discard = crate::i18n::gettext(app.locale, "Discard voice message");
     widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             theme::icon(ui, Icon::Mic, 16.0, palette.danger);
             theme::text(ui, &label, theme::semibold(12.5), palette.danger);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.with_layout(crate::rtl::end(ui), |ui| {
                 let button = theme::icon_button(
                     ui,
                     Icon::X,
@@ -2417,7 +2438,7 @@ fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 theme::progress(ui, 16.0, fraction, palette.accent);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.with_layout(crate::rtl::end(ui), |ui| {
                     let button = theme::icon_button(
                         ui,
                         Icon::X,
@@ -2439,7 +2460,7 @@ fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                         theme::tabular(fastframe_fonts::Weight::Regular, 12.5),
                         palette.secondary,
                     );
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.with_layout(crate::rtl::start(ui, Align::Center), |ui| {
                         theme::text(ui, &label, theme::semibold(12.5), palette.text);
                     });
                 });
@@ -2463,10 +2484,10 @@ fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             theme::icon(ui, Icon::Pencil, 16.0, palette.accent);
             theme::text(ui, "Editing message", theme::semibold(12.5), palette.accent);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.with_layout(crate::rtl::end(ui), |ui| {
                 if theme::icon_button(
                     ui,
                     Icon::X,
@@ -2495,7 +2516,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
     let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
     let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
             ui.painter().rect_filled(bar, 2.0, palette.accent);
             ui.vertical(|ui| {
@@ -2509,7 +2530,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
                 );
                 widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
             });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.with_layout(crate::rtl::end(ui), |ui| {
                 if theme::icon_button(
                     ui,
                     Icon::X,
@@ -11592,7 +11613,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
     // waveform across the rest, and send at the end.
     ui.allocate_ui_with_layout(
         vec2(ui.available_width().max(0.0), row_height),
-        egui::Layout::left_to_right(egui::Align::Center),
+        crate::rtl::start(ui, egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             if theme::circle_button(
@@ -11683,7 +11704,7 @@ fn select_box(ui: &egui::Ui, palette: &Palette, rect: Rect, checked: bool) {
 fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[String]) {
     let palette = app.palette;
     let locale = app.locale;
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if theme::icon_button(
             ui,
             Icon::X,
@@ -11705,7 +11726,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
         )
         .replace("{count}", &selected.len().to_string());
         theme::text(ui, &count, theme::medium(14.5), palette.text);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             // The selection stays open with nothing in it, as its check
             // boxes do; there is nothing to forward until one is ticked.
             let forward = ui
