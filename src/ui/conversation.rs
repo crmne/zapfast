@@ -1335,6 +1335,30 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
 }
 
 /// Group-member suggestions above the composer.
+/// Where the chosen member's row was drawn, for interaction tests.
+#[cfg(test)]
+pub(crate) fn mention_row_test_id() -> egui::Id {
+    egui::Id::new("mention-selected-row")
+}
+
+/// How many members the mention list shows before it scrolls.
+const MENTION_ROWS: usize = 5;
+
+/// The scroll offset that brings row `selected` into a list showing `visible`
+/// rows of `row_height`, moving as little as it can from `offset`.
+fn reveal_row(selected: usize, visible: usize, row_height: f32, offset: f32) -> f32 {
+    let top = selected as f32 * row_height;
+    let bottom = top + row_height;
+    let height = visible as f32 * row_height;
+    if top < offset {
+        top
+    } else if bottom > offset + height {
+        bottom - height
+    } else {
+        offset
+    }
+}
+
 fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id) {
     let cursor = egui::TextEdit::load_state(ui.ctx(), field)
         .and_then(|state| state.cursor.char_range())
@@ -1363,108 +1387,127 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
     let palette = app.palette;
     let everyone_alias = crate::mentions::everyone_alias(app.locale);
 
+    // The list draws only the rows in view, so a row the keys pick off screen
+    // cannot scroll itself in: the list scrolls to it instead.
+    let offset_id = egui::Id::new("mention-members-offset");
+    let pointer_moved = ui.input(|input| input.pointer.is_moving());
+
     let list = widgets::raised(ui, &palette, suggestion_frame(&palette), |ui| {
         let row_height = 38.0;
-        egui::ScrollArea::vertical()
+        // `show_rows` places the rows with the spacing from outside its
+        // closure: with any gap there, the rows it scrolls to sit lower than
+        // the ones it draws.
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let visible = candidates.len().min(MENTION_ROWS);
+        let mut area = egui::ScrollArea::vertical()
             .id_salt("mention-members")
-            .max_height(row_height * candidates.len().min(5) as f32)
-            .auto_shrink([false, true])
-            .show_rows(ui, row_height, candidates.len(), |ui, range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for index in range {
-                    let (id, label) = &candidates[index];
-                    let (rect, response) = ui.allocate_exact_size(
-                        vec2(ui.available_width(), row_height),
-                        Sense::click(),
-                    );
-                    if index == app.mention_selected || response.hovered() {
-                        ui.painter().rect_filled(
-                            rect,
-                            SUGGESTION_ROW_RADIUS,
-                            palette.surface_hover,
-                        );
-                    }
-                    let avatar = Rect::from_center_size(
-                        pos2(rect.left() + 19.0, rect.center().y),
-                        Vec2::splat(28.0),
-                    );
-                    let everyone = id == crate::mentions::ALL_ID;
-                    if everyone {
-                        ui.painter().circle_filled(
-                            avatar.center(),
-                            avatar.width() / 2.0,
-                            palette.avatar(crate::util::hue(id)),
-                        );
-                        theme::paint_icon(
-                            ui,
-                            Icon::Users,
-                            avatar,
-                            avatar.width() * 0.5,
-                            Color32::WHITE,
-                        );
-                    } else {
-                        let picture = app.avatar(id);
-                        widgets::paint_avatar(
-                            ui,
-                            &palette,
-                            avatar,
-                            label.trim_start_matches('~'),
-                            id,
-                            picture.as_deref(),
-                        );
-                    }
-                    let detail = if everyone
-                        && !everyone_alias.eq_ignore_ascii_case(crate::mentions::ALL_USER)
-                    {
-                        everyone_alias.clone()
-                    } else {
-                        crate::model::phone_of(id)
-                            .map(crate::util::phone)
-                            .unwrap_or_default()
-                    };
-                    let detail = widgets::line(
-                        ui,
-                        &detail,
-                        theme::regular(11.5),
-                        palette.secondary,
-                        (rect.width() * 0.36).min(150.0),
-                        1,
-                    );
-                    let name = widgets::line(
-                        ui,
-                        label,
-                        theme::medium(13.5),
-                        palette.text,
-                        rect.width() - detail.size().x - 62.0,
-                        1,
-                    );
-                    name.paint(
-                        ui,
-                        pos2(rect.left() + 40.0, rect.center().y - name.size().y / 2.0),
-                        palette.text,
-                    );
-                    detail.paint(
-                        ui,
-                        pos2(
-                            rect.right() - detail.size().x - 8.0,
-                            rect.center().y - detail.size().y / 2.0,
-                        ),
-                        palette.secondary,
-                    );
-                    if response.hovered() {
-                        app.mention_selected = index;
-                    }
-                    if (down || up) && index == app.mention_selected {
-                        response.scroll_to_me(Some(Align::Center));
-                    }
-                    if response
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        picked = Some((id.clone(), label.clone()));
-                    }
+            .max_height(row_height * visible as f32)
+            .auto_shrink([false, true]);
+        if down || up {
+            let offset = ui
+                .data(|data| data.get_temp::<f32>(offset_id))
+                .unwrap_or(0.0);
+            area = area.vertical_scroll_offset(reveal_row(
+                app.mention_selected,
+                visible,
+                row_height,
+                offset,
+            ));
+        }
+        let output = area.show_rows(ui, row_height, candidates.len(), |ui, range| {
+            for index in range {
+                let (id, label) = &candidates[index];
+                let (rect, response) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
+                #[cfg(test)]
+                if index == app.mention_selected {
+                    ui.data_mut(|data| data.insert_temp(mention_row_test_id(), rect));
                 }
-            });
+                if index == app.mention_selected {
+                    ui.painter()
+                        .rect_filled(rect, SUGGESTION_ROW_RADIUS, palette.surface_hover);
+                }
+                let avatar = Rect::from_center_size(
+                    pos2(rect.left() + 19.0, rect.center().y),
+                    Vec2::splat(28.0),
+                );
+                let everyone = id == crate::mentions::ALL_ID;
+                if everyone {
+                    ui.painter().circle_filled(
+                        avatar.center(),
+                        avatar.width() / 2.0,
+                        palette.avatar(crate::util::hue(id)),
+                    );
+                    theme::paint_icon(
+                        ui,
+                        Icon::Users,
+                        avatar,
+                        avatar.width() * 0.5,
+                        Color32::WHITE,
+                    );
+                } else {
+                    let picture = app.avatar(id);
+                    widgets::paint_avatar(
+                        ui,
+                        &palette,
+                        avatar,
+                        label.trim_start_matches('~'),
+                        id,
+                        picture.as_deref(),
+                    );
+                }
+                let detail = if everyone
+                    && !everyone_alias.eq_ignore_ascii_case(crate::mentions::ALL_USER)
+                {
+                    everyone_alias.clone()
+                } else {
+                    crate::model::phone_of(id)
+                        .map(crate::util::phone)
+                        .unwrap_or_default()
+                };
+                let detail = widgets::line(
+                    ui,
+                    &detail,
+                    theme::regular(11.5),
+                    palette.secondary,
+                    (rect.width() * 0.36).min(150.0),
+                    1,
+                );
+                let name = widgets::line(
+                    ui,
+                    label,
+                    theme::medium(13.5),
+                    palette.text,
+                    rect.width() - detail.size().x - 62.0,
+                    1,
+                );
+                name.paint(
+                    ui,
+                    pos2(rect.left() + 40.0, rect.center().y - name.size().y / 2.0),
+                    palette.text,
+                );
+                detail.paint(
+                    ui,
+                    pos2(
+                        rect.right() - detail.size().x - 8.0,
+                        rect.center().y - detail.size().y / 2.0,
+                    ),
+                    palette.secondary,
+                );
+                // Only a moving pointer takes the choice: one resting
+                // over the list would take it back from the keys.
+                if response.hovered() && pointer_moved {
+                    app.mention_selected = index;
+                }
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    picked = Some((id.clone(), label.clone()));
+                }
+            }
+        });
+        ui.data_mut(|data| data.insert_temp(offset_id, output.state.offset.y));
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(suggestion_list_id(), list.response.rect));
@@ -13085,6 +13128,18 @@ mod tests {
         assert_eq!(standalone_trigger("hello @", 7, '@'), Some(6));
         assert_eq!(standalone_trigger("19:30", 3, ':'), None);
         assert_eq!(standalone_trigger("mail@example.com", 5, '@'), None);
+    }
+
+    #[test]
+    fn keys_scroll_the_mention_list_to_the_chosen_member() {
+        // Up from the first of eight members wraps to the last, below the
+        // five rows in view.
+        assert_eq!(reveal_row(7, 5, 38.0, 0.0), 3.0 * 38.0);
+        // Down from the last wraps to the first, above them.
+        assert_eq!(reveal_row(0, 5, 38.0, 3.0 * 38.0), 0.0);
+        // A row already in view leaves the list where it is.
+        assert_eq!(reveal_row(4, 5, 38.0, 2.0 * 38.0), 2.0 * 38.0);
+        assert_eq!(reveal_row(2, 5, 38.0, 0.0), 0.0);
     }
 
     #[test]
