@@ -157,6 +157,21 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     drop_shortcut_text(ctx);
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let menu_open = egui::Popup::is_any_open(ctx);
+    // Control on every platform, including macOS. Leave plain Tab and all
+    // other modified Tabs for focus navigation and the platform.
+    if app.chat_view()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && !menu_open
+        && (app.call.is_none() || app.call_surface_hidden)
+        && ctx.input_mut(take_recent_chat)
+    {
+        ctx.data_mut(|data| data.insert_temp(crate::theme::keyboard_focus_id(), true));
+        actions.push(Action::SwitchRecentChat);
+    }
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
     if app.chat_view()
         && app.selection.as_ref().is_some_and(|(chat, selected)| {
@@ -575,6 +590,19 @@ fn take_delete(input: &mut egui::InputState, modifiers: Modifiers) -> bool {
         let cut = !taken && matches!(event, egui::Event::Cut);
         taken |= cut;
         !cut
+    });
+    taken
+}
+
+/// Takes Control+Tab alone, with the platform's optional `command` alias.
+fn take_recent_chat(input: &mut egui::InputState) -> bool {
+    let mut taken = false;
+    input.events.retain(|event| {
+        let matches = matches!(event, egui::Event::Key {
+            key: Key::Tab, pressed: true, modifiers, ..
+        } if modifiers.ctrl && !modifiers.alt && !modifiers.shift && !modifiers.mac_cmd);
+        taken |= matches;
+        !matches
     });
     taken
 }
@@ -1058,6 +1086,12 @@ const MESSAGES_KEYS: &str = if cfg!(target_os = "macos") {
     "Alt+2"
 };
 
+const RECENT_CHAT_KEYS: &str = if cfg!(target_os = "macos") {
+    "Control+Tab"
+} else {
+    "Ctrl+Tab"
+};
+
 /// Deletes the current message for me. A Mac's Delete key is Backspace, and
 /// Fn+Delete is Delete.
 const DELETE_KEYS: &str = if cfg!(target_os = "macos") {
@@ -1083,6 +1117,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("Ctrl+L", "Focus the message input"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
+    (RECENT_CHAT_KEYS, "Switch between the two most recent chats"),
     ("Ctrl+Shift+[ / ]", "Previous / next chat, as in WhatsApp"),
     ("Ctrl+1..9", "Open a chat by its position in the chat list"),
     ("Ctrl+Shift+1", "Chats"),
@@ -1155,6 +1190,37 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_control_tab_switches_recent_chats() {
+        let (_root, mut app, _) = app_with(Vec::new());
+        app.page = Page::Chats;
+        let ctx = egui::Context::default();
+        for modifiers in [Modifiers::CTRL, Modifiers::CTRL | Modifiers::COMMAND] {
+            app.actions.clear();
+            assert!(!press(&mut app, &ctx, Key::Tab, modifiers));
+            assert!(app.actions.contains(&Action::SwitchRecentChat));
+        }
+        for modifiers in [
+            Modifiers::NONE,
+            Modifiers::SHIFT,
+            Modifiers::CTRL | Modifiers::SHIFT,
+            Modifiers::CTRL | Modifiers::ALT,
+            Modifiers::MAC_CMD,
+        ] {
+            app.actions.clear();
+            press(&mut app, &ctx, Key::Tab, modifiers);
+            assert!(!app.actions.contains(&Action::SwitchRecentChat));
+        }
+        app.dialog = Some(Dialog::Shortcuts);
+        app.actions.clear();
+        press(&mut app, &ctx, Key::Tab, Modifiers::CTRL);
+        assert!(!app.actions.contains(&Action::SwitchRecentChat));
+        app.dialog = None;
+        app.page = Page::Settings;
+        press(&mut app, &ctx, Key::Tab, Modifiers::CTRL);
+        assert!(!app.actions.contains(&Action::SwitchRecentChat));
+    }
 
     /// An app whose open chat holds `messages`, by id and content, in order,
     /// with the folder it keeps its files in, which goes when dropped.
