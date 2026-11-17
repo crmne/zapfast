@@ -263,7 +263,7 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "06da5ee2b
 # window opens after the headless AppKit loop has already launched (#4770).
 # Wayland clipboard MIME bytes are read on that one data device (crmne/winit#7),
 # and macOS's accent picker replaces the typed character (crmne/winit#5).
-winit = { git = "https://github.com/crmne/winit", rev = "59ebfb727b8c83fcd28f8ca59c3733e32b4b4e9b" }
+winit = { git = "https://github.com/crmne/winit", rev = "dc09323e032a405a8a165aeda9ceb48b3251cebd" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
