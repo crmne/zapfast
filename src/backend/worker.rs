@@ -13069,7 +13069,8 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             media: media(document.mimetype.as_ref(), document.file_length, None, None),
             file_name,
             caption: non_empty(&document.caption),
-            pages: document.page_count,
+            // Archives and other files without pages arrive with a count of 0.
+            pages: document.page_count.filter(|&pages| pages > 0),
         });
     }
     if let Some(sticker) = sticker_of(base) {
@@ -16142,6 +16143,26 @@ mod tests {
         }
         assert_eq!(thumbnail_of(&image), Some(vec![0xff, 0xd8]));
         assert_eq!(classify(&wa::Message::default()), None);
+    }
+
+    #[test]
+    fn documents_without_pages_carry_no_page_count() {
+        let document = |pages| {
+            let mut proto = wa::Message::default();
+            proto.document_message = whatsapp_rust::prelude::MessageField::some({
+                let mut proto = wa::message::DocumentMessage::default();
+                proto.file_name = Some("fixture.zip".into());
+                proto.page_count = pages;
+                proto
+            });
+            classify(&proto)
+        };
+        for (sent, kept) in [(Some(0), None), (None, None), (Some(4), Some(4))] {
+            match document(sent) {
+                Some(Content::Document { pages, .. }) => assert_eq!(pages, kept, "{sent:?}"),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
     }
 
     #[test]

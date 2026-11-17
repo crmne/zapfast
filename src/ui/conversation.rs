@@ -8282,12 +8282,7 @@ fn content(
             pages,
         } => {
             let mut detail = Vec::new();
-            if let Some(pages) = pages {
-                detail.push(format!(
-                    "{pages} page{}",
-                    if *pages == 1 { "" } else { "s" }
-                ));
-            }
+            detail.extend(page_count(view.locale, *pages));
             detail.push(crate::util::bytes(media.size));
             attachment(
                 ui,
@@ -9893,6 +9888,16 @@ fn rich_body(
             pos2(rect.right() - reserve, rect.bottom() - 15.0),
             rect.right_bottom(),
         )
+    })
+}
+
+/// A document's page count as its bubble and the media panel show it. Files
+/// without pages, such as archives, arrive from some phones with a count of 0
+/// and show none, as on the phone.
+pub(super) fn page_count(locale: crate::i18n::Locale, pages: Option<u32>) -> Option<String> {
+    pages.filter(|&pages| pages > 0).map(|pages| {
+        crate::i18n::ngettext(locale, "{} page", "{} pages", pages)
+            .replace("{}", &pages.to_string())
     })
 }
 
@@ -12991,6 +12996,15 @@ mod tests {
 
     /// A document reads as not downloaded only when its card will not fetch
     /// it by itself: with auto-download on and within the size limit it will.
+    #[test]
+    fn documents_without_pages_show_no_page_count() {
+        let locale = crate::i18n::Locale::English;
+        assert_eq!(page_count(locale, Some(0)), None, "an archive has no pages");
+        assert_eq!(page_count(locale, None), None);
+        assert_eq!(page_count(locale, Some(1)).as_deref(), Some("1 page"));
+        assert_eq!(page_count(locale, Some(12)).as_deref(), Some("12 pages"));
+    }
+
     #[test]
     fn a_document_reads_as_not_downloaded_only_when_its_card_waits() {
         let document = |size: u64| Content::Document {
