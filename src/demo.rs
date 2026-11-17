@@ -25714,9 +25714,13 @@ mod rail_tests {
             assert_eq!(me.size(), egui::vec2(32.0, 32.0));
             // A Mac lays out its own way whichever the preview says.
             if crate::theme::macos_chrome(&ctx) {
+                // The rail's shade starts where the bar the lights are
+                // centred in ends, and Chats sits as far inside it as from
+                // its sides.
+                let inset = top[0].left() - rail.left();
                 assert!(
-                    top[0].top() >= 36.0 && top[0].top() < 60.0,
-                    "just below the traffic lights: {:?}",
+                    (top[0].top() - crate::theme::TOP_BAR_HEIGHT - inset).abs() < 0.5,
+                    "below the traffic lights' bar, {inset} points in: {:?}",
                     top[0]
                 );
                 // The lights reach over the list header, whose title makes

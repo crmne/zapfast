@@ -94,7 +94,10 @@ protocol. These notes are for coding agents and new contributors.
   chats' avatars fill it between the two (`chats::compact_list`); beside the
   list they would only repeat it. On macOS the traffic lights reach
   past it over the header beside it, which leaves `rail::lights_overhang`
-  free; a narrow window hides the rail with the list. The Calls tab keeps
+  free. Beside the list, the rail's top (the bar the lights are centred
+  in) takes the list's colour and the rail's shade starts under it,
+  rounded concentric with the first plate, which keeps its place with the
+  list hidden. A narrow window hides the rail with the list. The Calls tab keeps
   the open chat beside its history (`App::chat_view`), and a picked call row
   opens its chat there. Our avatar opens the account switcher
   (`src/ui/accounts.rs`): only the accounts (picture, name or number, unread
