@@ -3494,6 +3494,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer_tools_open = true;
                 app.focus_composer = true;
             }
+            "take-photo" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.photo_capture = Some(crate::photo_capture::Capture::simulated());
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -9794,6 +9798,8 @@ mod tests {
             "sticker-pack-view",
             "typing",
             "composer-tools",
+            "take-photo",
+            "take-photo,light",
             "link-preview",
             "link-preview,light",
             "link-preview-loading",
@@ -22611,9 +22617,9 @@ mod tests {
                 .expect("the plus button is a tab stop");
             (id, ctx.read_response(id).unwrap().rect.center())
         };
-        // Row 0 sends files, row 1 documents, row 2 sends a location, row 3
-        // creates a poll.
-        for row in [0.0, 1.0, 2.0, 3.0] {
+        // Row 0 sends files, row 1 takes a photo, row 2 sends documents,
+        // row 3 sends a location, row 4 creates a poll.
+        for row in [0.0, 1.0, 2.0, 3.0, 4.0] {
             let mut app = app();
             app.settings.show_shortcut_hints = false;
             let chat = app.open_chat.clone().unwrap();
@@ -22633,7 +22639,7 @@ mod tests {
             );
             let item = egui::pos2(
                 menu.center().x,
-                menu.top() + menu.height() * (1.0 + 2.0 * row) / 8.0,
+                menu.top() + menu.height() * (1.0 + 2.0 * row) / 10.0,
             );
             click(&mut app, &ctx, item);
             assert!(
@@ -22652,9 +22658,13 @@ mod tests {
                 assert_eq!(picked, Some(false), "Send files opens the file picker");
                 assert_eq!(app.dialog, None);
             } else if row == 1.0 {
-                assert_eq!(picked, Some(true), "documents open the file picker");
+                assert_eq!(picked, None);
+                assert!(app.photo_capture.is_some(), "Take photo opens the camera");
                 assert_eq!(app.dialog, None);
             } else if row == 2.0 {
+                assert_eq!(picked, Some(true), "documents open the file picker");
+                assert_eq!(app.dialog, None);
+            } else if row == 3.0 {
                 assert_eq!(picked, None);
                 assert_eq!(app.dialog, Some(crate::model::Dialog::SendLocation(chat)));
             } else {
@@ -22662,6 +22672,74 @@ mod tests {
                 assert_eq!(app.dialog, Some(crate::model::Dialog::CreatePoll(chat)));
             }
         }
+    }
+
+    #[test]
+    fn a_photo_taken_with_the_camera_is_staged_as_the_preview_showed_it() {
+        for mirror in [true, false] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.open_chat = Some(SAMPLES[0].id.to_owned());
+            app.photo_mirror = mirror;
+            app.actions.push(crate::model::Action::OpenPhotoCapture);
+            render(&mut app, &ctx);
+            let camera = app
+                .photo_capture
+                .as_ref()
+                .expect("the camera window is open");
+            let seen = camera.frame().expect("the simulated camera has a frame");
+            press_key(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::NONE);
+            assert!(
+                app.photo_capture.is_none(),
+                "taking the photo lets the camera go"
+            );
+            let [
+                crate::app::Staged {
+                    item:
+                        crate::app::Pending::Picture {
+                            width,
+                            height,
+                            rgba,
+                            ..
+                        },
+                    ..
+                },
+            ] = app.pending.as_slice()
+            else {
+                panic!("one picture is staged");
+            };
+            assert_eq!((*width, *height), (seen.width, seen.height));
+            // The simulated frame darkens to the left, so a mirrored photo
+            // starts with its brightest column.
+            let first = rgba[0];
+            let last_of_row = rgba[(seen.width - 1) * 4];
+            assert_eq!(first > last_of_row, mirror, "mirrored: {mirror}");
+            assert!(app.composer.is_empty(), "the shortcut types nothing");
+        }
+    }
+
+    #[test]
+    fn the_camera_window_mirrors_with_m_and_closes_with_escape_keeping_the_chat() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = SAMPLES[0].id.to_owned();
+        app.open_chat = Some(chat.clone());
+        app.actions.push(crate::model::Action::OpenPhotoCapture);
+        render(&mut app, &ctx);
+        assert!(app.photo_mirror, "mirrored by default");
+        press_key(&mut app, &ctx, egui::Key::M, egui::Modifiers::NONE);
+        assert!(!app.photo_mirror, "M switches mirroring off");
+        assert!(app.composer.is_empty(), "M is not typed into the composer");
+        press_key(&mut app, &ctx, egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(
+            app.photo_capture.is_none(),
+            "Escape closes the camera window"
+        );
+        assert!(app.pending.is_empty(), "nothing is staged");
+        assert_eq!(app.open_chat, Some(chat), "the chat stays open");
+        assert!(!app.photo_mirror, "the choice is kept for next time");
     }
 
     #[test]

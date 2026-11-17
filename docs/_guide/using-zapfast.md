@@ -266,6 +266,14 @@ The sticker is a 512 × 512 WebP under WhatsApp's 100 KB limit.
 
 Paste a picture or copied files, drop files on the window, or select them with
 the paperclip.
+To take a photo with your computer's camera, choose **Take photo** under **+**.
+A window shows the camera's live picture. **Mirror** (or M) flips it left to
+right, as a mirror would; it starts on and is remembered until ZapFast quits.
+The photo looks exactly like the preview. **Take photo** (or Enter) stages it
+like a pasted picture, ready for a caption, a crop, or **View once**; Cancel or
+Escape closes the window. The camera is used only while the window is open,
+and the picture never leaves your computer until you send it. The first time,
+macOS asks whether ZapFast may use the camera.
 On Wayland, attachment paste uses the window's native clipboard, including
 inside Flatpak without an X11 connection.
 A pasted or dropped attachment is ready at once, so the send key sends it even

@@ -28,6 +28,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         sticker_view_keys(app, ctx);
         return;
     }
+    // The camera window reads its own keys (Enter, M, Escape).
+    if app.photo_capture.is_some() {
+        return;
+    }
     let editing_text = ctx.text_edit_focused();
     let find = find_action(app);
     let archive = archive_action(app);

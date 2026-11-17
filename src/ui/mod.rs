@@ -24,6 +24,7 @@ pub mod message_info;
 pub mod new_group;
 pub(crate) mod overlay;
 pub mod pane;
+pub mod photo_capture;
 pub mod picker;
 pub mod polls;
 pub mod rail;
@@ -122,6 +123,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);
+    photo_capture::show(app, ctx);
     overlay::finish(ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
