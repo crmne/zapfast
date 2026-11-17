@@ -622,6 +622,51 @@ pub struct LinkPreview {
     pub url: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub video: bool,
+    /// Larger preview hosted by WhatsApp. Its download keys stay in the raw message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Box<Media>>,
+    /// Content identity of the downloadable picture, without its encryption keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_sha256: Option<Vec<u8>>,
+}
+
+impl LinkPreview {
+    /// Cached paths and in-flight downloads must belong to the same picture.
+    pub fn same_picture(&self, other: &Self) -> bool {
+        self.url == other.url && self.image_sha256 == other.image_sha256
+    }
+
+    /// Prefer WhatsApp's video flag; known reel/video links also work when a
+    /// sender omitted it. An ordinary post or article never gets a play badge.
+    pub fn is_video(&self) -> bool {
+        if self.video {
+            return true;
+        }
+        let Ok(url) = reqwest::Url::parse(&self.url) else {
+            return false;
+        };
+        let host = url
+            .host_str()
+            .unwrap_or_default()
+            .trim_start_matches("www.");
+        let path = url.path();
+        match host {
+            "instagram.com" => path.starts_with("/reel/") || path.starts_with("/reels/"),
+            "facebook.com" | "m.facebook.com" => {
+                path.starts_with("/reel/")
+                    || path.starts_with("/reels/")
+                    || path.starts_with("/share/r/")
+                    || path == "/watch"
+                    || path.starts_with("/watch/")
+                    || path.contains("/videos/")
+            }
+            "fb.watch" | "youtu.be" => path.len() > 1,
+            "youtube.com" | "m.youtube.com" => path == "/watch" || path.starts_with("/shorts/"),
+            _ => false,
+        }
+    }
 }
 
 /// A link preview made here for an outgoing message, with its picture as JPEG.
@@ -1490,6 +1535,10 @@ impl Content {
 
     pub fn media(&self) -> Option<&Media> {
         match self {
+            Self::Text {
+                preview: Some(preview),
+                ..
+            } => preview.image.as_deref(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }
@@ -1545,10 +1594,28 @@ impl Content {
         }
     }
 
-    /// Carries downloaded file paths over from `old` when rederiving content
-    /// from the raw protobuf: the main attachment and each carousel card's image.
+    /// A changed link must not inherit the previous link's picture or transfer state.
+    pub fn can_reuse_media(&self, old: &Content) -> bool {
+        match (self, old) {
+            (
+                Self::Text {
+                    preview: Some(new), ..
+                },
+                Self::Text {
+                    preview: Some(old), ..
+                },
+            ) => new.same_picture(old),
+            (Self::Text { .. }, _) | (_, Self::Text { .. }) => false,
+            _ => true,
+        }
+    }
+
+    /// Carries downloaded file paths over from `old` when rederiving content:
+    /// the main attachment, link picture and each carousel card's image.
     pub fn keep_local_paths(&mut self, old: &Content) {
-        if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
+        if self.can_reuse_media(old)
+            && let (Some(new), Some(old)) = (self.media_mut(), old.media())
+        {
             new.path = old.path.clone();
         }
         if let (
@@ -1581,7 +1648,8 @@ impl Content {
     /// downloaded where this copy has none: the attachment, a motion photo's
     /// clip, and each carousel card's image. A file this copy has stays.
     pub fn fill_local_paths(&mut self, other: &Content) {
-        if let (Some(new), Some(old)) = (self.media_mut(), other.media())
+        if self.can_reuse_media(other)
+            && let (Some(new), Some(old)) = (self.media_mut(), other.media())
             && new.path.is_none()
         {
             new.path = old.path.clone();
@@ -1651,6 +1719,10 @@ impl Content {
 
     pub fn media_mut(&mut self) -> Option<&mut Media> {
         match self {
+            Self::Text {
+                preview: Some(preview),
+                ..
+            } => preview.image.as_deref_mut(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }
@@ -3523,6 +3595,25 @@ mod storage_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn facebook_watch_urls_match_a_path_segment() {
+        for (path, expected) in [
+            ("/watch", true),
+            ("/watch/live", true),
+            ("/watchlist", false),
+        ] {
+            let preview = crate::model::LinkPreview {
+                url: format!("https://www.facebook.com{path}"),
+                title: None,
+                description: None,
+                video: false,
+                image: None,
+                image_sha256: None,
+            };
+            assert_eq!(preview.is_video(), expected, "{path}");
+        }
+    }
+
     /// Checks compatibility with older archived quotes that omitted a source chat.
     #[test]
     fn archived_quotes_without_a_source_chat_remain_readable() {
@@ -4419,6 +4510,9 @@ mod tests {
                     // Typed without the scheme, previewed with it: one link.
                     text: "see spotifast.rocks".into(),
                     preview: Some(LinkPreview {
+                        image_sha256: None,
+                        video: false,
+                        image: None,
                         url: "https://spotifast.rocks/".into(),
                         title: Some("Spotifast".into()),
                         description: None,

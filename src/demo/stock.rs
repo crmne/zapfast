@@ -43,6 +43,8 @@ const PHOTOS: [Photo; 5] = [LAUNCH, ENGINE, VENUE, DUSK, SPACEWALK];
 
 /// A four-second H.264 and AAC clip of a rocket leaving the pad, 640 by 360.
 pub const VIDEO: &[u8] = include_bytes!("../../assets/demo/videos/launch.mp4");
+/// The same public-domain launch cropped to a portrait video.
+pub const PORTRAIT_VIDEO: &[u8] = include_bytes!("../../assets/demo/videos/portrait.mp4");
 /// The same launch from beside the pad, square, for a round video message.
 pub const NOTE: &[u8] = include_bytes!("../../assets/demo/videos/note.mp4");
 /// How long both clips run, in seconds.

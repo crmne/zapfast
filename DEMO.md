@@ -64,6 +64,11 @@ search, and the light theme). `--demo-tour-script launch` is the default.
 Demo runs never open the microphone: recording plays back a synthetic tone.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
+Use `--demo-page social-previews` for Instagram and Facebook reel posters
+and a landscape article preview. `instagram-preview`, `facebook-preview`,
+and `article-preview` show each separately; `instagram-post-preview` shows a
+square post with a wrapped link and timestamp. The Facebook example has a
+full-size image without an inline JPEG.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
 and its attachment and poll menu, or `--demo-page location` for the location
 dialog with a spot pasted in. `typing`, `mention`, and
@@ -91,6 +96,11 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 `--demo-page video` shows a video and round video messages,
 `--demo-page video-expanded` the video playing in the full-window viewer, and
 `video-playing` or `note-playing` starts one of them, silently.
+`tiktok-video` shows a forwarded portrait video without an inline thumbnail
+before download; `tiktok-video-ready` shows its recovered first-frame poster.
+`video-preview` shows a downloaded portrait video with a small inline JPEG
+and no caption, for checking poster quality and the timestamp overlay.
+`video-preview-edited` also shows the edit indicator beside the timestamp.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,

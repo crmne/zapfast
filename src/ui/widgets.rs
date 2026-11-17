@@ -51,9 +51,26 @@ pub fn line(
     width: f32,
     max_rows: usize,
 ) -> Line {
+    formatted_line(
+        ui,
+        text,
+        egui::TextFormat::simple(font, color),
+        width,
+        max_rows,
+    )
+}
+
+/// A truncated line with explicit text formatting, including custom leading.
+pub fn formatted_line(
+    ui: &Ui,
+    text: &str,
+    format: egui::TextFormat,
+    width: f32,
+    max_rows: usize,
+) -> Line {
     let single = text.lines().next().unwrap_or_default();
     if max_rows == 1 && single.chars().any(bidi::is_strong_rtl) {
-        return rtl_line(ui, text, single, font, color, width);
+        return rtl_line(ui, text, single, format, width);
     }
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = width;
@@ -62,7 +79,6 @@ pub fn line(
     job.wrap.break_anywhere = max_rows == 1;
     job.wrap.overflow_character = Some('…');
     let mut placements = Vec::new();
-    let format = egui::TextFormat::simple(font, color);
     emoji::append(
         ui,
         &mut job,
@@ -84,15 +100,7 @@ pub fn line(
 /// letter mid-line and the reordered line overflowed its width (#72). The
 /// longest start of the text that fits beside an ellipsis is laid out
 /// whole instead, so the ellipsis ends the text as a reader expects.
-fn rtl_line(
-    ui: &Ui,
-    text: &str,
-    single: &str,
-    font: egui::FontId,
-    color: Color32,
-    width: f32,
-) -> Line {
-    let format = egui::TextFormat::simple(font, color);
+fn rtl_line(ui: &Ui, text: &str, single: &str, format: egui::TextFormat, width: f32) -> Line {
     let layout = |shown: &str| {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = f32::INFINITY;
