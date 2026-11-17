@@ -665,6 +665,35 @@ mod backend {
         FrameFormat::GRAY,
     ];
 
+    /// What a camera is asked for, in turn, until it opens. nokhwa's
+    /// AVFoundation backend only accepts a frame rate that tops one of the
+    /// device's ranges, yet its own default can pick a range's bottom
+    /// (1920x1080 at 15 frames a second on a FaceTime HD camera, #1010);
+    /// asking for the highest frame rate names a range's top.
+    const REQUESTS: [RequestedFormatType; 3] = [
+        RequestedFormatType::None,
+        RequestedFormatType::AbsoluteHighestFrameRate,
+        RequestedFormatType::AbsoluteHighestResolution,
+    ];
+
+    /// Opens with the first request that works, or answers the last refusal.
+    pub(super) fn first_opened<R: Copy + std::fmt::Debug, T, E: std::fmt::Display>(
+        requests: &[R],
+        mut open: impl FnMut(R) -> Result<T, E>,
+    ) -> Result<T, String> {
+        let mut refusal = "no format was asked for".to_owned();
+        for &request in requests {
+            match open(request) {
+                Ok(opened) => return Ok(opened),
+                Err(error) => {
+                    log::warn!("[CALL] the camera refused {request:?}: {error}");
+                    refusal = error.to_string();
+                }
+            }
+        }
+        Err(refusal)
+    }
+
     /// How long a person is given to answer macOS's camera permission prompt.
     #[cfg(target_os = "macos")]
     const PERMISSION_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -745,9 +774,13 @@ mod backend {
                 Ok(number) => CameraIndex::Index(number),
                 Err(_) => CameraIndex::String(id.to_owned()),
             };
-            let any = RequestedFormat::with_formats(RequestedFormatType::None, &READABLE);
-            let mut camera = nokhwa::Camera::new(index, any)
-                .map_err(|error| format!("the camera could not be opened: {error}"))?;
+            let mut camera = first_opened(&REQUESTS, |request| {
+                nokhwa::Camera::new(
+                    index.clone(),
+                    RequestedFormat::with_formats(request, &READABLE),
+                )
+            })
+            .map_err(|error| format!("the camera could not be opened: {error}"))?;
             let modes: Vec<Mode> = camera
                 .compatible_camera_formats()
                 .map_err(|error| format!("the camera's formats could not be read: {error}"))?
@@ -817,6 +850,26 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A camera that refuses the format nokhwa picks by itself opens with
+    /// the next request instead of failing the call (#1010).
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_refused_request_falls_back_to_the_next() {
+        let mut asked = Vec::new();
+        let opened = backend::first_opened(&[1, 2, 3], |request| {
+            asked.push(request);
+            if request == 2 {
+                Ok("open")
+            } else {
+                Err("Not Found/Rejected/Unsupported")
+            }
+        });
+        assert_eq!(opened, Ok("open"));
+        assert_eq!(asked, [1, 2], "stops at the first request that works");
+        let refused = backend::first_opened(&[1, 2], |_| Err::<(), _>("refused"));
+        assert_eq!(refused, Err("refused".to_owned()));
+    }
 
     #[test]
     fn yu12_keeps_luma_and_separate_chroma_planes() {
