@@ -103,6 +103,7 @@ pub fn populate(app: &mut App) -> Result<()> {
             animated: Some(animated.clone()),
             animated_source: None,
             mp4: String::new(),
+            sticker_source: None,
             width: 320,
             height: 240,
         })

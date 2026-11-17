@@ -445,6 +445,10 @@ msgstr ""
 msgid "Add to favorites"
 msgstr ""
 
+#: src/ui/conversation.rs
+msgid "Add to pack"
+msgstr ""
+
 #: src/ui/chats.rs:1741 src/ui/chats.rs:2148 src/ui/conversation.rs:648
 #: src/ui/dialogs.rs:1758 src/ui/info.rs:745
 msgid "Leave group"

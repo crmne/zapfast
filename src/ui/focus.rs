@@ -15,6 +15,7 @@ pub enum Stop {
     ReviewFile(usize),
     ReviewRemove(usize),
     ReviewAdd,
+    ReviewSticker,
     ReviewEdit,
     ReviewClose,
     PhoneLink(u32),

@@ -2070,53 +2070,74 @@ pub enum StickerShelf {
     Add,
 }
 
-/// A square region of a picture, in its pixels.
+/// A square region of a picture, in its pixels. It may be larger than the
+/// picture and reach past its edges, to make the picture smaller in the
+/// sticker: what lies outside the picture is see-through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StickerCrop {
-    pub x: u32,
-    pub y: u32,
+    pub x: i64,
+    pub y: i64,
     pub side: u32,
 }
 
 impl StickerCrop {
+    /// How many times the picture's longer side the square may grow to.
+    pub const ZOOM_OUT: u32 = 3;
+
     /// The largest square in the middle of the picture.
     pub fn centered(width: u32, height: u32) -> Self {
         let side = width.min(height).max(1);
         Self {
-            x: width.saturating_sub(side) / 2,
-            y: height.saturating_sub(side) / 2,
+            x: i64::from(width.saturating_sub(side) / 2),
+            y: i64::from(height.saturating_sub(side) / 2),
             side,
         }
     }
 
-    /// The same square kept inside a picture of this size.
+    /// The largest square a picture of this size allows.
+    pub fn largest(width: u32, height: u32) -> u32 {
+        width.max(height).max(1) * Self::ZOOM_OUT
+    }
+
+    /// The same square, sized within the picture's limits and still showing
+    /// at least an eighth of its side of the picture.
     pub fn clamped(self, width: u32, height: u32) -> Self {
-        let side = self.side.clamp(1, width.min(height).max(1));
+        let side = self.side.clamp(1, Self::largest(width, height));
+        let overlap = i64::from((side / 8).max(1));
+        let keep =
+            |at: i64, length: u32| at.clamp(overlap - i64::from(side), i64::from(length) - overlap);
         Self {
-            x: self.x.min(width.saturating_sub(side)),
-            y: self.y.min(height.saturating_sub(side)),
+            x: keep(self.x, width),
+            y: keep(self.y, height),
             side,
         }
     }
 
-    /// The square moved by whole pixels, staying inside the picture.
+    /// Whether the square lies wholly on the picture.
+    pub fn inside(self, width: u32, height: u32) -> bool {
+        self.x >= 0
+            && self.y >= 0
+            && self.x + i64::from(self.side) <= i64::from(width)
+            && self.y + i64::from(self.side) <= i64::from(height)
+    }
+
+    /// The square moved by whole pixels.
     pub fn moved(self, dx: i64, dy: i64, width: u32, height: u32) -> Self {
-        let shift = |at: u32, by: i64| (i64::from(at) + by).max(0) as u32;
         Self {
-            x: shift(self.x, dx),
-            y: shift(self.y, dy),
+            x: self.x + dx,
+            y: self.y + dy,
             ..self
         }
         .clamped(width, height)
     }
 
-    /// The square resized around its center, staying inside the picture.
+    /// The square resized around its center.
     pub fn resized(self, side: u32, width: u32, height: u32) -> Self {
-        let center = |at: u32| i64::from(at) + i64::from(self.side) / 2;
         let half = i64::from(side) / 2;
+        let center = |at: i64| at + i64::from(self.side) / 2;
         Self {
-            x: (center(self.x) - half).max(0) as u32,
-            y: (center(self.y) - half).max(0) as u32,
+            x: center(self.x) - half,
+            y: center(self.y) - half,
             side,
         }
         .clamped(width, height)
@@ -2370,6 +2391,14 @@ pub struct PictureOrigin {
     pub turns: u8,
 }
 
+/// A colour the sticker maker turns see-through, and how far from it, per
+/// channel, a pixel may be and still vanish.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColorKey {
+    pub color: [u8; 3],
+    pub tolerance: u8,
+}
+
 /// A picture on its way to becoming a sticker.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerDraft {
@@ -2383,6 +2412,22 @@ pub struct StickerDraft {
     pub keep_transparent: bool,
     /// Emojis typed for search, WhatsApp's suggestions, or both.
     pub emojis: String,
+    /// The picture moves, and becomes an animated sticker.
+    pub animated: bool,
+    /// The first frame, scaled down, for the colour picker and the preview.
+    pub poster: std::sync::Arc<image::RgbaImage>,
+    /// Turn [`Self::key`]'s colour see-through.
+    pub remove_color: bool,
+    pub key: ColorKey,
+    /// The next click on the picture picks the colour to remove.
+    pub picking: bool,
+}
+
+impl StickerDraft {
+    /// The colour key the sticker is made with, when one is on.
+    pub fn color_key(&self) -> Option<ColorKey> {
+        self.remove_color.then_some(self.key)
+    }
 }
 
 /// Sticker pack stored as a folder of WebP files, imported or made here.
@@ -2442,6 +2487,8 @@ pub struct Gif {
     /// tile first shows.
     pub animated_source: Option<(String, String)>,
     pub mp4: String,
+    /// An animated GIF rendition, the source for making a sticker.
+    pub sticker_source: Option<String>,
     pub width: u32,
     pub height: u32,
 }
@@ -3100,6 +3147,8 @@ pub enum Action {
     PickStickerArchive,
     /// Deletes a pack directory.
     DeleteStickerPack(PathBuf),
+    /// Saves a pack as a .wastickers file where the person chooses.
+    ExportStickerPack(PathBuf),
     /// Creates a local sticker pack.
     CreateStickerPack(String),
     /// Shows one list in the sticker tab.
@@ -3112,6 +3161,9 @@ pub enum Action {
     ShareStickerPack(PathBuf),
     /// Chooses a picture for the sticker maker.
     PickStickerPicture,
+    /// Opens the sticker maker on the picture or picture file in the
+    /// clipboard.
+    PasteStickerPicture,
     /// Makes the drafted sticker, then sends it to the open chat or adds it
     /// to favorites.
     MakeSticker {
@@ -3160,6 +3212,9 @@ pub enum Action {
         url: String,
         extension: String,
     },
+    /// Makes a sticker from a GIF result: downloads its animated GIF and
+    /// opens the sticker maker on it.
+    MakeGifSticker(Gif),
     SendGif(Gif),
     React {
         chat: ChatId,
@@ -3451,6 +3506,9 @@ pub enum Action {
     SetPendingViewOnce(bool),
     /// Opens the cropper on a staged picture.
     EditPicture(crate::app::AttachmentId),
+    /// Opens the sticker maker on a staged picture, GIF or video, which
+    /// stays staged.
+    StickerFromPending(crate::app::AttachmentId),
     /// Keeps the crop and the turn, replacing the staged picture.
     ApplyPictureEdit,
     /// Closes the cropper, leaving the staged picture as it was.
@@ -3661,7 +3719,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sticker_crop_stays_square_and_inside_the_picture() {
+    fn a_sticker_crop_stays_square_and_keeps_part_of_the_picture() {
         let crop = StickerCrop::centered(800, 600);
         assert_eq!(
             crop,
@@ -3671,16 +3729,18 @@ mod tests {
                 side: 600
             }
         );
-        // Dragging past an edge stops at it.
+        assert!(crop.inside(800, 600));
+        // Dragging past an edge may go beyond it, keeping an eighth of the
+        // square on the picture.
         assert_eq!(
-            crop.moved(-500, 40, 800, 600),
+            crop.moved(-5000, 40, 800, 600),
             StickerCrop {
-                x: 0,
-                y: 0,
+                x: -525,
+                y: 40,
                 side: 600
             }
         );
-        // Shrinking keeps the center; growing past the picture stops at it.
+        // Shrinking keeps the center.
         let small = crop.resized(200, 800, 600);
         assert_eq!(
             small,
@@ -3693,12 +3753,17 @@ mod tests {
         assert_eq!(
             small.moved(1000, 1000, 800, 600),
             StickerCrop {
-                x: 600,
-                y: 400,
+                x: 775,
+                y: 575,
                 side: 200
             }
         );
-        assert_eq!(small.resized(5000, 800, 600).side, 600);
+        // Growing past the picture makes it smaller in the sticker, up to a
+        // square three times its longer side.
+        let grown = crop.resized(1200, 800, 600);
+        assert_eq!((grown.x, grown.y, grown.side), (-200, -300, 1200));
+        assert!(!grown.inside(800, 600));
+        assert_eq!(small.resized(50_000, 800, 600).side, 2400);
         assert_eq!(StickerCrop::centered(0, 0).side, 1);
     }
 
