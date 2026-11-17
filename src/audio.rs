@@ -621,7 +621,9 @@ fn decode_file(path: &Path) -> Result<Vec<f32>, String> {
     }
     let file =
         std::fs::File::open(path).map_err(|error| format!("Could not read the audio: {error}"))?;
-    let decoder = rodio::Decoder::new(std::io::BufReader::new(file))
+    // From a file, so the decoder knows its length and may seek: an M4A whose
+    // index (moov) follows its audio, as many recorders write it, needs both.
+    let decoder = rodio::Decoder::try_from(file)
         .map_err(|error| format!("Could not decode the audio: {error}"))?;
     let channels = decoder.channels().get();
     let rate = decoder.sample_rate().get();
@@ -1587,5 +1589,26 @@ mod tests {
             heard.len()
         );
         assert!(levels.len() >= 15, "{}", levels.len());
+    }
+
+    /// An M4A whose index (moov) follows its audio, as many recorders and
+    /// ffmpeg write one, decodes: the decoder seeks to the index.
+    #[test]
+    fn an_m4a_with_its_index_after_the_audio_decodes() {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/index-at-end.m4a"
+        ));
+        let bytes = std::fs::read(path).expect("fixture");
+        let at = |atom: &[u8]| bytes.windows(4).position(|window| window == atom);
+        assert!(
+            at(b"moov") > at(b"mdat"),
+            "the fixture keeps its index last"
+        );
+        let samples = decode_file(path).expect("decodes");
+        // Half a second of a 440 Hz tone, give or take the encoder's padding.
+        let seconds = samples.len() as f64 / f64::from(voice::RATE);
+        assert!((0.4..0.7).contains(&seconds), "{seconds}");
+        assert!(samples.iter().any(|sample| sample.abs() > 0.05));
     }
 }

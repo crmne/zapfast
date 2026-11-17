@@ -790,6 +790,7 @@ fn ringing(
             Color32::WHITE,
             &decline,
             palette,
+            true,
         )
         .clicked()
         {
@@ -803,6 +804,8 @@ fn ringing(
             palette.on_accent,
             &accept,
             palette,
+            // Answering takes a few seconds; a second click would only ask again.
+            !app.call_being_answered(),
         )
         .clicked()
         {
@@ -1240,13 +1243,14 @@ fn answer(
     tint: Color32,
     label: &str,
     palette: &Palette,
+    enabled: bool,
 ) -> egui::Response {
     ui.allocate_ui_with_layout(
         vec2(CONTROL, CONTROL + 26.0),
         Layout::top_down(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            let response = control(ui, icon, fill, tint, label, true);
+            let response = control(ui, icon, fill, tint, label, enabled);
             theme::text(ui, label, theme::medium(13.0), palette.secondary);
             response
         },
