@@ -883,7 +883,9 @@ pub enum Command {
         full_name: Option<String>,
         first_name: Option<String>,
         to_phone: bool,
-        registered: Result<bool, String>,
+        /// The number WhatsApp has the account under, which can differ from `phone`; `None`
+        /// when the number is not on WhatsApp.
+        registered: Result<Option<String>, String>,
     },
     /// Downloads and sends a GIF as a short looping video.
     SendGif {

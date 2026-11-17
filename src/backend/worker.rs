@@ -773,6 +773,21 @@ impl Downloadable for PhoneSticker {
     }
 }
 
+/// The number WhatsApp has an account under, from its answer to a registration check, for the
+/// chat to open under. It can differ from the number typed: many Brazilian mobiles are still
+/// registered without the ninth digit their numbers gained later, and a chat opened under the
+/// typed form reaches nobody. The typed number stands when the answer names no phone number,
+/// such as a privacy id with none disclosed.
+fn registered_number(typed: &str, jid: &Jid, pn_jid: Option<&Jid>) -> String {
+    [Some(jid), pn_jid]
+        .into_iter()
+        .flatten()
+        .find(|jid| {
+            jid.is_pn() && !jid.user.is_empty() && jid.user.bytes().all(|b| b.is_ascii_digit())
+        })
+        .map_or_else(|| typed.to_owned(), |jid| jid.user.to_string())
+}
+
 /// The device name shown in WhatsApp's Linked Devices list, with the
 /// hostname appended so multiple machines can be told apart (#210).
 fn device_name() -> String {
@@ -8165,12 +8180,20 @@ impl Worker {
                 let jid = Jid::pn(&phone);
                 let generation = self.contact_generation;
                 tokio::spawn(async move {
-                    // Use WhatsApp's registration check before opening the chat.
+                    // Use WhatsApp's registration check before opening the chat, and open it
+                    // under the number the check answers with, which need not be the one typed.
                     let registered = client
                         .contacts()
                         .is_on_whatsapp(&[jid])
                         .await
-                        .map(|results| results.iter().any(|result| result.is_registered))
+                        .map(|results| {
+                            results
+                                .iter()
+                                .find(|result| result.is_registered)
+                                .map(|result| {
+                                    registered_number(&phone, &result.jid, result.pn_jid.as_ref())
+                                })
+                        })
                         .map_err(|_| "Could not check the number. Please try again.".to_owned());
                     let _ = commands.send(Command::ContactChecked {
                         generation,
@@ -8195,9 +8218,9 @@ impl Worker {
                 if generation != self.contact_generation {
                     return;
                 }
-                match registered {
-                    Ok(true) => {}
-                    Ok(false) => {
+                let number = match registered {
+                    Ok(Some(number)) => number,
+                    Ok(None) => {
                         self.emit(Event::ContactFailed {
                             request,
                             error: "This number is not on WhatsApp".to_owned(),
@@ -8208,8 +8231,11 @@ impl Worker {
                         self.emit(Event::ContactFailed { request, error });
                         return;
                     }
+                };
+                if number != phone {
+                    log::info!("the number typed is registered on WhatsApp in another form");
                 }
-                let id = format!("{phone}@s.whatsapp.net");
+                let id = format!("{number}@s.whatsapp.net");
                 if let Some(full_name) = full_name.clone() {
                     self.save_contact(id.clone(), full_name, first_name, to_phone);
                 }
@@ -14827,6 +14853,57 @@ mod tests {
         );
     }
 
+    /// A Brazilian mobile typed with its ninth digit, registered on WhatsApp without it, opens
+    /// the chat under the registered number, where messages are delivered (#1030).
+    #[tokio::test]
+    async fn a_contact_opens_under_the_number_whatsapp_has_it_under() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::ContactChecked {
+                generation: worker.contact_generation,
+                request: 42,
+                phone: "5571988887777".into(),
+                full_name: None,
+                first_name: None,
+                to_phone: false,
+                registered: Ok(Some("557188887777".into())),
+            })
+            .await;
+        let events: Vec<_> = events.try_iter().collect();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::ContactReady { request: 42, id, .. } if id == "557188887777@s.whatsapp.net"
+            )),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn the_registered_number_comes_from_whatsapps_answer() {
+        let pn = |user: &str| Jid::pn(user);
+        // The answer names the account by its registered number, without the ninth digit.
+        assert_eq!(
+            registered_number("5571988887777", &pn("557188887777"), None),
+            "557188887777"
+        );
+        // A privacy id answer carries the number beside it.
+        let lid: Jid = "200000000000001@lid".parse().unwrap();
+        assert_eq!(
+            registered_number("5571988887777", &lid, Some(&pn("557188887777"))),
+            "557188887777"
+        );
+        // An answer that names no phone number leaves the typed one.
+        assert_eq!(
+            registered_number("5571988887777", &lid, None),
+            "5571988887777"
+        );
+        assert_eq!(
+            registered_number("15550000001", &pn("15550000001"), None),
+            "15550000001"
+        );
+    }
+
     /// Malformed recipients are rejected before any number lookup is dispatched.
     #[tokio::test]
     async fn malformed_numbers_are_refused_before_contact_lookup() {
@@ -14859,7 +14936,7 @@ mod tests {
                     full_name,
                     first_name: None,
                     to_phone: true,
-                    registered: Ok(true),
+                    registered: Ok(Some("15550000001".into())),
                 })
                 .await;
             worker
