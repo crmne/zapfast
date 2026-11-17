@@ -45,7 +45,10 @@ people, only admins can mention everyone. People are notified as they are
 for any mention. Edits update the visible mentions. Editing an existing `@all`
 mention does not notify everyone again; adding `@all` in an edit requests a new
 notification. Forwarding or quoting an `@all` message does not notify everyone
-again. A group where an unread message mentions you, or everyone, shows **@**
+again. A forwarded message notifies nobody it mentions: each mention is
+written out as the name that person has in ZapFast (their contact name, the
+name on their profile, or their number).
+A group where an unread message mentions you, or everyone, shows **@**
 beside its unread count in the chat list, even when muted, and opening it shows
 the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,

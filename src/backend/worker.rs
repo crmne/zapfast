@@ -3705,6 +3705,34 @@ impl Worker {
         crate::model::phone_of(id).map(crate::util::phone)
     }
 
+    /// The name each person `base` mentions goes by here, keyed by the user
+    /// part its `@` token shows: their contact name, else the name on their
+    /// profile, else their formatted number. Our own mention is our profile
+    /// name, never "You", which would read as the forwarder. A privacy id
+    /// with none of these keeps its token.
+    fn forward_mention_names(&self, base: &wa::Message) -> Vec<(String, String)> {
+        let nonempty = |name: &Option<String>| name.clone().filter(|name| !name.is_empty());
+        mentioned_of(base)
+            .into_iter()
+            .filter_map(|jid| {
+                let user = jid.split('@').next().filter(|user| !user.is_empty())?;
+                let id = self.canonical_str(&jid);
+                let phone = || crate::model::phone_of(&id).map(crate::util::phone);
+                let name = if id == self.me() || self.is_me(&id) {
+                    nonempty(&self.me_name).or_else(phone)
+                } else {
+                    let contact = self.contacts.get(&id).or_else(|| self.contacts.get(&jid));
+                    contact
+                        .and_then(|contact| {
+                            nonempty(&contact.full_name).or_else(|| nonempty(&contact.push_name))
+                        })
+                        .or_else(phone)
+                }?;
+                Some((user.to_owned(), name))
+            })
+            .collect()
+    }
+
     /// Returns the best current chat name.
     fn chat_name(&self, id: &str, push_name: Option<&str>) -> String {
         if id == self.me() {
@@ -9962,8 +9990,15 @@ impl Worker {
         // Our own words are not marked forwarded, as on the phone, unless
         // they were a forward to begin with.
         let own = source.from_me && !original.get_base_message().is_forwarded();
-        let (message, expiration) =
+        let (mut message, expiration) =
             outgoing_forward(&original, self.ephemeral_expiration(to_chat), own);
+        // The forward goes without the people it mentions, so nobody is
+        // tagged again; their tokens become names, in it and in our copy, or
+        // both would show a bare number or privacy id (#1048).
+        let names = self.forward_mention_names(original.get_base_message());
+        spell_out_body(&mut message, &names);
+        let mut source = source;
+        spell_out_content(&mut source.content, &names);
         let client = self.client.clone()?;
         let id = client.generate_message_id().into_string();
         let mentions = self.mentions_of(&recorded_mention_ids(&message));
@@ -12095,6 +12130,60 @@ fn outgoing_forward(
     }
     let expiration = apply_ephemeral_expiration(&mut message, expiration);
     (message, expiration)
+}
+
+/// Spells out the mentions in an outgoing forward's text or caption.
+fn spell_out_body(message: &mut wa::Message, names: &[(String, String)]) {
+    if names.is_empty() {
+        return;
+    }
+    let spell = |text: &mut Option<String>| {
+        if let Some(text) = text.as_mut() {
+            *text = crate::mentions::spell_out(text, names);
+        }
+    };
+    spell(&mut message.conversation);
+    if let Some(text) = message.extended_text_message.as_option_mut() {
+        spell(&mut text.text);
+    }
+    if let Some(image) = message.image_message.as_option_mut() {
+        spell(&mut image.caption);
+    }
+    for video in [
+        message.video_message.as_option_mut(),
+        message.ptv_message.as_option_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        spell(&mut video.caption);
+    }
+    if let Some(document) = message.document_message.as_option_mut() {
+        spell(&mut document.caption);
+    }
+}
+
+/// Spells out the mentions in our stored copy of a forward, as sent.
+fn spell_out_content(content: &mut Content, names: &[(String, String)]) {
+    if names.is_empty() {
+        return;
+    }
+    match content {
+        Content::Text { text, .. } => *text = crate::mentions::spell_out(text, names),
+        Content::Image {
+            caption: Some(caption),
+            ..
+        }
+        | Content::Video {
+            caption: Some(caption),
+            ..
+        }
+        | Content::Document {
+            caption: Some(caption),
+            ..
+        } => *caption = crate::mentions::spell_out(caption, names),
+        _ => {}
+    }
 }
 
 fn apply_ephemeral_expiration(message: &mut wa::Message, expiration: Option<u32>) -> Option<u32> {
@@ -18440,6 +18529,92 @@ mod tests {
         assert_eq!(context.non_jid_mentions, Some(2));
         assert_eq!(context.is_forwarded, Some(true));
         assert!(recorded_mention_ids(&forward).is_empty());
+    }
+
+    /// A forward goes without the people its `@` tokens name, so nobody is
+    /// tagged again, and spells each token out as the name it goes by here,
+    /// so neither the destination nor our copy shows a bare number or
+    /// privacy id (#1048). The `@all` notification goes as before.
+    #[test]
+    fn forwarding_spells_out_mentions_instead_of_tagging_again() {
+        let lid = "100000000001@lid".to_owned();
+        let profile = "4915700000002@s.whatsapp.net".to_owned();
+        let stranger = "4915700000003@s.whatsapp.net".to_owned();
+        let unknown = "100000000009@lid".to_owned();
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let me = worker.me();
+        let me_user = me.split('@').next().unwrap().to_owned();
+        worker.me_name = Some("Carmine".into());
+        worker
+            .lid_to_pn
+            .insert("100000000001".into(), "4915700000001".into());
+        let contact = |id: &str, full: Option<&str>, push: Option<&str>| Contact {
+            id: id.into(),
+            full_name: full.map(Into::into),
+            first_name: None,
+            push_name: push.map(Into::into),
+        };
+        // The contact name wins over the profile name.
+        worker.contacts.insert(
+            "4915700000001@s.whatsapp.net".into(),
+            contact(
+                "4915700000001@s.whatsapp.net",
+                Some("Ada Lovelace"),
+                Some("Ada"),
+            ),
+        );
+        worker
+            .contacts
+            .insert(profile.clone(), contact(&profile, None, Some("Grace")));
+
+        let text = format!(
+            "@100000000001 @4915700000002 @4915700000003 @100000000009 @{me_user}, see @all"
+        );
+        let mut source = wa::ContextInfo::default();
+        source.mentioned_jid = vec![
+            lid.clone(),
+            profile.clone(),
+            stranger.clone(),
+            unknown.clone(),
+            me.clone(),
+        ];
+        source.non_jid_mentions = Some(1);
+        let original = wa::Message::text_with_context(text.clone(), source);
+
+        let names = worker.forward_mention_names(original.get_base_message());
+        let spelled = format!(
+            "@Ada Lovelace @Grace @{} @100000000009 @Carmine, see @all",
+            crate::util::phone("4915700000003")
+        );
+        let (mut forward, _) = outgoing_forward(&original, None, false);
+        spell_out_body(&mut forward, &names);
+        assert_eq!(forward.text_content(), Some(spelled.as_str()));
+        let context = context_of(&forward).expect("forward context");
+        assert!(context.mentioned_jid.is_empty(), "nobody is tagged again");
+        assert_eq!(context.non_jid_mentions, None, "@all does not notify");
+        assert!(recorded_mention_ids(&forward).is_empty());
+
+        let mut content = Content::text(&text);
+        spell_out_content(&mut content, &names);
+        assert_eq!(content, Content::text(&spelled));
+
+        // A caption is spelled out the same way, in the message and our copy.
+        let mut picture = wa::Message::default();
+        picture.image_message = MessageField::some({
+            let mut proto = wa::message::ImageMessage::default();
+            proto.caption = Some("look @100000000001".into());
+            proto
+        });
+        spell_out_body(&mut picture, &names);
+        assert_eq!(
+            picture
+                .image_message
+                .as_option()
+                .unwrap()
+                .caption
+                .as_deref(),
+            Some("look @Ada Lovelace")
+        );
     }
 
     #[test]
