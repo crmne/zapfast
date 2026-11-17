@@ -2922,6 +2922,14 @@ pub enum Action {
     StartRecording,
     CancelRecording,
     SendRecording,
+    /// Pauses the voice recording, keeping what it has so far, or records
+    /// again after a pause.
+    PauseRecording,
+    ResumeRecording,
+    /// Plays or pauses what a paused recording has so far.
+    PlayRecording,
+    /// Plays a paused recording from a fraction from 0 to 1.
+    SeekRecording(f32),
     /// Drops a voice message the worker refused to send.
     DiscardUnsentVoice,
     /// Opens a downloaded image in ZapFast's native preview. Only the file
