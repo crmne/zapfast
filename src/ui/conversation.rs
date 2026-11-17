@@ -1712,7 +1712,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 .map(|wrap| {
                     let format =
                         egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
-                    crate::bidi::layout_editor(ui, &app.composer, &format, wrap, true)
+                    layout_draft(ui, &app.composer, &format, palette.dim, wrap)
                         .0
                         .size()
                         .y
@@ -1815,16 +1815,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     palette.text,
                                 );
                                 let composer_rtl = crate::bidi::base_rtl(&app.composer);
+                                let markers = palette.dim;
                                 let mut layouter = |ui: &egui::Ui,
                                                     text: &dyn egui::TextBuffer,
                                                     wrap: f32| {
-                                    let (galley, found) = crate::bidi::layout_editor(
-                                        ui,
-                                        text.as_str(),
-                                        &format,
-                                        wrap,
-                                        true,
-                                    );
+                                    let (galley, found) =
+                                        layout_draft(ui, text.as_str(), &format, markers, wrap);
                                     clusters = found;
                                     galley
                                 };
@@ -1903,12 +1899,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     output.galley_pos,
                                     output.galley.size(),
                                 );
-                                let measured = crate::bidi::layout_editor(
+                                let measured = layout_draft(
                                     ui,
                                     &app.composer,
                                     &format,
+                                    markers,
                                     wrap,
-                                    true,
                                 )
                                 .0
                                 .size()
@@ -2221,6 +2217,35 @@ pub(crate) fn composer_pill_id() -> egui::Id {
 /// precisely. `App::at_bottom` covers ordinary UI checks.
 pub(crate) fn scroll_metrics_id(chat: &ChatId) -> egui::Id {
     egui::Id::new(("message-scroll-metrics", chat))
+}
+
+/// The draft as the composer shows it: its markup styled as it is typed,
+/// every character in place, emoji returned for painting over.
+fn layout_draft(
+    ui: &egui::Ui,
+    text: &str,
+    format: &egui::TextFormat,
+    markers: Color32,
+    wrap: f32,
+) -> (std::sync::Arc<egui::Galley>, Vec<(usize, usize, String)>) {
+    // Code as tall as the text around it, so a block's rows do not shrink
+    // the field or move its last line off the controls' centre.
+    let mono = ui.fonts_mut(|fonts| {
+        let size = format.font_id.size;
+        let text = fonts.row_height(&format.font_id);
+        let code = fonts.row_height(&egui::FontId::monospace(size));
+        if code > 0.0 {
+            egui::FontId::monospace(size * text / code)
+        } else {
+            egui::FontId::monospace(size * 0.95)
+        }
+    });
+    let (mut job, clusters) = crate::emoji::editor_job(text, format);
+    markup::style_draft(&mut job, markers, &mono);
+    (
+        crate::bidi::layout_editor_job(ui, job, format, wrap, true),
+        clusters,
+    )
 }
 
 /// How far below the top of a composer text row the middle of its ink sits,

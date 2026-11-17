@@ -3516,6 +3516,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.emoji_selected = 0;
                 app.focus_composer = true;
             }
+            // A draft's markup styled while it is typed, markers dimmed.
+            "composer-markup" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                app.composer = [
+                    "Dinner moved to *eight*, not ~seven~ 🍝",
+                    "_Bring dessert_ and the `projector`",
+                    "> Who is driving?",
+                    "```",
+                    "north gate, 7:45",
+                    "```",
+                ]
+                .join("\n");
+                app.focus_composer = true;
+            }
             // The strips above the composer: a reply, an edit, and a voice
             // message WhatsApp refused.
             "reply" => {
@@ -9800,6 +9814,8 @@ mod tests {
             "mention",
             "mention-everyone",
             "emoji-complete",
+            "composer-markup",
+            "composer-markup,light",
             "reply",
             "private-reply",
             "private-reply,light",

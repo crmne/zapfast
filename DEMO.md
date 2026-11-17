@@ -67,7 +67,8 @@ English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
 and its attachment and poll menu, or `--demo-page location` for the location
 dialog with a spot pasted in. `typing`, `mention`, and
-`emoji-complete` preview the multiline field and inline suggestions.
+`emoji-complete` preview the multiline field and inline suggestions;
+`composer-markup` a draft whose WhatsApp markup is styled as it is typed.
 `mention-everyone` shows the group's synthetic `@all` message with the
 everyone suggestion at the top of the composer list.
 Use `--demo-page blocked` to preview a blocked conversation, `blocked-contacts`

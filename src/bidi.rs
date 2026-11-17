@@ -37,7 +37,22 @@ pub fn layout_editor(
     wrap: f32,
     multiline: bool,
 ) -> (Arc<Galley>, Vec<(usize, usize, String)>) {
-    let (mut job, clusters) = crate::emoji::editor_job(text, format);
+    let (job, clusters) = crate::emoji::editor_job(text, format);
+    (
+        layout_editor_job(ui, job, format, wrap, multiline),
+        clusters,
+    )
+}
+
+/// Lays out an editor job built by [`crate::emoji::editor_job`], whose
+/// sections may since have been restyled.
+pub fn layout_editor_job(
+    ui: &egui::Ui,
+    mut job: egui::text::LayoutJob,
+    format: &TextFormat,
+    wrap: f32,
+    multiline: bool,
+) -> Arc<Galley> {
     job.wrap.max_width = wrap;
     job.break_on_newline = multiline;
     job.keep_trailing_whitespace = true;
@@ -49,7 +64,7 @@ pub fn layout_editor(
     }
     let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     reorder_rtl_runs(Arc::make_mut(&mut galley));
-    (galley, clusters)
+    galley
 }
 
 /// Single-line field galley. Emoji stay visible; the logical buffer is unchanged.

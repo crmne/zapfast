@@ -23,7 +23,8 @@ blinking; it starts blinking again when you use the window.
 The emoji picker stays open while you choose emoji and closes when you send
 the text.
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
-like WhatsApp, and a message of nothing but emoji shows large. Select text in
+like WhatsApp, and a message of nothing but emoji shows large. The composer
+shows the formatting as you type, with the markers dimmed. Select text in
 the composer and right-click (or press Shift+F10 while it is focused) for
 **Bold**, **Italic**, **Strikethrough**, or
 **Monospace**. Spaces at the edges of the selection stay outside the markers,
