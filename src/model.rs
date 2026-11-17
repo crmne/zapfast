@@ -1268,6 +1268,34 @@ impl Content {
         }
     }
 
+    /// The text an edit replaces: a text message's body, or the caption of a
+    /// photo, video or document. As on WhatsApp, media sent without a caption
+    /// cannot gain one, and a round video message has none to edit.
+    pub fn editable_text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text, .. } => Some(text),
+            Self::Image { caption, .. }
+            | Self::Video {
+                caption,
+                note: false,
+                ..
+            }
+            | Self::Document { caption, .. } => caption.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Puts an edit's text in place: media keeps its attachment and takes the
+    /// text as its caption, and anything else becomes the text.
+    pub fn set_edited_text(&mut self, text: String) {
+        match self {
+            Self::Image { caption, .. }
+            | Self::Video { caption, .. }
+            | Self::Document { caption, .. } => *caption = Some(text),
+            _ => *self = Self::text(text),
+        }
+    }
+
     /// The first line of the text the archive search looks at that contains
     /// `query`, trimmed, or `None` when no line has it.
     pub fn text_matching(&self, query: &str) -> Option<String> {
