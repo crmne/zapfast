@@ -63,6 +63,8 @@ mod prefetch;
 mod star_recovery;
 mod sticker_pace;
 mod stickers;
+#[cfg(test)]
+mod write_batching;
 
 use super::{
     Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
@@ -1177,32 +1179,7 @@ pub async fn run(
                     Some(command) => worker.handle_command(command).await,
                 }
             }
-            Some(event) = wa_events.recv() => match event {
-                RuntimeEvent::WhatsApp { session, event } => {
-                    worker.whatsapp_event(session, event).await;
-                }
-                RuntimeEvent::MessageRemoval { generation, event } => {
-                    worker.handle_session_deletion(generation, event).await;
-                }
-                RuntimeEvent::PreferencesRecovered {
-                    generation,
-                    locks,
-                    complete,
-                } => {
-                    worker.preferences_recovered(generation, locks, complete);
-                }
-                RuntimeEvent::FavoriteChatsRead { generation, complete } => {
-                    worker.favorite_chats_read(generation, complete);
-                }
-                RuntimeEvent::LinkPreviewsRead { generation, complete } => {
-                    worker.link_previews_read(generation, complete);
-                }
-                RuntimeEvent::PresenceSent {
-                    generation,
-                    online,
-                    succeeded,
-                } => worker.presence_sent(generation, online, succeeded),
-            },
+            Some(event) = wa_events.recv() => worker.runtime_events(event, &mut wa_events).await,
             Some(event) = async {
                 match call_events.as_mut() {
                     Some(events) => events.recv().await.ok(),
@@ -1250,6 +1227,74 @@ pub async fn run(
     worker.shutdown_call().await;
     worker.stop_bot().await;
 }
+
+impl Worker {
+    /// Handles `first` and the events already waiting behind it, up to
+    /// `EVENT_BATCH` or `EVENT_BATCH_TIME`, with their archive writes
+    /// committed together. A first sync brings thousands of deletions and
+    /// chat changes at once, and each committed alone rewrote the same
+    /// pages (#839).
+    async fn runtime_events(
+        &mut self,
+        first: RuntimeEvent,
+        waiting: &mut mpsc::UnboundedReceiver<RuntimeEvent>,
+    ) {
+        let batched = self.open_batch();
+        self.runtime_event(first).await;
+        let started = Instant::now();
+        for _ in 1..EVENT_BATCH {
+            if started.elapsed() >= EVENT_BATCH_TIME {
+                break;
+            }
+            let Ok(event) = waiting.try_recv() else {
+                break;
+            };
+            self.runtime_event(event).await;
+        }
+        self.close_batch(batched);
+    }
+
+    /// Handles one event from the protocol runtime.
+    async fn runtime_event(&mut self, event: RuntimeEvent) {
+        match event {
+            RuntimeEvent::WhatsApp { session, event } => {
+                self.whatsapp_event(session, event).await;
+            }
+            RuntimeEvent::MessageRemoval { generation, event } => {
+                self.handle_session_deletion(generation, event).await;
+            }
+            RuntimeEvent::PreferencesRecovered {
+                generation,
+                locks,
+                complete,
+            } => {
+                self.preferences_recovered(generation, locks, complete);
+            }
+            RuntimeEvent::FavoriteChatsRead {
+                generation,
+                complete,
+            } => {
+                self.favorite_chats_read(generation, complete);
+            }
+            RuntimeEvent::LinkPreviewsRead {
+                generation,
+                complete,
+            } => {
+                self.link_previews_read(generation, complete);
+            }
+            RuntimeEvent::PresenceSent {
+                generation,
+                online,
+                succeeded,
+            } => self.presence_sent(generation, online, succeeded),
+        }
+    }
+}
+
+/// The most runtime events that commit their archive writes together, and
+/// the longest a batch keeps the interface's commands waiting.
+const EVENT_BATCH: usize = 500;
+const EVENT_BATCH_TIME: Duration = Duration::from_millis(250);
 
 enum RuntimeEvent {
     /// A callback from a connection's event handler, under the session that
@@ -6285,7 +6330,46 @@ impl Worker {
 
     /// Archives a history chunk. `metadata` controls chat-state updates.
     /// Returns each chat's message count and whether the phone has more.
+    ///
+    /// The chunk commits once. Committed statement by statement, a first
+    /// sync rewrote and re-encrypted the same chat, index and table pages
+    /// for every message it filed, and wrote many times the archive's size
+    /// (#839). A write that fails still rolls back alone.
     fn apply_history(
+        &mut self,
+        parsed: ParsedHistory,
+        metadata: bool,
+    ) -> Vec<(ChatId, usize, Option<bool>)> {
+        self.in_one_commit(|worker| worker.file_history(parsed, metadata))
+    }
+
+    /// Runs `work` with its archive writes committed together at the end.
+    fn in_one_commit<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+        let batched = self.open_batch();
+        let result = work(self);
+        self.close_batch(batched);
+        result
+    }
+
+    /// Starts archive writes that commit together at `close_batch`. Should
+    /// the batch not open, each write commits on its own as before.
+    fn open_batch(&self) -> bool {
+        match self.archive.begin_batch() {
+            Ok(()) => true,
+            Err(error) => {
+                log::warn!("archive writes not batched: {error}");
+                false
+            }
+        }
+    }
+
+    fn close_batch(&self, batched: bool) {
+        if batched && let Err(error) = self.archive.end_batch() {
+            log::warn!("could not commit a batch of archive writes: {error}");
+        }
+    }
+
+    fn file_history(
         &mut self,
         parsed: ParsedHistory,
         metadata: bool,

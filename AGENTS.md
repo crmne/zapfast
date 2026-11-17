@@ -119,6 +119,12 @@ protocol. These notes are for coding agents and new contributors.
   migration checkpoints the old WAL and verifies an encrypted staging file before
   atomic replacement. A locked or missing key stops linking; never fall back to
   a disposable archive. Tests use fixtures and mock credentials only.
+  Each history chunk, and each run of runtime events already queued (up to
+  `EVENT_BATCH` or `EVENT_BATCH_TIME`), commits once (`Archive::begin_batch`):
+  committed write by write, a first sync wrote fifteen times the archive's
+  size (#839). Archive transactions are `archive::Batch`es, savepoints that
+  nest inside such a batch, never `unchecked_transaction` on the worker's
+  connection. `write_batching::history_write_bench` (ignored) measures it.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
 - A motion photo is a photo plus a short clip sent as a second message in an
