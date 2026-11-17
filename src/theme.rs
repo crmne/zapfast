@@ -272,16 +272,7 @@ impl Palette {
     /// translucent sidebar darkens the same way, with a little more of it
     /// opaque.
     pub fn rail(&self) -> Color32 {
-        let sidebar = self.sidebar();
-        let shade = self.rail_shade();
-        let keep = 1.0 - shade;
-        let channel = |value: u8| (f32::from(value) * keep).round() as u8;
-        Color32::from_rgba_premultiplied(
-            channel(sidebar.r()),
-            channel(sidebar.g()),
-            channel(sidebar.b()),
-            (f32::from(sidebar.a()) + (255.0 - f32::from(sidebar.a())) * shade).round() as u8,
-        )
+        rail_on(self.sidebar(), self.rail_shade())
     }
 
     /// The black the rail lays over the chat list's colour: [`Palette::rail`]
@@ -289,7 +280,7 @@ impl Palette {
     /// For a rail painted in the list's colour with its own shade over only
     /// part of it.
     pub fn rail_veil(&self) -> Color32 {
-        Color32::from_black_alpha((self.rail_shade() * 255.0).round() as u8)
+        rail_veil_on(self.sidebar(), self.rail_shade())
     }
 
     fn rail_shade(&self) -> f32 {
@@ -608,6 +599,34 @@ fn denser(color: Color32, factor: f32) -> Color32 {
     let [r, g, b, a] = color.to_srgba_unmultiplied();
     let alpha = (f32::from(a) * factor).round().clamp(0.0, 255.0) as u8;
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
+}
+
+/// `sidebar` with `shade` of black over it: the rail's colour beside the
+/// chat list, [`Palette::rail`].
+fn rail_on(sidebar: Color32, shade: f32) -> Color32 {
+    let keep = 1.0 - shade;
+    let channel = |value: u8| (f32::from(value) * keep).round() as u8;
+    Color32::from_rgba_premultiplied(
+        channel(sidebar.r()),
+        channel(sidebar.g()),
+        channel(sidebar.b()),
+        (f32::from(sidebar.a()) + (255.0 - f32::from(sidebar.a())) * shade).round() as u8,
+    )
+}
+
+/// The black that turns `sidebar` into [`rail_on`] when laid over it,
+/// [`Palette::rail_veil`]. Over a translucent sidebar its opacity is the one
+/// that takes the sidebar's to the rail's: `shade` rounded on its own can
+/// fall a step short, and the window's material then shows a step more
+/// through the veil than through the rail.
+fn rail_veil_on(sidebar: Color32, shade: f32) -> Color32 {
+    let alpha = if sidebar.a() < 255 {
+        let rail = rail_on(sidebar, shade);
+        f32::from(rail.a() - sidebar.a()) * 255.0 / f32::from(255 - sidebar.a())
+    } else {
+        shade * 255.0
+    };
+    Color32::from_black_alpha(alpha.round() as u8)
 }
 
 /// Converts HSL to color bytes for non-egui drawing.
@@ -1607,8 +1626,11 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 mod tests {
     use super::*;
 
-    /// The rail's veil over the chat list's colour is the rail's colour, so
-    /// a rail drawn that way matches one filled with it.
+    /// The rail's veil over the chat list's colour is the rail's colour to
+    /// the bit, so a rail drawn that way matches one filled with it. That
+    /// holds for the translucent list of a vibrant theme too, which tests
+    /// never draw: a step less opacity lets a step more of the window's
+    /// material through, a lighter rail than the filled one.
     #[test]
     fn the_rail_veil_over_the_sidebar_is_the_rail() {
         for palette in [
@@ -1617,11 +1639,15 @@ mod tests {
             Palette::messages(),
             Palette::messages_light(),
         ] {
-            let veiled = palette.sidebar().blend(palette.rail_veil());
-            let rail = palette.rail();
-            for (a, b) in veiled.to_array().into_iter().zip(rail.to_array()) {
-                assert!(a.abs_diff(b) <= 1, "{veiled:?} against {rail:?}");
+            let shade = palette.rail_shade();
+            for sidebar in [palette.panel, palette.panel.gamma_multiply(SIDEBAR_TINT)] {
+                assert_eq!(
+                    sidebar.blend(rail_veil_on(sidebar, shade)),
+                    rail_on(sidebar, shade),
+                    "over {sidebar:?}"
+                );
             }
+            assert_eq!(palette.sidebar().blend(palette.rail_veil()), palette.rail());
         }
     }
 
