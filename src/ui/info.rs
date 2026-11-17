@@ -1664,12 +1664,7 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
                     continue;
                 };
                 let mut detail = Vec::new();
-                if let Some(pages) = pages {
-                    detail.push(
-                        crate::i18n::ngettext(app.locale, "{} page", "{} pages", *pages)
-                            .replace("{}", &pages.to_string()),
-                    );
-                }
+                detail.extend(super::conversation::page_count(app.locale, *pages));
                 detail.push(crate::util::bytes(media.size));
                 detail.push(crate::util::chat_stamp(app.locale, message.timestamp));
                 if item_row(app, ui, Icon::FileText, file_name, &detail.join(" · ")).clicked() {
