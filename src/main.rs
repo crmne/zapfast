@@ -473,7 +473,7 @@ fn run() -> eframe::Result<()> {
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     app.attach_clipboard(
                         raw_window_handle::HasDisplayHandle::display_handle(cc)
                             .ok()

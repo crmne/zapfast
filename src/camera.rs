@@ -59,6 +59,12 @@ pub fn cameras() -> Vec<(String, String)> {
     cameras
 }
 
+/// What asking for the default camera reports when there is none.
+#[cfg(target_os = "freebsd")]
+const NO_CAMERA: &str = "cameras are not supported on FreeBSD yet";
+#[cfg(not(target_os = "freebsd"))]
+const NO_CAMERA: &str = "no camera is connected";
+
 /// One open camera, delivering YUV 4:2:0 frames of [`Source::size`].
 pub struct Source {
     camera: backend::Camera,
@@ -76,7 +82,7 @@ impl Source {
                 cameras()
                     .into_iter()
                     .next()
-                    .ok_or_else(|| "no camera is connected".to_owned())?
+                    .ok_or_else(|| NO_CAMERA.to_owned())?
                     .0
             }
         };
@@ -646,8 +652,59 @@ mod backend {
     }
 }
 
+/// FreeBSD has no camera backend yet.
+#[cfg(target_os = "freebsd")]
+mod backend {
+    use super::{Mode, NO_CAMERA, Pixel};
+
+    pub fn list() -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    pub struct Camera {
+        mode: Mode,
+    }
+
+    impl Camera {
+        pub fn open(_id: &str, _budget: (usize, usize), _fps: u32) -> Result<Self, String> {
+            Err(NO_CAMERA.to_owned())
+        }
+
+        pub fn mode(&self) -> Mode {
+            self.mode
+        }
+
+        pub fn read<R>(
+            &mut self,
+            _convert: impl FnOnce(Pixel, &[u8], usize, usize, usize) -> R,
+        ) -> Result<R, String> {
+            Err(NO_CAMERA.to_owned())
+        }
+
+        pub fn stop(&mut self) {}
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::{NO_CAMERA, Source, cameras};
+
+        #[test]
+        fn default_camera_reports_freebsd_unsupported() {
+            assert!(cameras().is_empty());
+            assert_eq!(
+                Source::open(None, (640, 480), 30).err().as_deref(),
+                Some(NO_CAMERA)
+            );
+            assert_eq!(
+                Source::open(Some("0"), (640, 480), 30).err().as_deref(),
+                Some(NO_CAMERA)
+            );
+        }
+    }
+}
+
 /// AVFoundation on macOS and Media Foundation on Windows, through nokhwa.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod backend {
     use super::{Mode, Pixel};
     use nokhwa::utils::{

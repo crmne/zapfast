@@ -24,7 +24,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 /// Whether this platform can pause other apps' media.
-pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
+pub const SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "freebsd", windows));
 
 /// Keeps other apps' media paused until dropped.
 #[must_use = "media resumes as soon as the hold is dropped"]
@@ -132,7 +132,7 @@ fn work(jobs: mpsc::Receiver<Job>) {
 }
 
 /// Whether an MPRIS bus name belongs to a player worth pausing.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 fn pausable_player(bus_name: &str) -> bool {
     let Some(player) = bus_name.strip_prefix("org.mpris.MediaPlayer2.") else {
         return false;
@@ -144,7 +144,7 @@ fn pausable_player(bus_name: &str) -> bool {
     !player.is_empty() && app != "playerctld" && app != "zapfast"
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod platform {
     use zbus::{Connection, Proxy, fdo::DBusProxy};
 
@@ -341,7 +341,7 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", windows)))]
 mod platform {
     /// macOS offers no public API to pause or resume other apps' media.
     pub struct Players;
@@ -418,7 +418,7 @@ mod tests {
     /// `dbus-run-session -- cargo test media_pause -- --ignored`.
     /// Refuses to run when any other player is on the bus, so it cannot
     /// pause real music.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     #[ignore = "needs a private D-Bus session"]
     fn pauses_and_resumes_a_player_on_a_private_bus() {

@@ -1700,7 +1700,7 @@ mod tests {
                 palette.dark
             );
             assert_eq!(options.subpixel_binning, rendering.subpixel_positioning);
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             assert_eq!(
                 options.color_transfer_function,
                 egui::epaint::FontColorTransferFunction::Off
