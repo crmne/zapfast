@@ -462,6 +462,16 @@ impl Worker {
     }
 
     pub(super) async fn answer_call(&mut self) {
+        // A second Accept that arrived while the first was being answered finds the offer already
+        // spent. The call it names is the one just picked up, so it is not ours to fail.
+        if self
+            .call
+            .as_ref()
+            .is_some_and(|runtime| !runtime.call.answerable())
+        {
+            log::info!("[CALL] ignoring an answer for a call that is no longer ringing");
+            return;
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -1457,6 +1467,25 @@ mod tests {
             .expect("the window hears the ring ended");
         assert_eq!(ended.phase, calls::CallPhase::Failed);
         assert_eq!(ended.outcome, Some(calls::CallOutcome::Missed));
+    }
+
+    /// A second Accept clicked while the first answer was on its way reaches the worker after the
+    /// call is up. It leaves that call alone: no error, no teardown, no update (#1024).
+    #[tokio::test]
+    async fn a_second_answer_leaves_the_answered_call_up() {
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        let call = Call::test_answered(crate::calls::test_offers::GROUP);
+        worker.call = Some(CallRuntime::new(call, None));
+        worker.answer_call().await;
+        let call = &worker.call.as_ref().expect("the call is still here").call;
+        assert_eq!(call.phase(), calls::CallPhase::Accepted);
+        let events: Vec<Event> = events.try_iter().collect();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Error(_) | Event::Call(_))),
+            "nothing is reported for an answer that came twice"
+        );
     }
 
     /// A group call reaches the window under the app's own ids, without our own roster entry, and

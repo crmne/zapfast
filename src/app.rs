@@ -878,6 +878,10 @@ pub struct App {
     /// its ringtone plays: notifications on, a sound chosen, and a chat that
     /// is not muted, archived or locked.
     call_rings: Option<u64>,
+    /// The incoming call (by generation) whose Accept was clicked. Answering
+    /// takes seconds, and the call keeps ringing on screen until it is up, so
+    /// Accept stays disabled meanwhile and a second click is not sent.
+    call_answering: Option<u64>,
     /// The ringback and ringtone, played on the default output in the real
     /// app and only tracked in tests and demos.
     call_tones: crate::call_tones::Tones,
@@ -1758,6 +1762,7 @@ impl App {
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,
+            call_answering: None,
             call_tones: Default::default(),
             call_dismissed: None,
             call_cancel: None,

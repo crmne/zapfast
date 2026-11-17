@@ -2326,6 +2326,22 @@ impl Call {
         }
     }
 
+    /// An incoming call this side has already picked up, for a test: the offer is spent, the way
+    /// [`Call::answer`] leaves it.
+    #[cfg(test)]
+    pub(crate) fn test_answered(chat: &str) -> Self {
+        Self {
+            phase: CallPhase::Accepted,
+            ..Self::test_snapshot(chat)
+        }
+    }
+
+    /// Whether there is an offer to answer: an incoming call nobody has picked up yet. Answering
+    /// hands the offer to the library, so a call already answered has none.
+    pub fn answerable(&self) -> bool {
+        self.incoming.is_some()
+    }
+
     /// The WhatsApp call id, which is how signaling for this call is told from any other's.
     pub fn call_id(&self) -> &str {
         &self.call_id
@@ -5093,6 +5109,14 @@ mod tests {
             GroupRefusal::of(&unreadable(), Some(false)).detail,
             "call service response failed: missing group-call integer attribute"
         );
+    }
+
+    #[test]
+    fn only_a_call_still_ringing_can_be_answered() {
+        let call = Call::ringing(GROUP.to_owned(), Box::new(group_offer(Vec::new())), false);
+        assert!(call.answerable(), "an offer nobody picked up yet");
+        // Answering spends the offer, so a second Accept finds nothing to answer.
+        assert!(!Call::test_answered(PEER).answerable());
     }
 
     #[test]
