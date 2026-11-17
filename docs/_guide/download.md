@@ -93,6 +93,12 @@ sudo dnf copr enable paolino/zapfast
 sudo dnf install zapfast
 ```
 
+On Gentoo, enable and sync the [GURU overlay](https://wiki.gentoo.org/wiki/Project:GURU/Information_for_End_Users) before you install. Portage cannot find `gui-apps/zapfast` until GURU is set up:
+
+```sh
+sudo emerge --ask gui-apps/zapfast
+```
+
 On openSUSE and other RPM distributions, or to install one release by hand,
 take the `.rpm`:
 
