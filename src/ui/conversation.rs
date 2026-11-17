@@ -1689,6 +1689,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
                 .size()
                 .y;
+            // The text field is never shorter than the font's row height, and
+            // a field even a fraction taller than its scroll area showed a
+            // scroll bar in an empty composer (macOS's system font: a
+            // 17-point galley in a 17.09-point row).
+            let field_min = line_height
+                .max(ui.fonts_mut(|fonts| fonts.row_height(&theme::regular(BODY_SIZE))));
             // Every control sits in a band as tall as a one-line field at the
             // bottom of the row, centred on it. The field grows to six lines
             // above that band, so the buttons stay beside its last line.
@@ -1719,7 +1725,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 })
                 .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
                 .unwrap_or(line_height)
-                .clamp(line_height, line_height * 6.0);
+                .clamp(field_min, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
@@ -1913,7 +1919,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                 .0
                                 .size()
                                 .y
-                                .clamp(line_height, line_height * 6.0);
+                                .clamp(field_min, line_height * 6.0);
                                 ui.ctx().data_mut(|data| {
                                     data.insert_temp(composer_text_id(), painted);
                                 });
@@ -2177,8 +2183,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
-/// Corner radius of the composer's rounded field.
-const COMPOSER_RADIUS: u8 = 24;
+/// Corner radius of the composer's rounded field: a control's radius plus
+/// the inset around it, so the send button sits in a corner of its own shape
+/// when the field grows past one line, instead of across its curve.
+const COMPOSER_RADIUS: u8 = 20;
+const _: () = assert!(COMPOSER_RADIUS as f32 == COMPOSER_CONTROL / 2.0 + COMPOSER_INSET as f32);
 /// Padding around the text of a one-line composer row. The row, and the send
 /// and record button, are one text line plus this; the controls are centred
 /// on it.
