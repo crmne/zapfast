@@ -441,6 +441,10 @@ pub struct Settings {
     pub system_theme_cache: Option<crate::theme::CustomTheme>,
     /// egui zoom factor.
     pub zoom: f32,
+    /// How far a Linux touchpad gesture scrolls, relative to the default
+    /// (1.0). Linux has no system-wide touchpad scroll speed apps can read,
+    /// so this matches ZapFast to the person's other apps.
+    pub touchpad_scroll_speed: f32,
     pub sidebar_width: f32,
     /// Width of the search pane beside the open chat.
     pub search_pane_width: f32,
@@ -563,6 +567,7 @@ impl Default for Settings {
             custom_theme_cache: None,
             system_theme_cache: None,
             zoom: 1.0,
+            touchpad_scroll_speed: 1.0,
             sidebar_width: 300.0,
             search_pane_width: 380.0,
             info_pane_width: 380.0,
@@ -985,6 +990,15 @@ mod tests {
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
         assert_eq!(Settings::load(&path).theme, ThemeChoice::System);
+    }
+
+    #[test]
+    fn touchpad_scroll_speed_defaults_to_the_default_for_older_settings() {
+        assert_eq!(Settings::default().touchpad_scroll_speed, 1.0);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        assert_eq!(Settings::load(&path).touchpad_scroll_speed, 1.0);
     }
 
     #[test]

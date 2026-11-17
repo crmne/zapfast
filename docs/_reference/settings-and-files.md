@@ -137,6 +137,12 @@ name or description, in the interface language or in English.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
+- **Touchpad scroll speed** (Linux only, 100% by default): how far a
+  two-finger swipe scrolls, from 50% to 400% in 10% steps. Linux has no
+  system-wide touchpad scroll speed that apps can read, so this matches
+  ZapFast to your other apps. `FASTFRAME_TOUCHPAD_SCALE` sets the scale that
+  100% stands for (1.8 by default). macOS and Windows already scroll at the
+  system's speed.
 - **Language**: the interface language, or **Auto** to follow the system.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
   Chinese, Traditional Chinese, Turkish, Indonesian, and Dutch are available; otherwise English.
