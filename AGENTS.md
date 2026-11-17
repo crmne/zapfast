@@ -121,6 +121,12 @@ protocol. These notes are for coding agents and new contributors.
   migration checkpoints the old WAL and verifies an encrypted staging file before
   atomic replacement. A locked or missing key stops linking; never fall back to
   a disposable archive. Tests use fixtures and mock credentials only.
+  Each history chunk, and each run of runtime events already queued (up to
+  `EVENT_BATCH` or `EVENT_BATCH_TIME`), commits once (`Archive::begin_batch`):
+  committed write by write, a first sync wrote fifteen times the archive's
+  size (#839). Archive transactions are `archive::Batch`es, savepoints that
+  nest inside such a batch, never `unchecked_transaction` on the worker's
+  connection. `write_batching::history_write_bench` (ignored) measures it.
 - `src/model.rs` holds the app's own types. Views never touch a protobuf;
   the worker translates in `classify()` and `parse_conversation()`.
 - A motion photo is a photo plus a short clip sent as a second message in an
@@ -371,7 +377,13 @@ protocol. These notes are for coding agents and new contributors.
   platform's picture over it afterwards (Apple Color Emoji, Segoe UI Emoji
   through DirectWrite, or the desktop's bitmap emoji font, with the bundled
   Noto behind them). New pictures are drawn on its worker thread; tests and
-  demo builds draw them inside the frame. The interface font is the
+  demo builds draw them inside the frame. Pickers and `:` completions list
+  emoji through `emoji::catalogue` / `emoji::lookup`, which stop at the
+  bundled font's emoji version (`BUNDLED_VERSION`), so an `emojis` update
+  never offers an emoji no font draws; when updating
+  `assets/fonts/NotoColorEmoji.ttf` (the CBDT build from googlefonts/noto-emoji,
+  not COLRv1), raise it, and a test checks the font draws every offered emoji.
+  The interface font is the
   platform's own (`fastframe_fonts::Primary::System`), and Inter in tests.
   fastframe-emoji's `EmojiPlugin` (added in `App::attach`) colours the
   emoji in every other egui text: labels, menus, tooltips, text fields. It
@@ -767,6 +779,13 @@ A release is not finished when the tag is pushed. Do these in order:
    file as the release description, and a stable tag without it fails. Link
    screenshots at the release's asset URLs
    (`https://github.com/crmne/zapfast/releases/download/vX.Y.Z/NAME.png`).
+   In the same commit, set `zapfast_version` in `docs/_config.yml` and the
+   version menu in `docs/_data/versions.yml` to the new version. The site's
+   `/` is built from the newest release tag and published when the release
+   is, by which time its files exist, so the tag's docs must already name
+   it; a version set after tagging only reaches `/next/` until the release
+   after. The menu lists only the current version, which points to
+   `/download/`, and the Changelog link; do not add older versions to it.
    Run the full checks, commit, and push `main`. Before tagging, verify the
    release commit is reachable from `origin/main` so the binaries report the
    right version and the release contains the canonical history.
@@ -775,12 +794,10 @@ A release is not finished when the tag is pushed. Do these in order:
 3. Upload the screenshots to the release as assets with the names the notes
    link, then open the published release and check the text, every image,
    and every download link. Never leave generated placeholder notes.
-4. After the release files exist, update both `zapfast_version` in
-   `docs/_config.yml` and the version menu in `docs/_data/versions.yml`.
-   The menu lists only the current version, which points to `/download/`,
-   and the Changelog link; do not add older versions to it. Never point the
-   download page at files that do not exist yet. Set `release_asset_prefix` to
-   `zapfast` and `release_app_name` to `ZapFast` only once those assets exist.
+4. Once the release is published, open zapfast.rocks and check that the
+   download page offers the new version and every download link loads. Set
+   `release_asset_prefix` to `zapfast` and `release_app_name` to `ZapFast`
+   only once those assets exist.
 5. Update the AUR packages from the templates in `packaging/arch/`. The shared
    packaging workflow generates versions, hashes and `.SRCINFO` after the
    release exists, and publishes when `PUBLISH_AUR` and the required secrets

@@ -193,6 +193,14 @@ impl App {
             .map(|owner| &owner.backend)
     }
 
+    /// Whether the call on screen is being answered: Accept was clicked and
+    /// the call is not up yet.
+    pub fn call_being_answered(&self) -> bool {
+        self.call
+            .as_ref()
+            .is_some_and(|call| self.call_answering == Some(call.generation))
+    }
+
     /// Sends a command to the call's own account, whichever is on screen.
     pub(super) fn send_call_command(&self, command: Command) {
         if let Some(backend) = self.call_backend() {
@@ -692,7 +700,14 @@ impl App {
             Action::SetCallCameraDevice(device) => {
                 self.send_call_command(Command::SetCallCameraDevice(device));
             }
-            Action::AnswerCall => self.send_call_command(Command::AnswerCall),
+            Action::AnswerCall => {
+                if let Some(call) = &self.call
+                    && self.call_answering != Some(call.generation)
+                {
+                    self.call_answering = Some(call.generation);
+                    self.send_call_command(Command::AnswerCall);
+                }
+            }
             Action::DeclineCall => {
                 self.send_call_command(Command::DeclineCall);
                 self.dismiss_call();
@@ -1110,6 +1125,37 @@ mod tests {
         chat.archived = false;
         chat.locked = true;
         assert!(!call_notification_eligible(&chat, now));
+    }
+
+    /// Answering takes seconds while the call keeps ringing on screen: Accept is disabled and a
+    /// second click sends nothing, so it cannot reach the call it just answered (#1024).
+    #[test]
+    fn accept_is_sent_once_per_call() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        let answers = |commands: Vec<Command>| {
+            commands
+                .into_iter()
+                .filter(|command| matches!(command, Command::AnswerCall))
+                .count()
+        };
+        app.handle_call_update(update(1, CallPhase::Incoming));
+        assert!(!app.call_being_answered());
+        app.apply(Action::AnswerCall, &ctx);
+        assert!(
+            app.call_being_answered(),
+            "Accept is disabled while answering"
+        );
+        app.apply(Action::AnswerCall, &ctx);
+        assert_eq!(answers(sent(&mut commands)), 1);
+        // The next call is answered afresh.
+        app.handle_call_update(update(1, CallPhase::Ended));
+        app.dismiss_call();
+        app.handle_call_update(update(2, CallPhase::Incoming));
+        assert!(!app.call_being_answered());
+        app.apply(Action::AnswerCall, &ctx);
+        assert_eq!(answers(sent(&mut commands)), 1);
     }
 
     #[test]

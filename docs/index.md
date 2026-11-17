@@ -1,7 +1,9 @@
 ---
 layout: home
 title: ZapFast
-description: A fast, lightweight WhatsApp app for Linux, macOS, and Windows.
+description: ZapFast is a lightweight WhatsApp client for Linux, macOS, and Windows, written in Rust with no browser engine. Opens in under a second, about 200 MB of RAM.
+seo:
+  title: Native WhatsApp Client for Linux, macOS and Windows
 permalink: /
 hero:
   name: ZapFast
@@ -58,9 +60,13 @@ features:
     link_text: Read the source
 ---
 
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"ZapFast","url":"https://zapfast.rocks/","downloadUrl":"https://zapfast.rocks/download/","softwareVersion":"{{ site.zapfast_version }}","operatingSystem":"Linux, macOS, Windows","applicationCategory":"CommunicationApplication","license":"https://github.com/crmne/zapfast/blob/main/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"image":"https://zapfast.rocks/screenshot.png","author":{"@type":"Person","name":"Carmine Paolino","url":"https://paolino.me"}}
+</script>
+
 <p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://fastframe.dev">fastframe</a>, the shared foundation for native Rust apps built with <a href="https://www.egui.rs">egui</a>.</p>
 
-<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="ZapFast in under a minute: a film of the app, made with its built-in demo content" hidden>
+<video class="hero-film image-src" width="1280" height="720" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="ZapFast in under a minute: a film of the app, made with its built-in demo content" hidden>
   <source src="{{ '/assets/videos/launch-film.mp4' | relative_url }}" type="video/mp4">
 </video>
 
@@ -82,6 +88,8 @@ features:
 <style>
   .hero-film {
     display: block;
+    /* The film's box before its metadata arrives, so nothing moves. */
+    aspect-ratio: 16 / 9;
     background: #0b141a;
   }
   .sibling {

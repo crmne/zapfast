@@ -878,6 +878,10 @@ pub struct App {
     /// its ringtone plays: notifications on, a sound chosen, and a chat that
     /// is not muted, archived or locked.
     call_rings: Option<u64>,
+    /// The incoming call (by generation) whose Accept was clicked. Answering
+    /// takes seconds, and the call keeps ringing on screen until it is up, so
+    /// Accept stays disabled meanwhile and a second click is not sent.
+    call_answering: Option<u64>,
     /// The ringback and ringtone, played on the default output in the real
     /// app and only tracked in tests and demos.
     call_tones: crate::call_tones::Tones,
@@ -1278,6 +1282,10 @@ fn cycled(active: usize, len: usize, step: i8) -> Option<usize> {
 
 /// How long a hidden start waits for a panel to show the tray item.
 const TRAY_WAIT: Duration = Duration::from_secs(30);
+
+/// How long quitting waits for the accounts' runtimes to finish their
+/// work and disconnect.
+const QUIT_WAIT: Duration = Duration::from_secs(10);
 
 const TRAY_SHOW: &str = "show";
 const TRAY_LOCK: &str = "lock";
@@ -1758,6 +1766,7 @@ impl App {
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,
+            call_answering: None,
             call_tones: Default::default(),
             call_dismissed: None,
             call_cancel: None,
@@ -2194,6 +2203,15 @@ impl App {
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
+        // Wayland's clipboard belongs to the client that made the selection,
+        // and this one stops answering for it with its window: eframe keeps
+        // the event loop for the next window without dispatching it, so other
+        // apps would wait for their own timeout on a paste. Hand the text to
+        // a source that keeps serving it (see `crate::clipboard`).
+        #[cfg(target_os = "linux")]
+        if let Some(clipboard) = self.clipboard_reader.wayland.take() {
+            crate::clipboard::keep_after_window(clipboard);
+        }
     }
 
     /// What the conversation shows behind its bubbles, for the chat and the
@@ -4898,7 +4916,11 @@ impl App {
                 }
             }
             Event::UpdateAvailable { version, url } => {
-                let notice = crate::updates::Release { version, url };
+                let notice = crate::updates::Release {
+                    version,
+                    url,
+                    published_at: None,
+                };
                 if self.update.as_ref() != Some(&notice) {
                     self.toast(format!("ZapFast {} is available", notice.version));
                 }
@@ -11871,8 +11893,13 @@ impl App {
         if self.media_hold.take().is_some() {
             crate::media_pause::settle(Duration::from_secs(2));
         }
+        // Every account stops at once, and none holds quitting up for good.
         for account in &mut self.accounts {
-            account.backend.shutdown();
+            account.backend.request_shutdown();
+        }
+        let deadline = Instant::now() + QUIT_WAIT;
+        for account in &mut self.accounts {
+            account.backend.wait_for_shutdown(deadline);
         }
         self.files.flush(fastframe_file::FLUSH_TIMEOUT);
     }
@@ -18991,6 +19018,7 @@ mod tests {
         app.update = Some(crate::updates::Release {
             version: "99.0.0".into(),
             url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            published_at: None,
         });
         app.update_support = Some(Err("Use your package manager".into()));
         app.settings.download_updates_automatically = true;

@@ -2,6 +2,8 @@
 title: Download
 description: Get ZapFast for Linux, macOS, or Windows, with install instructions for each.
 nav_order: 1
+seo:
+  title: Download for Linux, macOS, and Windows
 ---
 
 {% assign v = site.zapfast_version %}
@@ -96,6 +98,7 @@ take the `.rpm`:
 
 ```sh
 sudo dnf install ./{{ name }}-{{ v }}-1.x86_64.rpm    # or .aarch64.rpm
+sudo zypper install ./{{ name }}-{{ v }}-1.x86_64.rpm # on openSUSE
 ```
 
 - [{{ name }}-{{ v }}-1.x86_64.rpm]({{ base }}/{{ name }}-{{ v }}-1.x86_64.rpm)
