@@ -238,16 +238,16 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1"
 # (crmne/egui#2), and winit's `Ime::DeleteSurrounding` reaches egui (crmne/egui#4).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-eframe = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-emath = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-epaint = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+ecolor = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+eframe = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+egui = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+emath = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+epaint = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "06da5ee2b57c16d5b2fb5240c7b22aaf305e1cfa" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
