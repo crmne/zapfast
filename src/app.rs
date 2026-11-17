@@ -16990,6 +16990,8 @@ mod tests {
                 video: false,
                 path: Some(PathBuf::from(format!("/fixture/{index}.png"))),
                 thumbnail: None,
+                sender: String::new(),
+                sender_name: None,
             })
             .collect();
         app.viewer_media_chat = Some(chat);
@@ -17502,6 +17504,8 @@ mod tests {
             video: false,
             path: Some(PathBuf::from(format!("/fixture/{id}.png"))),
             thumbnail: None,
+            sender: String::new(),
+            sender_name: None,
         };
         app.viewer_media = vec![item("m0"), item("m1")];
         app.viewer_media_chat = Some(chat.into());

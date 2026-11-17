@@ -3813,6 +3813,61 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     "preview-1".to_owned(),
                 ));
             }
+            // The viewer over a group's album: the header names each picture's
+            // sender before the group's own name, and changes as the album
+            // steps between people.
+            "preview-group" => {
+                let chat = SAMPLES[1].id.to_owned();
+                app.open_chat = Some(chat.clone());
+                let now = crate::util::now();
+                let dir = app.dirs.media_cache_dir();
+                let mut rows = Vec::new();
+                let photos = [
+                    ("491703333333@s.whatsapp.net", "Tom", stock::VENUE),
+                    ("491702222222@s.whatsapp.net", "Mira", stock::ENGINE),
+                ];
+                for (index, (sender, name, photo)) in photos.into_iter().enumerate() {
+                    let path = stock::save_photo(&dir, photo);
+                    let mut attachment = media(
+                        "image/jpeg",
+                        photo.bytes.len() as u64,
+                        Some(photo.width),
+                        Some(photo.height),
+                    );
+                    attachment.path = Some(path);
+                    let mut row = message(
+                        &chat,
+                        &format!("preview-group-{index}"),
+                        false,
+                        now + index as i64 * 2,
+                        Content::Image {
+                            motion: None,
+                            caption: None,
+                            media: attachment,
+                        },
+                    );
+                    row.sender = sender.to_owned();
+                    row.sender_name = Some(name.to_owned());
+                    row.thumbnail = Some(stock::thumbnail(photo));
+                    rows.push(row);
+                }
+                app.viewer_media = rows
+                    .iter()
+                    .flat_map(crate::model::MediaItem::of_message)
+                    .collect();
+                let path = app.viewer_media.first().and_then(|item| item.path.clone());
+                app.conversations
+                    .get_mut(&chat)
+                    .expect("sample group")
+                    .messages
+                    .extend(rows);
+                app.viewer_media_chat = Some(chat.clone());
+                app.image_preview = Some(crate::image_preview::PreviewState::new(
+                    path,
+                    chat,
+                    "preview-group-0".to_owned(),
+                ));
+            }
             "compose-emoji" => {
                 app.composer = "Andiamo 😊 con due 👍🏽 e poi testo normale".to_owned();
             }
@@ -10033,6 +10088,7 @@ mod tests {
             ("offline,empty", wide),
             ("offline,settings", wide),
             ("preview", wide),
+            ("preview-group", wide),
         ];
         for footprint in footprints {
             for (page, size) in pages {
@@ -14236,6 +14292,63 @@ mod tests {
             .expect("the chat is brought to the message the viewer was showing");
         assert_eq!(highlight.message, "preview-1");
         assert_eq!(highlight.chat, crate::demo::SAMPLES[0].id);
+    }
+
+    /// The viewer's title names the sender first in a group, so a picture read
+    /// from an album that mixes several people says who sent the one on screen.
+    #[test]
+    fn the_viewer_names_the_sender_before_a_groups_own_name() {
+        fn collect(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
+                _ => {}
+            }
+        }
+        let mut app = app();
+        let group = SAMPLES[1].id;
+        app.open_chat = Some(group.to_owned());
+        let photo = app
+            .conversations
+            .get(group)
+            .expect("the sample group")
+            .messages
+            .iter()
+            .find(|row| row.id == "group-photo")
+            .cloned()
+            .expect("the group's sample photo");
+        app.viewer_media = crate::model::MediaItem::of_message(&photo);
+        app.viewer_media_chat = Some(group.to_owned());
+        app.image_preview = Some(crate::image_preview::PreviewState::new(
+            None,
+            group.to_owned(),
+            photo.id.clone(),
+        ));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut texts);
+        }
+        assert!(
+            texts.iter().any(|text| text == "Tom · Rust Berlin"),
+            "the group's picture names its sender: {texts:?}"
+        );
     }
 
     /// Ctrl++ zooms the picture, not the whole interface, including when the

@@ -223,6 +223,13 @@ fn field_panels(stage: Rect, drawn: Rect) -> [Rect; 4] {
     ]
 }
 
+fn viewer_title(chat_title: String, sender: Option<&str>, group: bool) -> String {
+    match sender.filter(|name| !name.is_empty()) {
+        Some(name) if group => format!("{name} · {chat_title}"),
+        _ => chat_title,
+    }
+}
+
 /// Title, the actions that reach the message, and the zoom controls.
 fn header(
     app: &mut App,
@@ -249,6 +256,35 @@ fn header(
                     str::to_owned,
                 )
         });
+    // Prefer the sender carried by the album item, which is available even
+    // when the message is no longer loaded in memory; fall back to the live
+    // conversation row, then to nothing. Our own id resolves to the localized
+    // "You" label instead of relying on display_name_or's hardcoded one.
+    let sender = item
+        .map(|item| {
+            if app.me.as_deref() == Some(item.sender.as_str()) {
+                crate::i18n::gettext(app.locale, "You").into_owned()
+            } else {
+                app.display_name_or(&item.sender, item.sender_name.as_deref())
+            }
+        })
+        .or_else(|| {
+            app.conversations
+                .get(chat)
+                .and_then(|conversation| conversation.message(preview.message()))
+                .map(|row| {
+                    if app.me.as_deref() == Some(row.sender.as_str()) {
+                        crate::i18n::gettext(app.locale, "You").into_owned()
+                    } else {
+                        app.display_name_or(&row.sender, row.sender_name.as_deref())
+                    }
+                })
+        });
+    let title = viewer_title(
+        title,
+        sender.as_deref(),
+        app.chat(chat).is_some_and(|known| known.is_group()),
+    );
     let message = preview.message().to_owned();
     // The file already on the computer, when the item has one: the header
     // offers Save as for it, as the message menu does, instead of fetching it
@@ -1108,6 +1144,30 @@ fn tile_of(item: &MediaItem) -> Tile {
 }
 
 #[cfg(test)]
+mod title_tests {
+    use super::viewer_title;
+
+    #[test]
+    fn a_group_names_the_sender_before_its_own_name() {
+        assert_eq!(
+            viewer_title("Studio".into(), Some("Ada"), true),
+            "Ada · Studio"
+        );
+    }
+
+    #[test]
+    fn a_one_to_one_chat_keeps_its_own_name() {
+        assert_eq!(viewer_title("Ada".into(), Some("Ada"), false), "Ada");
+    }
+
+    #[test]
+    fn an_unknown_sender_keeps_the_chat_name() {
+        assert_eq!(viewer_title("Studio".into(), None, true), "Studio");
+        assert_eq!(viewer_title("Studio".into(), Some(""), true), "Studio");
+    }
+}
+
+#[cfg(test)]
 mod tile_tests {
     use super::*;
     use crate::model::MediaItem;
@@ -1152,6 +1212,8 @@ mod tile_tests {
                     video,
                     path: None,
                     thumbnail: Some(png.into_inner()),
+                    sender: String::new(),
+                    sender_name: None,
                 };
                 let rect = Rect::from_min_size(pos2(16.0, 16.0), Vec2::splat(THUMB));
                 let uri =
@@ -1235,6 +1297,8 @@ mod tile_tests {
                 video: false,
                 path: Some(path.clone()),
                 thumbnail: None,
+                sender: String::new(),
+                sender_name: None,
             };
             let ctx = egui::Context::default();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -1293,6 +1357,8 @@ mod tile_tests {
             video: false,
             path: Some(PathBuf::from("/photos/a.jpg")),
             thumbnail: Some(vec![1, 2, 3]),
+            sender: String::new(),
+            sender_name: None,
         };
         assert_eq!(tile_of(&stored), Tile::Stored);
         let file_only = MediaItem {
