@@ -554,6 +554,8 @@ button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 When someone else records a voice message, a microphone replaces the typing dots.
+A voice message or audio file whose download fails says why in its player and
+retries when clicked, and the message keeps its width.
 
 ## Calls
 
