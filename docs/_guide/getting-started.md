@@ -88,7 +88,9 @@ and its unread chats count toward neither the dot nor the app icon's badge.
 After linking, the phone sends recent history. The chat list appears within
 seconds, and messages can take a few minutes to finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
-ZapFast asks your phone for older messages. The phone must be online.
+ZapFast asks your phone for older messages. The phone must be online. When an
+older page arrives, the message you are reading stays where it is, so you can
+keep scrolling up from the same spot.
 
 ## Try it in your own chat
 

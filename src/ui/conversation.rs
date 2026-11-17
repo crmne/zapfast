@@ -3027,6 +3027,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let mut reveal = std::mem::take(&mut app.reveal_cursor);
     // Check out the conversation while drawing rows and collecting actions.
     let mut conversation = app.conversations.remove(&chat.id).unwrap_or_default();
+    // The row the reader was looking at when older history was asked for, and
+    // whether that page is still on its way.
+    let keep_place = conversation.keep_place.clone();
+    let awaiting_older = conversation.loading_older || conversation.fetching_phone;
     // The list's items are its rows: an album is one.
     let starts = row_starts(&conversation.messages, app.selecting_in(&chat.id));
     let total = starts.len();
@@ -3266,6 +3270,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     // follows, so what the reader looks at stays put while rows scrolled past
     // are measured for the first time.
     let mut grew_above = 0.0;
+    // The first row's top this frame, and the row named by `keep_place`, kept
+    // so older history inserted above the reader can be compensated exactly.
+    let mut first_row_top: Option<(String, f32)> = None;
+    let mut keep_top = None;
+    let mut keep_drawn_top = None;
+    // Whether this pass put the reader back on the row older history pushed
+    // down, so the stale offset below must not ask for the next page again.
+    let mut held_place = false;
     // The offset the message list is about to load, the distance a Home
     // scroll still has to cover: the same id the `ScrollArea` below loads.
     // `.id_salt()` hashes its salt into an `IdSalt` before combining it with
@@ -3273,6 +3285,19 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     // to land on the same id.
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new(("messages", &chat.id)));
     let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
+    // Where the list's first row was drawn last frame, before any older page
+    // this frame put new rows above it.
+    let first_top_id = scroll_id.with("first-row-top");
+    let first_top = ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, f32)>(first_top_id));
+    // Where the row the reader is looking at was drawn last frame. A bubble
+    // is the steadier reference: a day chip above it may come or go with the
+    // page.
+    let keep_before = keep_place.as_ref().and_then(|id| {
+        ui.ctx()
+            .data(|data| data.get_temp::<egui::Rect>(bubble_id(&chat.id, id).with("rect")))
+    });
     // The list has not been shown before: it starts at the top.
     let first_show = scroll_state.is_none();
     let offset = scroll_state.map_or(0.0, |state| state.offset.y);
@@ -3495,6 +3520,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         };
                         let row_is_anchor = view.anchor.is_some_and(row_contains);
                         let before = ui.cursor().top();
+                        if previous.is_none() {
+                            first_row_top = Some((message.id.clone(), before));
+                        }
+                        if keep_place.as_deref() == Some(message.id.as_str()) {
+                            keep_top = Some(before);
+                        }
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
                                 != crate::util::day_key(message.timestamp)
@@ -3714,6 +3745,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                         &mut actions,
                                     )
                                 };
+                                if keep_place.as_deref() == Some(message.id.as_str())
+                                    && let Some(rect) = ui.ctx().data(|data| {
+                                        data.get_temp::<egui::Rect>(
+                                            bubble_id(&chat.id, &message.id).with("rect"),
+                                        )
+                                    })
+                                {
+                                    keep_drawn_top = Some(rect.top());
+                                }
                                 if let Some((slot, top)) = flash {
                                     if row_is_anchor && response.is_some() {
                                         jump_since.set(Some(time));
@@ -4251,6 +4291,37 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let fetching = conversation.fetching_phone;
     let fetching_explicit = conversation.phone_explicit;
     let exhausted = conversation.phone_exhausted;
+    // Older history that landed above the transcript keeps the reader's
+    // place: the page pushed the message they were reading down, so the
+    // offset follows it by the same height. Its bubble is the reference, so
+    // the day chip above it may come or go with the page without moving it;
+    // a row skipped far from the view falls back to its row top, which its
+    // space still places.
+    if app.scroll_anchor.is_some() {
+        // A jump of the reader's own wins over holding the previous place.
+        conversation.keep_place = None;
+    } else if let Some(id) = &keep_place {
+        // The page landed once something came before the row that was first
+        // last frame: a still-waiting request leaves it first.
+        let landed = first_top
+            .as_ref()
+            .is_some_and(|(first_id, _)| first_id == id)
+            && first_row_top
+                .as_ref()
+                .is_some_and(|(first_id, _)| first_id != id);
+        if landed {
+            if let (Some(before), Some(now)) = (keep_before, keep_drawn_top) {
+                grew_above = now - before.top();
+            } else if let (Some((_, was)), Some(now)) = (&first_top, keep_top) {
+                grew_above = now - was;
+            }
+            held_place = grew_above.abs() >= 0.5;
+            conversation.keep_place = None;
+        } else if complete && !awaiting_older {
+            // At the very start of the history there is nothing left to hold.
+            conversation.keep_place = None;
+        }
+    }
     conversation.rows = rows;
     // Keep the rows on screen where they were when rows above them changed
     // height, unless this frame scrolled on purpose (to the end, a jump, or
@@ -4272,6 +4343,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         ui.ctx()
             .request_discard("transcript rows above the viewport changed height");
     }
+    // Where the first row drew this frame, for the frame older history lands
+    // in: the row the reader was looking at is the one to hold in place.
+    ui.ctx().data_mut(|data| match first_row_top {
+        Some((id, top)) => {
+            data.insert_temp(first_top_id, (id, top));
+        }
+        None => {
+            data.remove::<(String, f32)>(first_top_id);
+        }
+    });
     // A jump to the end moves the offset only after the rows were painted at
     // the old one. On a chat's first showing that is the top of its first
     // page, which would flash for a frame before the end; redo the pass at
@@ -4375,7 +4456,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let explicit = near_top && !fits && !scroll_to_bottom;
     // A reader reaching the top while an automatic request waits claims it.
     let claim = fetching && explicit && !fetching_explicit;
-    if (near_top || fits)
+    if !held_place
+        && (near_top || fits)
         && ((!complete && !loading) || (complete && (!fetching || claim) && !exhausted))
     {
         actions.push(Action::LoadOlder {
