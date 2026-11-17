@@ -250,6 +250,13 @@ impl AppDirs {
         self.state.join("panic.log")
     }
 
+    /// eframe's storage. ZapFast keeps nothing in it, so nothing writes this
+    /// file: it only keeps eframe from reading the `app.ron` in its default
+    /// folder, where a version before 0.20 left a window (#874).
+    pub fn eframe_storage(&self) -> PathBuf {
+        self.state.join("eframe.ron")
+    }
+
     /// Downloaded attachments keyed by message id.
     pub fn media_cache_dir(&self) -> PathBuf {
         self.cache.join("media")
@@ -477,6 +484,18 @@ mod tests {
             assert_eq!(std::fs::read(path.join("fixture")).unwrap(), b"preserved");
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// #874: eframe reads a window from its storage at every start, so it
+    /// gets a file among ZapFast's own, never one in its default folder.
+    #[test]
+    fn eframe_storage_is_not_in_eframes_default_folder() {
+        let dirs = AppDirs::discover();
+        let storage = dirs.eframe_storage();
+        assert!(storage.starts_with(&dirs.state));
+        if let Some(default) = eframe::storage_dir("zapfast") {
+            assert!(!storage.starts_with(default));
+        }
     }
 
     #[test]
