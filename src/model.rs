@@ -2708,6 +2708,9 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    SetSmartStorage(bool),
+    OptimizeStorage,
+    CancelStorageOptimization,
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,

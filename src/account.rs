@@ -50,6 +50,8 @@ pub struct Account {
     /// until a measurement succeeds, so a failed one shows no numbers
     /// rather than zeroes.
     pub storage_stats: Option<crate::model::StorageStats>,
+    pub storage_optimizing: bool,
+    pub storage_report: Option<crate::smart_storage::Report>,
     /// The measurement being waited for; an older answer is dropped.
     pub storage_token: u64,
     /// Whether the media cache is being emptied.
@@ -195,6 +197,8 @@ impl Account {
             drafts: HashMap::new(),
             open_draft_priority: false,
             storage_stats: None,
+            storage_optimizing: false,
+            storage_report: None,
             storage_token: 0,
             storage_clearing: false,
             chat_export: None,

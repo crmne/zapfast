@@ -14,6 +14,8 @@ use crate::model::{
 mod broadcast_lists;
 pub use broadcast_lists::Adopted;
 mod calls;
+mod compact;
+pub use compact::RawRow;
 pub mod chat_export;
 pub use calls::CALL_LOG_LIMIT;
 mod drafts;
@@ -572,6 +574,7 @@ impl Archive {
     fn prepare(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
+        connection.execute_batch(compact::SCHEMA)?;
         connection.execute_batch(labels::SCHEMA)?;
         connection.execute_batch(polls::SCHEMA)?;
         connection.execute_batch(drafts::SCHEMA)?;
@@ -1948,7 +1951,7 @@ impl Archive {
             Ok(ArchivedSticker {
                 last_used: row.get(1)?,
                 path: std::path::PathBuf::from(row.get::<_, String>(0)?),
-                raw: row.get(2)?,
+                raw: compact::optional_raw(row, 2)?,
             })
         })?;
         Ok(rows
@@ -2026,7 +2029,9 @@ impl Archive {
         let mut statement = self
             .connection
             .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, compact::unpack_row(row, 2)?))
+        })?;
         rows.collect()
     }
 
@@ -2036,7 +2041,9 @@ impl Archive {
             "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
              AND json_extract(content, '$.kind') = 'video'",
         )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, compact::unpack_row(row, 2)?))
+        })?;
         rows.collect()
     }
 
@@ -2046,7 +2053,9 @@ impl Archive {
             "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
              AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')",
         )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, compact::unpack_row(row, 2)?))
+        })?;
         rows.collect()
     }
 
@@ -2057,7 +2066,9 @@ impl Archive {
              AND json_extract(content, '$.kind') = 'unsupported'
              AND json_extract(content, '$.what') = 'message'",
         )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, compact::unpack_row(row, 2)?))
+        })?;
         rows.collect()
     }
 
@@ -2070,7 +2081,9 @@ impl Archive {
                    AND json_extract(content, '$.what') = 'interactive message')
                   OR json_extract(content, '$.kind') = 'interactive')",
         )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, compact::unpack_row(row, 2)?))
+        })?;
         rows.collect()
     }
 
@@ -2625,7 +2638,7 @@ impl Archive {
             .query_row(
                 "SELECT raw FROM messages WHERE chat = ?1 AND id = ?2",
                 params![chat, id],
-                |row| row.get(0),
+                |row| compact::optional_raw(row, 0),
             )
             .optional()
             .map(Option::flatten)

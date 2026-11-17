@@ -1469,6 +1469,11 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
+        for account in &app.accounts {
+            account
+                .backend
+                .send(Command::SetSmartStorage(app.settings.smart_storage));
+        }
         let folder = app.settings.download_folder.clone();
         for account in &app.accounts {
             account
@@ -2098,6 +2103,9 @@ impl App {
                 }
             }
         };
+        account
+            .backend
+            .send(Command::SetSmartStorage(self.settings.smart_storage));
         account.backend.send(Command::SetDownloadFolder(
             self.settings.download_folder.clone(),
         ));
@@ -3709,6 +3717,16 @@ impl App {
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
+            Event::StorageOptimization { running, report } => {
+                self.storage_optimizing = running;
+                self.storage_report = Some(report);
+                if !running {
+                    self.storage_token += 1;
+                    self.backend.send(Command::LoadStorageStats {
+                        token: self.storage_token,
+                    });
+                }
+            }
             Event::StorageStats {
                 stats,
                 token,
@@ -7431,6 +7449,20 @@ impl App {
             return;
         }
         match action {
+            Action::SetSmartStorage(enabled) => {
+                self.settings.smart_storage = enabled;
+                for account in &self.accounts {
+                    account.backend.send(Command::SetSmartStorage(enabled));
+                }
+                self.mark_settings_dirty();
+            }
+            Action::OptimizeStorage => {
+                self.storage_optimizing = true;
+                self.backend.send(Command::OptimizeStorage);
+            }
+            Action::CancelStorageOptimization => {
+                self.backend.send(Command::CancelStorageOptimization)
+            }
             Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
             Action::SetBlocked { chat, blocked } => {
                 if self.is_connected() && self.blocklist.editable() {
