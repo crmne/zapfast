@@ -19027,6 +19027,85 @@ mod tests {
         }
     }
 
+    /// A page of older history that lands while the reader is at the top
+    /// stays above them: the message they were reading keeps its place
+    /// instead of the view jumping up into the new page.
+    #[test]
+    fn older_history_keeps_the_readers_place() {
+        let root = tempfile::Builder::new()
+            .prefix("zapfast-demo-")
+            .tempdir()
+            .unwrap();
+        let (mut app, events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        ROOTS.with(|roots| roots.borrow_mut().push(root));
+        populate(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        // No unread divider: its first placement lays out every row.
+        for row in &mut app.chats {
+            row.unread = 0;
+            row.unread_mention = None;
+        }
+        lengthen_chat(&mut app, &chat, 120, "hold");
+        app.conversations.get_mut(&chat).unwrap().complete = false;
+        assert_eq!(app.open_chat.as_deref(), Some(chat.as_str()));
+        render(&mut app, &ctx);
+        // Scroll all the way up, as the reader does before the page loads.
+        press_key(&mut app, &ctx, egui::Key::Home, egui::Modifiers::NONE);
+        settle_key_scroll(&mut app, &ctx);
+        let (before_offset, _) = scroll_metrics(&ctx, &chat);
+        assert!(before_offset < 80.0, "at the top: {before_offset}");
+        let first = app.conversations[&chat].messages[0].id.clone();
+        let rect_id = crate::ui::conversation::bubble_id(&chat, &first).with("rect");
+        let before = ctx
+            .data(|data| data.get_temp::<egui::Rect>(rect_id))
+            .expect("the oldest message is on screen");
+        // The scroll to the top asks for the older page, which lands above
+        // everything loaded.
+        app.load_older(&chat, true);
+        assert!(app.conversations[&chat].loading_older);
+        let oldest = app.conversations[&chat].messages[0].timestamp;
+        let page: Vec<Message> = (0..20)
+            .map(|n| {
+                message(
+                    &chat,
+                    &format!("page-{n}"),
+                    false,
+                    oldest - 2_000 + n,
+                    Content::text(format!("Row {} with some words", 500 + n)),
+                )
+            })
+            .collect();
+        events
+            .send(crate::backend::Event::Messages {
+                chat: chat.clone(),
+                messages: page,
+                older: true,
+                complete: false,
+            })
+            .unwrap();
+        settle_key_scroll(&mut app, &ctx);
+        let after = ctx
+            .data(|data| data.get_temp::<egui::Rect>(rect_id))
+            .expect("the previously oldest message is still drawn");
+        let (after_offset, _) = scroll_metrics(&ctx, &chat);
+        assert!(
+            (after.top() - before.top()).abs() < 1.0,
+            "the reader's message moved from {} to {}",
+            before.top(),
+            after.top()
+        );
+        assert!(
+            after_offset > before_offset + 200.0,
+            "the offset grew by the page above it ({before_offset} -> {after_offset})"
+        );
+        assert_eq!(
+            app.conversations[&chat].messages[0].id, "page-0",
+            "the page is above the messages that were loaded"
+        );
+    }
+
     /// A chat long enough to scroll, open, whose contact is typing below its
     /// newest message, its message list focused from the keys, and the
     /// sender for the backend's events.

@@ -206,6 +206,10 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
+    /// The message that was first when older history was asked for, so the
+    /// transcript can keep it where the reader was looking when the page
+    /// lands rather than jumping up to the new rows above it.
+    pub(crate) keep_place: Option<String>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -6077,8 +6081,6 @@ impl App {
     }
 
     pub fn load_older(&mut self, chat: &str, explicit: bool) {
-        // The account's fields directly, so the window's scroll anchor can
-        // change while its conversation is borrowed.
         let account = &mut self.accounts[self.active];
         let Some(conversation) = account.conversations.get_mut(chat) else {
             return;
@@ -6095,7 +6097,7 @@ impl App {
         }
         conversation.loading_older = true;
         let before = (oldest.timestamp, oldest.id.clone());
-        self.scroll_anchor = Some(oldest.id.clone());
+        conversation.keep_place = Some(oldest.id.clone());
         account.backend.send(Command::LoadChat {
             chat: chat.to_owned(),
             before: Some(before),
@@ -6139,7 +6141,7 @@ impl App {
         }
         conversation.fetching_phone = true;
         conversation.phone_explicit = explicit;
-        self.scroll_anchor = conversation
+        conversation.keep_place = conversation
             .messages
             .first()
             .map(|oldest| oldest.id.clone());
