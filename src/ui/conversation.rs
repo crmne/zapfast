@@ -9169,6 +9169,19 @@ fn album_tile(
                 message: message.id.clone(),
             });
         }
+    } else if media.path.is_none()
+        && matches!(media.state, MediaState::Idle)
+        && ui.is_rect_visible(rect)
+        && auto_download_allowed(media, false, view.auto_download)
+    {
+        // A member comes into view as a single photo or video would, and
+        // downloads by itself under the same setting and size limit.
+        actions.push(Action::Download {
+            manual: false,
+            card: None,
+            chat: message.chat.clone(),
+            message: message.id.clone(),
+        });
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(album_tile_id(&view.chat.id, &message.id), rect));

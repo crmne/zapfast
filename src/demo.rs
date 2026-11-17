@@ -13415,6 +13415,47 @@ mod tests {
         }
     }
 
+    /// With automatic downloads on, album members download as they come into
+    /// view, as single photos do (#977): never one over the size limit or one
+    /// that failed, and none at all with the setting off.
+    #[test]
+    fn album_members_download_by_themselves_under_the_automatic_download_rules() {
+        use crate::model::MediaState;
+        for auto_download in [true, false] {
+            let mut app = app();
+            media_album_sample(&mut app, true);
+            app.account_mut().settings.auto_download = auto_download;
+            let chat = app.open_chat.clone().unwrap();
+            let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+            messages[1].content.media_at_mut(None).unwrap().size =
+                crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+            messages[2].content.media_at_mut(None).unwrap().state =
+                MediaState::Failed("Synthetic download error".into());
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.backend.record_demo_commands();
+            render(&mut app, &ctx);
+            render(&mut app, &ctx);
+            let downloads: Vec<_> = app
+                .backend
+                .take_demo_commands()
+                .into_iter()
+                .filter_map(|command| match command {
+                    crate::backend::Command::Download {
+                        message, manual, ..
+                    } => Some((message, manual)),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<(String, bool)> = if auto_download {
+                vec![("album-0".into(), false), ("album-3".into(), false)]
+            } else {
+                vec![]
+            };
+            assert_eq!(downloads, expected, "auto_download {auto_download}");
+        }
+    }
+
     /// Album buttons expose their media kind and download state, including failures.
     #[test]
     fn album_tiles_name_each_download_state_for_screen_readers() {

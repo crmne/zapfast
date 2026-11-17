@@ -343,6 +343,8 @@ items with the same protocol album identity, sender and local calendar date
 are grouped. A reply shared by several items appears once above the grid;
 different reply targets keep their own previews. If only some items carry
 the quoted text, the preview uses one of those copies.
+With automatic downloads on, each item up to 64 MiB downloads as it comes
+into view, as a single attachment does.
 **Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
