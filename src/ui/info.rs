@@ -920,7 +920,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
 
 /// The group's members, each opening their own panel. They are sorted once
 /// per change of the chat list or the contacts, not every frame.
-fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: f32) {
+fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, _photo: f32) {
     let palette = app.palette;
     let id = shown.id.as_str();
     if app.info_members.as_ref().is_none_or(|(chat, _)| chat != id) {
@@ -965,9 +965,9 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let mut chosen: Option<(String, crate::group_admin::MemberChange)> = None;
     // Limit the visible rows because groups can have thousands of members.
     let row_height = 30.0;
-    let rows = ((window - photo - 300.0) / row_height)
-        .floor()
-        .clamp(2.0, 8.0);
+    // The enclosing panel scrolls too: keep a useful member viewport even
+    // when the photo and settings above it consume most of the initial view.
+    let rows = (window * 0.45 / row_height).floor().clamp(6.0, 12.0);
     let mut open = None;
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;

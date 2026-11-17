@@ -22,6 +22,7 @@ pub mod calls;
 pub mod camera;
 #[cfg(target_os = "linux")]
 pub mod clipboard;
+pub mod communities;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 pub mod diagnostics;

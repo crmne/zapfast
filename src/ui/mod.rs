@@ -7,6 +7,7 @@ pub mod call;
 pub mod calls;
 mod chat_export;
 pub mod chats;
+pub mod communities;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;

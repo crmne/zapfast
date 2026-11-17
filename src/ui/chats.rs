@@ -1527,8 +1527,34 @@ fn person_row(
 }
 
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
+    if chat.is_community() {
+        return super::communities::row(app, ui, chat);
+    }
     let palette = app.palette;
     let title = app.chat_title(chat);
+    let nested = !chat.pinned
+        && !chat.left
+        && app.communities_grouped()
+        && chat
+            .community
+            .as_ref()
+            .and_then(|info| info.parent.as_deref())
+            .is_some_and(|parent| {
+                app.chats.iter().any(|chat| {
+                    chat.id == parent && chat.is_community() && !chat.locked && !chat.left
+                })
+            });
+    let title = if nested
+        && chat
+            .community
+            .as_ref()
+            .is_some_and(|info| info.is_announcement)
+    {
+        crate::i18n::gettext(app.locale, "Announcements").into_owned()
+    } else {
+        title
+    };
+    let indent = if nested { 18.0 } else { 0.0 };
     // While searching, the result reached with the arrows is the selection;
     // before any arrow press it stays the open chat, as a click leaves it.
     let selected = app
@@ -1560,8 +1586,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + 38.0 + indent, rect.center().y),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&chat.id);
         widgets::paint_avatar(
             ui,
@@ -1575,7 +1603,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
-        let left = rect.left() + 76.0;
+        let left = rect.left() + 76.0 + indent;
         let right = rect.right() - 14.0;
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(app.locale, chat.last_activity)
