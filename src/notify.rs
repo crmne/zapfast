@@ -143,6 +143,14 @@ impl Notifications {
         }
     }
 
+    /// How many of a chat's notifications may still wait for a click.
+    #[cfg(test)]
+    pub fn waiting(&self, account: &crate::model::AccountId, chat: &str) -> usize {
+        self.pending
+            .get(&(account.as_str().to_owned(), chat.to_owned()))
+            .map_or(0, Vec::len)
+    }
+
     pub fn clear(&mut self, account: &crate::model::AccountId, chat: &str) {
         if let Some(entries) = self
             .pending

@@ -523,6 +523,15 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.notifications,
     );
+    // Global, so it stays reachable while this account's notifications are off.
+    notifications.toggle(
+        translated(locale, "Reaction notifications"),
+        translated(
+            locale,
+            "Notify when someone reacts to one of your messages.",
+        ),
+        |settings| &mut settings.reaction_notifications,
+    );
     if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
         notifications.toggle(

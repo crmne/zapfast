@@ -196,6 +196,11 @@ name or description, in the interface language or in English.
   sender, the text, or a picture, as behind the app lock, and plays only the
   message sound. Clicking one still opens the message. Applies to every
   account.
+- **Reaction notifications**: on by default. A notification when someone
+  reacts to one of your messages, such as "Reacted 👍 to “the plan”". It
+  follows the message notifications' rules: muted, archived and locked chats
+  stay quiet, and without message content it says only "New message".
+  Applies to every account.
 - **Message sound** and **Mention sound**: Pidgin's sounds, the system sound,
   none, or an audio file. On macOS, Pidgin's sounds and the system sound play
   with the notification, so Do Not Disturb, Focus, and the notification
