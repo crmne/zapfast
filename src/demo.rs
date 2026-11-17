@@ -12003,6 +12003,64 @@ mod tests {
         );
     }
 
+    /// A failure notice in an audio message's player stays inside the bubble
+    /// instead of widening it past its settled card width.
+    #[test]
+    fn a_failed_audio_message_keeps_its_bubble_width() {
+        // The note's column is as wide as the row, so only the audio file,
+        // which keeps room for its music badge, could grow. Check both.
+        for note in [true, false] {
+            let width = |state: crate::model::MediaState| {
+                let mut app = app();
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                let chat = sample_ids()[0].to_owned();
+                let mut clip = media("audio/ogg; codecs=opus", 12_000, None, None);
+                clip.state = state;
+                app.conversations.get_mut(&chat).unwrap().messages = vec![message(
+                    &chat,
+                    "voice-failed",
+                    false,
+                    100,
+                    Content::Audio {
+                        media: clip,
+                        seconds: Some(5),
+                        voice_note: note,
+                        waveform: demo_waveform(),
+                    },
+                )];
+                render(&mut app, &ctx);
+                let rect = ctx
+                    .data(|data| {
+                        data.get_temp::<egui::Rect>(
+                            crate::ui::conversation::bubble_id(&chat, "voice-failed").with("rect"),
+                        )
+                    })
+                    .expect("the audio message is on screen");
+                let viewport = app
+                    .selection_view
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .expect("the message viewport is on screen");
+                assert!(
+                    rect.right() <= viewport.right(),
+                    "note={note}: the bubble ends at {} past the view's {}",
+                    rect.right(),
+                    viewport.right()
+                );
+                rect.width()
+            };
+            let idle = width(crate::model::MediaState::Idle);
+            let failed = width(crate::model::MediaState::Failed(
+                "Timed out waiting for the media server to answer after 30 seconds".into(),
+            ));
+            assert!(
+                (failed - idle).abs() < 0.5,
+                "note={note}: a failure notice widened the bubble from {idle} to {failed}"
+            );
+        }
+    }
+
     #[test]
     fn the_speed_chip_cycles_and_the_menu_offers_every_speed() {
         let mut app = app();

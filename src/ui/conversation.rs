@@ -11368,6 +11368,12 @@ fn voice_player(
             }
             let mut wave_middle = None;
             ui.vertical(|ui| {
+                // The waveform's column may be narrower than the row: an audio
+                // file keeps room for its music badge on the right. A failure
+                // notice as wide as the row would otherwise push the bubble
+                // past its settled card width, out to the right, and the whole
+                // transcript with it.
+                ui.set_width(wave_width.max(0.0));
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(wave_width, bar_height), Sense::click());
