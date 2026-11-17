@@ -119,6 +119,7 @@ impl Source {
             taken = Some(std::time::Instant::now());
             let picture = match pixel {
                 Pixel::I420 => planar_to_i420(data, width, height, stride),
+                Pixel::Nv12 => nv12_to_i420(data, width, height, stride),
                 _ => to_i420(pixel, data, width, height),
             };
             let Some(picture) = picture else {
@@ -272,7 +273,7 @@ pub fn to_i420(pixel: Pixel, data: &[u8], width: usize, height: usize) -> Option
     match pixel {
         Pixel::I420 => planar_to_i420(data, width, height, width),
         Pixel::Yuyv => yuyv_to_i420(data, width, height),
-        Pixel::Nv12 => nv12_to_i420(data, width, height),
+        Pixel::Nv12 => nv12_to_i420(data, width, height, width),
         Pixel::Mjpeg => {
             let picture =
                 image::load_from_memory_with_format(data, image::ImageFormat::Jpeg).ok()?;
@@ -365,18 +366,23 @@ fn yuyv_to_i420(data: &[u8], width: usize, height: usize) -> Option<I420> {
     })
 }
 
-fn nv12_to_i420(data: &[u8], width: usize, height: usize) -> Option<I420> {
+/// V4L2 NV12 stores the Y plane and then interleaved UV rows in one buffer,
+/// both with the driver's row stride. Apple's ISP pads its portrait modes'
+/// rows (720 wide in 768 bytes), so reading rows `width` apart shears them.
+fn nv12_to_i420(data: &[u8], width: usize, height: usize, stride: usize) -> Option<I420> {
     let (even_w, even_h) = (width & !1, height & !1);
     let chroma_rows = height.div_ceil(2);
-    let chroma_stride = width.div_ceil(2) * 2;
-    if even_w == 0 || even_h == 0 || data.len() < width * height + chroma_stride * chroma_rows {
+    let chroma_stride = stride.max(width.div_ceil(2).checked_mul(2)?);
+    let y_len = stride.checked_mul(height)?;
+    let total = y_len.checked_add(chroma_stride.checked_mul(chroma_rows)?)?;
+    if even_w == 0 || even_h == 0 || stride < width || data.len() < total {
         return None;
     }
     let mut y = Vec::with_capacity(even_w * even_h);
     for row in 0..even_h {
-        y.extend_from_slice(&data[row * width..row * width + even_w]);
+        y.extend_from_slice(&data[row * stride..row * stride + even_w]);
     }
-    let chroma = &data[width * height..];
+    let chroma = &data[y_len..];
     let mut u = Vec::with_capacity(even_w * even_h / 4);
     let mut v = Vec::with_capacity(even_w * even_h / 4);
     for row in 0..even_h / 2 {
@@ -942,6 +948,36 @@ mod tests {
         assert_eq!(picture.y, [1, 2, 3, 4]);
         assert_eq!(picture.u, [50]);
         assert_eq!(picture.v, [60]);
+    }
+
+    #[test]
+    fn nv12_skips_padding_in_luma_and_chroma_rows() {
+        // A 2x2 picture in rows of 4 bytes, the last 2 of each padding.
+        let data = [1, 2, 0, 0, 3, 4, 0, 0, 50, 60, 0, 0];
+        let picture = nv12_to_i420(&data, 2, 2, 4).unwrap();
+        assert_eq!(picture.y, [1, 2, 3, 4]);
+        assert_eq!(picture.u, [50]);
+        assert_eq!(picture.v, [60]);
+    }
+
+    #[test]
+    fn nv12_keeps_every_chroma_row_with_padding() {
+        // A 2x4 picture, as Apple's ISP pads its portrait modes.
+        let data = [
+            1, 2, 0, 0, 3, 4, 0, 0, 5, 6, 0, 0, 7, 8, 0, 0, // Y
+            50, 60, 0, 0, 51, 61, 0, 0, // UV
+        ];
+        let picture = nv12_to_i420(&data, 2, 4, 4).unwrap();
+        assert_eq!(picture.y, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(picture.u, [50, 51]);
+        assert_eq!(picture.v, [60, 61]);
+    }
+
+    #[test]
+    fn nv12_refuses_short_frames_and_strides_narrower_than_the_picture() {
+        assert!(nv12_to_i420(&[1, 2, 0, 0, 3, 4, 0, 0, 50, 60], 2, 2, 4).is_none());
+        assert!(nv12_to_i420(&[1, 2, 3, 4, 50, 60], 2, 2, 1).is_none());
+        assert!(nv12_to_i420(&[], usize::MAX, 2, usize::MAX).is_none());
     }
 
     #[test]
