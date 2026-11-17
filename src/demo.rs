@@ -23025,6 +23025,56 @@ mod tests {
     }
 
     #[test]
+    fn up_from_the_first_member_scrolls_the_mention_list_to_the_last() {
+        let mut app = app();
+        apply_flags(&mut app, Some("mention-everyone"));
+        // More members than the five rows the list shows.
+        let group = app.open_chat.clone().expect("group open");
+        if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == group) {
+            chat.participants
+                .extend((0..4).map(|index| format!("1555000010{index}@s.whatsapp.net")));
+        }
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        render(&mut app, &ctx);
+        let chat = app.current_chat().expect("group open").clone();
+        let members = app.mention_candidates(&chat, "").len();
+        assert!(members > 5, "the list scrolls with {members} members");
+        let offset = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<f32>(egui::Id::new("mention-members-offset")))
+        };
+        assert_eq!(offset(&ctx), Some(0.0));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowUp, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.mention_selected, members - 1);
+        let rect = |id| ctx.data(|data| data.get_temp::<egui::Rect>(id));
+        let list = rect(crate::ui::conversation::suggestion_list_id()).expect("list drawn");
+        let row = rect(crate::ui::conversation::mention_row_test_id()).expect("row drawn");
+        assert!(
+            list.contains_rect(row),
+            "the last member shows whole: {row:?} in {list:?}"
+        );
+        assert_eq!(
+            offset(&ctx),
+            Some((members - 5) as f32 * 38.0),
+            "the last member scrolls into view"
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.mention_selected, 0);
+        assert_eq!(offset(&ctx), Some(0.0), "and the first back");
+    }
+
+    #[test]
     fn question_mark_opens_help_but_never_steals_it_from_text_fields() {
         let mut app = app();
         let ctx = egui::Context::default();
