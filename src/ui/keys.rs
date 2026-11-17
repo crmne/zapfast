@@ -330,6 +330,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseChatSearch);
         } else if app.open_chat.is_some() {
             actions.push(Action::CloseChat);
+        } else if app.rail_list_open() {
+            // The rail's Groups and Channels lists are left through Escape,
+            // as the Chats destination leaves them.
+            actions.push(Action::SetChatFilter(crate::model::ChatFilter::All));
         } else if app.locked_folder {
             actions.push(Action::CloseLockedFolder);
         }
@@ -1841,6 +1845,26 @@ mod tests {
         assert!(matches!(
             app.actions.as_slice(),
             [Action::Open(Page::Chats)]
+        ));
+    }
+
+    /// The rail's Groups and Channels lists are left through Escape, as the
+    /// Chats destination leaves them.
+    #[test]
+    fn escape_leaves_the_rail_lists() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.chat_filter = crate::model::ChatFilter::Groups;
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::SetChatFilter(crate::model::ChatFilter::All)]
         ));
     }
 

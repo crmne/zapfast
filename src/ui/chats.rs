@@ -226,7 +226,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         // rail beside the list.
                         header_title(
                             ui,
-                            &crate::i18n::gettext(app.locale, tab_title(&app.page)),
+                            &crate::i18n::gettext(app.locale, tab_title(app)),
                             theme::bold(20.0),
                             palette.text,
                             buttons_width,
@@ -247,9 +247,13 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// The header's title beside our avatar: the tab the list shows.
-fn tab_title(page: &Page) -> &'static str {
-    if *page == Page::Calls {
+fn tab_title(app: &App) -> &'static str {
+    if app.page == Page::Calls {
         "Calls"
+    } else if app.chat_filter == ChatFilter::Groups {
+        "Groups"
+    } else if app.chat_filter == ChatFilter::Channels {
+        "Channels"
     } else {
         "Chats"
     }
@@ -561,7 +565,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     // under the traffic lights.
                     header_title(
                         ui,
-                        &crate::i18n::gettext(app.locale, tab_title(&app.page)),
+                        &crate::i18n::gettext(app.locale, tab_title(app)),
                         theme::bold(20.0),
                         palette.text,
                         header_buttons_width(ui, &buttons),
@@ -2422,6 +2426,24 @@ mod tests {
         assert!(!title_fits(100.0, 176.0, three, spacing));
         assert!(title_fits(100.0, 214.0, three, spacing));
         assert_eq!(row_width(0, 30.0, spacing), 0.0);
+    }
+
+    /// The header's title names the list the rail opened: the groups and
+    /// the channels have lists of their own.
+    #[test]
+    fn the_title_names_the_rail_list() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        assert_eq!(tab_title(&app), "Chats");
+        app.chat_filter = ChatFilter::Groups;
+        assert_eq!(tab_title(&app), "Groups");
+        app.chat_filter = ChatFilter::Channels;
+        assert_eq!(tab_title(&app), "Channels");
+        app.page = Page::Calls;
+        assert_eq!(tab_title(&app), "Calls");
     }
 
     /// The title measures its room from the list the header draws: New chat,
