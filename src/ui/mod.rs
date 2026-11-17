@@ -11,6 +11,7 @@ pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
 mod glass;
+pub mod hints;
 pub mod image_editor;
 pub mod image_preview;
 pub mod info;
@@ -50,6 +51,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
     // no toasts, and no shortcut reaches them.
     if app.app_lock.is_locked() {
+        if hints::active(ctx) {
+            hints::cancel(ctx);
+        }
         titlebar_strip(app, ui);
         lock::show(app, ui);
         focus_ring(app, ctx);
@@ -95,6 +99,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         update::show(app, ctx);
         toasts(app, ctx);
         focus_ring(app, ctx);
+        hints::paint(ctx, &app.palette);
         announce(app, ctx);
         window_chrome(app, ui);
         return;
@@ -126,6 +131,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);
+    hints::paint(ctx, &app.palette);
     announce(app, ctx);
     window_chrome(app, ui);
 }
