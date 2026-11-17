@@ -7,6 +7,8 @@
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
+use super::DownloadError;
+
 /// Favorites started per tick of the worker's five-second clock.
 const PER_TICK: usize = 2;
 /// Favorite downloads, and picker downloads (recent and chat stickers
@@ -72,16 +74,14 @@ impl Pace {
 }
 
 /// Whether a download error is the server's rate limit.
-pub(super) fn rate_limited(error: &str) -> bool {
-    error.contains("rate-overlimit") || error.contains("code=429") || error.contains("status: 429")
+pub(super) fn rate_limited(error: &DownloadError) -> bool {
+    error.http_status == Some(429) || error.iq_code == Some(429)
 }
 
 /// Whether a download error means the file is gone from the servers, so
 /// asking again soon cannot help.
-pub(super) fn gone(error: &str) -> bool {
-    ["status: 403", "status: 404", "status: 410"]
-        .iter()
-        .any(|status| error.contains(status))
+pub(super) fn gone(error: &DownloadError) -> bool {
+    matches!(error.http_status, Some(403 | 404 | 410))
 }
 
 #[cfg(test)]
@@ -120,16 +120,24 @@ mod tests {
         assert!(pace.open(much_later + FIRST));
     }
 
-    #[test]
-    fn errors_are_read_the_way_the_library_writes_them() {
-        assert!(rate_limited(
-            "received a server error response: code=429, text='rate-overlimit'"
-        ));
-        assert!(gone("Download failed with status: 403"));
-        assert!(gone("Download media not found/expired with status: 410"));
-        assert!(!gone(
-            "received a server error response: code=429, text='rate-overlimit'"
-        ));
-        assert!(!rate_limited("Download failed with status: 403"));
+    /// The errors come from the library's own download and IQ code, so a
+    /// change in how it reports a refusal fails here.
+    #[tokio::test]
+    async fn errors_are_read_the_way_the_library_reports_them() {
+        use super::super::tests::{rate_overlimit, refused_download};
+        for status in [403, 404, 410] {
+            let error = refused_download(status).await;
+            assert!(gone(&error), "{status}: {}", error.text);
+            assert!(!rate_limited(&error), "{status}: {}", error.text);
+        }
+        for error in [refused_download(429).await, rate_overlimit()] {
+            assert!(rate_limited(&error), "{}", error.text);
+            assert!(!gone(&error), "{}", error.text);
+        }
+        for status in [401, 500] {
+            let error = refused_download(status).await;
+            assert!(!gone(&error), "{status}: {}", error.text);
+            assert!(!rate_limited(&error), "{status}: {}", error.text);
+        }
     }
 }
