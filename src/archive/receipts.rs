@@ -17,7 +17,7 @@ impl Archive {
         id: &str,
         recipients: &[String],
     ) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Batch::begin(&self.connection)?;
         transaction.query_row(
             "SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2 AND from_me = 1",
             params![chat, id],
@@ -92,7 +92,7 @@ impl Archive {
         id: &str,
         receipts: &[(String, Delivery, i64)],
     ) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Batch::begin(&self.connection)?;
         for (recipient, status, at) in receipts {
             self.file_receipt(chat, id, recipient, *status, *at)?;
         }
@@ -116,7 +116,7 @@ impl Archive {
     /// Moves a group message's ticks to its least advanced saved recipient.
     /// Returns whether the message's state changed.
     pub fn settle_group(&self, chat: &str, id: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Batch::begin(&self.connection)?;
         let (rank, delivered_at, read_at, played_at): (
             Option<i64>,
             Option<i64>,
@@ -149,7 +149,7 @@ impl Archive {
     /// them: the message row keeps a direct chat's delivery times. Returns the
     /// furthest state reached and when, if the message moved.
     pub fn settle_direct(&self, chat: &str, id: &str) -> Result<Option<(Delivery, i64)>> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = super::Batch::begin(&self.connection)?;
         let (rank, delivered_at, read_at, played_at): (
             Option<i64>,
             Option<i64>,
@@ -240,7 +240,7 @@ impl Archive {
 
     /// A privacy id and a phone number identify one person, not two readers.
     pub(super) fn merge_group_recipient(
-        transaction: &rusqlite::Transaction<'_>,
+        transaction: &super::Batch<'_>,
         lid: &str,
         pn: &str,
     ) -> Result<()> {

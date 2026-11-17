@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
@@ -76,6 +76,26 @@ impl LinkStatus {
 #[cfg(test)]
 mod tests {
     use super::LinkStatus;
+
+    /// Quitting stops waiting for a runtime still busy at the deadline,
+    /// and waits for one that ends in time.
+    #[test]
+    fn quitting_waits_for_the_runtime_only_until_the_deadline() {
+        use std::time::{Duration, Instant};
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (mut busy, _) = super::Backend::detached();
+        busy.thread = Some(std::thread::spawn(move || {
+            let _ = held.recv();
+        }));
+        assert!(!busy.wait_for_shutdown(Instant::now() + Duration::from_millis(50)));
+        release.send(()).unwrap();
+
+        let (mut done, _) = super::Backend::detached();
+        done.thread = Some(std::thread::spawn(|| {}));
+        assert!(done.wait_for_shutdown(Instant::now() + Duration::from_secs(60)));
+        let (mut never_started, _) = super::Backend::detached();
+        assert!(never_started.wait_for_shutdown(Instant::now()));
+    }
 
     #[test]
     fn backend_waits_for_window_acknowledgement_before_touching_storage() {
@@ -883,7 +903,9 @@ pub enum Command {
         full_name: Option<String>,
         first_name: Option<String>,
         to_phone: bool,
-        registered: Result<bool, String>,
+        /// The number WhatsApp has the account under, which can differ from `phone`; `None`
+        /// when the number is not on WhatsApp.
+        registered: Result<Option<String>, String>,
     },
     /// Downloads and sends a GIF as a short looping video.
     SendGif {
@@ -1938,11 +1960,38 @@ impl Backend {
         self.startup.take()
     }
 
-    pub fn shutdown(&mut self) {
+    /// Asks the runtime to stop, without waiting for it.
+    pub fn request_shutdown(&mut self) {
         self.startup.take();
         self.send(Command::Shutdown);
+    }
+
+    /// Stops the runtime and waits for it, however long that takes, as
+    /// removing an account must before deleting its files.
+    pub fn shutdown(&mut self) {
+        self.request_shutdown();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+
+    /// Waits for a runtime asked to stop until `deadline`, and leaves it to
+    /// end with the process after that. Quitting must not hang on archive
+    /// work: the window is gone, and the tray's Show did nothing for as long
+    /// as the first sync took (#839). The archive is SQLite, so writes cut
+    /// short roll back. False when the runtime was still running.
+    pub fn wait_for_shutdown(&mut self, deadline: Instant) -> bool {
+        let Some(thread) = self.thread.take() else {
+            return true;
+        };
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                log::warn!("the backend was still busy when ZapFast quit");
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = thread.join();
+        true
     }
 }

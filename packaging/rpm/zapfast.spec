@@ -27,20 +27,23 @@ BuildRequires:  gcc-c++
 BuildRequires:  perl
 BuildRequires:  pkgconfig(alsa)
 BuildRequires:  pkgconfig(libpipewire-0.3)
-Requires:       libglvnd-glx
-Requires:       libglvnd-egl
-Requires:       libxkbcommon
-Requires:       libxkbcommon-x11
-Requires:       libwayland-client
-Requires:       libwayland-cursor
-Requires:       libwayland-egl
-Requires:       libX11
-Requires:       libX11-xcb
-Requires:       libXcursor
-Requires:       libXi
-Requires:       libXrandr
-Requires:       alsa-lib
-Requires:       pipewire-libs
+# ZapFast opens these libraries while running (OpenGL, the window system and
+# the keyboard), so rpmbuild cannot see them. They are required by library
+# name, which Fedora and openSUSE share, not by package name, which they do
+# not (libX11 and libX11-6). rpmbuild adds the linked ones (sound, the C++
+# runtime) itself. Both architectures are 64-bit.
+Requires:       libGL.so.1()(64bit)
+Requires:       libEGL.so.1()(64bit)
+Requires:       libxkbcommon.so.0()(64bit)
+Requires:       libxkbcommon-x11.so.0()(64bit)
+Requires:       libwayland-client.so.0()(64bit)
+Requires:       libwayland-cursor.so.0()(64bit)
+Requires:       libwayland-egl.so.1()(64bit)
+Requires:       libX11.so.6()(64bit)
+Requires:       libX11-xcb.so.1()(64bit)
+Requires:       libXcursor.so.1()(64bit)
+Requires:       libXi.so.6()(64bit)
+Requires:       libXrandr.so.2()(64bit)
 Recommends:     google-noto-color-emoji-fonts
 Recommends:     xdg-desktop-portal
 Provides:       fastsapp = %{version}-%{release}

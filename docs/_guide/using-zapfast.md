@@ -45,7 +45,10 @@ people, only admins can mention everyone. People are notified as they are
 for any mention. Edits update the visible mentions. Editing an existing `@all`
 mention does not notify everyone again; adding `@all` in an edit requests a new
 notification. Forwarding or quoting an `@all` message does not notify everyone
-again. A group where an unread message mentions you, or everyone, shows **@**
+again. A forwarded message notifies nobody it mentions: each mention is
+written out as the name that person has in ZapFast (their contact name, the
+name on their profile, or their number).
+A group where an unread message mentions you, or everyone, shows **@**
 beside its unread count in the chat list, even when muted, and opening it shows
 the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
@@ -343,6 +346,8 @@ items with the same protocol album identity, sender and local calendar date
 are grouped. A reply shared by several items appears once above the grid;
 different reply targets keep their own previews. If only some items carry
 the quoted text, the preview uses one of those copies.
+With automatic downloads on, each item up to 64 MiB downloads as it comes
+into view, as a single attachment does.
 **Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
@@ -560,7 +565,9 @@ The call screen opens as soon as you press the button and says
 Hanging up before then cancels the call before it reaches them. An incoming call takes over the
 window with the caller's picture and name, and **Accept** and **Decline**. It
 also raises a desktop notification and plays a ringtone until it is answered, declined,
-or given up, so a window hidden in the tray does not hide the call. The
+or given up, so a window hidden in the tray does not hide the call. If word
+that a call ended never arrives (a dropped connection can lose it), a call
+still ringing after two minutes is filed as missed, so the next call rings. The
 ringtone follows your notification sound: with the sound set to **None**, or
 notifications off, a call shows without ringing. A call in a
 muted, archived, or locked chat stays as quiet as a message in it. A locked
@@ -683,6 +690,12 @@ you want. Press `Cmd+C` on macOS or `Ctrl+C` elsewhere. The clipboard includes
 only the selected messages, in chat order, using the same sharing format,
 even if some have scrolled off-screen. Attachments contribute a text label and
 any caption; their files are not copied. Copying keeps the selection open.
+
+On Wayland, copied text stays on the clipboard after the window closes to the
+tray, so it can be pasted into other apps while ZapFast keeps running in the
+background. This needs a desktop that supports clipboard data-control
+(Hyprland, wlroots desktops, KDE, sway). Where it is missing, GNOME among them,
+the clipboard is only available while the window is open.
 
 ## Chats
 

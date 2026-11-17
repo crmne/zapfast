@@ -68,6 +68,52 @@ pub struct Archive {
 
 pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
+/// Writes that commit together, or not at all.
+///
+/// Batches nest. The outermost one is the transaction; inside another it is
+/// a savepoint, so a step that fails rolls back alone and the writes around
+/// it still commit, as when each step committed on its own. Dropped without
+/// `commit`, it rolls back its own writes.
+pub(crate) struct Batch<'a> {
+    connection: &'a Connection,
+    open: bool,
+}
+
+impl<'a> Batch<'a> {
+    pub(crate) fn begin(connection: &'a Connection) -> Result<Self> {
+        connection.execute_batch("SAVEPOINT batch")?;
+        Ok(Self {
+            connection,
+            open: true,
+        })
+    }
+
+    /// A failed commit rolls back, as rusqlite's own transaction does.
+    pub(crate) fn commit(mut self) -> Result<()> {
+        self.connection.execute_batch("RELEASE batch")?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl Drop for Batch<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self
+                .connection
+                .execute_batch("ROLLBACK TO batch; RELEASE batch");
+        }
+    }
+}
+
+impl std::ops::Deref for Batch<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.connection
+    }
+}
+
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
@@ -480,6 +526,43 @@ impl Archive {
 
     fn open_with_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<Self> {
         Ok(Self::prepare(encryption::open(path, key)?)?)
+    }
+
+    /// An encrypted archive with a fixture key, for tests and benchmarks that
+    /// must write what a real one writes.
+    #[cfg(test)]
+    pub(crate) fn open_encrypted_for_test(path: &Path, key: &[u8; 32]) -> anyhow::Result<Self> {
+        Self::open_with_key(path, key)
+    }
+
+    /// Starts writes that commit together at `end_batch`, for a caller that
+    /// cannot hold a `Batch` across its work. Each call must be paired with
+    /// one `end_batch`. Batches opened meanwhile nest inside it.
+    pub fn begin_batch(&self) -> Result<()> {
+        self.connection.execute_batch("SAVEPOINT outer_batch")
+    }
+
+    /// Commits the writes since `begin_batch`. When the commit fails, they
+    /// roll back, so no transaction is left open.
+    pub fn end_batch(&self) -> Result<()> {
+        if let Err(error) = self.connection.execute_batch("RELEASE outer_batch") {
+            let _ = self
+                .connection
+                .execute_batch("ROLLBACK TO outer_batch; RELEASE outer_batch");
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_batch_for_test(&self) -> bool {
+        !self.connection.is_autocommit()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn count_messages_for_test(&self) -> Result<i64> {
+        self.connection
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -1167,7 +1250,7 @@ impl Archive {
     /// Stores a privacy id mapping and reconciles history already filed under
     /// the privacy id with the canonical phone-number chat.
     pub fn put_lid(&self, lid: &str, pn: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Batch::begin(&self.connection)?;
         let lid_chat = format!("{lid}@lid");
         let phone_chat = format!("{pn}@s.whatsapp.net");
         Self::merge_group_recipient(&transaction, &lid_chat, &phone_chat)?;
@@ -2023,7 +2106,7 @@ impl Archive {
 
     /// Commits removal, barriers, and pending cleanup for every known identity.
     pub fn delete_message_aliases(&self, chats: &[String], id: &str) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Batch::begin(&self.connection)?;
         let mut deleted = 0;
         for chat in chats {
             transaction.execute(
@@ -2070,7 +2153,7 @@ impl Archive {
 
     /// Saves authoritative acceptance separately from fallible physical cleanup.
     pub fn confirm_message_removal(&self, account: &str, chats: &[String], id: &str) -> Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Batch::begin(&self.connection)?;
         // The caller supplies the current protocol account, including before its
         // Connected event. Bind replay checks to that same persisted identity.
         transaction.execute(
@@ -2151,7 +2234,7 @@ impl Archive {
     /// Atomically removes only the range the linked device knew about, keeping
     /// newer messages and a durable barrier against replay after restart.
     pub fn remove_chat_through(&self, chat: &str, through: i64, delete: bool) -> Result<Removed> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Batch::begin(&self.connection)?;
         let through = self
             .removal_point(chat)?
             .map_or(through, |old| old.max(through));
@@ -2581,7 +2664,7 @@ impl Archive {
     /// The chat's activity follows: an activity time this message set moves
     /// to the chat's newest message, and later activity stays.
     pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
-        let transaction = self.connection.unchecked_transaction()?;
+        let transaction = Batch::begin(&self.connection)?;
         let Some(old) = transaction
             .query_row(
                 "SELECT timestamp FROM messages
@@ -2882,6 +2965,114 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// Makes filing the message `id` fail, as a full disk would.
+    pub(crate) fn reject_message(archive: &super::Archive, id: &str) {
+        archive
+            .connection
+            .execute_batch(&format!(
+                "CREATE TRIGGER reject_message BEFORE INSERT ON messages WHEN NEW.id = '{id}'
+                 BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+            ))
+            .unwrap();
+    }
+
+    /// Every row of the tables history fills, in insertion order, to tell
+    /// two archives apart.
+    pub(crate) fn dump(archive: &super::Archive) -> Vec<String> {
+        let mut rows = Vec::new();
+        for table in [
+            "chats",
+            "messages",
+            "contacts",
+            "group_receipts",
+            "lids",
+            "message_removals",
+            "pending_message_removals",
+            "chat_removals",
+            "meta",
+        ] {
+            let mut statement = archive
+                .connection
+                .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                .unwrap();
+            let columns = statement.column_count();
+            let table_rows = statement
+                .query_map([], |row| {
+                    let values: Vec<rusqlite::types::Value> = (0..columns)
+                        .map(|column| row.get(column))
+                        .collect::<rusqlite::Result<_>>()?;
+                    Ok(format!("{table}: {values:?}"))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            rows.extend(table_rows);
+        }
+        rows
+    }
+
+    #[test]
+    fn a_batch_commits_its_writes_together() {
+        let archive = super::Archive::in_memory().unwrap();
+        archive.begin_batch().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "One").unwrap();
+        archive.ensure_chat("2@s.whatsapp.net", "Two").unwrap();
+        assert!(archive.in_batch_for_test());
+        archive.end_batch().unwrap();
+        assert!(!archive.in_batch_for_test(), "nothing is left open");
+        assert!(archive.chat("1@s.whatsapp.net").unwrap().is_some());
+        assert!(archive.chat("2@s.whatsapp.net").unwrap().is_some());
+    }
+
+    /// A step that fails inside a batch rolls back alone, as it did when
+    /// it committed by itself, and the steps around it still land.
+    #[test]
+    fn a_failed_step_inside_a_batch_rolls_back_alone() {
+        let archive = super::Archive::in_memory().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "One").unwrap();
+        archive
+            .insert_message(&message("1@s.whatsapp.net", "gone", 100, false), None)
+            .unwrap();
+        archive.begin_batch().unwrap();
+        archive.ensure_chat("2@s.whatsapp.net", "Two").unwrap();
+        // A nested batch of its own that fails half way.
+        set_message_deletion_failure(&archive, true);
+        assert!(
+            archive
+                .delete_message_aliases(&["1@s.whatsapp.net".into()], "gone")
+                .is_err()
+        );
+        set_message_deletion_failure(&archive, false);
+        archive.ensure_chat("3@s.whatsapp.net", "Three").unwrap();
+        archive.end_batch().unwrap();
+        assert!(!archive.in_batch_for_test());
+        assert!(archive.chat("2@s.whatsapp.net").unwrap().is_some());
+        assert!(archive.chat("3@s.whatsapp.net").unwrap().is_some());
+        assert!(
+            !archive.message_removed("1@s.whatsapp.net", "gone").unwrap(),
+            "the failed step's barrier rolled back with it"
+        );
+        assert!(
+            archive
+                .message("1@s.whatsapp.net", "gone")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_batch_that_cannot_commit_leaves_no_transaction_open() {
+        let archive = super::Archive::in_memory().unwrap();
+        archive.begin_batch().unwrap();
+        archive.ensure_chat("1@s.whatsapp.net", "One").unwrap();
+        // Something ended the transaction under the batch.
+        archive.connection.execute_batch("ROLLBACK").unwrap();
+        assert!(archive.end_batch().is_err());
+        assert!(!archive.in_batch_for_test());
+        archive.ensure_chat("2@s.whatsapp.net", "Two").unwrap();
+        assert!(archive.chat("2@s.whatsapp.net").unwrap().is_some());
+    }
+
     pub(crate) fn reject_archive_updates(archive: &super::Archive) {
         archive.connection.execute_batch(
             "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
