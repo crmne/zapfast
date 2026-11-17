@@ -97,6 +97,16 @@ jobs:
       # No compiler cache: published binaries never build from outputs
       # restored from an Actions cache.
       - run: cargo build --locked --release --target ${{ matrix.target }}
+        # Keep both Windows packages usable without an administrator-installed
+        # VC redistributable. --target keeps this flag off host proc macros.
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+      - name: Check Windows runtime dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./packaging/windows/test-runtime-check.ps1
+          ./packaging/windows/check-runtime.ps1 -Binary target/${{ matrix.target }}/release/zapfast.exe
 
       # native-packages signs the Windows code (native-packages.yaml,
       # windows.signing) through the Azure CLI sign-in below, once the
