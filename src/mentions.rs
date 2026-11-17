@@ -1,4 +1,4 @@
-//! Mentioning everyone in a group.
+//! Mentioning everyone in a group, and spelling out mentions in forwards.
 //!
 //! The message body keeps the visible token `@all`. A localized word, such
 //! as `@todos`, is only a way to type it: the composer rewrites that word to
@@ -136,6 +136,41 @@ pub fn everyone_query_matches(query: &str, alias: &str) -> bool {
     query.is_empty() || ALL_USER.starts_with(&query) || alias.to_lowercase().starts_with(&query)
 }
 
+/// Writes each `@<user>` token that names one of `names` (`user`, name) as
+/// `@<name>`, for a forward, which carries no mentions: WhatsApp sends it
+/// without them so nobody is tagged again, and the bare token would read as a
+/// number or privacy id. The token is a whole run of digits after an `@`
+/// that starts a mention, as the message view reads it. Other tokens,
+/// `@all` among them, stay as they are.
+pub fn spell_out(text: &str, names: &[(String, String)]) -> String {
+    if names.is_empty() {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (at, _) in text.match_indices('@') {
+        if at < copied || !boundary_before(text, at) {
+            continue;
+        }
+        let digits = text[at + 1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(text.len() - at - 1);
+        let user = &text[at + 1..at + 1 + digits];
+        let Some((_, name)) = names
+            .iter()
+            .find(|(known, name)| !user.is_empty() && known == user && !name.is_empty())
+        else {
+            continue;
+        };
+        out.push_str(&text[copied..at]);
+        out.push('@');
+        out.push_str(name);
+        copied = at + 1 + digits;
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 fn token_end(text: &str, at: usize, token: &str, ignore_case: bool) -> Option<usize> {
     if !text.get(at..)?.starts_with('@') || !boundary_before(text, at) {
         return None;
@@ -190,6 +225,28 @@ fn same_letter(left: char, right: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forward_spells_out_the_people_it_names() {
+        let names = [
+            ("100000000001".to_owned(), "Ada Lovelace".to_owned()),
+            ("4915700000002".to_owned(), "+49 157 00000002".to_owned()),
+        ];
+        assert_eq!(
+            spell_out("@100000000001 and (@4915700000002), see @all", &names),
+            "@Ada Lovelace and (@+49 157 00000002), see @all"
+        );
+        // Only a whole token that starts a mention, and only a known one.
+        assert_eq!(
+            spell_out(
+                "@1000000000012 a@100000000001 @999999999 @100000000001.",
+                &names
+            ),
+            "@1000000000012 a@100000000001 @999999999 @Ada Lovelace."
+        );
+        assert_eq!(spell_out("@", &names), "@");
+        assert_eq!(spell_out("@100000000001", &[]), "@100000000001");
+    }
 
     #[test]
     fn the_wire_token_is_a_whole_word() {

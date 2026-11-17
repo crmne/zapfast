@@ -63,6 +63,8 @@ mod prefetch;
 mod star_recovery;
 mod sticker_pace;
 mod stickers;
+#[cfg(test)]
+mod write_batching;
 
 use super::{
     Command, Event, GroupEdit, LinkStatus, MessageRemovalOutcome, Refusal, SendTurn, Unsent, Waker,
@@ -773,6 +775,21 @@ impl Downloadable for PhoneSticker {
     }
 }
 
+/// The number WhatsApp has an account under, from its answer to a registration check, for the
+/// chat to open under. It can differ from the number typed: many Brazilian mobiles are still
+/// registered without the ninth digit their numbers gained later, and a chat opened under the
+/// typed form reaches nobody. The typed number stands when the answer names no phone number,
+/// such as a privacy id with none disclosed.
+fn registered_number(typed: &str, jid: &Jid, pn_jid: Option<&Jid>) -> String {
+    [Some(jid), pn_jid]
+        .into_iter()
+        .flatten()
+        .find(|jid| {
+            jid.is_pn() && !jid.user.is_empty() && jid.user.bytes().all(|b| b.is_ascii_digit())
+        })
+        .map_or_else(|| typed.to_owned(), |jid| jid.user.to_string())
+}
+
 /// The device name shown in WhatsApp's Linked Devices list, with the
 /// hostname appended so multiple machines can be told apart (#210).
 fn device_name() -> String {
@@ -1162,32 +1179,7 @@ pub async fn run(
                     Some(command) => worker.handle_command(command).await,
                 }
             }
-            Some(event) = wa_events.recv() => match event {
-                RuntimeEvent::WhatsApp { session, event } => {
-                    worker.whatsapp_event(session, event).await;
-                }
-                RuntimeEvent::MessageRemoval { generation, event } => {
-                    worker.handle_session_deletion(generation, event).await;
-                }
-                RuntimeEvent::PreferencesRecovered {
-                    generation,
-                    locks,
-                    complete,
-                } => {
-                    worker.preferences_recovered(generation, locks, complete);
-                }
-                RuntimeEvent::FavoriteChatsRead { generation, complete } => {
-                    worker.favorite_chats_read(generation, complete);
-                }
-                RuntimeEvent::LinkPreviewsRead { generation, complete } => {
-                    worker.link_previews_read(generation, complete);
-                }
-                RuntimeEvent::PresenceSent {
-                    generation,
-                    online,
-                    succeeded,
-                } => worker.presence_sent(generation, online, succeeded),
-            },
+            Some(event) = wa_events.recv() => worker.runtime_events(event, &mut wa_events).await,
             Some(event) = async {
                 match call_events.as_mut() {
                     Some(events) => events.recv().await.ok(),
@@ -1235,6 +1227,74 @@ pub async fn run(
     worker.shutdown_call().await;
     worker.stop_bot().await;
 }
+
+impl Worker {
+    /// Handles `first` and the events already waiting behind it, up to
+    /// `EVENT_BATCH` or `EVENT_BATCH_TIME`, with their archive writes
+    /// committed together. A first sync brings thousands of deletions and
+    /// chat changes at once, and each committed alone rewrote the same
+    /// pages (#839).
+    async fn runtime_events(
+        &mut self,
+        first: RuntimeEvent,
+        waiting: &mut mpsc::UnboundedReceiver<RuntimeEvent>,
+    ) {
+        let batched = self.open_batch();
+        self.runtime_event(first).await;
+        let started = Instant::now();
+        for _ in 1..EVENT_BATCH {
+            if started.elapsed() >= EVENT_BATCH_TIME {
+                break;
+            }
+            let Ok(event) = waiting.try_recv() else {
+                break;
+            };
+            self.runtime_event(event).await;
+        }
+        self.close_batch(batched);
+    }
+
+    /// Handles one event from the protocol runtime.
+    async fn runtime_event(&mut self, event: RuntimeEvent) {
+        match event {
+            RuntimeEvent::WhatsApp { session, event } => {
+                self.whatsapp_event(session, event).await;
+            }
+            RuntimeEvent::MessageRemoval { generation, event } => {
+                self.handle_session_deletion(generation, event).await;
+            }
+            RuntimeEvent::PreferencesRecovered {
+                generation,
+                locks,
+                complete,
+            } => {
+                self.preferences_recovered(generation, locks, complete);
+            }
+            RuntimeEvent::FavoriteChatsRead {
+                generation,
+                complete,
+            } => {
+                self.favorite_chats_read(generation, complete);
+            }
+            RuntimeEvent::LinkPreviewsRead {
+                generation,
+                complete,
+            } => {
+                self.link_previews_read(generation, complete);
+            }
+            RuntimeEvent::PresenceSent {
+                generation,
+                online,
+                succeeded,
+            } => self.presence_sent(generation, online, succeeded),
+        }
+    }
+}
+
+/// The most runtime events that commit their archive writes together, and
+/// the longest a batch keeps the interface's commands waiting.
+const EVENT_BATCH: usize = 500;
+const EVENT_BATCH_TIME: Duration = Duration::from_millis(250);
 
 enum RuntimeEvent {
     /// A callback from a connection's event handler, under the session that
@@ -3688,6 +3748,34 @@ impl Worker {
             return Some(name);
         }
         crate::model::phone_of(id).map(crate::util::phone)
+    }
+
+    /// The name each person `base` mentions goes by here, keyed by the user
+    /// part its `@` token shows: their contact name, else the name on their
+    /// profile, else their formatted number. Our own mention is our profile
+    /// name, never "You", which would read as the forwarder. A privacy id
+    /// with none of these keeps its token.
+    fn forward_mention_names(&self, base: &wa::Message) -> Vec<(String, String)> {
+        let nonempty = |name: &Option<String>| name.clone().filter(|name| !name.is_empty());
+        mentioned_of(base)
+            .into_iter()
+            .filter_map(|jid| {
+                let user = jid.split('@').next().filter(|user| !user.is_empty())?;
+                let id = self.canonical_str(&jid);
+                let phone = || crate::model::phone_of(&id).map(crate::util::phone);
+                let name = if id == self.me() || self.is_me(&id) {
+                    nonempty(&self.me_name).or_else(phone)
+                } else {
+                    let contact = self.contacts.get(&id).or_else(|| self.contacts.get(&jid));
+                    contact
+                        .and_then(|contact| {
+                            nonempty(&contact.full_name).or_else(|| nonempty(&contact.push_name))
+                        })
+                        .or_else(phone)
+                }?;
+                Some((user.to_owned(), name))
+            })
+            .collect()
     }
 
     /// Returns the best current chat name.
@@ -6242,7 +6330,46 @@ impl Worker {
 
     /// Archives a history chunk. `metadata` controls chat-state updates.
     /// Returns each chat's message count and whether the phone has more.
+    ///
+    /// The chunk commits once. Committed statement by statement, a first
+    /// sync rewrote and re-encrypted the same chat, index and table pages
+    /// for every message it filed, and wrote many times the archive's size
+    /// (#839). A write that fails still rolls back alone.
     fn apply_history(
+        &mut self,
+        parsed: ParsedHistory,
+        metadata: bool,
+    ) -> Vec<(ChatId, usize, Option<bool>)> {
+        self.in_one_commit(|worker| worker.file_history(parsed, metadata))
+    }
+
+    /// Runs `work` with its archive writes committed together at the end.
+    fn in_one_commit<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+        let batched = self.open_batch();
+        let result = work(self);
+        self.close_batch(batched);
+        result
+    }
+
+    /// Starts archive writes that commit together at `close_batch`. Should
+    /// the batch not open, each write commits on its own as before.
+    fn open_batch(&self) -> bool {
+        match self.archive.begin_batch() {
+            Ok(()) => true,
+            Err(error) => {
+                log::warn!("archive writes not batched: {error}");
+                false
+            }
+        }
+    }
+
+    fn close_batch(&self, batched: bool) {
+        if batched && let Err(error) = self.archive.end_batch() {
+            log::warn!("could not commit a batch of archive writes: {error}");
+        }
+    }
+
+    fn file_history(
         &mut self,
         parsed: ParsedHistory,
         metadata: bool,
@@ -8165,12 +8292,20 @@ impl Worker {
                 let jid = Jid::pn(&phone);
                 let generation = self.contact_generation;
                 tokio::spawn(async move {
-                    // Use WhatsApp's registration check before opening the chat.
+                    // Use WhatsApp's registration check before opening the chat, and open it
+                    // under the number the check answers with, which need not be the one typed.
                     let registered = client
                         .contacts()
                         .is_on_whatsapp(&[jid])
                         .await
-                        .map(|results| results.iter().any(|result| result.is_registered))
+                        .map(|results| {
+                            results
+                                .iter()
+                                .find(|result| result.is_registered)
+                                .map(|result| {
+                                    registered_number(&phone, &result.jid, result.pn_jid.as_ref())
+                                })
+                        })
                         .map_err(|_| "Could not check the number. Please try again.".to_owned());
                     let _ = commands.send(Command::ContactChecked {
                         generation,
@@ -8195,9 +8330,9 @@ impl Worker {
                 if generation != self.contact_generation {
                     return;
                 }
-                match registered {
-                    Ok(true) => {}
-                    Ok(false) => {
+                let number = match registered {
+                    Ok(Some(number)) => number,
+                    Ok(None) => {
                         self.emit(Event::ContactFailed {
                             request,
                             error: "This number is not on WhatsApp".to_owned(),
@@ -8208,8 +8343,11 @@ impl Worker {
                         self.emit(Event::ContactFailed { request, error });
                         return;
                     }
+                };
+                if number != phone {
+                    log::info!("the number typed is registered on WhatsApp in another form");
                 }
-                let id = format!("{phone}@s.whatsapp.net");
+                let id = format!("{number}@s.whatsapp.net");
                 if let Some(full_name) = full_name.clone() {
                     self.save_contact(id.clone(), full_name, first_name, to_phone);
                 }
@@ -9936,8 +10074,15 @@ impl Worker {
         // Our own words are not marked forwarded, as on the phone, unless
         // they were a forward to begin with.
         let own = source.from_me && !original.get_base_message().is_forwarded();
-        let (message, expiration) =
+        let (mut message, expiration) =
             outgoing_forward(&original, self.ephemeral_expiration(to_chat), own);
+        // The forward goes without the people it mentions, so nobody is
+        // tagged again; their tokens become names, in it and in our copy, or
+        // both would show a bare number or privacy id (#1048).
+        let names = self.forward_mention_names(original.get_base_message());
+        spell_out_body(&mut message, &names);
+        let mut source = source;
+        spell_out_content(&mut source.content, &names);
         let client = self.client.clone()?;
         let id = client.generate_message_id().into_string();
         let mentions = self.mentions_of(&recorded_mention_ids(&message));
@@ -12069,6 +12214,60 @@ fn outgoing_forward(
     }
     let expiration = apply_ephemeral_expiration(&mut message, expiration);
     (message, expiration)
+}
+
+/// Spells out the mentions in an outgoing forward's text or caption.
+fn spell_out_body(message: &mut wa::Message, names: &[(String, String)]) {
+    if names.is_empty() {
+        return;
+    }
+    let spell = |text: &mut Option<String>| {
+        if let Some(text) = text.as_mut() {
+            *text = crate::mentions::spell_out(text, names);
+        }
+    };
+    spell(&mut message.conversation);
+    if let Some(text) = message.extended_text_message.as_option_mut() {
+        spell(&mut text.text);
+    }
+    if let Some(image) = message.image_message.as_option_mut() {
+        spell(&mut image.caption);
+    }
+    for video in [
+        message.video_message.as_option_mut(),
+        message.ptv_message.as_option_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        spell(&mut video.caption);
+    }
+    if let Some(document) = message.document_message.as_option_mut() {
+        spell(&mut document.caption);
+    }
+}
+
+/// Spells out the mentions in our stored copy of a forward, as sent.
+fn spell_out_content(content: &mut Content, names: &[(String, String)]) {
+    if names.is_empty() {
+        return;
+    }
+    match content {
+        Content::Text { text, .. } => *text = crate::mentions::spell_out(text, names),
+        Content::Image {
+            caption: Some(caption),
+            ..
+        }
+        | Content::Video {
+            caption: Some(caption),
+            ..
+        }
+        | Content::Document {
+            caption: Some(caption),
+            ..
+        } => *caption = crate::mentions::spell_out(caption, names),
+        _ => {}
+    }
 }
 
 fn apply_ephemeral_expiration(message: &mut wa::Message, expiration: Option<u32>) -> Option<u32> {
@@ -14827,6 +15026,57 @@ mod tests {
         );
     }
 
+    /// A Brazilian mobile typed with its ninth digit, registered on WhatsApp without it, opens
+    /// the chat under the registered number, where messages are delivered (#1030).
+    #[tokio::test]
+    async fn a_contact_opens_under_the_number_whatsapp_has_it_under() {
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::ContactChecked {
+                generation: worker.contact_generation,
+                request: 42,
+                phone: "5571988887777".into(),
+                full_name: None,
+                first_name: None,
+                to_phone: false,
+                registered: Ok(Some("557188887777".into())),
+            })
+            .await;
+        let events: Vec<_> = events.try_iter().collect();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::ContactReady { request: 42, id, .. } if id == "557188887777@s.whatsapp.net"
+            )),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn the_registered_number_comes_from_whatsapps_answer() {
+        let pn = |user: &str| Jid::pn(user);
+        // The answer names the account by its registered number, without the ninth digit.
+        assert_eq!(
+            registered_number("5571988887777", &pn("557188887777"), None),
+            "557188887777"
+        );
+        // A privacy id answer carries the number beside it.
+        let lid: Jid = "200000000000001@lid".parse().unwrap();
+        assert_eq!(
+            registered_number("5571988887777", &lid, Some(&pn("557188887777"))),
+            "557188887777"
+        );
+        // An answer that names no phone number leaves the typed one.
+        assert_eq!(
+            registered_number("5571988887777", &lid, None),
+            "5571988887777"
+        );
+        assert_eq!(
+            registered_number("15550000001", &pn("15550000001"), None),
+            "15550000001"
+        );
+    }
+
     /// Malformed recipients are rejected before any number lookup is dispatched.
     #[tokio::test]
     async fn malformed_numbers_are_refused_before_contact_lookup() {
@@ -14859,7 +15109,7 @@ mod tests {
                     full_name,
                     first_name: None,
                     to_phone: true,
-                    registered: Ok(true),
+                    registered: Ok(Some("15550000001".into())),
                 })
                 .await;
             worker
@@ -18363,6 +18613,92 @@ mod tests {
         assert_eq!(context.non_jid_mentions, Some(2));
         assert_eq!(context.is_forwarded, Some(true));
         assert!(recorded_mention_ids(&forward).is_empty());
+    }
+
+    /// A forward goes without the people its `@` tokens name, so nobody is
+    /// tagged again, and spells each token out as the name it goes by here,
+    /// so neither the destination nor our copy shows a bare number or
+    /// privacy id (#1048). The `@all` notification goes as before.
+    #[test]
+    fn forwarding_spells_out_mentions_instead_of_tagging_again() {
+        let lid = "100000000001@lid".to_owned();
+        let profile = "4915700000002@s.whatsapp.net".to_owned();
+        let stranger = "4915700000003@s.whatsapp.net".to_owned();
+        let unknown = "100000000009@lid".to_owned();
+        let (mut worker, _, _, _) = receipt_tests::worker();
+        let me = worker.me();
+        let me_user = me.split('@').next().unwrap().to_owned();
+        worker.me_name = Some("Carmine".into());
+        worker
+            .lid_to_pn
+            .insert("100000000001".into(), "4915700000001".into());
+        let contact = |id: &str, full: Option<&str>, push: Option<&str>| Contact {
+            id: id.into(),
+            full_name: full.map(Into::into),
+            first_name: None,
+            push_name: push.map(Into::into),
+        };
+        // The contact name wins over the profile name.
+        worker.contacts.insert(
+            "4915700000001@s.whatsapp.net".into(),
+            contact(
+                "4915700000001@s.whatsapp.net",
+                Some("Ada Lovelace"),
+                Some("Ada"),
+            ),
+        );
+        worker
+            .contacts
+            .insert(profile.clone(), contact(&profile, None, Some("Grace")));
+
+        let text = format!(
+            "@100000000001 @4915700000002 @4915700000003 @100000000009 @{me_user}, see @all"
+        );
+        let mut source = wa::ContextInfo::default();
+        source.mentioned_jid = vec![
+            lid.clone(),
+            profile.clone(),
+            stranger.clone(),
+            unknown.clone(),
+            me.clone(),
+        ];
+        source.non_jid_mentions = Some(1);
+        let original = wa::Message::text_with_context(text.clone(), source);
+
+        let names = worker.forward_mention_names(original.get_base_message());
+        let spelled = format!(
+            "@Ada Lovelace @Grace @{} @100000000009 @Carmine, see @all",
+            crate::util::phone("4915700000003")
+        );
+        let (mut forward, _) = outgoing_forward(&original, None, false);
+        spell_out_body(&mut forward, &names);
+        assert_eq!(forward.text_content(), Some(spelled.as_str()));
+        let context = context_of(&forward).expect("forward context");
+        assert!(context.mentioned_jid.is_empty(), "nobody is tagged again");
+        assert_eq!(context.non_jid_mentions, None, "@all does not notify");
+        assert!(recorded_mention_ids(&forward).is_empty());
+
+        let mut content = Content::text(&text);
+        spell_out_content(&mut content, &names);
+        assert_eq!(content, Content::text(&spelled));
+
+        // A caption is spelled out the same way, in the message and our copy.
+        let mut picture = wa::Message::default();
+        picture.image_message = MessageField::some({
+            let mut proto = wa::message::ImageMessage::default();
+            proto.caption = Some("look @100000000001".into());
+            proto
+        });
+        spell_out_body(&mut picture, &names);
+        assert_eq!(
+            picture
+                .image_message
+                .as_option()
+                .unwrap()
+                .caption
+                .as_deref(),
+            Some("look @Ada Lovelace")
+        );
     }
 
     #[test]
