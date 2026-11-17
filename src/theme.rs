@@ -615,18 +615,35 @@ fn rail_on(sidebar: Color32, shade: f32) -> Color32 {
 }
 
 /// The black that turns `sidebar` into [`rail_on`] when laid over it,
-/// [`Palette::rail_veil`]. Over a translucent sidebar its opacity is the one
-/// that takes the sidebar's to the rail's: `shade` rounded on its own can
-/// fall a step short, and the window's material then shows a step more
-/// through the veil than through the rail.
+/// [`Palette::rail_veil`]: of `shade` rounded and the opacities a step either
+/// side, the one whose blend comes closest, `shade` rounded on a tie. Over a
+/// translucent sidebar `shade` rounded can fall a step short, and the
+/// window's material then shows a step more through the veil than through
+/// the rail; an opacity worked out from the alphas alone loses the shade
+/// over a nearly opaque one.
 fn rail_veil_on(sidebar: Color32, shade: f32) -> Color32 {
-    let alpha = if sidebar.a() < 255 {
-        let rail = rail_on(sidebar, shade);
-        f32::from(rail.a() - sidebar.a()) * 255.0 / f32::from(255 - sidebar.a())
-    } else {
-        shade * 255.0
-    };
-    Color32::from_black_alpha(alpha.round() as u8)
+    let rail = rail_on(sidebar, shade);
+    let rounded = (shade * 255.0).round() as u8;
+    let steps = [
+        rounded,
+        rounded.saturating_sub(1),
+        rounded.saturating_add(1),
+    ];
+    steps
+        .into_iter()
+        .map(Color32::from_black_alpha)
+        .min_by_key(|&veil| channel_gap(sidebar.blend(veil), rail))
+        .unwrap_or(Color32::from_black_alpha(rounded))
+}
+
+/// The largest difference between `a` and `b` in any channel, alpha included.
+fn channel_gap(a: Color32, b: Color32) -> u8 {
+    a.to_array()
+        .into_iter()
+        .zip(b.to_array())
+        .map(|(a, b)| a.abs_diff(b))
+        .max()
+        .unwrap_or(0)
 }
 
 /// Converts HSL to color bytes for non-egui drawing.
@@ -1648,6 +1665,41 @@ mod tests {
                 );
             }
             assert_eq!(palette.sidebar().blend(palette.rail_veil()), palette.rail());
+        }
+    }
+
+    /// A custom theme's panel may be translucent to any degree. Over a nearly
+    /// opaque one the veil still shades the rail, and over any sidebar it
+    /// lands within a step of the rail's colour.
+    #[test]
+    fn the_rail_veil_shades_any_sidebar() {
+        let nearly_opaque = Color32::from_rgba_premultiplied(200, 200, 200, 254);
+        assert_eq!(
+            nearly_opaque.blend(rail_veil_on(nearly_opaque, DARK_RAIL_SHADE)),
+            rail_on(nearly_opaque, DARK_RAIL_SHADE)
+        );
+        for shade in [RAIL_SHADE, DARK_RAIL_SHADE] {
+            for alpha in 1..=255u8 {
+                for grey in (0..=255u16).step_by(5) {
+                    let v = ((grey * u16::from(alpha) + 127) / 255) as u8;
+                    for sidebar in [
+                        Color32::from_rgba_premultiplied(v, v, v, alpha),
+                        Color32::from_rgba_premultiplied(
+                            v,
+                            v.saturating_sub(9),
+                            v.saturating_add(7).min(alpha),
+                            alpha,
+                        ),
+                    ] {
+                        let veiled = sidebar.blend(rail_veil_on(sidebar, shade));
+                        let rail = rail_on(sidebar, shade);
+                        assert!(
+                            channel_gap(veiled, rail) <= 1,
+                            "over {sidebar:?}: {veiled:?} for {rail:?}"
+                        );
+                    }
+                }
+            }
         }
     }
 
