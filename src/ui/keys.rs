@@ -879,7 +879,9 @@ fn drop_shortcut_text(ctx: &egui::Context) {
 }
 
 /// Handles keys while the cropper covers the window: Escape leaves the
-/// staged picture alone, Enter keeps the crop. Enter on a focused button
+/// staged picture alone, Enter keeps the edit, Ctrl+Z (Command+Z on macOS)
+/// takes the latest mark back, and Ctrl+Shift+Z or Ctrl+Y puts it back. Enter
+/// on a focused button
 /// the reader can reach, the cropper's own or the window's above it,
 /// presses that button instead, as anywhere else, so Enter on Cancel
 /// cancels and Enter on Turn left turns the picture. A control under the
@@ -918,7 +920,36 @@ fn editor_keys(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::ApplyPictureEdit);
         }
     });
+    let mut history = None;
+    ctx.input_mut(|input| {
+        // A pattern without Shift matches with Shift held too, so the redo
+        // spelling is asked for first.
+        if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+            || input.consume_key(Modifiers::COMMAND, Key::Y)
+        {
+            history = Some(Step::Redo);
+        } else if input.consume_key(Modifiers::COMMAND, Key::Z) {
+            history = Some(Step::Undo);
+        }
+    });
+    if let Some(edit) = app
+        .picture_edit
+        .as_mut()
+        .filter(|edit| edit.drawing.is_none())
+    {
+        match history {
+            Some(Step::Undo) => edit.undo(),
+            Some(Step::Redo) => edit.redo(),
+            None => {}
+        }
+    }
     app.actions.extend(actions);
+}
+
+/// A step through the picture editor's marks.
+enum Step {
+    Undo,
+    Redo,
 }
 
 /// Handles a playing clip's keys while the viewer shows it: Space plays or
@@ -1797,6 +1828,58 @@ mod tests {
             "the button above the cropper takes Enter"
         );
         assert_eq!(enter(&mut app, under), [Action::ApplyPictureEdit]);
+    }
+
+    /// Ctrl+Z takes the latest mark back, and Ctrl+Shift+Z and Ctrl+Y put
+    /// it back: the Shift spelling must not undo again.
+    #[test]
+    fn the_editors_undo_and_redo_keys_step_through_its_marks() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let mut edit = crate::model::PictureEdit::new(
+            0,
+            crate::model::PictureSource::File("photo.png".into()),
+            100,
+            100,
+        );
+        for at in [10.0, 30.0] {
+            edit.begin_mark(crate::model::Brush::default(), [at, at]);
+            edit.finish_mark();
+        }
+        app.picture_edit = Some(edit);
+        let ctx = egui::Context::default();
+        let press = |app: &mut App, key: Key, modifiers: Modifiers| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    }],
+                    ..Default::default()
+                },
+                |ui| handle(app, ui.ctx()),
+            );
+            output.textures_delta.clear();
+            app.picture_edit.as_ref().map_or(0, |edit| edit.marks.len())
+        };
+        assert_eq!(press(&mut app, Key::Z, Modifiers::COMMAND), 1);
+        assert_eq!(press(&mut app, Key::Z, Modifiers::COMMAND), 0);
+        let redo = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(press(&mut app, Key::Z, redo), 1);
+        assert_eq!(press(&mut app, Key::Y, Modifiers::COMMAND), 2);
+        assert_eq!(
+            press(&mut app, Key::Z, Modifiers::NONE),
+            2,
+            "Z alone does nothing"
+        );
+        assert!(app.actions.is_empty());
     }
 
     fn escape(app: &mut App, ctx: &egui::Context) {

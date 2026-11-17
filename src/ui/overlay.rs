@@ -2,7 +2,7 @@
 //! reader attached: the dialogs, the media viewer, the sticker view, the
 //! picture cropper and the emoji and reaction pickers. Opened, an overlay
 //! takes focus in the first pass that shows it, on its first control (the
-//! cropper's on "Keep this crop") unless it put focus on one of its own, so
+//! editor's on "Keep changes") unless it put focus on one of its own, so
 //! the reader never lands on the window in between, nor on the menu item
 //! that opened it on the way. Closed, a dialog, the viewer, the sticker view
 //! or the cropper gives focus back to where it was when it opened, such as
@@ -53,7 +53,7 @@ impl Overlay {
     }
 
     /// The control focus enters on, when it is not the first one: the
-    /// cropper's "Keep this crop", so Enter keeps the crop as it always has.
+    /// editor's "Keep changes", so Enter keeps the edit as it always has.
     fn entry(&self, ctx: &egui::Context) -> Option<Id> {
         match self {
             Self::Editor => {
