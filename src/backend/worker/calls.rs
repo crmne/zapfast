@@ -193,8 +193,24 @@ impl Worker {
         update
     }
 
-    /// Whether a call is already up, which every entry point refuses to double.
+    /// Ends the call ringing here if its ring lapsed with no word of its end (see
+    /// [`calls::Call::ring_lapsed`]), filing it as missed, so it no longer holds the call slot.
+    pub(super) fn let_lapsed_ring_go(&mut self) {
+        let now = std::time::Instant::now();
+        let update = self
+            .call
+            .as_mut()
+            .filter(|runtime| runtime.call.ring_lapsed(now))
+            .and_then(|runtime| runtime.call.lapse_ring());
+        if let Some(update) = update {
+            self.emit_call(update);
+        }
+    }
+
+    /// Whether a call is already up, which every entry point refuses to double. A ring that lapsed
+    /// is let go first: it is not a call, and it must not refuse every one that follows.
     pub(super) fn call_busy(&mut self) -> bool {
+        self.let_lapsed_ring_go();
         if self.call.is_some() {
             log::warn!("[CALL] refusing a new call: one is already up");
             return true;
@@ -907,6 +923,8 @@ impl Worker {
     /// The fresh list is also published when it changed, so a device that came or went shows up in
     /// the pickers without anyone pressing anything.
     pub(super) async fn reconcile_call(&mut self) {
+        // A ring whose end never arrived goes on the heartbeat too, so its surface does not stay up.
+        self.let_lapsed_ring_go();
         if self
             .call
             .as_ref()
@@ -1405,6 +1423,41 @@ fn rings_in(chat: &str, group: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A call that rang here and whose end never arrived must not keep the account busy: the next
+    /// offer would be refused at once, and the caller would hear one ring and the call drop.
+    #[test]
+    fn a_ring_whose_end_never_came_does_not_refuse_the_next_call() {
+        use crate::calls::test_offers::{GROUP, group_offer};
+        let (mut worker, events, _, _) = super::super::receipt_tests::worker();
+        let mut call = Call::ringing(GROUP.to_owned(), Box::new(group_offer(Vec::new())), false);
+        call.rang_ago(calls::RING_LIMIT - std::time::Duration::from_secs(5));
+        worker.call = Some(CallRuntime::new(call, None));
+
+        // Still ringing: a second offer meets a busy account.
+        assert!(
+            worker.call_busy(),
+            "a call that is still ringing holds the slot"
+        );
+
+        // Rung past any offer with no word of its end: the slot is free again.
+        if let Some(runtime) = worker.call.as_mut() {
+            runtime
+                .call
+                .rang_ago(calls::RING_LIMIT + std::time::Duration::from_secs(1));
+        }
+        assert!(!worker.call_busy(), "a lapsed ring frees the slot");
+        assert!(worker.call.is_none());
+        let ended = events
+            .try_iter()
+            .find_map(|event| match event {
+                Event::Call(update) => Some(update),
+                _ => None,
+            })
+            .expect("the window hears the ring ended");
+        assert_eq!(ended.phase, calls::CallPhase::Failed);
+        assert_eq!(ended.outcome, Some(calls::CallOutcome::Missed));
+    }
 
     /// A group call reaches the window under the app's own ids, without our own roster entry, and
     /// is filed in its group, under the member who rang, once it is over.
