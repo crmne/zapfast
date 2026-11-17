@@ -332,6 +332,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             actions.push(Action::CloseChat);
         } else if app.locked_folder {
             actions.push(Action::CloseLockedFolder);
+        } else if app.show_archived {
+            // As the locked folder above and WhatsApp Web: with no chat open,
+            // Escape goes back from the archive to the chats.
+            actions.push(Action::ShowArchived(false));
         }
     }
     if escape {
@@ -1091,7 +1095,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
         "Escape",
-        "Dismiss the current action, return from search, Calls or Starred, or close the chat",
+        "Dismiss the current action, close the chat, or return from search, Calls, Starred or Archived",
     ),
     ("Ctrl+N", "New chat or message yourself"),
     ("Ctrl+E", "Archive or unarchive the open chat"),
@@ -1842,6 +1846,36 @@ mod tests {
             app.actions.as_slice(),
             [Action::Open(Page::Chats)]
         ));
+    }
+
+    #[test]
+    fn escape_closes_the_chat_then_leaves_the_archive() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.page = Page::Chats;
+        app.show_archived = true;
+        app.open_chat = Some("fixture".into());
+        let ctx = egui::Context::default();
+        escape(&mut app, &ctx);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::CloseChat]),
+            "the open chat closes first"
+        );
+        app.actions.clear();
+        app.open_chat = None;
+        escape(&mut app, &ctx);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::ShowArchived(false)]
+        ));
+        app.actions.clear();
+        app.show_archived = false;
+        escape(&mut app, &ctx);
+        assert!(app.actions.is_empty(), "the chats have nothing to leave");
     }
 
     #[test]
