@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{Settings, ThemeChoice, WallpaperColor};
+use crate::settings::{Settings, ThemeChoice, TrayIcon, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -424,6 +424,15 @@ fn sections(app: &App) -> Vec<Section> {
             custom_titlebar_switch,
         );
     }
+    #[cfg(target_os = "linux")]
+    appearance.row(
+        translated(locale, "Tray icon"),
+        translated(
+            locale,
+            "Choose an icon colour when your panel uses a custom theme.",
+        ),
+        tray_icon_picker,
+    );
 
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
@@ -1898,6 +1907,45 @@ fn custom_titlebar_switch(ui: &mut egui::Ui, app: &mut App) {
     if response.changed() {
         app.actions.push(Action::SetCustomTitlebar(value));
     }
+}
+
+/// The words of one tray icon choice. Literal `gettext` calls, so the
+/// translator template finds every choice.
+fn tray_icon_label(locale: Locale, choice: TrayIcon) -> Cow<'static, str> {
+    match choice {
+        TrayIcon::Automatic => crate::i18n::gettext(locale, "Automatic"),
+        TrayIcon::LightPanel => crate::i18n::gettext(locale, "Light panel"),
+        TrayIcon::DarkPanel => crate::i18n::gettext(locale, "Dark panel"),
+        TrayIcon::Original => crate::i18n::gettext(locale, "Original colours"),
+    }
+}
+
+fn tray_icon_picker(ui: &mut egui::Ui, app: &mut App) {
+    let selected = tray_icon_label(app.locale, app.settings.tray_icon);
+    let response = egui::ComboBox::from_id_salt("tray_icon")
+        .selected_text(selected.to_string())
+        .width(200.0_f32.min(ui.available_width()))
+        .show_ui(ui, |ui| {
+            for choice in TrayIcon::ALL {
+                let label = tray_icon_label(app.locale, choice);
+                if ui
+                    .selectable_label(app.settings.tray_icon == choice, label)
+                    .clicked()
+                {
+                    app.actions.push(Action::SetTrayIcon(choice));
+                }
+            }
+        });
+    theme::reveal_focus(&response.response);
+    response.response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(
+            egui::WidgetType::ComboBox,
+            ui.is_enabled(),
+            crate::i18n::gettext(app.locale, "Tray icon"),
+        );
+        info.current_text_value = Some(selected.to_string());
+        info
+    });
 }
 
 fn toggle(

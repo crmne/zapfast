@@ -76,6 +76,30 @@ impl FontChoice {
     }
 }
 
+/// How the tray icon contrasts with its panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayIcon {
+    /// Choose a monochrome icon from the desktop's reported panel colour.
+    #[default]
+    Automatic,
+    /// A black icon for a light panel.
+    LightPanel,
+    /// A white icon for a dark panel.
+    DarkPanel,
+    /// ZapFast's coloured application icon.
+    Original,
+}
+
+impl TrayIcon {
+    pub const ALL: [TrayIcon; 4] = [
+        Self::Automatic,
+        Self::LightPanel,
+        Self::DarkPanel,
+        Self::Original,
+    ];
+}
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -480,6 +504,8 @@ pub struct Settings {
     /// where a closed ZapFast always stays in the Dock, whether it has a
     /// menu-bar item.
     pub keep_running_in_background: bool,
+    /// How the tray icon contrasts with the system panel.
+    pub tray_icon: TrayIcon,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
     /// Notifications name the chat and sender and show the message. Off,
@@ -580,6 +606,7 @@ impl Default for Settings {
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
+            tray_icon: TrayIcon::Automatic,
             notifications: true,
             notification_content: true,
             message_sound: NotificationSound::Receive,
@@ -1036,6 +1063,16 @@ mod tests {
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
         assert_eq!(saved["font"], "inter");
+    }
+
+    #[test]
+    fn tray_icon_choice_defaults_to_automatic_and_is_saved_by_name() {
+        let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        assert_eq!(older.tray_icon, TrayIcon::Automatic);
+        let chosen: Settings = serde_json::from_str(r#"{"tray_icon":"dark_panel"}"#).unwrap();
+        assert_eq!(chosen.tray_icon, TrayIcon::DarkPanel);
+        let saved = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(saved["tray_icon"], "dark_panel");
     }
 
     /// The Messages theme is saved by name, and palettes cached before
