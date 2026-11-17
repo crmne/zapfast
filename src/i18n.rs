@@ -38,11 +38,13 @@ pub enum Locale {
     Indonesian,
     #[serde(rename = "nl")]
     Dutch,
+    #[serde(rename = "he")]
+    Hebrew,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -55,6 +57,7 @@ impl Locale {
         Self::Turkish,
         Self::Indonesian,
         Self::Dutch,
+        Self::Hebrew,
     ];
 
     /// The language's own name, for the picker.
@@ -72,6 +75,7 @@ impl Locale {
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
             Self::Dutch => "Nederlands",
+            Self::Hebrew => "עברית",
         }
     }
 
@@ -98,6 +102,8 @@ impl Locale {
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
             "nl" => Self::Dutch,
+            // `iw` is the legacy code some systems still report for Hebrew.
+            "he" | "iw" => Self::Hebrew,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
                 // Simplified and names a region where Traditional is the
@@ -131,6 +137,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
             Self::Dutch => Some(&nl::Translator),
+            Self::Hebrew => Some(&he::Translator),
             Self::English => None,
         }
     }
@@ -261,6 +268,8 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("id-ID"), Some(Locale::Indonesian));
         assert_eq!(Locale::from_system("id"), Some(Locale::Indonesian));
+        assert_eq!(Locale::from_system("he-IL"), Some(Locale::Hebrew));
+        assert_eq!(Locale::from_system("iw"), Some(Locale::Hebrew));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
