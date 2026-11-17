@@ -3047,6 +3047,12 @@ pub enum Action {
     Attach {
         documents: bool,
     },
+    /// Opens the camera window to take a photo for the composer.
+    OpenPhotoCapture,
+    /// Closes the camera window and releases the camera.
+    ClosePhotoCapture,
+    /// Mirrors the camera window's photo left to right, or stops.
+    SetPhotoMirror(bool),
     /// Opens or closes the composer tools menu.
     SetComposerTools(bool),
     SendFiles(Vec<PathBuf>),

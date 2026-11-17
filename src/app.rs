@@ -644,6 +644,10 @@ pub struct App {
     next_pending_id: AttachmentId,
     /// Whether the composer plus menu is open or closing.
     pub composer_tools_open: bool,
+    /// The camera window taking a photo for the composer, while it is open.
+    pub photo_capture: Option<crate::photo_capture::Capture>,
+    /// Whether the camera window mirrors the photo, kept while ZapFast runs.
+    pub photo_mirror: bool,
     /// In-chat audio player.
     pub player: Player,
     /// In-chat video player.
@@ -1665,6 +1669,8 @@ impl App {
             pending_view_once: false,
             next_pending_id: 0,
             composer_tools_open: false,
+            photo_capture: None,
+            photo_mirror: true,
             player: Player::new(waker.clone()),
             video: crate::video::Player::new(waker.clone()),
             video_chat: None,
@@ -8472,6 +8478,23 @@ impl App {
                     self.backend.send(Command::PickFiles { chat, documents });
                 }
             }
+            Action::OpenPhotoCapture => {
+                if self.open_chat.is_some() && self.photo_capture.is_none() {
+                    self.composer_tools_open = false;
+                    // An offline demo never opens the camera.
+                    #[cfg(any(test, feature = "demo"))]
+                    let capture = if self.backend.is_offline() {
+                        crate::photo_capture::Capture::simulated()
+                    } else {
+                        crate::photo_capture::Capture::start(ctx)
+                    };
+                    #[cfg(not(any(test, feature = "demo")))]
+                    let capture = crate::photo_capture::Capture::start(ctx);
+                    self.photo_capture = Some(capture);
+                }
+            }
+            Action::ClosePhotoCapture => self.photo_capture = None,
+            Action::SetPhotoMirror(mirror) => self.photo_mirror = mirror,
             Action::SetComposerTools(open) => {
                 self.composer_tools_open = open;
                 if open {

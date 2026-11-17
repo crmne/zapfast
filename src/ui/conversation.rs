@@ -2285,6 +2285,10 @@ fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
                 if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), &send_files) {
                     app.actions.push(Action::Attach { documents: false });
                 }
+                let take_photo = crate::i18n::gettext(app.locale, "Take photo");
+                if widgets::menu_item(ui, &app.palette, Some(Icon::Video), &take_photo) {
+                    app.actions.push(Action::OpenPhotoCapture);
+                }
                 // Pictures picked here keep their own bytes instead of
                 // becoming compressed photos.
                 let document = crate::i18n::gettext(app.locale, "Send as document");
