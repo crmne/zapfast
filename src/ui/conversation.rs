@@ -1717,7 +1717,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         .size()
                         .y
                 })
-                .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
+                // The text's own height last frame: the editor's box adds its margin.
+                .or_else(|| {
+                    ui.ctx()
+                        .data(|data| data.get_temp::<Rect>(composer_text_id()))
+                        .map(|painted| painted.height())
+                })
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
@@ -1797,14 +1802,26 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         ui.set_width((field_width - 16.0).max(0.0));
                         ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.add_space(top);
+                        // The scroll area clips the text. One as tall as the
+                        // lines cut off the Arabic fallback, which is enlarged
+                        // to read as large as Latin text and draws beyond its
+                        // line, so it reaches into the padding around the text
+                        // and the editor's margin keeps the lines in place.
+                        let margin = Margin {
+                            left: 0,
+                            right: 0,
+                            top: whole_points(top),
+                            bottom: whole_points(bottom),
+                        };
+                        let overhang = f32::from(margin.top) + f32::from(margin.bottom);
+                        ui.add_space(top - f32::from(margin.top));
                         // Grow from one to six lines, then scroll. The height
                         // is this frame's draft, measured above, rather than
                         // the scroll area's memory of the last frame.
                         egui::ScrollArea::vertical()
                             .id_salt("composer-scroll")
-                            .max_height(text_height)
-                            .min_scrolled_height(text_height)
+                            .max_height(text_height + overhang)
+                            .min_scrolled_height(text_height + overhang)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 // Keep emoji in the buffer so character offsets match, then
@@ -1835,8 +1852,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     .filter(|range| !range.is_empty());
                                 let mut output = egui::TextEdit::multiline(&mut app.composer)
                                     .id(id)
-                                    .frame(Frame::NONE)
-                                    .margin(Margin::ZERO)
+                                    .frame(Frame::NONE.inner_margin(margin))
                                     .hint_text(
                                         egui::RichText::new(if app.pending.is_empty() {
                                             crate::i18n::gettext(app.locale, "Type a message")
@@ -2038,7 +2054,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     response.request_focus();
                                 }
                             });
-                        ui.add_space(bottom);
+                        ui.add_space(bottom - f32::from(margin.bottom));
                         });
                     });
                 if view_once
@@ -2221,6 +2237,11 @@ pub(crate) fn composer_pill_id() -> egui::Id {
 /// precisely. `App::at_bottom` covers ordinary UI checks.
 pub(crate) fn scroll_metrics_id(chat: &ChatId) -> egui::Id {
     egui::Id::new(("message-scroll-metrics", chat))
+}
+
+/// `points` rounded down to whole points, for an editor's [`Margin`].
+fn whole_points(points: f32) -> i8 {
+    points.floor().clamp(0.0, f32::from(i8::MAX)) as i8
 }
 
 /// How far below the top of a composer text row the middle of its ink sits,
