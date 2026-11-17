@@ -98,6 +98,7 @@ take the `.rpm`:
 
 ```sh
 sudo dnf install ./{{ name }}-{{ v }}-1.x86_64.rpm    # or .aarch64.rpm
+sudo zypper install ./{{ name }}-{{ v }}-1.x86_64.rpm # on openSUSE
 ```
 
 - [{{ name }}-{{ v }}-1.x86_64.rpm]({{ base }}/{{ name }}-{{ v }}-1.x86_64.rpm)
