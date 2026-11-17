@@ -9941,7 +9941,7 @@ impl App {
                     return;
                 }
                 if !value.is_empty()
-                    && let Err(error) = crate::proxy::Proxy::parse(&value)
+                    && let Err(error) = crate::proxy::validate_setting(&value)
                 {
                     self.toast_error(error);
                     return;

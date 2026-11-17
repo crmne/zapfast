@@ -37,7 +37,7 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
 /// An updater on the proxy-aware reqwest client.
 pub fn updater() -> anyhow::Result<Updater> {
     let mut builder = reqwest::blocking::Client::builder();
-    if let Some(proxy) = crate::proxy::reqwest_proxy() {
+    if let Some(proxy) = crate::proxy::reqwest_proxy().map_err(anyhow::Error::msg)? {
         builder = builder.proxy(proxy);
     }
     Ok(Updater::new(CONFIG, ReqwestTransport::new(builder)?))

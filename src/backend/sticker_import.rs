@@ -211,7 +211,7 @@ fn signal_agent() -> Result<ureq::Agent, String> {
         .build();
     Ok(ureq::Agent::config_builder()
         .tls_config(tls)
-        .proxy(crate::proxy::ureq_proxy())
+        .proxy(crate::proxy::ureq_proxy()?)
         .build()
         .into())
 }
