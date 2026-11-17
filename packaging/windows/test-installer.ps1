@@ -1,12 +1,14 @@
 # Installs, updates and removes ZapFast's Windows packages on a CI runner,
 # with stand-in program files: the Inno Setup installer, the MSI
-# taking it over (as the updater runs it, and by hand), an MSI update, and
-# uninstalling with ZapFast running and then without.
+# taking it over (as the updater runs it, and by hand), an MSI update,
+# uninstalling with ZapFast running and then without, and the whatsapp: links
+# the MSI registers, or leaves to another program.
 #
 #   pwsh packaging/windows/test-installer.ps1
 #
-# Needs Inno Setup 6, WiX 5 with WixToolset.Util.wixext, and Ruby. Run from
-# the repository root. Changes the current user's ZapFast install.
+# Needs Inno Setup 6, WiX 5 with WixToolset.Util.wixext, Ruby, and an
+# administrator for the machine-wide whatsapp: case. Run from the repository
+# root. Changes the current user's ZapFast install.
 
 $ErrorActionPreference = "Stop"
 $root = Join-Path $env:RUNNER_TEMP "zapfast-installer-test"
@@ -17,6 +19,43 @@ $innoKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{F2512314-
 $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "ZapFast.lnk"
 $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "ZapFast.lnk"
 $defaultFolder = Join-Path $env:LOCALAPPDATA "Programs\ZapFast"
+
+# A whatsapp: registration this machine already has, for the user or for all
+# users, is set aside while the test runs and put back when it ends, passing
+# or failing (not when it is interrupted).
+$registrations = "HKCU\Software\Classes\whatsapp", "HKLM\Software\Classes\whatsapp"
+$cleared = [System.Collections.Generic.List[string]]::new()
+function Saved($key) {
+  Join-Path $root "$($key.Split('\')[0])-whatsapp.reg"
+}
+# Removes what the test registered in a cleared place, and puts back what was
+# there before. Returns what it could not do.
+function Restore {
+  foreach ($key in $cleared) {
+    reg delete $key /f 2>$null | Out-Null
+    reg query $key 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      "could not remove $key; what was there before is saved in $(Saved $key)"
+      continue
+    }
+    if (Test-Path (Saved $key)) {
+      reg import (Saved $key) 2>$null | Out-Null
+      if ($LASTEXITCODE -ne 0) { "could not put back $key from $(Saved $key)" }
+    }
+  }
+}
+# A failing run reports its own error; what Restore could not do is a warning.
+trap { Restore | ForEach-Object { Write-Warning $_ }; break }
+foreach ($key in $registrations) {
+  reg query $key 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    reg export $key (Saved $key) /y | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not save $key" }
+    reg delete $key /f | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not set aside $key" }
+  }
+  $cleared.Add($key)
+}
 
 function Check($condition, $what) {
   if (-not $condition) { throw "FAILED: $what" }
@@ -68,6 +107,21 @@ function Program($folder) {
   Get-Content -Raw (Join-Path $folder "zapfast.exe")
 }
 
+$links = "HKCU:\Software\Classes\whatsapp"
+
+# What a whatsapp: link runs, or nothing when no program is registered for it.
+function WhatsAppLink {
+  if (-not (Test-Path $links)) { return $null }
+  if ($null -eq (Get-ItemProperty $links -Name "URL Protocol" -ErrorAction SilentlyContinue)) { return $null }
+  $command = Join-Path $links "shell\open\command"
+  if (-not (Test-Path $command)) { return $null }
+  (Get-Item $command).GetValue("")
+}
+
+function Opens($folder) {
+  "`"$(Join-Path $folder "zapfast.exe")`" `"%1`""
+}
+
 # What Settings > Apps lists for ZapFast: the MSI installs Windows Installer
 # knows by ZapFast's UpgradeCode, and the Inno Setup entry.
 function Entries {
@@ -99,6 +153,7 @@ Check (-not (Test-Path (Join-Path $defaultFolder "fastsapp.exe"))) "the copy kep
 Check ((Entries) -eq 1) "Settings > Apps lists ZapFast once"
 Check (Test-Path $startMenu) "the Start menu shortcut is there"
 Check (Test-Path $desktop) "the desktop shortcut is kept"
+Check ((WhatsAppLink) -eq (Opens $defaultFolder)) "whatsapp: links open ZapFast"
 
 # 3. An MSI update run by hand finds the install on its own.
 $v2 = Msi "0.18.2"
@@ -107,6 +162,7 @@ Check ($code -in 0, 3010) "the next MSI updates in place ($code)"
 Check ((Program $defaultFolder) -eq "zapfast.exe msi-0.18.2-x64") "the program is the new one"
 Check ((Entries) -eq 1) "Settings > Apps still lists ZapFast once"
 Check (Test-Path $desktop) "the desktop shortcut survives the update"
+Check ((WhatsAppLink) -eq (Opens $defaultFolder)) "whatsapp: links still open ZapFast after the update"
 
 # 4. Uninstalling while ZapFast runs is refused, untouched.
 $fake = Join-Path $root "running"
@@ -129,6 +185,8 @@ Check (-not (Test-Path $defaultFolder)) "the program folder is gone"
 Check (-not (Test-Path $startMenu)) "the Start menu shortcut is gone"
 Check (-not (Test-Path $desktop)) "the desktop shortcut is gone"
 Check ((Entries) -eq 0) "Settings > Apps no longer lists ZapFast"
+Check ($null -eq (WhatsAppLink)) "whatsapp: links no longer run the removed program"
+Check (-not (Test-Path $links)) "their registration is gone"
 
 # 6. An Inno install in a folder of its own, taken over by an MSI run by hand.
 $custom = Join-Path $env:LOCALAPPDATA "ZapFast Elsewhere"
@@ -138,10 +196,47 @@ Check ($code -in 0, 3010) "a hand-run MSI takes over the Inno install ($code)"
 Check ((Program $custom) -eq "zapfast.exe msi-0.18.1-x64") "it installs into Inno's folder"
 Check (-not (Test-Path $defaultFolder)) "and not into the default one"
 Check (-not (Test-Path $desktop)) "no desktop shortcut appears that Inno did not make"
+Check ((WhatsAppLink) -eq (Opens $custom)) "whatsapp: links open the copy in that folder"
 $code = Msiexec "/x `"$v1`" /qn /norestart"
 Check ($code -in 0, 3010) "and uninstalls ($code)"
 Check (-not (Test-Path $custom)) "leaving no folder behind"
+Check ($null -eq (WhatsAppLink)) "nor a link to it"
 
-# 7. The Windows on ARM package builds.
+# 7. Another program's whatsapp: links stay its own through an install and
+# an uninstall: registered for the user or the whole machine, under a default
+# verb other than open, or by a program whose name contains zapfast.exe.
+$other = "`"C:\Other\WhatsApp.exe`" `"%1`""
+$machineLinks = "HKLM:\Software\Classes\whatsapp"
+$registered = @(
+  @{ Where = "for the user"; Key = $links; Verb = "open"; Command = $other },
+  @{ Where = "for the whole machine"; Key = $machineLinks; Verb = "open"; Command = $other },
+  @{ Where = "under another default verb"; Key = $machineLinks; Verb = "launch"; Command = $other },
+  @{ Where = "by a program named like ZapFast"; Key = $links; Verb = "open"
+     Command = "`"C:\Other\zapfast.exe-helper.exe`" `"%1`"" }
+)
+foreach ($handler in $registered) {
+  $command = Join-Path $handler.Key "shell\$($handler.Verb)\command"
+  New-Item -Force $command -Value $handler.Command | Out-Null
+  New-ItemProperty -Force $handler.Key -Name "URL Protocol" -Value "" | Out-Null
+  if ($handler.Verb -ne "open") { Set-Item (Join-Path $handler.Key "shell") -Value $handler.Verb }
+  try {
+    $code = Msiexec "/i `"$v2`" /qn /norestart"
+    Check ($code -in 0, 3010) "ZapFast installs beside links registered $($handler.Where) ($code)"
+    Check ((Get-Item $command).GetValue("") -eq $handler.Command) "they still run the other program"
+    if ($handler.Key -ne $links) { Check (-not (Test-Path $links)) "and ZapFast registers nothing over them" }
+    $code = Msiexec "/x `"$v2`" /qn /norestart"
+    Check ($code -in 0, 3010) "and uninstalls ($code)"
+    Check ((Get-Item $command).GetValue("") -eq $handler.Command) "leaving them in place"
+  } finally {
+    Remove-Item -Recurse -Force $handler.Key
+  }
+}
+
+# 8. The Windows on ARM package builds.
 Msi "0.18.1" "arm64" | Out-Null
 Check $true "the arm64 MSI builds"
+
+# A passing run fails if the machine is not left as it was found.
+$unrestored = @(Restore)
+$unrestored | ForEach-Object { Write-Host "FAILED: $_" }
+if ($unrestored.Count -gt 0) { exit 1 }
