@@ -6009,7 +6009,7 @@ fn bubble_frame(
         ui.painter().rect_stroke(
             inner.response.rect.expand(2.0),
             12.0,
-            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
+            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.focus()),
             egui::StrokeKind::Outside,
         );
     }

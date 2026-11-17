@@ -85,6 +85,10 @@ pub struct Palette {
     pub link: Color32,
     /// Read-receipt blue.
     pub read: Color32,
+    /// The outline around focused controls and the field being typed in.
+    /// Unset, it follows `accent`; read it through [`Palette::focus`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<Color32>,
     /// How message bubbles are shaped. Neither palette files nor the copy
     /// of a palette cached in settings can set it, so custom themes keep
     /// WhatsApp's: only the built-in Messages palettes choose another.
@@ -131,6 +135,7 @@ impl Palette {
             bubble_out: Color32::from_rgb(0x00, 0x5c, 0x4b),
             link: Color32::from_rgb(0x53, 0xbd, 0xeb),
             read: Color32::from_rgb(0x53, 0xbd, 0xeb),
+            focus: None,
             bubbles: BubbleStyle::WhatsApp,
         }
     }
@@ -165,6 +170,7 @@ impl Palette {
             bubble_out: MESSAGES_BLUE_DARK[0],
             link: Color32::from_rgb(0x64, 0xd2, 0xff),
             read: Color32::from_rgb(0x64, 0xd2, 0xff),
+            focus: None,
             bubbles: BubbleStyle::Messages,
         }
     }
@@ -197,6 +203,7 @@ impl Palette {
             bubble_out: MESSAGES_BLUE_LIGHT[0],
             link: Color32::from_rgb(0x00, 0x66, 0xcc),
             read: Color32::from_rgb(0x00, 0x66, 0xcc),
+            focus: None,
             bubbles: BubbleStyle::Messages,
         }
     }
@@ -230,6 +237,7 @@ impl Palette {
             link: Color32::from_rgb(0x02, 0x7e, 0xb5),
             // The lighter blue vanished on the green outgoing bubble.
             read: Color32::from_rgb(0x02, 0x7e, 0xb5),
+            focus: None,
             bubbles: BubbleStyle::WhatsApp,
         }
     }
@@ -340,6 +348,22 @@ impl Palette {
     /// and the read ticks, move toward the text colour just far enough to
     /// stay readable on the bubble: a grey that reads on the panel can vanish
     /// on the outgoing bubble. Works for custom themes as well.
+    /// The colour of focus outlines: the theme's `focus`, or its accent.
+    pub fn focus(&self) -> Color32 {
+        self.focus.unwrap_or(self.accent)
+    }
+
+    /// The ring around a focused control filled with `fill`. On an accent
+    /// fill, such as a primary button, any focus colour could vanish into
+    /// it, so the ring takes the colour drawn on the accent instead.
+    pub fn focus_ring(&self, fill: Color32) -> Color32 {
+        if fill == self.accent {
+            self.on_accent
+        } else {
+            self.focus()
+        }
+    }
+
     pub fn on_bubble(&self, own: bool) -> Self {
         let fill = if own { self.bubble_out } else { self.bubble_in };
         // Buttons and icons inside a bubble tint it with the accent, which in
@@ -500,6 +524,7 @@ impl fastframe_theme::Palette for Palette {
             "bubble_out" => self.bubble_out = color,
             "link" => self.link = color,
             "read" => self.read = color,
+            "focus" => self.focus = Some(color),
             _ => return false,
         }
         true
@@ -692,7 +717,7 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.weak_text_color = Some(palette.secondary);
     visuals.hyperlink_color = palette.link;
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
-    visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
+    visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.focus());
     visuals.window_stroke = Stroke::new(1.0, palette.outline);
     visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
     visuals.menu_corner_radius = CornerRadius::same(RADIUS);
@@ -1967,6 +1992,7 @@ mod tests {
             "bubble_out",
             "link",
             "read",
+            "focus",
         ] {
             let mut palette = Palette::dark();
             assert!(
@@ -1978,6 +2004,31 @@ mod tests {
             fastframe_theme::parse_palette::<Palette>(r##"{"colors":{"typo":"#ffffff"}}"##)
                 .is_err()
         );
+    }
+
+    /// Focus outlines follow the accent unless a theme gives them their own
+    /// colour, and palettes cached before `focus` existed still load.
+    #[test]
+    fn focus_follows_the_accent_unless_a_theme_sets_it() {
+        let accent_only: Palette =
+            fastframe_theme::parse_palette(r##"{"colors":{"accent":"#203040"}}"##).unwrap();
+        assert_eq!(accent_only.focus(), Color32::from_rgb(0x20, 0x30, 0x40));
+        let own: Palette = fastframe_theme::parse_palette(
+            r##"{"colors":{"accent":"#203040","focus":"#3c3c3c"}}"##,
+        )
+        .unwrap();
+        assert_eq!(own.focus(), Color32::from_rgb(0x3c, 0x3c, 0x3c));
+        assert_eq!(own.accent, Color32::from_rgb(0x20, 0x30, 0x40));
+        let stored = serde_json::to_value(Palette::dark()).unwrap();
+        assert!(stored.get("focus").is_none());
+        let cached: Palette = serde_json::from_value(stored).unwrap();
+        assert_eq!(cached.focus(), Palette::dark().accent);
+        // A primary button keeps a ring that contrasts with its accent fill.
+        assert_eq!(own.focus_ring(own.accent), own.on_accent);
+        assert_eq!(own.focus_ring(Color32::TRANSPARENT), own.focus());
+        let round_trip: Palette =
+            serde_json::from_value(serde_json::to_value(own).unwrap()).unwrap();
+        assert_eq!(round_trip.focus(), own.focus());
     }
 
     /// ZapFast's Omarchy template adds the chat colours to the base ones and
