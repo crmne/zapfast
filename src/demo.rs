@@ -2884,6 +2884,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.update = Some(crate::updates::Release {
                     version: "99.0.0".to_owned(),
                     url: "https://github.com/crmne/zapfast/releases/latest".to_owned(),
+                    published_at: None,
                 });
                 app.show_update = true;
                 let installation = Installation {

@@ -4889,7 +4889,11 @@ impl App {
                 }
             }
             Event::UpdateAvailable { version, url } => {
-                let notice = crate::updates::Release { version, url };
+                let notice = crate::updates::Release {
+                    version,
+                    url,
+                    published_at: None,
+                };
                 if self.update.as_ref() != Some(&notice) {
                     self.toast(format!("ZapFast {} is available", notice.version));
                 }
@@ -18982,6 +18986,7 @@ mod tests {
         app.update = Some(crate::updates::Release {
             version: "99.0.0".into(),
             url: "https://github.com/crmne/zapfast/releases/latest".into(),
+            published_at: None,
         });
         app.update_support = Some(Err("Use your package manager".into()));
         app.settings.download_updates_automatically = true;
