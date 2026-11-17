@@ -2194,6 +2194,15 @@ impl App {
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
+        // Wayland's clipboard belongs to the client that made the selection,
+        // and this one stops answering for it with its window: eframe keeps
+        // the event loop for the next window without dispatching it, so other
+        // apps would wait for their own timeout on a paste. Hand the text to
+        // a source that keeps serving it (see `crate::clipboard`).
+        #[cfg(target_os = "linux")]
+        if let Some(clipboard) = self.clipboard_reader.wayland.take() {
+            crate::clipboard::keep_after_window(clipboard);
+        }
     }
 
     /// What the conversation shows behind its bubbles, for the chat and the
