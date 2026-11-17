@@ -369,7 +369,13 @@ protocol. These notes are for coding agents and new contributors.
   platform's picture over it afterwards (Apple Color Emoji, Segoe UI Emoji
   through DirectWrite, or the desktop's bitmap emoji font, with the bundled
   Noto behind them). New pictures are drawn on its worker thread; tests and
-  demo builds draw them inside the frame. The interface font is the
+  demo builds draw them inside the frame. Pickers and `:` completions list
+  emoji through `emoji::catalogue` / `emoji::lookup`, which stop at the
+  bundled font's emoji version (`BUNDLED_VERSION`), so an `emojis` update
+  never offers an emoji no font draws; when updating
+  `assets/fonts/NotoColorEmoji.ttf` (the CBDT build from googlefonts/noto-emoji,
+  not COLRv1), raise it, and a test checks the font draws every offered emoji.
+  The interface font is the
   platform's own (`fastframe_fonts::Primary::System`), and Inter in tests.
   fastframe-emoji's `EmojiPlugin` (added in `App::attach`) colours the
   emoji in every other egui text: labels, menus, tooltips, text fields. It
