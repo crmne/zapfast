@@ -9,7 +9,9 @@ nav_order: 1
 ZapFast registers as a linked device through
 [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust). Messages are
 end-to-end encrypted for each device. Pair with a QR code or phone-number
-code. New links list ZapFast under **Linked devices**; an existing link may
+code. New links list ZapFast under **Linked devices** by default;
+[User agent](/settings-and-files/#user-agent) in Settings offers Chrome, Firefox,
+or a custom companion name. An existing link may
 retain the earlier name FastsApp until you link again. There you can unlink
 it at any time.
 

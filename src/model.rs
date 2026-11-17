@@ -3385,6 +3385,7 @@ pub enum Action {
     SetKeepChatsArchived(bool),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
+    SetUserAgent(crate::settings::UserAgent),
     /// Plays a notification sound once, as a preview.
     PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),

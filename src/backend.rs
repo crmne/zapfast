@@ -101,7 +101,11 @@ mod tests {
     fn backend_waits_for_window_acknowledgement_before_touching_storage() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = crate::paths::AppDirs::under(directory.path());
-        let mut backend = super::Backend::spawn(dirs.as_account(), super::Waker::default());
+        let mut backend = super::Backend::spawn(
+            dirs.as_account(),
+            super::Waker::default(),
+            Default::default(),
+        );
         assert!(!dirs.session_db().exists());
         assert!(!dirs.archive_db().exists());
         // Closing before a first frame must cancel startup without connecting
@@ -1006,6 +1010,7 @@ pub enum Command {
     Relink,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
+    SetUserAgent(crate::settings::UserAgent),
     /// Sets aside an unreadable archive and the linked session, then starts
     /// over with a new archive and a new link.
     StartOverArchive,
@@ -1781,7 +1786,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn spawn(dirs: AccountDirs, waker: Waker) -> Self {
+    pub fn spawn(dirs: AccountDirs, waker: Waker, user_agent: crate::settings::UserAgent) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -1797,7 +1802,15 @@ impl Backend {
             .spawn(move || {
                 runtime.block_on(async move {
                     if started.await.is_ok() {
-                        worker::run(dirs, event_tx, worker_commands, command_rx, waker).await;
+                        worker::run(
+                            dirs,
+                            event_tx,
+                            worker_commands,
+                            command_rx,
+                            waker,
+                            user_agent,
+                        )
+                        .await;
                     }
                 });
                 runtime.shutdown_timeout(Duration::from_secs(3));
