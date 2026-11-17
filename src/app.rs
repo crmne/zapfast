@@ -1283,6 +1283,10 @@ fn cycled(active: usize, len: usize, step: i8) -> Option<usize> {
 /// How long a hidden start waits for a panel to show the tray item.
 const TRAY_WAIT: Duration = Duration::from_secs(30);
 
+/// How long quitting waits for the accounts' runtimes to finish their
+/// work and disconnect.
+const QUIT_WAIT: Duration = Duration::from_secs(10);
+
 const TRAY_SHOW: &str = "show";
 const TRAY_LOCK: &str = "lock";
 const TRAY_QUIT: &str = "quit";
@@ -11866,8 +11870,13 @@ impl App {
         if self.media_hold.take().is_some() {
             crate::media_pause::settle(Duration::from_secs(2));
         }
+        // Every account stops at once, and none holds quitting up for good.
         for account in &mut self.accounts {
-            account.backend.shutdown();
+            account.backend.request_shutdown();
+        }
+        let deadline = Instant::now() + QUIT_WAIT;
+        for account in &mut self.accounts {
+            account.backend.wait_for_shutdown(deadline);
         }
         self.files.flush(fastframe_file::FLUSH_TIMEOUT);
     }
