@@ -699,6 +699,10 @@ the clipboard is only available while the window is open.
 
 ## Chats
 
+While you scroll, the first visible message's date briefly stays at the top
+of the conversation. In the Messages themes it sits below the header's blur,
+so the date remains readable.
+
 Someone without a saved contact or profile name shows as their phone number. In
 a group that hides numbers, WhatsApp sends only a masked one such as
 `+233∙∙∙∙∙∙42`, and ZapFast shows that until WhatsApp reveals the whole number.
