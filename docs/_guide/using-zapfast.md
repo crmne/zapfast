@@ -797,7 +797,9 @@ The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
 Followed channels have their own **Channels** chip. **Archived**, in the rail
 on the left above **Settings**, opens the archived chats in the list, and
-shows how many of them are unread. A chip with unread chats shows how many it
+shows how many of them are unread. **Chats**, at the top of the rail, carries
+the app icon's badge for the number on screen: its unread messages, or a dot
+when only muted or archived groups, or channels, are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
 ZapFast remembers the chip or label each account last showed and comes back
@@ -1002,8 +1004,12 @@ show the unread count as a badge on the app icon: KDE Plasma's taskbar, with
 or Dash to Panel. Windows overlays a compact unread-message count on ZapFast's
 taskbar button while the window is open, using `99+` above 99. Windows must use
 its regular taskbar icon size for overlays to appear. The count
-does not count toasts remaining in Windows notification history. On macOS, the
-Dock icon shows the number of unread chats in a red badge. The icon and
+does not count toasts remaining in Windows notification history. The app icon
+counts every unread message in a direct chat or a group. A muted or archived
+group adds no number, and a muted or archived direct chat counts nothing. On
+macOS, a red badge on the Dock icon shows that number, or an empty red dot when
+only muted or archived groups, or channels, are unread. The badge drops as you read each chat,
+not when you open ZapFast. The icon and
 badge stay with the app when its window is closed and reopened. A macOS
 source build run through Cargo uses ZapFast's icon too. Starting hidden
 lets you open the first window from the menu-bar menu. On Linux and
