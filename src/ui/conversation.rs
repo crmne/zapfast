@@ -1835,7 +1835,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     theme::regular(BODY_SIZE),
                                     palette.text,
                                 );
-                                let composer_rtl = crate::bidi::base_rtl(&app.composer);
+                                let composer_rtl = crate::bidi::base_rtl(&app.composer)
+                                    || (app.composer.is_empty() && crate::rtl::enabled(ui));
                                 let mut layouter = |ui: &egui::Ui,
                                                     text: &dyn egui::TextBuffer,
                                                     wrap: f32| {
@@ -2147,7 +2148,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 };
                 let hint = super::keys::label(hint_text.as_ref());
                 ui.add_space(2.0);
-                ui.horizontal(|ui| {
+                let layout = crate::rtl::start(ui, egui::Align::Center);
+                ui.with_layout(layout, |ui| {
                     if theme::icon_button(
                         ui,
                         Icon::X,
@@ -2255,7 +2257,7 @@ fn ink_middle(ui: &egui::Ui, line_height: f32) -> f32 {
 /// Lays out a control centred in the composer's last-line band, however
 /// tall the draft has grown, so every control shares one vertical centre.
 fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.allocate_ui_with_layout(vec2(0.0, line), Layout::left_to_right(Align::Center), add)
+    ui.allocate_ui_with_layout(vec2(0.0, line), crate::rtl::start(ui, Align::Center), add)
         .inner
 }
 

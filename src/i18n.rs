@@ -44,7 +44,7 @@ pub enum Locale {
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::Arabic,
         Self::PortugueseBrazil,

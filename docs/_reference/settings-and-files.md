@@ -143,7 +143,8 @@ name or description, in the interface language or in English.
   Choosing Arabic mirrors the interface right to left: the navigation rail and
   chat list move to the right, the conversation and composer read from the
   right, and dialogs and menus follow, while message text keeps its own
-  direction. Message contents, names, and logs are never translated.
+  direction. Chips, menus, tooltips and labels put their words in the order
+  Arabic reads them. Message contents, names, and logs are never translated.
 - **Custom title bar** (Windows and Linux, off by default): ZapFast draws
   its own title bar instead of the desktop's. The window buttons sit in the
   top corner of whichever pane is there (the open chat's header, the info

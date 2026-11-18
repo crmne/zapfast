@@ -11,6 +11,7 @@
 //! Glyph positions are the visual ones. epaint hit-testing reads the `rtl`
 //! flag set here.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -156,6 +157,82 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
         align_right(galley);
     }
     refresh_bounds(galley);
+}
+
+/// Reorders the text shapes the app did not lay out itself.
+///
+/// Most interface text goes straight to `Painter::text`, which shapes each font
+/// run in its own direction but leaves the runs in logical order. In a right-
+/// to-left label that puts its first word on the left, so the words read
+/// reversed: a chip says "المقروء غير" instead of "غير المقروء". This plugin
+/// moves those runs into visual order after layout, as [`layout_job`] does for
+/// text the app lays out itself. Galleys that already carry visual order, and
+/// editors whose caret follows the buffer, are left as they are.
+#[derive(Default)]
+pub(crate) struct BidiPlugin {
+    /// Reordered galleys, by the address layout gave their original.
+    ///
+    /// The original is kept alive so another galley cannot take its address.
+    /// The cache is dropped whole when it outgrows one screen's labels, so a
+    /// long session does not keep every string it ever drew.
+    reordered: HashMap<usize, (Arc<Galley>, Arc<Galley>)>,
+}
+
+/// How many text layouts the plugin remembers between frames.
+const BIDI_CACHE: usize = 512;
+
+impl egui::Plugin for BidiPlugin {
+    fn debug_name(&self) -> &'static str {
+        "zapfast-bidi"
+    }
+
+    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+        if self.reordered.len() > BIDI_CACHE {
+            self.reordered.clear();
+        }
+        for clipped in &mut output.shapes {
+            reorder_shape(&mut clipped.shape, &mut self.reordered);
+        }
+    }
+}
+
+fn reorder_shape(
+    shape: &mut egui::Shape,
+    reordered: &mut HashMap<usize, (Arc<Galley>, Arc<Galley>)>,
+) {
+    match shape {
+        egui::Shape::Text(text) => {
+            // An editor's caret follows the logical buffer, so its galley keeps
+            // the text order its layout gave it.
+            if text.galley.job.keep_trailing_whitespace || text.angle != 0.0 {
+                return;
+            }
+            if !text.galley.text().chars().any(is_strong_rtl)
+                || text.galley.rows.iter().all(|placed| {
+                    placed.row.glyphs.is_empty() || already_visual(&placed.row.glyphs)
+                })
+            {
+                return;
+            }
+            let key = Arc::as_ptr(&text.galley) as usize;
+            if let Some((original, visual)) = reordered.get(&key)
+                && Arc::ptr_eq(original, &text.galley)
+            {
+                text.galley = Arc::clone(visual);
+                return;
+            }
+            let mut visual = Arc::clone(&text.galley);
+            reorder_rtl_runs(Arc::make_mut(&mut visual));
+            reordered.insert(key, (Arc::clone(&text.galley), Arc::clone(&visual)));
+            text.galley = visual;
+        }
+        egui::Shape::Vec(shapes) => {
+            for shape in shapes {
+                reorder_shape(shape, reordered);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The bidi paragraph last used, keyed by its byte offset in the galley text.
@@ -921,6 +998,53 @@ mod tests {
             let galley = galley.into_inner().expect("a label");
             assert_eq!(visual_chars(&galley), drawn_in_order(&galley, text));
         }
+    }
+
+    /// Chips, menus and tooltips hand their text to egui itself, which leaves
+    /// each font run in logical order. The plugin moves those runs into visual
+    /// order, so a chip reads "غير المقروء" and not "المقروء غير".
+    #[test]
+    fn plain_labels_read_right_to_left() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.add_plugin(BidiPlugin::default());
+        for text in ["غير المقروء", "Ctrl+V يلصق صورة", "محمد سيد"] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.label(text);
+                },
+            );
+            output.textures_delta.clear();
+            let galley = first_text(&output.shapes).expect("a label");
+            assert_eq!(
+                visual_chars(&galley),
+                drawn_in_order(&galley, text),
+                "logical {text:?}"
+            );
+            assert!(
+                galley.rows.iter().all(|placed| placed
+                    .row
+                    .glyphs
+                    .iter()
+                    .all(|glyph| glyph.rtl || !is_strong_rtl(glyph.chr))),
+                "every Arabic glyph must carry its right-to-left caret for {text:?}"
+            );
+        }
+    }
+
+    fn first_text(shapes: &[egui::epaint::ClippedShape]) -> Option<Arc<Galley>> {
+        fn find(shape: &egui::Shape) -> Option<Arc<Galley>> {
+            match shape {
+                egui::Shape::Text(text) => Some(text.galley.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(find),
+                _ => None,
+            }
+        }
+        shapes.iter().find_map(|clipped| find(&clipped.shape))
     }
 
     #[test]
