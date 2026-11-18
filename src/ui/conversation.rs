@@ -2756,13 +2756,45 @@ fn album_continues(messages: &[Message], index: usize) -> bool {
         && crate::util::day_key(previous.timestamp) == crate::util::day_key(message.timestamp)
 }
 
-/// The index of the first message of each row the message list draws: the
-/// list's items, which its cursor steps through. Every message has its own
-/// row, except an album's items outside a selection, which share their
-/// first item's.
+fn plain_sticker(message: &Message) -> bool {
+    matches!(&message.content, Content::Sticker { .. }) && message.quoted.is_none()
+}
+
+fn stickers_join(first: &Message, second: &Message) -> bool {
+    plain_sticker(first)
+        && plain_sticker(second)
+        && first.from_me == second.from_me
+        && first.sender == second.sender
+        && crate::util::day_key(first.timestamp) == crate::util::day_key(second.timestamp)
+}
+
+fn sticker_pair_starts(messages: &[Message]) -> Vec<Option<usize>> {
+    let mut pairs = vec![None; messages.len()];
+    let mut index = 0;
+    while index + 1 < messages.len() {
+        if stickers_join(&messages[index], &messages[index + 1]) {
+            pairs[index] = Some(index);
+            pairs[index + 1] = Some(index);
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    pairs
+}
+
+/// The index of each row the message list draws. Albums and pairs of plain
+/// stickers share their first message's row outside a selection.
 pub fn row_starts(messages: &[Message], selecting: bool) -> Vec<usize> {
+    if selecting {
+        return (0..messages.len()).collect();
+    }
+    let paired_sticker_starts = sticker_pair_starts(messages);
     (0..messages.len())
-        .filter(|&index| selecting || !album_continues(messages, index))
+        .filter(|&index| {
+            !album_continues(messages, index)
+                && paired_sticker_starts[index].is_none_or(|start| start == index)
+        })
         .collect()
 }
 
@@ -3470,13 +3502,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
+                    let paired_sticker_starts = sticker_pair_starts(&conversation.messages);
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
-                        // WhatsApp marks every item in a media album with the
-                        // same parent id. Only its first item owns a row; the
-                        // remaining consecutive items are painted in that row.
+                        let sticker_pair_start = paired_sticker_starts[index];
+                        // Albums and plain sticker pairs share a row. Their
+                        // remaining messages are drawn beside the first one.
                         if selection.is_none()
-                            && album_continues(&conversation.messages, message_index)
+                            && (album_continues(&conversation.messages, message_index)
+                                || sticker_pair_start.is_some_and(|start| start != message_index))
                         {
                             rows.insert(
                                 message.id.clone(),
@@ -3492,9 +3526,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             .is_none()
                             .then(|| album_run(&conversation.messages, message_index))
                             .flatten();
+                        let stickers = if selection.is_none() {
+                            sticker_pair_start.map(|start| &conversation.messages[start..start + 2])
+                        } else {
+                            None
+                        };
                         let row_contains = |id: &str| {
                             message.id == id
                                 || album.is_some_and(|items| items.iter().any(|item| item.id == id))
+                                || stickers
+                                    .is_some_and(|items| items.iter().any(|item| item.id == id))
                         };
                         let row_is_anchor = view.anchor.is_some_and(row_contains);
                         let before = ui.cursor().top();
@@ -3506,7 +3547,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             day_separator_top = before + 8.0;
                         }
                         let here = notices_above(&notices[placed..], message.timestamp);
-                        let known = rows.get(&message.id).copied();
+                        // A continuation can become its own row when older
+                        // history changes a sticker pair's boundary. Its zero
+                        // height is a marker, not a usable measurement.
+                        let known = rows
+                            .get(&message.id)
+                            .copied()
+                            .filter(|row| row.height > 0.0);
                         let height = known.map_or_else(
                             || estimated_height(message, layout_width, new_day, here),
                             |row| row.height,
@@ -3654,11 +3701,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                 // Messages curls its tail under a run's last bubble.
                                 // The sender's picture: beside the first message of a
                                 // run in WhatsApp's style, beside the last in Messages.
+                                let avatar_index =
+                                    index + stickers.map_or(0, |members| members.len() - 1);
                                 let show_avatar = if palette.bubbles == theme::BubbleStyle::Messages
                                 {
                                     shows_sender_pictures(chat)
                                         && !message.from_me
-                                        && last_of_run(&conversation.messages, index)
+                                        && last_of_run(&conversation.messages, avatar_index)
                                 } else {
                                     show_sender
                                 };
@@ -3696,6 +3745,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                                     show_sender,
                                                     show_avatar,
                                                     tailed,
+                                                    reserve_avatar: true,
+                                                    paired_sticker: false,
                                                 },
                                                 &mut actions,
                                             )
@@ -3703,6 +3754,20 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                         .inner
                                     })
                                     .inner
+                                } else if let Some(stickers) = stickers {
+                                    sticker_row(
+                                        ui,
+                                        &view,
+                                        stickers,
+                                        RunPlace {
+                                            show_sender,
+                                            show_avatar,
+                                            tailed,
+                                            reserve_avatar: true,
+                                            paired_sticker: true,
+                                        },
+                                        &mut actions,
+                                    )
                                 } else {
                                     bubble(
                                         ui,
@@ -3713,6 +3778,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             show_sender,
                                             show_avatar,
                                             tailed,
+                                            reserve_avatar: true,
+                                            paired_sticker: false,
                                         },
                                         &mut actions,
                                     )
@@ -3966,15 +4033,27 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             let text = text.map_or_else(String::new, |text| {
                                 markup::plain(text, &mentions_of(&view, message))
                             });
-                            // An album row reads as its bubble draws it: the
-                            // items, every member's quote and reactions, and the
-                            // footer of its last member.
-                            let members = album.unwrap_or(std::slice::from_ref(message));
+                            // A grouped row reads as its bubbles draw it, with
+                            // the footer and status of its last member.
+                            let members =
+                                album.or(stickers).unwrap_or(std::slice::from_ref(message));
                             let last = members.last().unwrap_or(message);
                             // A call reads the title its bubble draws, which
                             // depends on who placed it.
                             let body = if let Some(members) = album {
                                 album_label(&view, members)
+                            } else if let Some(members) = stickers {
+                                members
+                                    .iter()
+                                    .map(|member| {
+                                        crate::a11y::content_description(
+                                            view.locale,
+                                            &member.content,
+                                            "",
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             } else {
                                 match super::calls::Entry::of(message) {
                                     Some(entry) => {
@@ -4825,6 +4904,8 @@ struct RunPlace {
     show_sender: bool,
     show_avatar: bool,
     tailed: bool,
+    reserve_avatar: bool,
+    paired_sticker: bool,
 }
 
 /// The message the unread divider sits before: the `count`-th incoming row
@@ -4876,6 +4957,8 @@ fn bubble(
         show_sender,
         show_avatar,
         tailed,
+        reserve_avatar,
+        paired_sticker,
     } = place;
     let own = message.from_me;
     // Greys that read on the panel can vanish on the bubble; use its own.
@@ -4883,9 +4966,11 @@ fn bubble(
         palette: view.palette.on_bubble(own),
         ..*view
     };
-    let with_avatar = !own && shows_sender_pictures(view.chat);
+    let with_avatar = reserve_avatar && !own && shows_sender_pictures(view.chat);
     let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
-    let share = if carousel {
+    let share = if paired_sticker {
+        1.0
+    } else if carousel {
         0.95
     } else if view.palette.bubbles == theme::BubbleStyle::Messages {
         MESSAGES_WIDTH_SHARE
@@ -4921,7 +5006,11 @@ fn bubble(
     }
     let mut response = None;
     ui.with_layout(
-        Layout::top_down(if own { Align::Max } else { Align::Min }),
+        Layout::top_down(if own && !paired_sticker {
+            Align::Max
+        } else {
+            Align::Min
+        }),
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
@@ -5009,6 +5098,80 @@ fn bubble(
             }
         },
     );
+    response
+}
+
+fn sticker_row(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    messages: &[Message],
+    place: RunPlace,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let first = messages.first()?;
+    let own = first.from_me;
+    let reserve_avatar = place.reserve_avatar && !own && shows_sender_pictures(view.chat);
+    let avatar_space = if reserve_avatar {
+        SENDER_AVATAR + 8.0
+    } else {
+        0.0
+    };
+    let gap = ui.spacing().item_spacing.x;
+    let inset = if view.palette.bubbles == theme::BubbleStyle::Messages {
+        MESSAGES_BUBBLE_MARGIN.sum().x
+    } else {
+        20.0
+    };
+    let cell_width =
+        ((ui.available_width() - gap - avatar_space).max(0.0) / 2.0).min(STICKER_SIDE + inset);
+    let first_width = cell_width + avatar_space;
+    let second_width = cell_width;
+    let row_width = first_width + second_width + gap;
+    let mut response: Option<egui::Response> = None;
+
+    ui.with_layout(
+        Layout::top_down(if own { Align::Max } else { Align::Min }),
+        |ui| {
+            ui.allocate_ui_with_layout(
+                vec2(row_width, 0.0),
+                Layout::left_to_right(Align::Min),
+                |ui| {
+                    ui.set_width(row_width);
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for (index, message) in messages.iter().enumerate() {
+                        let width = if index == 0 {
+                            first_width
+                        } else {
+                            second_width
+                        };
+                        let member_place = RunPlace {
+                            show_sender: index == 0 && place.show_sender,
+                            show_avatar: index == 0 && place.show_avatar,
+                            tailed: index == 0 && place.tailed,
+                            reserve_avatar: index == 0 && reserve_avatar,
+                            paired_sticker: true,
+                        };
+                        let drawn = ui.allocate_ui_with_layout(
+                            vec2(width, 0.0),
+                            Layout::top_down(Align::Min),
+                            |ui| {
+                                ui.set_width(width);
+                                bubble(ui, view, message, None, member_place, actions)
+                            },
+                        );
+                        if let Some(member_response) = drawn.inner {
+                            if let Some(row_response) = &mut response {
+                                row_response.rect = row_response.rect.union(member_response.rect);
+                            } else {
+                                response = Some(member_response);
+                            }
+                        }
+                    }
+                },
+            );
+        },
+    );
+
     response
 }
 
@@ -10100,13 +10263,13 @@ fn fit_picture(width: f32, height: f32, max_width: f32, max_height: f32) -> Vec2
 }
 
 /// Fits a sticker to the standard square size.
-fn fit_sticker(width: f32, height: f32) -> Vec2 {
+fn fit_sticker(width: f32, height: f32, max_side: f32) -> Vec2 {
     let (width, height) = if width > 0.0 && height > 0.0 {
         (width, height)
     } else {
         (1.0, 1.0)
     };
-    let scale = (STICKER_SIDE / width).min(STICKER_SIDE / height);
+    let scale = (max_side / width).min(max_side / height);
     vec2(width * scale, height * scale)
 }
 
@@ -10139,8 +10302,9 @@ fn picture(
 ) -> Rect {
     let palette = view.palette;
     let radius = picture_radius(&palette, message);
+    let sticker_side = width.clamp(1.0, STICKER_SIDE);
     let (max_width, max_height) = match sticker {
-        Some(_) => (STICKER_SIDE, STICKER_SIDE),
+        Some(_) => (sticker_side, sticker_side),
         None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
     };
     if let Some(path) = &media.path {
@@ -10151,6 +10315,7 @@ fn picture(
             let size = fit_sticker(
                 media.width.unwrap_or(180) as f32,
                 media.height.unwrap_or(180) as f32,
+                max_width,
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let mut unreadable = false;
@@ -10193,7 +10358,7 @@ fn picture(
         // them on every frame, shaking the whole chat (#179).
         let fit = |pixels: Vec2| {
             if sticker.is_some() {
-                fit_sticker(pixels.x, pixels.y)
+                fit_sticker(pixels.x, pixels.y, max_width.min(max_height))
             } else {
                 fit_picture(pixels.x, pixels.y, max_width, max_height)
             }
@@ -10263,7 +10428,11 @@ fn picture(
                 let size = drawn.map_or_else(
                     || {
                         if sticker.is_some() {
-                            Vec2::splat(STICKER_SIDE)
+                            fit_sticker(
+                                media.width.unwrap_or(180) as f32,
+                                media.height.unwrap_or(180) as f32,
+                                max_width,
+                            )
                         } else {
                             frame_size(media, None, max_width, max_height)
                         }
@@ -12248,6 +12417,81 @@ mod tests {
         assert!(album_run(&senders, 0).is_none());
     }
 
+    #[test]
+    fn plain_stickers_are_grouped_two_at_a_time_and_expand_during_selection() {
+        let messages: Vec<_> = ["one", "two", "three", "four", "five"]
+            .iter()
+            .map(|id| sticker_message(id))
+            .collect();
+
+        assert_eq!(
+            sticker_pair_starts(&messages),
+            [Some(0), Some(0), Some(2), Some(2), None]
+        );
+        assert_eq!(row_starts(&messages, false), [0, 2, 4]);
+        assert_eq!(row_starts(&messages, true), [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_replied_sticker_stays_alone_and_breaks_the_pair() {
+        let mut reply = sticker_message("reply");
+        reply.quoted = Some(crate::model::Quoted {
+            chat: None,
+            id: "quoted-message".into(),
+            sender: "alice".into(),
+            sender_name: None,
+            summary: "A message".into(),
+            labelled: Some(false),
+            mentions: Vec::new(),
+        });
+        let messages = vec![
+            sticker_message("before"),
+            reply,
+            sticker_message("after-one"),
+            sticker_message("after-two"),
+            sticker_message("after-three"),
+        ];
+
+        assert_eq!(
+            sticker_pair_starts(&messages),
+            [None, None, Some(2), Some(2), None]
+        );
+        assert_eq!(row_starts(&messages, false), [0, 1, 2, 4]);
+    }
+
+    #[test]
+    fn sticker_pairs_stop_at_sender_side_day_and_message_boundaries() {
+        let mut different_sender = sticker_message("different-sender");
+        different_sender.sender = "bob".into();
+        assert_eq!(
+            sticker_pair_starts(&[sticker_message("one"), different_sender]),
+            [None, None]
+        );
+
+        let mut different_side = sticker_message("different-side");
+        different_side.from_me = false;
+        different_side.sender = "alice".into();
+        assert_eq!(
+            sticker_pair_starts(&[sticker_message("one"), different_side]),
+            [None, None]
+        );
+
+        let mut next_day = sticker_message("next-day");
+        next_day.timestamp = 86_400;
+        assert_eq!(
+            sticker_pair_starts(&[sticker_message("one"), next_day]),
+            [None, None]
+        );
+
+        let messages = vec![
+            sticker_message("one"),
+            message(Content::text("between")),
+            sticker_message("two"),
+        ];
+        assert_eq!(sticker_pair_starts(&messages), [None, None, None]);
+        assert_eq!(row_starts(&messages, false), [0, 1, 2]);
+    }
+
     fn message(content: Content) -> Message {
         Message {
             id: "m1".into(),
@@ -12268,6 +12512,17 @@ mod tests {
             thumbnail: None,
             history_order: None,
         }
+    }
+
+    fn sticker_message(id: &str) -> Message {
+        let mut attachment = media(Some(180), Some(180));
+        attachment.mime = "image/webp".into();
+        let mut message = message(Content::Sticker {
+            media: attachment,
+            animated: false,
+        });
+        message.id = id.into();
+        message
     }
 
     /// The unread divider skips the rows the unread count leaves out, so the
@@ -12349,6 +12604,8 @@ mod tests {
                             show_sender: false,
                             show_avatar: false,
                             tailed: false,
+                            reserve_avatar: true,
+                            paired_sticker: false,
                         },
                         &mut actions,
                     )
@@ -12362,6 +12619,56 @@ mod tests {
             assert!(!crate::app::can_select(&notice.content));
             assert!(actions.is_empty());
             assert!(view.copy_rows.unwrap().lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn paired_stickers_keep_independent_bubble_targets() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|view| {
+            let mut first = sticker_message("sticker-one");
+            first.chat = view.chat.id.clone();
+            let mut second = sticker_message("sticker-two");
+            second.chat = view.chat.id.clone();
+            let messages = [first, second];
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(700.0, 400.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = sticker_row(
+                        ui,
+                        view,
+                        &messages,
+                        RunPlace {
+                            show_sender: false,
+                            show_avatar: false,
+                            tailed: false,
+                            reserve_avatar: true,
+                            paired_sticker: true,
+                        },
+                        &mut actions,
+                    )
+                    .expect("the sticker pair has a row response");
+                    assert!(response.rect.is_positive());
+                },
+            );
+            output.textures_delta.clear();
+
+            let first = ctx
+                .data(|data| {
+                    data.get_temp::<Rect>(bubble_id(&view.chat.id, "sticker-one").with("rect"))
+                })
+                .expect("the first sticker keeps its own bubble target");
+            let second = ctx
+                .data(|data| {
+                    data.get_temp::<Rect>(bubble_id(&view.chat.id, "sticker-two").with("rect"))
+                })
+                .expect("the second sticker keeps its own bubble target");
+            assert!(first.right() < second.left());
         });
     }
 

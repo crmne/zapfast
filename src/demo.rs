@@ -2623,6 +2623,21 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings_search = choice["settings-search=".len()..].to_owned();
             }
             "wallpaper" => app.page = Page::Wallpaper,
+            // Temporary screenshot states for PR #1016, restored after capture.
+            "pr1016-opacity-35" => app.settings.doodle_opacity = 35,
+            "pr1016-emoji-medium-dark" => {
+                app.settings.emoji_skin_tone = crate::settings::EmojiSkinTone::MediumDark;
+            }
+            "pr1016-ptpt" => {
+                let locale = crate::i18n::Locale::PortuguesePortugal;
+                app.settings.interface_language = Some(locale);
+                app.locale = locale;
+            }
+            "pr1016-ptbr" => {
+                let locale = crate::i18n::Locale::PortugueseBrazil;
+                app.settings.interface_language = Some(locale);
+                app.locale = locale;
+            }
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes.
             "call" => call_sample(app, true, false),

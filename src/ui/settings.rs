@@ -726,7 +726,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Fetch older history"),
         translated(
             locale,
-            "Background history requests wake your phone and may trigger WhatsApp sync alerts. Turn off to stop automatic history requests.",
+            "Fetches older messages in the background for the open, pinned and ten most recent chats. Each request wakes your phone and may trigger WhatsApp sync alerts. Turn off to stop this background prefetch.",
         ),
         |settings| &mut settings.history_prefetch,
     );
