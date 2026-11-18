@@ -658,6 +658,9 @@ pub fn call_duration(seconds: u64) -> String {
 
 /// Formats a phone number with a plus sign and country-appropriate grouping.
 pub fn phone(digits: &str) -> String {
+    const E164_MAX_DIGITS: usize = 15;
+    // Starts over when full: a number seen again is parsed once more.
+    const CACHED_NUMBERS: usize = 4096;
     static FORMATTED: std::sync::LazyLock<
         std::sync::Mutex<std::collections::HashMap<String, String>>,
     > = std::sync::LazyLock::new(Default::default);
@@ -665,15 +668,23 @@ pub fn phone(digits: &str) -> String {
     if digits.is_empty() {
         return String::new();
     }
-    let mut formatted = FORMATTED
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    formatted
-        .entry(digits)
-        .or_insert_with_key(|digits| {
-            international_format(digits).unwrap_or_else(|| grouped(digits))
-        })
-        .clone()
+    if digits.len() > E164_MAX_DIGITS {
+        return grouped(&digits);
+    }
+    let cache = || {
+        FORMATTED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    if let Some(known) = cache().get(&digits) {
+        return known.clone();
+    }
+    let formatted = international_format(&digits).unwrap_or_else(|| grouped(&digits));
+    let mut cache = cache();
+    if cache.len() >= CACHED_NUMBERS {
+        cache.clear();
+    }
+    cache.entry(digits).or_insert(formatted).clone()
 }
 
 fn international_format(digits: &str) -> Option<String> {
@@ -1212,6 +1223,7 @@ mod tests {
         assert_eq!(phone("97150123456"), "+971 501 234 56");
         assert_eq!(phone("3361234567"), "+33 612 345 67");
         assert_eq!(phone("4179123456"), "+41 791 234 56");
+        assert_eq!(phone("1234567890123456"), "+1 234 567 890 123 456");
         assert_eq!(phone("41791234567"), "+41 79 123 45 67");
         assert_eq!(phone(""), "");
     }
