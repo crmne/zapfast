@@ -2077,6 +2077,31 @@ impl Worker {
             .find(Message::known_to_phone))
     }
 
+    /// The range a read or unread mark carries: the newest message the phone
+    /// has at or before `through`, named by its key. The phone leaves the chat
+    /// as it was when the range names no message, as it does for archiving
+    /// (`archive_range`), so a read made here never reached it.
+    fn read_range(
+        &self,
+        chat: &str,
+        jid: &Jid,
+        through: i64,
+    ) -> whatsapp_rust::SyncActionMessageRange {
+        let newest = self
+            .archive
+            .messages(chat, None, PHONE_RANGE_LOOKBACK)
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .find(|message| message.known_to_phone() && message.timestamp <= through);
+        let mut range = match newest {
+            Some(newest) => archive_range(jid, Some(&newest)),
+            None => whatsapp_rust::message_range(through, None, Vec::new()),
+        };
+        range.last_message_timestamp = Some(through);
+        range
+    }
+
     /// Stars or unstars one message for every linked device.
     fn next_star_generation(&mut self, chat: &str, id: &str) -> u64 {
         let slot = self
@@ -10139,13 +10164,13 @@ impl Worker {
             if !self.read_sync.start(&chat, through, Instant::now()) {
                 break;
             }
+            // This update is private to our devices, even with blue ticks
+            // disabled. Keep the original position when retrying offline
+            // reads, not the latest message received since the local read.
+            let range = self.read_range(&chat, &jid, through);
             let client = client.clone();
             let commands = self.commands.clone();
             tokio::spawn(async move {
-                // This update is private to our devices, even with blue ticks
-                // disabled. Keep the original position when retrying offline
-                // reads, not the latest message received since the local read.
-                let range = whatsapp_rust::message_range(through, None, Vec::new());
                 let result = client
                     .chat_actions()
                     .mark_chat_as_read(&jid, true, Some(range))
@@ -10175,10 +10200,10 @@ impl Worker {
             {
                 break;
             }
+            let range = self.read_range(&chat, &jid, through);
             let client = client.clone();
             let commands = self.commands.clone();
             tokio::spawn(async move {
-                let range = whatsapp_rust::message_range(through, None, Vec::new());
                 let result = client
                     .chat_actions()
                     .mark_chat_as_read(&jid, false, Some(range))
@@ -23208,6 +23233,33 @@ mod receipt_tests {
             .set_archived_at(&id, false, time.timestamp_millis() + 1)
             .unwrap();
         assert!(!worker.archive.chat(PEER).unwrap().unwrap().archived);
+    }
+
+    /// A read sent to the phone names the newest message it covers, never a
+    /// later one or a send the phone never got; with none it keeps the time.
+    #[test]
+    fn read_range_names_the_newest_message_read() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let jid: Jid = PEER.parse().unwrap();
+        worker.store_message(incoming("read", 100), None, None);
+        worker.store_message(
+            Message {
+                status: Delivery::Failed,
+                ..own_message("failed", 150)
+            },
+            None,
+            None,
+        );
+        worker.store_message(incoming("later", 200), None, None);
+        let range = worker.read_range(PEER, &jid, 160);
+        assert_eq!(range.last_message_timestamp, Some(160));
+        assert_eq!(range.messages.len(), 1);
+        assert_eq!(range.messages[0].key.id.as_deref(), Some("read"));
+        assert_eq!(range.messages[0].timestamp, Some(100));
+
+        let empty = worker.read_range("9@s.whatsapp.net", &jid, 50);
+        assert_eq!(empty.last_message_timestamp, Some(50));
+        assert!(empty.messages.is_empty());
     }
 
     #[test]
