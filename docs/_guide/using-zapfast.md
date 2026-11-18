@@ -787,6 +787,12 @@ on the left above **Settings**, opens the archived chats in the list, and
 shows how many of them are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
+When connected, ZapFast checks the channels you follow and retrieves their
+recent posts from WhatsApp. It refreshes this information about every ten
+minutes. Channels missing from the initial chat history appear when the server
+returns the subscription list. Posts retrieved this way are added to the
+archive without generating unread counts or notifications. Older posts remain
+subject to the history WhatsApp makes available.
 ZapFast remembers the chip or label each account last showed and comes back
 to it at the next start.
 As on the phone, the list leaves out people you have never exchanged a

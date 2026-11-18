@@ -18,6 +18,8 @@ pub enum Locale {
     English,
     #[serde(rename = "pt-BR")]
     PortugueseBrazil,
+    #[serde(rename = "pt-PT")]
+    PortuguesePortugal,
     #[serde(rename = "de")]
     German,
     #[serde(rename = "es")]
@@ -42,8 +44,9 @@ pub enum Locale {
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
+        Self::PortuguesePortugal,
         Self::PortugueseBrazil,
         Self::German,
         Self::Spanish,
@@ -62,6 +65,7 @@ impl Locale {
         match self {
             Self::English => "English",
             Self::PortugueseBrazil => "Português (Brasil)",
+            Self::PortuguesePortugal => "Português (Portugal)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
             Self::Italian => "Italiano",
@@ -75,10 +79,9 @@ impl Locale {
         }
     }
 
-    /// Maps a system language tag (BCP 47 or POSIX) to a supported locale by
-    /// its language subtag, so `pt-PT` and `pt_BR` both resolve to Portuguese.
-    /// Chinese is the exception: its script decides, so a reader who asked for
-    /// Traditional does not get Simplified characters and the other way round.
+    /// Maps a system language tag (BCP 47 or POSIX) to a supported locale.
+    /// Portuguese uses the region where provided, as does Chinese with its
+    /// script and region.
     pub fn from_system(identifier: &str) -> Option<Locale> {
         fastframe_i18n::LanguageTag::parse(identifier).and_then(|tag| Self::from_tag(&tag))
     }
@@ -89,7 +92,11 @@ impl Locale {
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
-            "pt" => Self::PortugueseBrazil,
+            "pt" => match tag.region.as_deref() {
+                // Preserve the old choice for regionless Portuguese systems.
+                Some("br") | None => Self::PortugueseBrazil,
+                _ => Self::PortuguesePortugal,
+            },
             "de" => Self::German,
             "es" => Self::Spanish,
             "it" => Self::Italian,
@@ -121,6 +128,7 @@ impl fastframe_i18n::Locale for Locale {
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
             Self::PortugueseBrazil => Some(&pt_br::Translator),
+            Self::PortuguesePortugal => Some(&pt_pt::Translator),
             Self::German => Some(&de::Translator),
             Self::Spanish => Some(&es::Translator),
             Self::French => Some(&fr::Translator),
@@ -199,7 +207,15 @@ mod tests {
     #[test]
     fn system_locales_map_to_the_right_catalog() {
         assert_eq!(Locale::from_system("pt-BR"), Some(Locale::PortugueseBrazil));
-        assert_eq!(Locale::from_system("pt_PT"), Some(Locale::PortugueseBrazil));
+        assert_eq!(
+            Locale::from_system("pt_PT"),
+            Some(Locale::PortuguesePortugal)
+        );
+        assert_eq!(
+            Locale::from_system("pt-PT"),
+            Some(Locale::PortuguesePortugal)
+        );
+        assert_eq!(Locale::from_system("pt"), Some(Locale::PortugueseBrazil));
         assert_eq!(Locale::from_system("de-DE"), Some(Locale::German));
         assert_eq!(Locale::from_system("es"), Some(Locale::Spanish));
         assert_eq!(Locale::from_system("it-IT"), Some(Locale::Italian));
@@ -297,6 +313,7 @@ mod tests {
     #[test]
     fn unknown_keys_fall_back_to_the_english_source() {
         assert_eq!(gettext(Locale::PortugueseBrazil, "Chats"), "Conversas");
+        assert_eq!(gettext(Locale::PortuguesePortugal, "Chats"), "Conversas");
         assert_eq!(gettext(Locale::English, "Chats"), "Chats");
         let missing = "A string nobody has translated";
         assert_eq!(gettext(Locale::PortugueseBrazil, missing), missing);

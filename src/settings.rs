@@ -76,6 +76,95 @@ impl FontChoice {
     }
 }
 
+/// Preferred skin tone for emoji selected from the picker and suggestions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmojiSkinTone {
+    #[default]
+    Default,
+    Light,
+    MediumLight,
+    Medium,
+    MediumDark,
+    Dark,
+}
+
+impl EmojiSkinTone {
+    pub const ALL: [Self; 6] = [
+        Self::Default,
+        Self::Light,
+        Self::MediumLight,
+        Self::Medium,
+        Self::MediumDark,
+        Self::Dark,
+    ];
+
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        let name = match self {
+            Self::Default => "Default",
+            Self::Light => "Light",
+            Self::MediumLight => "Medium-light",
+            Self::Medium => "Medium",
+            Self::MediumDark => "Medium-dark",
+            Self::Dark => "Dark",
+        };
+        crate::i18n::gettext(locale, name)
+    }
+
+    /// Keep explicitly chosen variants intact, including emoji saved in Recents.
+    pub fn apply(self, value: &str) -> String {
+        let Some(emoji) = emojis::get(value) else {
+            return value.to_owned();
+        };
+        if self == Self::Default || emoji.skin_tone() != Some(emojis::SkinTone::Default) {
+            return value.to_owned();
+        }
+        let tone = match self {
+            Self::Default => emojis::SkinTone::Default,
+            Self::Light => emojis::SkinTone::Light,
+            Self::MediumLight => emojis::SkinTone::MediumLight,
+            Self::Medium => emojis::SkinTone::Medium,
+            Self::MediumDark => emojis::SkinTone::MediumDark,
+            Self::Dark => emojis::SkinTone::Dark,
+        };
+        emoji
+            .with_skin_tone(tone)
+            .unwrap_or(emoji)
+            .as_str()
+            .to_owned()
+    }
+}
+
+#[cfg(test)]
+mod emoji_skin_tone_tests {
+    use super::*;
+
+    #[test]
+    fn saved_preference_is_backwards_compatible_and_survives_round_trip() {
+        let old: Settings = serde_json::from_str(r#"{"enter_sends":false}"#).unwrap();
+        assert_eq!(old.emoji_skin_tone, EmojiSkinTone::Default);
+        let new = Settings {
+            emoji_skin_tone: EmojiSkinTone::MediumDark,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_string(&new).unwrap();
+        assert!(saved.contains(r#""emoji_skin_tone":"medium_dark""#));
+        assert_eq!(serde_json::from_str::<Settings>(&saved).unwrap(), new);
+    }
+
+    #[test]
+    fn tone_changes_supported_emoji_only_and_keeps_existing_variants() {
+        assert_eq!(EmojiSkinTone::MediumDark.apply("👍"), "👍🏾");
+        assert_eq!(EmojiSkinTone::MediumDark.apply("👍🏻"), "👍🏻");
+        assert_eq!(EmojiSkinTone::MediumDark.apply("😀"), "😀");
+        assert_eq!(
+            EmojiSkinTone::MediumDark.apply("not an emoji"),
+            "not an emoji"
+        );
+        assert_eq!(EmojiSkinTone::Default.apply("👍"), "👍");
+    }
+}
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,6 +563,8 @@ pub struct Settings {
     pub show_shortcut_hints: bool,
     /// Recently used emoji, newest first.
     pub recent_emoji: Vec<String>,
+    /// Preferred skin tone for emoji without an explicitly chosen variant.
+    pub emoji_skin_tone: EmojiSkinTone,
     /// Emoji reaction usage on this device, most-used first (recent breaks ties).
     pub reaction_emoji: Vec<(String, u32)>,
     /// User GIPHY API key. Empty uses the optional built-in key.
@@ -580,6 +671,7 @@ impl Default for Settings {
             last_chat: None,
             show_shortcut_hints: true,
             recent_emoji: Vec::new(),
+            emoji_skin_tone: EmojiSkinTone::Default,
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,

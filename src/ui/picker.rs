@@ -693,6 +693,7 @@ fn emoji_grid(
             .unwrap_or(&app.settings.recent_emoji)
     };
     let rows = rows_for(&app.picker_search, recent, columns, recent_label);
+    let skin_tone = app.settings.emoji_skin_tone;
     let emoji_count = rows
         .iter()
         .map(|row| match row {
@@ -709,7 +710,8 @@ fn emoji_grid(
     }
     let row_height = CELL;
     let mut picked = (submit && emoji_count > 0).then(|| {
-        rows.iter()
+        let emoji = rows
+            .iter()
             .filter_map(|row| match row {
                 Row::Header(_) => None,
                 Row::Emoji { values, .. } => Some(values.as_slice()),
@@ -717,8 +719,8 @@ fn emoji_grid(
             .flatten()
             .nth(app.emoji_selected)
             .copied()
-            .expect("emoji selection is in range")
-            .to_owned()
+            .expect("emoji selection is in range");
+        skin_tone.apply(emoji)
     });
     // `show_rows` must use the same zero spacing as the grid.
     ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -792,6 +794,7 @@ fn emoji_grid(
                             let selected = *first + offset == app.emoji_selected;
                             let (rect, response) =
                                 ui.allocate_exact_size(vec2(cell, row_height), Sense::click());
+                            let shown = skin_tone.apply(emoji);
                             if ui.is_rect_visible(rect) {
                                 if selected {
                                     ui.painter().rect_filled(
@@ -814,7 +817,7 @@ fn emoji_grid(
                                 }
                                 let line = widgets::line(
                                     ui,
-                                    emoji,
+                                    &shown,
                                     theme::regular(24.0),
                                     palette.text,
                                     cell,
@@ -827,7 +830,7 @@ fn emoji_grid(
                                 .clicked()
                             {
                                 app.emoji_selected = *first + offset;
-                                picked = Some((*emoji).to_owned());
+                                picked = Some(shown);
                             }
                         }
                     });

@@ -4255,6 +4255,15 @@ impl App {
                     self.order_selection(&chat);
                 }
             }
+            Event::ChannelPostsUpdated(chat) => {
+                if self
+                    .conversations
+                    .get(&chat)
+                    .is_some_and(|conversation| conversation.requested)
+                {
+                    self.backend.send(Command::LoadChat { chat, before: None });
+                }
+            }
             Event::Contacts(contacts) => {
                 if live {
                     self.info_members = None;
@@ -9634,6 +9643,10 @@ impl App {
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
+                self.mark_settings_dirty();
+            }
+            Action::SetEmojiSkinTone(choice) => {
+                self.settings.emoji_skin_tone = choice;
                 self.mark_settings_dirty();
             }
             Action::SetCustomTheme(filename) => {

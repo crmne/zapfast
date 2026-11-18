@@ -1151,6 +1151,12 @@ pub enum Command {
         generation: u64,
         names: Vec<(String, String)>,
     },
+    /// Internal: recent posts fetched directly from a followed channel.
+    ChannelPosts {
+        generation: u64,
+        chat: ChatId,
+        posts: Vec<whatsapp_rust::NewsletterMessage>,
+    },
     /// Internal: the pictures of followed channels, or `None` when the list
     /// could not be read.
     ChannelPictures(Option<Vec<(ChatId, ChannelPicture)>>),
@@ -1305,6 +1311,8 @@ pub enum Event {
         error: String,
     },
     MessageUpdated(Box<Message>),
+    /// Channel history changed; reload a transcript if it is already cached.
+    ChannelPostsUpdated(ChatId),
     ChatExportProgress {
         request: u64,
         counts: crate::archive::chat_export::Counts,

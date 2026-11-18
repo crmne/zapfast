@@ -27,7 +27,7 @@ use whatsapp_rust::prelude::{
 };
 use whatsapp_rust::send::{PinDuration, RevokeType};
 use whatsapp_rust::types::events as wa_events;
-use whatsapp_rust::types::message::{EncMediaType, MessageInfo, MessageSource};
+use whatsapp_rust::types::message::{EditAttribute, EncMediaType, MessageInfo, MessageSource};
 use whatsapp_rust::types::presence::{ChatActivity, PresenceStatus, ReceiptType};
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::download::{DownloadWriter, Downloadable};
@@ -80,6 +80,16 @@ use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
+/// Refresh subscribed channels while the client stays connected.
+const CHANNEL_REFRESH: Duration = Duration::from_secs(10 * 60);
+/// Avoid sending a burst of channel history requests to WhatsApp.
+const CHANNEL_REQUEST_PACE: Duration = Duration::from_millis(300);
+/// A slow channel must not stall updates for every other subscription.
+const CHANNEL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Newest posts per subscribed channel, including posts missed while offline.
+const CHANNEL_RECENT_POSTS: u32 = 25;
+/// Cap history pagination across channels, including long-offline accounts.
+const CHANNEL_HISTORY_PAGES: usize = 4;
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
 /// Phone history-request timeout.
@@ -1039,6 +1049,8 @@ pub async fn run(
         presence_refresh_pending: false,
         presence_generation: 0,
         channel_list_generation: 0,
+        channel_refresh_due: Instant::now(),
+        channel_refresh_task: None,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
         pending_avatars: HashMap::new(),
@@ -1225,6 +1237,7 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.pump_channels();
                 worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
@@ -1596,6 +1609,10 @@ struct Worker {
     /// Bumped by each connection's followed-channel query, so the answer of
     /// an earlier one cannot rename or drop channels after a newer one.
     channel_list_generation: u64,
+    /// Next regular refresh of channel subscriptions and recent posts.
+    channel_refresh_due: Instant,
+    /// Aborted when the link drops so an old session stops fetching posts.
+    channel_refresh_task: Option<tokio::task::JoinHandle<()>>,
     /// Pending phone-history requests by chat.
     pending_older: HashMap<ChatId, OlderRequest>,
     /// Chats already told that the phone did not answer; cleared when the
@@ -2406,6 +2423,10 @@ impl Worker {
             // nothing new to tell the window.
             let mut blocks_changed = false;
             if !status.is_connected() {
+                if let Some(task) = self.channel_refresh_task.take() {
+                    task.abort();
+                }
+                self.channel_list_generation = self.channel_list_generation.wrapping_add(1);
                 blocks_changed = self.blocklist.loading || self.blocklist.pending;
                 self.blocklist.invalidate();
                 if matches!(status, LinkStatus::LoggedOut) {
@@ -3740,6 +3761,235 @@ impl Worker {
         self.refresh_chat_name(id);
     }
 
+    /// Subscriptions are read from WhatsApp's server, and their newest posts
+    /// come from the newsletter history API. Neither requires waking the phone
+    /// with an on-demand companion-device history request.
+    fn refresh_channels(&mut self) {
+        if !self.status.is_connected() {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        if let Some(task) = self.channel_refresh_task.take() {
+            task.abort();
+        }
+        self.channel_refresh_due = Instant::now() + CHANNEL_REFRESH;
+        self.channel_list_generation = self.channel_list_generation.wrapping_add(1);
+        let generation = self.channel_list_generation;
+        let commands = self.commands.clone();
+        let last_activities: HashMap<_, _> = self
+            .archive
+            .chats()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|chat| chat.is_channel())
+            .map(|chat| (chat.id, chat.last_activity))
+            .collect();
+        self.channel_refresh_task = Some(tokio::spawn(async move {
+            let list = match tokio::time::timeout(
+                CHANNEL_REQUEST_TIMEOUT,
+                client.newsletter().list_subscribed(),
+            )
+            .await
+            {
+                Ok(Ok(list)) => list,
+                Ok(Err(error)) => {
+                    log::debug!("followed channels not listed: {error}");
+                    let _ = commands.send(Command::ChannelPictures(None));
+                    return;
+                }
+                Err(_) => {
+                    log::debug!("followed-channel list timed out");
+                    let _ = commands.send(Command::ChannelPictures(None));
+                    return;
+                }
+            };
+            let pictures = list
+                .iter()
+                .map(|channel| (channel.jid.to_string(), super::ChannelPicture::of(channel)))
+                .collect();
+            let names = list
+                .iter()
+                .map(|channel| (channel.jid.to_string(), channel.name.clone()))
+                .collect();
+            let mutes = list
+                .iter()
+                .filter_map(|channel| Some((channel.jid.to_string(), channel.muted?)))
+                .collect();
+            let _ = commands.send(Command::ChannelNames { generation, names });
+            let _ = commands.send(Command::ChannelMutes(mutes));
+            let _ = commands.send(Command::ChannelPictures(Some(pictures)));
+
+            for channel in list {
+                let chat = channel.jid.to_string();
+                let last_activity = last_activities.get(&chat).copied().unwrap_or(0);
+                let max_pages = if last_activity == 0 {
+                    2
+                } else {
+                    CHANNEL_HISTORY_PAGES
+                };
+                let mut before = None;
+                for _ in 0..max_pages {
+                    let posts = match tokio::time::timeout(
+                        CHANNEL_REQUEST_TIMEOUT,
+                        client.newsletter().get_messages(
+                            channel.jid.clone(),
+                            CHANNEL_RECENT_POSTS,
+                            before,
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(Ok(posts)) if !posts.is_empty() => posts,
+                        Ok(Ok(_)) => break,
+                        Ok(Err(error)) => {
+                            log::debug!("channel posts not fetched: {error}");
+                            break;
+                        }
+                        Err(_) => {
+                            log::debug!("channel posts request timed out: {chat}");
+                            break;
+                        }
+                    };
+                    let overlap = last_activity > 0
+                        && posts
+                            .iter()
+                            .filter(|post| {
+                                post.original_timestamp.unwrap_or(post.timestamp)
+                                    <= last_activity as u64
+                            })
+                            .take(2)
+                            .count()
+                            == 2;
+                    let next = posts
+                        .iter()
+                        .map(|post| post.server_id)
+                        .filter(|id| *id > 0)
+                        .min();
+                    let full = posts.len() >= CHANNEL_RECENT_POSTS as usize;
+                    if commands
+                        .send(Command::ChannelPosts {
+                            generation,
+                            chat: chat.clone(),
+                            posts,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if overlap || !full || next.is_none() || next == before {
+                        break;
+                    }
+                    before = next;
+                    tokio::time::sleep(CHANNEL_REQUEST_PACE).await;
+                }
+                tokio::time::sleep(CHANNEL_REQUEST_PACE).await;
+            }
+        }));
+    }
+
+    fn pump_channels(&mut self) {
+        if Instant::now() >= self.channel_refresh_due
+            && self
+                .channel_refresh_task
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        {
+            self.refresh_channels();
+        }
+    }
+
+    /// File channel posts as history so reconnecting does not generate new
+    /// unread counts, phone read receipts or notifications for old posts.
+    fn apply_channel_posts(&mut self, chat: &str, posts: Vec<whatsapp_rust::NewsletterMessage>) {
+        let mut messages = Vec::new();
+        let mut revoked = Vec::new();
+        let mut updated = Vec::new();
+        let mut newest = 0;
+        for post in posts {
+            let Some(id) = post.message_id.map(|id| id.to_string()) else {
+                continue;
+            };
+            if post.edit != EditAttribute::Empty {
+                updated.push(id.clone());
+            }
+            if post.edit == EditAttribute::AdminRevoke {
+                revoked.push(id);
+                continue;
+            }
+            let Some(proto) = post.message else {
+                continue;
+            };
+            let Some(content) = classify(&proto) else {
+                continue;
+            };
+            let timestamp = i64::try_from(post.original_timestamp.unwrap_or(post.timestamp))
+                .unwrap_or(i64::MAX);
+            newest = newest.max(timestamp);
+            let base = proto.get_base_message();
+            messages.push(ParsedMessage {
+                id,
+                sender: Some(chat.to_owned()),
+                from_me: post.is_sender,
+                push_name: None,
+                timestamp,
+                history_order: None,
+                edited: post.edit == EditAttribute::AdminEdit,
+                content,
+                status: Delivery::None,
+                quoted: self.quoted_of(base),
+                reactions: Vec::new(),
+                mentions: recorded_mention_ids(base),
+                forwarded: forwarded_of(base),
+                thumbnail: thumbnail_of(base),
+                raw: proto.encode_to_vec(),
+                poll_secret: None,
+                poll_votes: Vec::new(),
+                receipts: Vec::new(),
+                sealed_edit: None,
+            });
+        }
+        if messages.is_empty() && revoked.is_empty() {
+            return;
+        }
+        self.apply_history(
+            ParsedHistory {
+                chats: vec![ParsedChat {
+                    diagnostics: HistoryDiagnostics::default(),
+                    id: chat.to_owned(),
+                    name: None,
+                    unread: None,
+                    marked_unread: None,
+                    archived: None,
+                    pinned_at: None,
+                    muted_until: None,
+                    locked: None,
+                    ephemeral_expiration: None,
+                    ephemeral_setting_timestamp: None,
+                    last_activity: newest,
+                    pn_jid: None,
+                    lid_jid: None,
+                    more_on_phone: None,
+                    messages,
+                    revoked,
+                    poll_updates: Vec::new(),
+                    reactions: Vec::new(),
+                    clips: Vec::new(),
+                    pins: Vec::new(),
+                }],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            false,
+        );
+        for id in updated {
+            self.emit_message(chat, &id);
+        }
+        self.emit(Event::ChannelPostsUpdated(chat.to_owned()));
+    }
+
     /// Mutes synced for channels we no longer follow used to file them as
     /// empty conversations, which the list could only name "Unknown". Once the
     /// server has listed the followed ones, drop the others that never held a
@@ -4120,6 +4370,7 @@ impl Worker {
                 self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
+                self.refresh_channels();
                 if let Some(client) = self.client.clone() {
                     let me = self.me_pn.clone().and_then(|pn| Self::jid_of(&pn));
                     let commands = self.commands.clone();
@@ -4130,48 +4381,6 @@ impl Worker {
                     self.announce_presence(self.online_wanted);
                     spawn_pin_limit_check(client.clone(), self.events.clone(), self.waker.clone());
                     spawn_calling_gate_log(client.clone());
-                    let channels = self.commands.clone();
-                    let followed = client.clone();
-                    self.channel_list_generation = self.channel_list_generation.wrapping_add(1);
-                    let generation = self.channel_list_generation;
-                    tokio::spawn(async move {
-                        // A channel's Mute lives on the channel, not in the
-                        // chat's app state, so read it from the server.
-                        match followed.newsletter().list_subscribed().await {
-                            Ok(list) => {
-                                let pictures = list
-                                    .iter()
-                                    .map(|channel| {
-                                        (
-                                            channel.jid.to_string(),
-                                            super::ChannelPicture::of(channel),
-                                        )
-                                    })
-                                    .collect();
-                                // History sync often carries no channel name,
-                                // which leaves only the bare id to show. Every
-                                // id goes, named or not: the list is also what
-                                // tells a followed channel from a stale one.
-                                let names = list
-                                    .iter()
-                                    .map(|channel| (channel.jid.to_string(), channel.name.clone()))
-                                    .collect();
-                                let mutes = list
-                                    .into_iter()
-                                    .filter_map(|channel| {
-                                        Some((channel.jid.to_string(), channel.muted?))
-                                    })
-                                    .collect();
-                                let _ = channels.send(Command::ChannelNames { generation, names });
-                                let _ = channels.send(Command::ChannelMutes(mutes));
-                                let _ = channels.send(Command::ChannelPictures(Some(pictures)));
-                            }
-                            Err(error) => {
-                                log::debug!("followed channels not listed: {error}");
-                                let _ = channels.send(Command::ChannelPictures(None));
-                            }
-                        }
-                    });
                     tokio::spawn(async move {
                         publish_account_privacy(&client, &commands).await;
                         if let Some(me) = me {
@@ -8721,16 +8930,41 @@ impl Worker {
                 }
                 self.drop_unfollowed_empty_channels(&names);
                 for (chat, name) in names {
-                    if name.trim().is_empty() {
+                    if !chat.ends_with("@newsletter") {
                         continue;
                     }
-                    let Ok(Some(known)) = self.archive.chat(&chat) else {
-                        continue;
-                    };
-                    if name != known.name {
-                        let _ = self.archive.rename_chat(&chat, &name);
-                        self.emit_chat(&chat);
+                    match self.archive.chat(&chat) {
+                        Ok(None) => {
+                            let display = if name.trim().is_empty() {
+                                fallback_name(&chat)
+                            } else {
+                                name
+                            };
+                            if self.archive.ensure_chat(&chat, &display).is_ok() {
+                                self.emit_chat(&chat);
+                            }
+                        }
+                        Ok(Some(known))
+                            if !name.trim().is_empty()
+                                && name != known.name
+                                && self.archive.rename_chat(&chat, &name).is_ok() =>
+                        {
+                            self.emit_chat(&chat);
+                        }
+                        _ => {}
                     }
+                }
+            }
+            Command::ChannelPosts {
+                generation,
+                chat,
+                posts,
+            } => {
+                if generation == self.channel_list_generation
+                    && chat.ends_with("@newsletter")
+                    && self.archive.chat(&chat).is_ok_and(|known| known.is_some())
+                {
+                    self.apply_channel_posts(&chat, posts);
                 }
             }
             Command::ChannelPictures(list) => self.channel_pictures_listed(list),
@@ -16852,7 +17086,16 @@ mod tests {
             .await;
         let name = |worker: &Worker| worker.archive.chat(CHANNEL).unwrap().unwrap().name;
         assert_eq!(name(&worker), "Fixture news");
-        assert!(worker.archive.chat("unknown@newsletter").unwrap().is_none());
+        assert_eq!(
+            worker
+                .archive
+                .chat("unknown@newsletter")
+                .unwrap()
+                .unwrap()
+                .name,
+            "Elsewhere",
+            "following a channel creates it even before history arrives"
+        );
         // A later message or contact update must not put the id back.
         worker.ensure_chat(CHANNEL, None);
         worker.refresh_chat_name(CHANNEL);
@@ -16926,6 +17169,107 @@ mod tests {
             fallback_name(CHANNEL)
         );
         assert!(worker.archive.chat(EMPTY).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn channel_history_imports_recent_posts_without_notifications_or_unread_counts() {
+        let (mut worker, events, _, _) = receipt_tests::worker();
+        const CHANNEL: &str = "120363000000000001@newsletter";
+        worker
+            .handle_command(Command::ChannelNames {
+                generation: worker.channel_list_generation,
+                names: vec![(CHANNEL.into(), "Fixture news".into())],
+            })
+            .await;
+        let message = |id: &str, text: &str, edit: EditAttribute| {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some(text.into());
+            whatsapp_rust::NewsletterMessage::builder()
+                .message_id(whatsapp_rust::MessageId::new(id).unwrap())
+                .server_id(123)
+                .timestamp(1_700_000_000)
+                .message_type(whatsapp_rust::NewsletterMessageType::Text)
+                .edit(edit)
+                .is_sender(false)
+                .is_wamo_sub(false)
+                .message(proto)
+                .build()
+        };
+        for (text, edit) in [
+            ("first", EditAttribute::Empty),
+            ("edited", EditAttribute::AdminEdit),
+        ] {
+            worker
+                .handle_command(Command::ChannelPosts {
+                    generation: worker.channel_list_generation,
+                    chat: CHANNEL.into(),
+                    posts: vec![message("channel-post-1", text, edit)],
+                })
+                .await;
+        }
+        let stored = worker
+            .archive
+            .message(CHANNEL, "channel-post-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.content, Content::text("edited"));
+        assert!(stored.edited);
+        worker
+            .handle_command(Command::ChannelPosts {
+                generation: worker.channel_list_generation.wrapping_add(1),
+                chat: CHANNEL.into(),
+                posts: vec![message("stale-post", "stale", EditAttribute::Empty)],
+            })
+            .await;
+        assert!(
+            worker
+                .archive
+                .message(CHANNEL, "stale-post")
+                .unwrap()
+                .is_none()
+        );
+
+        let revoked = whatsapp_rust::NewsletterMessage::builder()
+            .message_id(whatsapp_rust::MessageId::new("channel-post-1").unwrap())
+            .server_id(123)
+            .timestamp(1_700_000_000)
+            .message_type(whatsapp_rust::NewsletterMessageType::Text)
+            .edit(EditAttribute::AdminRevoke)
+            .is_sender(false)
+            .is_wamo_sub(false)
+            .build();
+        worker
+            .handle_command(Command::ChannelPosts {
+                generation: worker.channel_list_generation,
+                chat: CHANNEL.into(),
+                posts: vec![revoked],
+            })
+            .await;
+        assert_eq!(
+            worker
+                .archive
+                .message(CHANNEL, "channel-post-1")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+        assert_eq!(
+            worker
+                .archive
+                .chats()
+                .unwrap()
+                .iter()
+                .find(|c| c.id == CHANNEL)
+                .unwrap()
+                .unread,
+            0
+        );
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Incoming { .. }))
+        );
     }
 
     fn unconfirmed(worker: &mut Worker) {
@@ -20102,6 +20446,8 @@ mod receipt_tests {
             presence_refresh_pending: false,
             presence_generation: 0,
             channel_list_generation: 0,
+            channel_refresh_due: Instant::now(),
+            channel_refresh_task: None,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
             pending_avatars: HashMap::new(),

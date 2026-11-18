@@ -3302,6 +3302,7 @@ pub enum Action {
     /// made, so the window is replaced.
     SetCustomTitlebar(bool),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
+    SetEmojiSkinTone(crate::settings::EmojiSkinTone),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),

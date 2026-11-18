@@ -1121,7 +1121,7 @@ fn active_emoji(text: &str, start: Option<usize>, cursor: usize) -> Option<(usiz
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct EmojiSuggestion {
-    emoji: &'static str,
+    emoji: String,
     shortcode: String,
     name: &'static str,
 }
@@ -1150,12 +1150,15 @@ fn emoji_match_score(emoji: &emojis::Emoji, query: &str) -> Option<u8> {
     }
 }
 
-fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
+fn emoji_suggestion(
+    emoji: &'static emojis::Emoji,
+    tone: crate::settings::EmojiSkinTone,
+) -> EmojiSuggestion {
     let shortcode = emoji
         .shortcode()
         .map_or_else(|| emoji.name().replace([' ', '-'], "_"), str::to_owned);
     EmojiSuggestion {
-        emoji: emoji.as_str(),
+        emoji: tone.apply(emoji.as_str()),
         shortcode: format!(":{shortcode}:"),
         name: emoji.name(),
     }
@@ -1176,7 +1179,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
             .chain(emojis::iter())
             .filter(|emoji| seen.insert(emoji.as_str()))
             .take(LIMIT)
-            .map(emoji_suggestion)
+            .map(|emoji| emoji_suggestion(emoji, app.settings.emoji_skin_tone))
             .collect();
         return recent;
     }
@@ -1192,7 +1195,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
         .into_iter()
         .filter(|(_, _, emoji)| seen.insert(emoji.as_str()))
         .take(LIMIT)
-        .map(|(_, _, emoji)| emoji_suggestion(emoji))
+        .map(|(_, _, emoji)| emoji_suggestion(emoji, app.settings.emoji_skin_tone))
         .collect()
 }
 
@@ -1274,7 +1277,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
 
             let emoji = widgets::line(
                 ui,
-                candidate.emoji,
+                &candidate.emoji,
                 theme::regular(22.0),
                 palette.text,
                 30.0,
@@ -13116,6 +13119,20 @@ mod tests {
         };
         assert!(offers("pregnant", "🤰"));
         assert!(offers("thumbsup", "👍"));
+    }
+
+    #[test]
+    fn completion_uses_skin_tone_but_preserves_recent_explicit_variants() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings = crate::settings::Settings {
+            emoji_skin_tone: crate::settings::EmojiSkinTone::MediumDark,
+            recent_emoji: vec!["👍🏻".to_owned()],
+            ..crate::settings::Settings::default()
+        };
+        let (app, _events) =
+            App::headless(crate::paths::AppDirs::under(directory.path()), settings);
+        assert_eq!(emoji_candidates(&app, "thumbsup")[0].emoji, "👍🏾");
+        assert_eq!(emoji_candidates(&app, "")[0].emoji, "👍🏻");
     }
 }
 

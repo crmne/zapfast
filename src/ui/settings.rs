@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{Settings, ThemeChoice, WallpaperColor};
+use crate::settings::{EmojiSkinTone, Settings, ThemeChoice, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -439,13 +439,10 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
-    chats.account_toggle(
-        translated(locale, "Fetch older history"),
-        translated(
-            locale,
-            "Asks your phone in the background for older messages in the open, pinned and ten most recent chats.",
-        ),
-        |settings| &mut settings.history_prefetch,
+    chats.row(
+        translated(locale, "Emoji skin tone"),
+        translated(locale, "Preferred skin tone for emoji and reactions."),
+        emoji_skin_tone_picker,
     );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
@@ -724,6 +721,14 @@ fn sections(app: &App) -> Vec<Section> {
             "You still choose when to restart. Package managers and Flatpak update ZapFast themselves.",
         ),
         |settings| &mut settings.download_updates_automatically,
+    );
+    system.account_toggle(
+        translated(locale, "Fetch older history"),
+        translated(
+            locale,
+            "Background history requests wake your phone and may trigger WhatsApp sync alerts. Turn off to stop automatic history requests.",
+        ),
+        |settings| &mut settings.history_prefetch,
     );
     let environment = app
         .settings
@@ -1234,6 +1239,25 @@ fn language_picker(ui: &mut egui::Ui, app: &mut App) {
     theme::reveal_focus(&response.response);
 }
 
+fn emoji_skin_tone_picker(ui: &mut egui::Ui, app: &mut App) {
+    let selected = app.settings.emoji_skin_tone;
+    let palette = app.palette;
+    let locale = app.locale;
+    let label = format!("{} {}", selected.apply("👍"), selected.label(locale));
+    let response = egui::ComboBox::from_id_salt("emoji_skin_tone")
+        .selected_text(label)
+        .width(200.0_f32.min(ui.available_width()))
+        .show_ui(ui, |ui| {
+            for tone in EmojiSkinTone::ALL {
+                let label = format!("{} {}", tone.apply("👍"), tone.label(locale));
+                if theme_option(ui, &palette, &label, tone == selected) {
+                    app.actions.push(Action::SetEmojiSkinTone(tone));
+                }
+            }
+        });
+    theme::reveal_focus(&response.response);
+}
+
 /// Wallpaper colour picker and live preview.
 pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
     super::banner(app, ui);
@@ -1384,7 +1408,11 @@ fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
             );
         });
     };
-    let slider = |ui: &mut egui::Ui, enabled: bool, value: &mut u8, inline_label: bool| {
+    let slider = |ui: &mut egui::Ui,
+                  enabled: bool,
+                  value: &mut u8,
+                  inline_label: bool,
+                  label_id: Option<egui::Id>| {
         // On narrow palettes the label has its own row. Reserve width for
         // the percentage field and give the slider track the remaining space.
         ui.spacing_mut().slider_width = if inline_label {
@@ -1396,7 +1424,10 @@ fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
         if inline_label {
             control = control.text(opacity_label.as_ref());
         }
-        let _response = ui.add_enabled(enabled, control);
+        let mut _response = ui.add_enabled(enabled, control);
+        if let Some(label_id) = label_id {
+            _response = _response.labelled_by(label_id);
+        }
         #[cfg(test)]
         ui.ctx().data_mut(|data| {
             data.insert_temp(
@@ -1413,20 +1444,21 @@ fn wallpaper_doodle_controls(app: &mut App, ui: &mut egui::Ui, width: f32) {
             |ui| {
                 checkbox(ui, &mut doodles);
                 ui.add_space(14.0);
-                slider(ui, doodles, &mut opacity, true);
+                slider(ui, doodles, &mut opacity, true, None);
             },
         );
     } else {
         ui.allocate_ui_with_layout(vec2(width, 28.0), Layout::top_down(Align::Center), |ui| {
             checkbox(ui, &mut doodles)
         });
+        let mut label_id = None;
         ui.allocate_ui_with_layout(vec2(width, 22.0), Layout::top_down(Align::Center), |ui| {
-            ui.label(opacity_label.as_ref());
+            label_id = Some(ui.label(opacity_label.as_ref()).id);
         });
         ui.allocate_ui_with_layout(
             vec2(width, 36.0),
             Layout::left_to_right(Align::Center).with_main_align(Align::Center),
-            |ui| slider(ui, doodles, &mut opacity, false),
+            |ui| slider(ui, doodles, &mut opacity, false, label_id),
         );
     }
 
@@ -2166,6 +2198,28 @@ fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selecte
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phone_sync_setting_is_in_system_and_emoji_tone_is_in_chats() {
+        let directory = tempfile::tempdir().unwrap();
+        let (app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            Settings::default(),
+        );
+        let sections = sections(&app);
+        let has_row = |section: &str, title: &str| {
+            sections.iter().any(|group| {
+                group.title.source == section
+                    && group
+                        .entries
+                        .iter()
+                        .any(|(row, _)| row.title.source == title)
+            })
+        };
+        assert!(has_row("System", "Fetch older history"));
+        assert!(!has_row("Chats", "Fetch older history"));
+        assert!(has_row("Chats", "Emoji skin tone"));
+    }
 
     fn titles(section: Section, filter: &Filter) -> Vec<String> {
         let (_, rows) = section.visible(filter);
