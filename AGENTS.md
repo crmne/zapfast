@@ -595,10 +595,9 @@ protocol. These notes are for coding agents and new contributors.
   exists), and `src/macos.rs` hands its menu events to `fastframe_tray::claim_menu_event` first.
   The process Dock icon and unread badge use fastframe-dock; a Cargo run
   gets the embedded icon, while a packaged app keeps its bundle icon. The
-  badge counts as Slack does (`Account::badge_mark`): unread messages in
-  direct chats plus unread mentions of us and replies to our messages in
-  groups (`Archive::unread_mentions`), with a dot on macOS for
-  other group or channel activity; it stays in ZapFast and survives window
+  badge (`Account::badge_mark`) counts unread messages in direct chats and
+  in groups that are neither muted nor archived, with a dot on macOS for
+  muted or archived groups and channels; it stays in ZapFast and survives window
   replacement. `macos::request_badge_permission` adds the badge to the
   notification permission, which fastframe-notifications asks without it.
   Clicking the macOS menu-bar icon opens its menu; **Show or hide ZapFast**

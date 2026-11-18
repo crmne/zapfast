@@ -24843,37 +24843,38 @@ mod tests {
         assert_eq!(app.unread_chat_count(), 2);
     }
 
-    /// The app badge counts as Slack does: direct messages by the message,
-    /// group mentions by the mention, and any other activity as a dot.
+    /// The app badge counts every unread message in direct chats and active
+    /// groups, and lights only the dot for muted or archived groups and
+    /// channels.
     #[test]
-    fn the_app_badge_counts_direct_messages_and_mentions_and_dots_the_rest() {
+    fn the_app_badge_counts_direct_and_group_messages_and_dots_quiet_groups() {
         use crate::notify::BadgeMark;
         let mut app = app();
         assert_eq!(app.badge_mark_everywhere(), BadgeMark::default());
 
-        let mut quiet_group = Chat::new("1-1@g.us".into(), "Club".into());
-        quiet_group.unread = 5;
-        app.chats = vec![quiet_group];
+        let mut muted_group = Chat::new("1-1@g.us".into(), "Loud".into());
+        muted_group.muted_until = Some(i64::MAX);
+        muted_group.unread = 9;
+        muted_group.unread_mentions = 1;
+        let mut archived_group = Chat::new("2-1@g.us".into(), "Past".into());
+        archived_group.archived = true;
+        archived_group.unread = 4;
+        app.chats = vec![muted_group, archived_group];
         assert_eq!(
             app.badge_mark_everywhere(),
             BadgeMark {
                 count: 0,
                 dot: true
             },
-            "a group that does not name us only lights the dot"
+            "a muted or archived group only lights the dot"
         );
 
-        let mut ada = Chat::new("2@s.whatsapp.net".into(), "Ada".into());
+        let mut ada = Chat::new("3@s.whatsapp.net".into(), "Ada".into());
         ada.unread = 3;
-        let mut marked = Chat::new("3@s.whatsapp.net".into(), "Grace".into());
+        let mut marked = Chat::new("4@s.whatsapp.net".into(), "Grace".into());
         marked.marked_unread = true;
-        let mut tagged = Chat::new("4-1@g.us".into(), "Team".into());
-        tagged.unread = 6;
-        tagged.unread_mentions = 2;
-        let mut muted_group = Chat::new("5-1@g.us".into(), "Loud".into());
-        muted_group.muted_until = Some(i64::MAX);
-        muted_group.unread = 9;
-        muted_group.unread_mentions = 1;
+        let mut team = Chat::new("5-1@g.us".into(), "Team".into());
+        team.unread = 6;
         let mut muted_friend = Chat::new("6@s.whatsapp.net".into(), "Hush".into());
         muted_friend.muted_until = Some(i64::MAX);
         muted_friend.unread = 4;
@@ -24882,20 +24883,13 @@ mod tests {
         archived.unread = 4;
         let mut channel = Chat::new("8@newsletter".into(), "News".into());
         channel.unread = 3;
-        app.chats.extend([
-            ada,
-            marked,
-            tagged,
-            muted_group,
-            muted_friend,
-            archived,
-            channel,
-        ]);
-        // 3 from Ada, 1 marked by hand, 2 mentions in Team, 1 in the muted group.
+        app.chats
+            .extend([ada, marked, team, muted_friend, archived, channel]);
+        // 3 from Ada, 1 marked by hand, 6 in Team.
         assert_eq!(
             app.badge_mark_everywhere(),
             BadgeMark {
-                count: 7,
+                count: 10,
                 dot: true
             }
         );
@@ -24903,11 +24897,10 @@ mod tests {
         app.account_mut().settings.notifications = false;
         assert_eq!(app.badge_mark_everywhere(), BadgeMark::default());
 
-        // Reading the tagged group takes its mentions off the badge.
+        // Reading the group takes its messages off the badge.
         app.account_mut().settings.notifications = true;
-        app.mark_read("4-1@g.us");
-        assert_eq!(app.chat("4-1@g.us").unwrap().unread_mentions, 0);
-        assert_eq!(app.badge_mark_everywhere().count, 5);
+        app.mark_read("5-1@g.us");
+        assert_eq!(app.badge_mark_everywhere().count, 4);
     }
 
     #[test]

@@ -20,10 +20,9 @@ pub fn badge_description(count: u32, locale: crate::i18n::Locale) -> String {
         .replace("{}", &count.to_string())
 }
 
-/// What the app icon shows, the way Slack's does: a number for what was
-/// said to us (every unread message in a direct chat, every unread mention
-/// in a group), and an empty dot when only other activity waits (group or
-/// channel messages that do not name us).
+/// What the app icon shows: a number for every unread message in a direct
+/// chat or an active group, and an empty dot when only quieter activity waits
+/// (muted or archived groups, channels).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BadgeMark {
     pub count: u32,
