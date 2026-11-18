@@ -797,7 +797,9 @@ The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
 Followed channels have their own **Channels** chip. **Archived**, in the rail
 on the left above **Settings**, opens the archived chats in the list, and
-shows how many of them are unread. A chip with unread chats shows how many it
+shows how many of them are unread. **Chats**, at the top of the rail, carries
+the app icon's badge for the number on screen: its unread messages, or a dot
+when only muted or archived groups, or channels, are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
 ZapFast remembers the chip or label each account last showed and comes back
