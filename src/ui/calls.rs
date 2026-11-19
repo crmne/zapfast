@@ -7,7 +7,7 @@
 //! phone's call log and the call-log messages in history) and from the calls
 //! ZapFast took part in.
 
-use egui::{Align, Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Frame, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::i18n::{Locale, gettext, ngettext};
@@ -284,7 +284,7 @@ pub fn filter_chip_id(filter: CallFilter) -> egui::Id {
 pub fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
         for filter in CallFilter::EVERY {
             let selected = app.call_filter == filter;
@@ -369,9 +369,13 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     }
     // A person's call is called back, and a group's call in its group while
     // group calls are on; a call among several people with no group behind
-    // it has no way back from here.
+    // it has no way back from here. The button sits at the reading end, the
+    // left of the row when Arabic reads right to left.
     let button_rect = Rect::from_center_size(
-        pos2(rect.right() - 30.0, rect.center().y),
+        pos2(
+            crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 30.0),
+            rect.center().y,
+        ),
         Vec2::splat(34.0),
     );
     let group_chat = crate::model::ChatKind::from_id(&message.chat)
@@ -413,8 +417,13 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     } else if response.hovered() {
         widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
     }
-    let avatar_rect =
-        Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+    let avatar_rect = Rect::from_center_size(
+        pos2(
+            crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+            rect.center().y,
+        ),
+        Vec2::splat(48.0),
+    );
     if link {
         crate::ui::call::paint_link_avatar(ui, &palette, avatar_rect);
     } else {
@@ -427,14 +436,16 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             picture.as_deref(),
         );
     }
-    let left = rect.left() + 76.0;
-    let right = button_rect.left() - 6.0;
+    let content_start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+    let content_end = crate::rtl::behind(ui, crate::rtl::start_edge(ui, button_rect), 6.0);
     let stamp_galley = ui
         .painter()
         .layout_no_wrap(stamp, theme::regular(11.5), palette.dim);
     let name_top = rect.top() + 14.0;
+    let stamp_width = stamp_galley.size().x;
+    let stamp_x = crate::rtl::text_at_end(ui, content_end, stamp_width);
     ui.painter().galley(
-        pos2(right - stamp_galley.size().x, name_top + 2.0),
+        pos2(stamp_x, name_top + 2.0),
         stamp_galley.clone(),
         palette.dim,
     );
@@ -449,11 +460,18 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         &label,
         theme::medium(14.5),
         name_color,
-        (right - stamp_galley.size().x - 8.0 - left).max(0.0),
+        crate::rtl::name_width_before_stamp(ui, content_start, content_end, stamp_width),
         1,
     );
-    name_line.paint(ui, pos2(left, name_top), name_color);
-    let glyph_rect = Rect::from_min_size(pos2(left, rect.top() + 39.0), Vec2::splat(15.0));
+    let name_x = crate::rtl::text_left(ui, content_start, name_line.size().x);
+    name_line.paint(ui, pos2(name_x, name_top), name_color);
+    let glyph_rect = Rect::from_min_size(
+        pos2(
+            crate::rtl::text_left(ui, content_start, 15.0),
+            rect.top() + 39.0,
+        ),
+        Vec2::splat(15.0),
+    );
     theme::paint_icon(
         ui,
         entry.direction_icon(),
@@ -470,10 +488,21 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         &summary,
         theme::regular(13.0),
         palette.secondary,
-        (right - left - 21.0).max(0.0),
+        (crate::rtl::room(ui, content_start, content_end) - 21.0).max(0.0),
         1,
     );
-    detail.paint(ui, pos2(left + 21.0, rect.top() + 38.0), palette.secondary);
+    detail.paint(
+        ui,
+        pos2(
+            crate::rtl::text_left(
+                ui,
+                crate::rtl::ahead(ui, content_start, 21.0),
+                detail.size().x,
+            ),
+            rect.top() + 38.0,
+        ),
+        palette.secondary,
+    );
 }
 
 /// What a call was and how it went, on one line: "Video call · 12 min 34 s", with how many
@@ -586,16 +615,18 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
 
 fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
     ui.add_space(10.0);
-    Frame::new()
-        .inner_margin(Margin {
-            left: 16,
-            right: 14,
-            top: 4,
-            bottom: 6,
-        })
-        .show(ui, |ui| {
-            theme::text(ui, label, theme::medium(13.0), palette.accent);
-        });
+    ui.with_layout(crate::rtl::top(ui), |ui| {
+        Frame::new()
+            .inner_margin(Margin {
+                left: 16,
+                right: 14,
+                top: 4,
+                bottom: 6,
+            })
+            .show(ui, |ui| {
+                theme::text(ui, label, theme::medium(13.0), palette.accent);
+            });
+    });
 }
 
 /// One person on the new-call list, with a voice and a video button.
@@ -608,30 +639,54 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::hover(),
     );
+    // The buttons sit at the reading end, the left of the row when Arabic
+    // reads right to left.
+    let near = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 12.0);
+    let far = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 92.0);
     let buttons = Rect::from_min_max(
-        pos2(rect.right() - 92.0, rect.top()),
-        pos2(rect.right() - 12.0, rect.bottom()),
+        pos2(near.min(far), rect.top()),
+        pos2(near.max(far), rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(48.0),
+        );
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
-        let width = (buttons.left() - 8.0 - left).max(0.0);
+        let text_start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let text_end = crate::rtl::behind(ui, crate::rtl::start_edge(ui, buttons), 8.0);
+        let width = crate::rtl::room(ui, text_start, text_end);
         let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
-        name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
+        name_line.paint(
+            ui,
+            pos2(
+                crate::rtl::text_left(ui, text_start, name_line.size().x),
+                rect.top() + 14.0,
+            ),
+            palette.text,
+        );
         if let Some(phone) = crate::model::phone_of(id).map(crate::util::phone) {
             let phone_line = widgets::line(ui, &phone, theme::regular(13.0), palette.dim, width, 1);
-            phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
+            phone_line.paint(
+                ui,
+                pos2(
+                    crate::rtl::text_left(ui, text_start, phone_line.size().x),
+                    rect.top() + 38.0,
+                ),
+                palette.dim,
+            );
         }
     }
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(buttons)
-            .layout(Layout::right_to_left(Align::Center)),
+            .layout(crate::rtl::end(ui)),
     );
     let video = gettext(locale, "Video call {name}").replace("{name}", &name);
     if theme::icon_button(
@@ -803,6 +858,7 @@ mod tests {
     }
 
     fn frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) {
+        crate::rtl::set(ctx, app.locale.is_rtl());
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 600.0))),
@@ -838,6 +894,35 @@ mod tests {
         app.actions.clear();
         // The call-back button sits at the row's right end.
         frame(&mut app, &ctx, click(row.right_center() - vec2(30.0, 0.0)));
+        frame(&mut app, &ctx, vec![]);
+        assert!(
+            matches!(app.actions.as_slice(), [Action::StartCall(chat)] if chat == ADA),
+            "{:?}",
+            app.actions
+        );
+    }
+
+    /// In Arabic the row is the same tile mirrored: the avatar and the names
+    /// sit on the right, and the call-back button at the left end.
+    #[test]
+    fn a_history_row_mirrors_for_arabic() {
+        let (_directory, mut app, ctx) = calls_app();
+        app.locale = Locale::Arabic;
+        frame(&mut app, &ctx, vec![]);
+        let row = ctx.read_response(row_id(ADA, "1")).unwrap().rect;
+        app.actions.clear();
+        frame(&mut app, &ctx, click(row.right_center() - vec2(40.0, 0.0)));
+        frame(&mut app, &ctx, vec![]);
+        assert!(
+            matches!(
+                app.actions.as_slice(),
+                [Action::PickCall { chat, message }] if chat == ADA && message == "1"
+            ),
+            "{:?}",
+            app.actions
+        );
+        app.actions.clear();
+        frame(&mut app, &ctx, click(row.left_center() + vec2(30.0, 0.0)));
         frame(&mut app, &ctx, vec![]);
         assert!(
             matches!(app.actions.as_slice(), [Action::StartCall(chat)] if chat == ADA),
@@ -924,6 +1009,39 @@ mod tests {
         let mut found = None;
         for y in (0..600).step_by(4) {
             let at = egui::pos2(400.0 - 12.0 - 30.0 - 4.0 - 15.0, y as f32);
+            app.actions.clear();
+            frame(&mut app, &ctx, click(at));
+            frame(&mut app, &ctx, vec![]);
+            if !app.actions.is_empty() {
+                found = Some(app.actions.clone());
+                break;
+            }
+        }
+        let actions = found.expect("a voice button answers a click");
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::StartCall(_), Action::ShowNewCall(false)]
+            ),
+            "{actions:?}"
+        );
+    }
+
+    /// The new-call rows mirror as the history does: their voice and video
+    /// buttons sit at the left end in Arabic.
+    #[test]
+    fn a_new_call_row_mirrors_for_arabic() {
+        let (_directory, mut app, ctx) = calls_app();
+        app.locale = Locale::Arabic;
+        app.new_call = true;
+        app.chats.push(crate::model::Chat::new(
+            GRACE.to_owned(),
+            "Grace".to_owned(),
+        ));
+        frame(&mut app, &ctx, vec![]);
+        let mut found = None;
+        for y in (0..600).step_by(4) {
+            let at = egui::pos2(12.0 + 30.0 + 4.0 + 15.0, y as f32);
             app.actions.clear();
             frame(&mut app, &ctx, click(at));
             frame(&mut app, &ctx, vec![]);
@@ -1093,5 +1211,50 @@ mod tests {
         assert!(entry.group);
         let one_to_one = call(ADA, "1", true, 60, CallStatus::Answered);
         assert_eq!(Entry::of(&one_to_one).unwrap().participants, None);
+    }
+
+    /// A long call name stops before its timestamp in both directions, so the
+    /// stamp stays readable and the call button keeps its own room.
+    #[test]
+    fn a_long_call_name_stops_before_its_timestamp() {
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 80.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::rtl::set(ui.ctx(), rtl);
+                    let (start, end) = if rtl { (300.0, 40.0) } else { (40.0, 300.0) };
+                    let available = crate::rtl::room(ui, start, end) - 8.0;
+                    let stamp_width = 48.0;
+                    let name_width =
+                        crate::rtl::name_width_before_stamp(ui, start, end, stamp_width);
+                    assert!(
+                        (name_width - (available - stamp_width)).abs() < 0.5,
+                        "rtl {rtl}: the stamp takes its own width, {name_width} of {available}"
+                    );
+                    let name = widgets::line(
+                        ui,
+                        "A long call name that would run under the timestamp",
+                        theme::medium(14.5),
+                        egui::Color32::WHITE,
+                        name_width,
+                        1,
+                    );
+                    assert!(
+                        name.size().x < available - stamp_width + 1.0,
+                        "rtl {rtl}: the galley is {} wide, not {available}",
+                        name.size().x
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
     }
 }

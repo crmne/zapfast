@@ -33,10 +33,10 @@ pub fn member_row_id(id: &str) -> egui::Id {
 fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
     let palette = app.palette;
     let back = crate::i18n::gettext(app.locale, "Back");
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if theme::icon_button(
             ui,
-            Icon::ArrowLeft,
+            crate::rtl::back_icon(ui),
             16.0,
             palette.secondary,
             palette.text,
@@ -47,7 +47,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
             app.actions.push(Action::NewGroupBack);
         }
         theme::text(ui, label, theme::bold(18.0), palette.text);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             if theme::icon_button(
                 ui,
                 Icon::X,

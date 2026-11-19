@@ -2730,6 +2730,11 @@ impl App {
         ctx.add_plugin(crate::ui::conversation::SelectionLeash::new(
             std::sync::Arc::clone(&self.selection_view),
         ));
+        // Move the font runs of plain labels, chips, menus and tooltips into
+        // right-to-left visual order. It must come before every plugin that
+        // reads glyph positions (the emoji plugin does), so their pictures
+        // follow the glyphs the reader sees.
+        ctx.add_plugin(crate::bidi::BidiPlugin::default());
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());

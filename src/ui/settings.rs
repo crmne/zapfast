@@ -245,18 +245,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             ui.ctx()
                 .data_mut(|data| data.insert_temp(column_id(), column.x_range()));
+            let column_layout = crate::rtl::top(ui);
+            let (start_room, _) = crate::rtl::pair(ui, room.left, room.right);
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(column)
-                    .layout(Layout::top_down(Align::Min)),
+                    .layout(column_layout),
                 |ui| {
                     ui.set_width(width);
                     ui.add_space(room.top);
-                    ui.horizontal(|ui| {
-                        ui.add_space(room.left);
+                    crate::rtl::row(ui, |ui| {
+                        ui.add_space(start_room);
                         if theme::icon_button(
                             ui,
-                            Icon::ArrowLeft,
+                            crate::rtl::back_icon(ui),
                             20.0,
                             palette.secondary,
                             palette.text,
@@ -1271,7 +1273,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                             ui.add_space(24.0);
                             if theme::icon_button(
                                 ui,
-                                Icon::ArrowLeft,
+                                crate::rtl::back_icon(ui),
                                 20.0,
                                 palette.secondary,
                                 palette.text,
@@ -1477,14 +1479,14 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
     let stats = app.storage_stats.unwrap_or_default();
     let measured = app.storage_stats.is_some();
     let total = stats.bytes_total();
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Storage used"),
             theme::medium(14.0),
             palette.text,
         );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             let clearing = app.storage_clearing;
             let label = crate::i18n::gettext(locale, "Clear…");
             let clear = ui
@@ -1574,9 +1576,9 @@ fn storage_bar_row(
     bytes: u64,
     total: u64,
 ) {
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         theme::text(ui, label, theme::medium(14.0), palette.text);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             theme::text(
                 ui,
                 format!("{count} · {}", crate::util::bytes(bytes)),
@@ -1641,11 +1643,11 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
     let draft_id = ui.id().with("profile_draft");
     let mut draft: Option<(String, String)> = ui.data_mut(|data| data.get_temp(draft_id));
     let mut submitted = false;
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let picture = app.avatar_full(&me).or_else(|| app.avatar(&me));
         let change_picture = crate::i18n::gettext(app.locale, "Change profile picture");
-        if widgets::clickable_avatar(
+        let avatar = widgets::clickable_avatar(
             ui,
             &palette,
             &name,
@@ -1655,58 +1657,86 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             &change_picture,
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(change_picture.as_ref())
-        .clicked()
-        {
+        .on_hover_text(change_picture.as_ref());
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::new("settings-account-avatar"), avatar.rect)
+        });
+        if avatar.clicked() {
             app.actions.push(Action::PickProfilePicture);
         }
-        ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 380.0).max(160.0));
-            if let Some((draft_name, draft_about)) = &mut draft {
-                submitted |= profile_field(
-                    ui,
-                    &palette,
-                    draft_name,
-                    &crate::i18n::gettext(app.locale, "Your name"),
-                    25,
-                );
-                ui.add_space(6.0);
-                submitted |= profile_field(
-                    ui,
-                    &palette,
-                    draft_about,
-                    &crate::i18n::pgettext(app.locale, "profile", "About"),
-                    139,
-                );
-                return;
-            }
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let shown = if name.is_empty() {
-                    crate::i18n::gettext(app.locale, "Linked device")
-                } else {
-                    name.clone().into()
-                };
-                theme::text(ui, shown, theme::semibold(16.0), palette.text);
-                if theme::icon_button(
-                    ui,
-                    Icon::Pencil,
-                    15.0,
-                    palette.secondary,
-                    palette.text,
-                    &crate::i18n::gettext(app.locale, "Edit your name and About"),
-                )
-                .clicked()
-                {
-                    draft = Some((name.clone(), app.me_about.clone().unwrap_or_default()));
+        // The profile follows the avatar at the reading start; the 380-point
+        // action block keeps the reading end. An explicit allocation carries
+        // the RTL cursor from the avatar towards the actions, which a plain
+        // vertical child did not.
+        let available = {
+            let room = ui.available_rect_before_wrap();
+            crate::rtl::room(
+                ui,
+                crate::rtl::start_edge(ui, room),
+                crate::rtl::end_edge(ui, room),
+            )
+        };
+        let profile_width = (available - 380.0).max(160.0);
+        ui.allocate_ui_with_layout(
+            vec2(profile_width, ui.spacing().interact_size.y),
+            crate::rtl::top(ui),
+            |ui| {
+                ui.set_width(profile_width);
+                if let Some((draft_name, draft_about)) = &mut draft {
+                    submitted |= profile_field(
+                        ui,
+                        &palette,
+                        draft_name,
+                        &crate::i18n::gettext(app.locale, "Your name"),
+                        25,
+                    );
+                    ui.add_space(6.0);
+                    submitted |= profile_field(
+                        ui,
+                        &palette,
+                        draft_about,
+                        &crate::i18n::pgettext(app.locale, "profile", "About"),
+                        139,
+                    );
+                    return;
                 }
-            });
-            theme::text(ui, &phone, theme::regular(13.0), palette.secondary);
-            if let Some(about) = &app.me_about {
-                theme::paragraph(ui, about, theme::regular(13.0), palette.secondary);
-            }
-        });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                crate::rtl::row(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let shown = if name.is_empty() {
+                        crate::i18n::gettext(app.locale, "Linked device")
+                    } else {
+                        name.clone().into()
+                    };
+                    let _shown_response =
+                        theme::text(ui, shown, theme::semibold(16.0), palette.text);
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("settings-account-name"),
+                            _shown_response.rect,
+                        )
+                    });
+                    if theme::icon_button(
+                        ui,
+                        Icon::Pencil,
+                        15.0,
+                        palette.secondary,
+                        palette.text,
+                        &crate::i18n::gettext(app.locale, "Edit your name and About"),
+                    )
+                    .clicked()
+                    {
+                        draft = Some((name.clone(), app.me_about.clone().unwrap_or_default()));
+                    }
+                });
+                theme::text(ui, &phone, theme::regular(13.0), palette.secondary);
+                if let Some(about) = &app.me_about {
+                    theme::paragraph(ui, about, theme::regular(13.0), palette.secondary);
+                }
+            },
+        );
+        ui.with_layout(crate::rtl::end(ui), |ui| {
             // With other numbers here, unlinking this one also takes it off
             // the switcher; the last one stays, waiting to be linked again.
             if app.has_several_accounts() {
@@ -1734,15 +1764,17 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.actions.push(Action::ShowDialog(Dialog::ConfirmUnlink));
             }
-            if theme::soft_button(
+            let add = theme::soft_button(
                 ui,
                 &palette,
                 Some(Icon::Plus),
                 &crate::i18n::gettext(app.locale, "Add account"),
                 false,
-            )
-            .clicked()
-            {
+            );
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::new("settings-account-add"), add.rect));
+            if add.clicked() {
                 app.actions.push(Action::AddAccount);
             }
         });
@@ -1750,7 +1782,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
     if let Some((draft_name, draft_about)) = &draft {
         ui.add_space(10.0);
         let mut done = false;
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             ui.add_space(56.0 + 14.0);
             let name = draft_name.trim();
             let about = draft_about.trim();
@@ -1810,7 +1842,7 @@ fn profile_field(
 /// The version, links to more about ZapFast, and who made it.
 fn about(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let (logo, _) = ui.allocate_exact_size(Vec2::splat(44.0), egui::Sense::hover());
         theme::mark(ui, logo.center(), 44.0);
@@ -1833,7 +1865,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(12.0);
-    ui.horizontal_wrapped(|ui| {
+    crate::rtl::wrapped_row(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         if let Some(update) = &app.update {
             let label = crate::i18n::gettext(app.locale, "Update to {version}")

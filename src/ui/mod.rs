@@ -42,6 +42,8 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    // Every layout helper reads this frame's reading direction.
+    crate::rtl::set(ctx, app.locale.is_rtl());
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
     picker::release_gif_animations(app, ctx);
@@ -272,6 +274,11 @@ fn slide_in(app: &mut App, ui: &mut egui::Ui, list_only: bool, progress: f32) {
         });
     }
     let direction = if list_only { -1.0 } else { 1.0 };
+    let direction = if crate::rtl::is(ui.ctx()) {
+        -direction
+    } else {
+        direction
+    };
     let offset = (1.0 - progress) * rect.width() * direction;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.with_visual_transform(

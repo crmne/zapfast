@@ -1,6 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Align, Frame, Key, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::model::{Action, Chat, ChatActivity, ChatFilter, Contact, Dialog, Message, Page};
@@ -14,7 +14,7 @@ use super::widgets;
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     search_keyboard(app, ui);
     let palette = app.palette;
-    let panel = egui::Panel::left("chats")
+    let panel = crate::rtl::start_panel(ui.ctx(), "chats")
         .resizable(true)
         .default_size(app.settings.sidebar_width)
         .size_range(260.0..=520.0)
@@ -158,21 +158,22 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                 ),
             );
             ui.add_space(room.top);
+            let (start_room, end_room) = crate::rtl::pair(ui, room.left, room.right);
             let row = ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), super::conversation::HEADER_ROW),
-                Layout::left_to_right(Align::Center),
+                crate::rtl::start(ui, Align::Center),
                 |ui| {
-                    ui.add_space(room.left);
+                    ui.add_space(start_room);
                     let buttons = list_header_buttons(app, ui.ctx());
                     // The title measures its room from the buttons and the
                     // caption buttons' room after them.
-                    let buttons_width = header_buttons_width(ui, &buttons) + room.right;
+                    let buttons_width = header_buttons_width(ui, &buttons) + end_room;
                     if app.page == Page::Calls && app.new_call {
                         new_call_header(app, ui, 20.0, buttons_width);
                     } else if app.page != Page::Calls && app.show_starred {
                         if theme::icon_button(
                             ui,
-                            Icon::ArrowLeft,
+                            crate::rtl::back_icon(ui),
                             18.0,
                             palette.secondary,
                             palette.text,
@@ -193,7 +194,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                     } else if app.page != Page::Calls && (app.show_archived || app.locked_folder) {
                         if theme::icon_button(
                             ui,
-                            Icon::ArrowLeft,
+                            crate::rtl::back_icon(ui),
                             18.0,
                             palette.secondary,
                             palette.text,
@@ -232,8 +233,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             buttons_width,
                         );
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(room.right);
+                    ui.with_layout(crate::rtl::end(ui), |ui| {
+                        ui.add_space(end_room);
                         header_button_row(app, ui, &buttons, false);
                     });
                 },
@@ -261,7 +262,7 @@ fn new_call_header(app: &mut App, ui: &mut egui::Ui, title: f32, buttons: f32) {
     let palette = app.palette;
     if theme::icon_button(
         ui,
-        Icon::ArrowLeft,
+        crate::rtl::back_icon(ui),
         18.0,
         palette.secondary,
         palette.text,
@@ -497,17 +498,20 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
     Frame::new()
         .inner_margin(Margin::symmetric(14, 8))
         .show(ui, |ui| {
-            let row = ui.horizontal(|ui| {
+            let overhang = super::rail::lights_overhang(ui.ctx());
+            // The traffic lights reach past the rail over this header, at its
+            // start: the left in LTR, the right in RTL.
+            let (start_overhang, end_overhang) = crate::rtl::pair(ui, overhang, 0.0);
+            let row = crate::rtl::row(ui, |ui| {
                 ui.set_min_height(super::conversation::HEADER_ROW);
-                // The traffic lights reach past the rail over this header.
-                ui.add_space(super::rail::lights_overhang(ui.ctx()));
+                ui.add_space(start_overhang);
                 let buttons = list_header_buttons(app, ui.ctx());
                 if app.page == Page::Calls && app.new_call {
                     new_call_header(app, ui, 16.0, header_buttons_width(ui, &buttons));
                 } else if app.page != Page::Calls && app.show_starred {
                     if theme::icon_button(
                         ui,
-                        Icon::ArrowLeft,
+                        crate::rtl::back_icon(ui),
                         18.0,
                         palette.secondary,
                         palette.text,
@@ -528,7 +532,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                 } else if app.page != Page::Calls && (app.show_archived || app.locked_folder) {
                     if theme::icon_button(
                         ui,
-                        Icon::ArrowLeft,
+                        crate::rtl::back_icon(ui),
                         18.0,
                         palette.secondary,
                         palette.text,
@@ -567,7 +571,8 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         header_buttons_width(ui, &buttons),
                     );
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.with_layout(crate::rtl::end(ui), |ui| {
+                    ui.add_space(end_overhang);
                     header_button_row(app, ui, &buttons, true);
                 });
             });
@@ -604,7 +609,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     ui.add_space(8.0);
     let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
-        ui.horizontal(|ui| {
+        crate::rtl::row(ui, |ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
             for filter in ChatFilter::EVERY {
                 let count = match filter {
@@ -1089,21 +1094,32 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
+        let icon_rect = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(22.0),
+        );
         Icon::LockOpen
             .image(palette.accent, 22.0)
             .paint_at(ui, icon_rect);
         ui.painter().text(
-            pos2(rect.left() + 76.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0),
+                rect.center().y,
+            ),
+            crate::rtl::pick(ui, egui::Align2::LEFT_CENTER, egui::Align2::RIGHT_CENTER),
             crate::i18n::gettext(app.locale, "Locked chats"),
             theme::medium(14.5),
             palette.text,
         );
         ui.painter().text(
-            pos2(rect.right() - 16.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
+            pos2(
+                crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 16.0),
+                rect.center().y,
+            ),
+            crate::rtl::pick(ui, egui::Align2::RIGHT_CENTER, egui::Align2::LEFT_CENTER),
             count.to_string(),
             theme::regular(12.5),
             palette.accent,
@@ -1312,8 +1328,13 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&hit.chat);
         widgets::paint_avatar(
             ui,
@@ -1323,22 +1344,30 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             &hit.chat,
             picture.as_deref(),
         );
-        let left = rect.left() + 76.0;
-        let right = rect.right() - 14.0;
+        // `left` is where reading starts and `right` where it ends, whichever
+        // side of the row those are on.
+        let left = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let right = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 14.0);
         let stamp_galley = ui.painter().layout_no_wrap(
             crate::util::chat_stamp(app.locale, hit.timestamp),
             theme::regular(11.5),
             palette.dim,
         );
         let name_top = rect.top() + 14.0;
+        let stamp_width = stamp_galley.size().x;
+        let stamp_x = crate::rtl::text_at_end(ui, right, stamp_width);
         ui.painter().galley(
-            pos2(right - stamp_galley.size().x, name_top + 1.0),
+            pos2(stamp_x, name_top + 1.0),
             stamp_galley.clone(),
             palette.dim,
         );
-        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        let name_width = crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
         let name = widgets::line(ui, &title, theme::medium(14.5), palette.text, name_width, 1);
-        name.paint(ui, pos2(left, name_top), palette.text);
+        name.paint(
+            ui,
+            pos2(crate::rtl::text_left(ui, left, name.size().x), name_top),
+            palette.text,
+        );
         // Show the sender for group messages.
         let line_y = rect.top() + 38.0;
         let mut x = left;
@@ -1348,11 +1377,15 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
                 "You: ",
                 theme::regular(13.0),
                 palette.dim,
-                (right - x) * 0.5,
+                crate::rtl::room(ui, x, right) * 0.5,
                 1,
             );
-            who.paint(ui, pos2(x, line_y), palette.dim);
-            x += who.size().x;
+            who.paint(
+                ui,
+                pos2(crate::rtl::text_left(ui, x, who.size().x), line_y),
+                palette.dim,
+            );
+            x = crate::rtl::ahead(ui, x, who.size().x);
         } else if crate::model::ChatKind::from_id(&hit.chat) == crate::model::ChatKind::Group {
             let sender = app.display_name_or(&hit.sender, hit.sender_name.as_deref());
             let first = app.short_name(&hit.sender, &sender);
@@ -1361,21 +1394,29 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
                 &format!("{first}: "),
                 theme::regular(13.0),
                 palette.dim,
-                (right - x) * 0.5,
+                crate::rtl::room(ui, x, right) * 0.5,
                 1,
             );
-            who.paint(ui, pos2(x, line_y), palette.dim);
-            x += who.size().x;
+            who.paint(
+                ui,
+                pos2(crate::rtl::text_left(ui, x, who.size().x), line_y),
+                palette.dim,
+            );
+            x = crate::rtl::ahead(ui, x, who.size().x);
         }
         let words = widgets::line(
             ui,
             &app.preview_line(&hit.summary_in(app.locale), hit),
             theme::regular(13.0),
             palette.dim,
-            (right - x).max(0.0),
+            crate::rtl::room(ui, x, right),
             1,
         );
-        words.paint(ui, pos2(x, line_y), palette.dim);
+        words.paint(
+            ui,
+            pos2(crate::rtl::text_left(ui, x, words.size().x), line_y),
+            palette.dim,
+        );
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
@@ -1431,23 +1472,32 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
         if response.hovered() || response.has_focus() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let circle =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let circle = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(48.0),
+        );
         ui.painter()
             .circle_filled(circle.center(), circle.width() / 2.0, palette.accent);
         theme::paint_icon(ui, icon, circle, 22.0, palette.on_accent);
-        let left = rect.left() + 76.0;
+        let start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let end = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 14.0);
         let line = widgets::line(
             ui,
             label,
             theme::medium(14.5),
             palette.text,
-            rect.right() - 14.0 - left,
+            crate::rtl::room(ui, start, end),
             1,
         );
         line.paint(
             ui,
-            pos2(left, rect.center().y - line.size().y / 2.0),
+            pos2(
+                crate::rtl::text_left(ui, start, line.size().x),
+                rect.center().y - line.size().y / 2.0,
+            ),
             palette.text,
         );
     }
@@ -1497,30 +1547,37 @@ fn person_row(
         } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(id);
         widgets::paint_avatar(ui, &palette, avatar_rect, name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
-        let name_line = widgets::line(
+        let start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let end = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 14.0);
+        let width = crate::rtl::room(ui, start, end);
+        let name_line = widgets::line(ui, name, theme::medium(14.5), palette.text, width, 1);
+        name_line.paint(
             ui,
-            name,
-            theme::medium(14.5),
+            pos2(
+                crate::rtl::text_left(ui, start, name_line.size().x),
+                rect.top() + 14.0,
+            ),
             palette.text,
-            rect.right() - 14.0 - left,
-            1,
         );
-        name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
         if let Some(detail) = detail {
-            let phone_line = widgets::line(
+            let phone_line = widgets::line(ui, detail, theme::regular(13.0), palette.dim, width, 1);
+            phone_line.paint(
                 ui,
-                detail,
-                theme::regular(13.0),
+                pos2(
+                    crate::rtl::text_left(ui, start, phone_line.size().x),
+                    rect.top() + 38.0,
+                ),
                 palette.dim,
-                rect.right() - 14.0 - left,
-                1,
             );
-            phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
         }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1560,8 +1617,13 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
+                rect.center().y,
+            ),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&chat.id);
         widgets::paint_avatar(
             ui,
@@ -1575,8 +1637,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
-        let left = rect.left() + 76.0;
-        let right = rect.right() - 14.0;
+        // `left` is where reading starts and `right` where it ends, whichever
+        // side of the row those are on.
+        let left = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let right = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 14.0);
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {
@@ -1592,53 +1656,66 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             .painter()
             .layout_no_wrap(stamp, theme::regular(11.5), stamp_color);
         let name_top = rect.top() + 14.0;
+        let stamp_width = stamp_galley.size().x;
+        let stamp_x = crate::rtl::text_at_end(ui, right, stamp_width);
         ui.painter().galley(
-            pos2(right - stamp_galley.size().x, name_top + 1.0),
+            pos2(stamp_x, name_top + 1.0),
             stamp_galley.clone(),
             stamp_color,
         );
-        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        let name_width = crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
         let name_font = if unread {
             theme::semibold(14.5)
         } else {
             theme::medium(14.5)
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
-        name.paint(ui, pos2(left, name_top), palette.text);
+        let name_x = crate::rtl::text_left(ui, left, name.size().x);
+        name.paint(ui, pos2(name_x, name_top), palette.text);
 
-        // Leave room for badges beside the latest-message preview.
-        let mut badge_right = right;
+        // Leave room for badges beside the latest-message preview, along the
+        // reading end of the row.
+        let mut badge_edge = right;
         let line_y = rect.top() + 38.0;
+        let badge_at = |edge: f32, offset: f32| crate::rtl::behind(ui, edge, offset);
+        let badge_advance = |edge: f32, width: f32| crate::rtl::behind(ui, edge, width);
         if unread {
             let width = widgets::unread_indicator(
                 ui,
                 &palette,
-                pos2(badge_right - 10.0, line_y + 8.0),
+                pos2(badge_at(badge_edge, 10.0), line_y + 8.0),
                 chat.unread,
                 chat.marked_unread,
                 muted,
             );
-            badge_right -= width + 6.0;
+            badge_edge = badge_advance(badge_edge, width + 6.0);
         }
         if chat.unread > 0 && chat.unread_mention.is_some() {
             // A mention calls even in a muted chat, as on WhatsApp.
-            let width =
-                widgets::mention_badge(ui, &palette, pos2(badge_right - 10.0, line_y + 8.0));
-            badge_right -= width + 6.0;
+            let width = widgets::mention_badge(
+                ui,
+                &palette,
+                pos2(badge_at(badge_edge, 10.0), line_y + 8.0),
+            );
+            badge_edge = badge_advance(badge_edge, width + 6.0);
         }
         if muted {
-            let icon_rect =
-                Rect::from_center_size(pos2(badge_right - 8.0, line_y + 8.0), Vec2::splat(15.0));
+            let icon_rect = Rect::from_center_size(
+                pos2(badge_at(badge_edge, 8.0), line_y + 8.0),
+                Vec2::splat(15.0),
+            );
             Icon::VolumeX
                 .image(palette.dim, 15.0)
                 .paint_at(ui, icon_rect);
-            badge_right -= 20.0;
+            badge_edge = badge_advance(badge_edge, 20.0);
         }
         if chat.pinned {
-            let icon_rect =
-                Rect::from_center_size(pos2(badge_right - 8.0, line_y + 8.0), Vec2::splat(14.0));
+            let icon_rect = Rect::from_center_size(
+                pos2(badge_at(badge_edge, 8.0), line_y + 8.0),
+                Vec2::splat(14.0),
+            );
             Icon::Pin.image(palette.dim, 14.0).paint_at(ui, icon_rect);
-            badge_right -= 20.0;
+            badge_edge = badge_advance(badge_edge, 20.0);
         }
         let mut x = left;
         let typing = app.typing_in(&chat.id);
@@ -1664,7 +1741,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 &who,
                 theme::medium(13.0),
                 palette.accent,
-                badge_right - x,
+                crate::rtl::room(ui, x, badge_edge),
                 1,
             )
         } else if let Some(draft) = app.draft_preview(&chat.id) {
@@ -1675,25 +1752,31 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 &label,
                 theme::medium(13.0),
                 palette.accent,
-                (badge_right - x) * 0.5,
+                crate::rtl::room(ui, x, badge_edge) * 0.5,
                 1,
             );
             let width = label.size().x;
-            label.paint(ui, pos2(x, line_y), palette.accent);
-            x += width;
+            label.paint(
+                ui,
+                pos2(crate::rtl::text_left(ui, x, width), line_y),
+                palette.accent,
+            );
+            x = crate::rtl::ahead(ui, x, width);
             widgets::line(
                 ui,
                 &draft,
                 theme::regular(13.0),
                 preview_color,
-                (badge_right - x).max(0.0),
+                crate::rtl::room(ui, x, badge_edge),
                 1,
             )
         } else if let Some(last) = &chat.last {
             let mut prefix = String::new();
             if last.from_me {
-                let tick_rect =
-                    Rect::from_center_size(pos2(x + 8.0, line_y + 8.0), Vec2::splat(16.0));
+                let tick_rect = Rect::from_center_size(
+                    pos2(crate::rtl::ahead(ui, x, 8.0), line_y + 8.0),
+                    Vec2::splat(16.0),
+                );
                 widgets::ticks(
                     ui,
                     &palette,
@@ -1705,7 +1788,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                         app.account_receipts_off,
                     ),
                 );
-                x += 20.0;
+                x = crate::rtl::ahead(ui, x, 20.0);
             } else if chat.is_group() {
                 let sender = app.display_name_or(&last.sender, last.sender_name.as_deref());
                 let first = app.short_name(&last.sender, &sender);
@@ -1715,12 +1798,16 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     &prefix,
                     theme::regular(13.0),
                     preview_color,
-                    (badge_right - x) * 0.5,
+                    crate::rtl::room(ui, x, badge_edge) * 0.5,
                     1,
                 );
                 let width = sender.size().x;
-                sender.paint(ui, pos2(x, line_y), preview_color);
-                x += width;
+                sender.paint(
+                    ui,
+                    pos2(crate::rtl::text_left(ui, x, width), line_y),
+                    preview_color,
+                );
+                x = crate::rtl::ahead(ui, x, width);
             }
             let words = widgets::line(
                 ui,
@@ -1730,15 +1817,17 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 ),
                 theme::regular(13.0),
                 preview_color,
-                (badge_right - x).max(0.0),
+                crate::rtl::room(ui, x, badge_edge),
                 1,
             );
             // The row shows one line: offer the whole message when that line
             // was cut short or the message has more lines than it.
             if words.galley.elided || last.full.trim_end() != last.summary {
+                let top = line_y - 4.0;
+                let bottom = line_y + words.size().y.max(16.0) + 4.0;
                 let area = Rect::from_min_max(
-                    pos2(left, line_y - 4.0),
-                    pos2(badge_right, line_y + words.size().y.max(16.0) + 4.0),
+                    pos2(badge_edge.min(left), top),
+                    pos2(badge_edge.max(left), bottom),
                 );
                 full_preview = Some((area, prefix, last.full_in(app.locale).into_owned()));
             }
@@ -1746,7 +1835,11 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else {
             widgets::line(ui, "", theme::regular(13.0), preview_color, 1.0, 1)
         };
-        preview.paint(ui, pos2(x, line_y), preview_color);
+        preview.paint(
+            ui,
+            pos2(crate::rtl::text_left(ui, x, preview.size().x), line_y),
+            preview_color,
+        );
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if let Some((area, prefix, full)) = full_preview {
@@ -3218,5 +3311,50 @@ mod tests {
         let center = compact_badge_center(avatar);
         assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
         assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
+    }
+
+    /// A name stops before its timestamp in both directions: the timestamp is
+    /// pinned to the reading end, so the name takes the room before its near
+    /// edge, not the row's whole reading width. Long Arabic and English chat
+    /// titles covered their stamps before this.
+    #[test]
+    fn a_long_name_stops_before_its_timestamp() {
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 80.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::rtl::set(ui.ctx(), rtl);
+                    // Reading start and end, whichever side they are on.
+                    let (left, right) = if rtl { (300.0, 40.0) } else { (40.0, 300.0) };
+                    let available = crate::rtl::room(ui, left, right) - 8.0;
+                    let stamp_width = 48.0;
+                    let name_width =
+                        crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
+                    assert!(
+                        (name_width - (available - stamp_width)).abs() < 0.5,
+                        "rtl {rtl}: the stamp takes its own width, {name_width} of {available}"
+                    );
+                    let name = widgets::line(
+                        ui,
+                        "A long chat title that would run under the timestamp",
+                        theme::medium(14.5),
+                        egui::Color32::WHITE,
+                        name_width,
+                        1,
+                    );
+                    assert!(
+                        name.size().x < available - stamp_width + 1.0,
+                        "rtl {rtl}: the galley is {} wide, not {available}",
+                        name.size().x
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
     }
 }

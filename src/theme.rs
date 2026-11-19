@@ -889,6 +889,7 @@ fastframe_icons::icons! {
         Archive => "archive",
         ArrowDown => "arrow-down",
         ArrowLeft => lucide "arrow-left",
+        ArrowRight => "arrow-right",
         Ban => "ban",
         Bell => "bell",
         BellOff => "bell-off",

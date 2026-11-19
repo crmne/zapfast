@@ -158,7 +158,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
     let palette = app.palette;
     // Its own panel id: sharing the list's would hand that resizable panel
     // this narrow width, and it would save it as the list's width.
-    let panel = egui::Panel::left("chat-rail")
+    let panel = crate::rtl::start_panel(ui.ctx(), "chat-rail")
         .resizable(false)
         .exact_size(WIDTH)
         .show_separator_line(false)

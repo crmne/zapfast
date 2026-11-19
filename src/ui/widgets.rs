@@ -683,10 +683,12 @@ pub fn menu_item_focusable(
                 .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
         }
         let color = if enabled { palette.text } else { palette.dim };
-        let mut x = rect.left() + 10.0;
+        let mut x = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 10.0);
         if let Some(icon) = icon {
-            let icon_rect =
-                Rect::from_center_size(pos2(x + 8.0, rect.center().y), Vec2::splat(16.0));
+            let icon_rect = Rect::from_center_size(
+                pos2(crate::rtl::ahead(ui, x, 8.0), rect.center().y),
+                Vec2::splat(16.0),
+            );
             icon.image(
                 if enabled {
                     palette.secondary
@@ -696,7 +698,7 @@ pub fn menu_item_focusable(
                 16.0,
             )
             .paint_at(ui, icon_rect);
-            x += 26.0;
+            x = crate::rtl::ahead(ui, x, 26.0);
         }
         let mut job = egui::text::LayoutJob::simple_singleline(
             label.to_string(),
@@ -704,14 +706,15 @@ pub fn menu_item_focusable(
             color,
         );
         job.wrap = egui::text::TextWrapping {
-            max_width: (rect.right() - 10.0 - x).max(0.0),
+            max_width: (crate::rtl::room(ui, x, crate::rtl::end_edge(ui, rect)) - 10.0).max(0.0),
             max_rows: 1,
             break_anywhere: true,
             overflow_character: Some('\u{2026}'),
         };
         let galley = crate::bidi::layout_job(ui, job);
+        let left = crate::rtl::text_left(ui, x, galley.size().x);
         ui.painter().galley(
-            pos2(x, rect.center().y - galley.size().y / 2.0),
+            pos2(left, rect.center().y - galley.size().y / 2.0),
             galley,
             color,
         );
@@ -1023,8 +1026,13 @@ pub fn search_field(
         (false, false) => palette.surface,
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
-    let icon_rect =
-        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
+    let icon_rect = Rect::from_center_size(
+        pos2(
+            crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 18.0),
+            rect.center().y,
+        ),
+        Vec2::splat(16.0),
+    );
     Icon::Search
         .image(palette.secondary, 16.0)
         .paint_at(ui, icon_rect);
@@ -1039,9 +1047,11 @@ pub fn search_field(
     let line_height = probe.size().y;
     let middle = cap_middle(&probe).unwrap_or(line_height / 2.0);
     let top = fastframe_text::snap_to_pixels(rect.center().y - middle, ui.ctx().pixels_per_point());
+    let field_edge = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 34.0);
+    let field_far = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 30.0);
     let field_rect = Rect::from_min_max(
-        pos2(rect.left() + 34.0, top),
-        pos2(rect.right() - 30.0, top + line_height),
+        pos2(field_edge.min(field_far), top),
+        pos2(field_edge.max(field_far), top + line_height),
     );
     // The editor is one line tall now; the rest of the pill still focuses
     // it, as it did when the editor filled the pill. Registered first, so
@@ -1064,7 +1074,7 @@ pub fn search_field(
     let align = if bidi::base_rtl(text) {
         Align::RIGHT
     } else {
-        Align::LEFT
+        crate::rtl::align(ui)
     };
     let output = egui::TextEdit::singleline(text)
         .id(id)
@@ -1095,7 +1105,10 @@ pub fn search_field(
         // The button's own size: a smaller box let it overflow downwards,
         // which put the cross below the field's middle.
         let clear_rect = Rect::from_center_size(
-            pos2(rect.right() - 17.0, rect.center().y),
+            pos2(
+                crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 17.0),
+                rect.center().y,
+            ),
             Vec2::splat(15.0 + theme::ICON_BUTTON_PAD),
         );
         let mut clear = ui.new_child(
@@ -1200,8 +1213,8 @@ pub fn setting_row(
     description: &str,
     control: impl FnOnce(&mut Ui),
 ) {
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
+    crate::rtl::row(ui, |ui| {
+        ui.with_layout(crate::rtl::top(ui), |ui| {
             ui.set_width((ui.available_width() - 260.0).max(120.0));
             rich_text(ui, label, theme::medium(14.0), palette.text);
             if !description.is_empty() {
@@ -1219,7 +1232,7 @@ pub fn setting_row(
                 }
             }
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), control);
+        ui.with_layout(crate::rtl::end(ui), control);
     });
     ui.add_space(10.0);
 }
@@ -1426,11 +1439,12 @@ pub fn paint_shadow_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edg
 /// bottom is. A stroke centred on the edge would lose the half the content
 /// beside it paints over, and all but vanish at some display scales.
 pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
+    let edge = crate::rtl::end_edge(ui, panel);
+    // The hairline stays inside the panel on both sides: the one point before
+    // the edge in left-to-right, and after it in right-to-left.
+    let (x0, x1) = crate::rtl::pick(ui, (edge - 1.0, edge), (edge, edge + 1.0));
     ui.painter().rect_filled(
-        Rect::from_min_max(
-            pos2(panel.right() - 1.0, panel.top()),
-            pos2(panel.right(), panel.bottom()),
-        ),
+        Rect::from_min_max(pos2(x0, panel.top()), pos2(x1, panel.bottom())),
         0.0,
         palette.outline,
     );
@@ -1440,9 +1454,18 @@ pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
 /// a panel beside content on a lower level, as the chat list is beside the
 /// conversation. The panel draws its own hairline.
 pub fn paint_shadow_beside(ui: &Ui, palette: &Palette, edge: f32, top: f32, bottom: f32) {
-    let rect = Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom));
-    ui.painter()
-        .add(shadow_mesh(palette, rect, [true, false, false, true]));
+    let (rect, dark) = crate::rtl::pick(
+        ui,
+        (
+            Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom)),
+            [true, false, false, true],
+        ),
+        (
+            Rect::from_min_max(pos2(edge - SHADOW_REACH, top), pos2(edge, bottom)),
+            [false, true, true, false],
+        ),
+    );
+    ui.painter().add(shadow_mesh(palette, rect, dark));
 }
 
 /// One gradient quad over `rect`, dark at the corners marked in `dark`
@@ -2987,5 +3010,36 @@ mod tests {
         assert!(off_outline > 0.0, "the off track is outlined");
         assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
         assert!(on_knob > off_knob, "the knob grows when on");
+    }
+
+    /// The hairline beside a panel stays inside it in both directions, so
+    /// the content painted afterwards cannot cover it in a right-to-left
+    /// frame, where the reading end is the panel's left edge.
+    #[test]
+    fn the_panel_hairline_stays_inside_the_panel() {
+        let panel = Rect::from_min_max(pos2(100.0, 10.0), pos2(300.0, 200.0));
+        let palette = Palette::dark();
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                crate::rtl::set(ui.ctx(), rtl);
+                paint_edge_beside(ui, &palette, panel);
+            });
+            output.textures_delta.clear();
+            let rect = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(shape) if shape.fill == palette.outline => Some(shape.rect),
+                    _ => None,
+                })
+                .expect("the hairline is painted");
+            assert!(
+                rect.min.x >= panel.left() - 0.01 && rect.max.x <= panel.right() + 0.01,
+                "rtl {rtl}: {rect:?} inside {panel:?}"
+            );
+            assert!((rect.width() - 1.0).abs() < 0.01, "one point wide");
+        }
     }
 }

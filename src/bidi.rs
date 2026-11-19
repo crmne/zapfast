@@ -11,6 +11,7 @@
 //! Glyph positions are the visual ones. epaint hit-testing reads the `rtl`
 //! flag set here.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -121,7 +122,7 @@ pub fn message_rtl(text: &str) -> bool {
 
 /// Places each line in visual order and records logical caret direction.
 pub fn reorder_rtl_runs(galley: &mut Galley) {
-    if !galley.text().chars().any(is_strong_rtl) {
+    if !may_contain_rtl(galley.text()) || !galley.text().chars().any(is_strong_rtl) {
         return;
     }
     // A later paint can widen the galley for selection. Running alignment and
@@ -156,6 +157,128 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
         align_right(galley);
     }
     refresh_bounds(galley);
+}
+
+/// Reorders the text shapes the app did not lay out itself.
+///
+/// Most interface text goes straight to `Painter::text`, which shapes each font
+/// run in its own direction but leaves the runs in logical order. In a right-
+/// to-left label that puts its first word on the left, so the words read
+/// reversed: a chip says "المقروء غير" instead of "غير المقروء". This plugin
+/// moves those runs into visual order after layout, as [`layout_job`] does for
+/// text the app lays out itself. Galleys that already carry visual order, and
+/// editors whose caret follows the buffer, are left as they are.
+///
+/// # Ordering
+///
+/// This plugin must be added **before** any plugin that reads glyph positions
+/// (such as the emoji plugin), so that visual order is established first.
+/// Adding it after one breaks that plugin's placement in right-to-left text.
+#[derive(Default)]
+pub(crate) struct BidiPlugin {
+    /// Reordered galleys, by the address layout gave their original.
+    ///
+    /// The original is kept alive so another galley cannot take its address.
+    /// Each entry remembers the frame it last served, so eviction can drop the
+    /// oldest strings rather than the whole cache at once.
+    reordered: HashMap<usize, Reordered>,
+}
+
+/// A galley's visual-order twin, and the frame that last asked for it.
+struct Reordered {
+    original: Arc<Galley>,
+    visual: Arc<Galley>,
+    last_used: u64,
+}
+
+/// How many text layouts the plugin remembers between frames.
+const BIDI_CACHE: usize = 512;
+
+impl egui::Plugin for BidiPlugin {
+    fn debug_name(&self) -> &'static str {
+        "zapfast-bidi"
+    }
+
+    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
+        let frame = ctx.cumulative_frame_nr();
+        if self.reordered.len() > BIDI_CACHE {
+            evict_oldest(&mut self.reordered);
+        }
+        for clipped in &mut output.shapes {
+            reorder_shape(&mut clipped.shape, &mut self.reordered, frame);
+        }
+    }
+}
+
+/// Leaves the newest three quarters of the cache, so a long session keeps its
+/// working set instead of starting over on every overflow.
+fn evict_oldest(reordered: &mut HashMap<usize, Reordered>) {
+    let keep = BIDI_CACHE * 3 / 4;
+    let mut ages: Vec<u64> = reordered.values().map(|entry| entry.last_used).collect();
+    let cut_at = ages.len() - keep;
+    let (_, cut, _) = ages.select_nth_unstable(cut_at);
+    let cut = *cut;
+    reordered.retain(|_, entry| entry.last_used >= cut);
+    // One frame that painted more strings than the whole cache leaves every
+    // entry the same age, so there is nothing to rank and the cache goes.
+    if reordered.len() > BIDI_CACHE {
+        reordered.clear();
+    }
+}
+
+/// A quick byte check before the character scan: the Hebrew block starts at
+/// U+0590, whose UTF-8 lead byte is 0xD6, so a string of ASCII, Latin-1,
+/// Greek, or Cyrillic text cannot hold a right-to-left character. Characters
+/// at or above U+0560 (Armenian's tail, Hebrew, Arabic, Thai, CJK, …) only
+/// pay for the full scan; none of them is RTL except the ones the scan will
+/// find. No string that holds an RTL character is ever skipped.
+fn may_contain_rtl(text: &str) -> bool {
+    text.bytes().any(|byte| byte >= 0xD6)
+}
+
+fn reorder_shape(shape: &mut egui::Shape, reordered: &mut HashMap<usize, Reordered>, frame: u64) {
+    match shape {
+        egui::Shape::Text(text) => {
+            // An editor's caret follows the logical buffer, so its galley keeps
+            // the text order its layout gave it.
+            if text.galley.job.keep_trailing_whitespace || text.angle != 0.0 {
+                return;
+            }
+            if !may_contain_rtl(text.galley.text())
+                || !text.galley.text().chars().any(is_strong_rtl)
+                || text.galley.rows.iter().all(|placed| {
+                    placed.row.glyphs.is_empty() || already_visual(&placed.row.glyphs)
+                })
+            {
+                return;
+            }
+            let key = Arc::as_ptr(&text.galley) as usize;
+            if let Some(entry) = reordered.get_mut(&key)
+                && Arc::ptr_eq(&entry.original, &text.galley)
+            {
+                entry.last_used = frame;
+                text.galley = Arc::clone(&entry.visual);
+                return;
+            }
+            let mut visual = Arc::clone(&text.galley);
+            reorder_rtl_runs(Arc::make_mut(&mut visual));
+            reordered.insert(
+                key,
+                Reordered {
+                    original: Arc::clone(&text.galley),
+                    visual: Arc::clone(&visual),
+                    last_used: frame,
+                },
+            );
+            text.galley = visual;
+        }
+        egui::Shape::Vec(shapes) => {
+            for shape in shapes {
+                reorder_shape(shape, reordered, frame);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The bidi paragraph last used, keyed by its byte offset in the galley text.
@@ -237,7 +360,18 @@ fn reorder_row<'a>(
     placed.sort_by(|a, b| a.key.cmp(&b.key).then(a.glyphs.start.cmp(&b.glyphs.start)));
 
     let glyph_vertices = row.visuals.glyph_vertex_range.clone();
-    let mut cursor = 0.0f32;
+    // Keep a row's original leftmost position: an indented label stays
+    // indented after its runs move, and a row already at zero still starts
+    // there.
+    let mut cursor = row
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.pos.x)
+        .fold(f32::INFINITY, f32::min);
+    if !cursor.is_finite() {
+        cursor = 0.0;
+    }
+    let row_origin = cursor;
     let mut deco: Vec<Moved> = Vec::new();
     for atom in &placed {
         let delta = cursor - atom.min_x;
@@ -275,7 +409,7 @@ fn reorder_row<'a>(
                 glyph.pos.x += extra;
                 shift_glyph_mesh(&mut row.visuals.mesh, glyph, egui::vec2(extra, 0.0));
             }
-            let mut pen = 0.0f32;
+            let mut pen = row_origin;
             for index in replacement {
                 let glyph = &mut row.glyphs[index];
                 let delta = pen - glyph.pos.x;
@@ -923,6 +1057,114 @@ mod tests {
         }
     }
 
+    /// Chips, menus and tooltips hand their text to egui itself, which leaves
+    /// each font run in logical order. The plugin moves those runs into visual
+    /// order, so a chip reads "غير المقروء" and not "المقروء غير".
+    #[test]
+    fn plain_labels_read_right_to_left() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.add_plugin(BidiPlugin::default());
+        for text in ["غير المقروء", "Ctrl+V يلصق صورة", "محمد سيد"] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.label(text);
+                },
+            );
+            output.textures_delta.clear();
+            let galley = first_text(&output.shapes).expect("a label");
+            assert_eq!(
+                visual_chars(&galley),
+                drawn_in_order(&galley, text),
+                "logical {text:?}"
+            );
+            assert!(
+                galley.rows.iter().all(|placed| placed
+                    .row
+                    .glyphs
+                    .iter()
+                    .all(|glyph| glyph.rtl || !is_strong_rtl(glyph.chr))),
+                "every Arabic glyph must carry its right-to-left caret for {text:?}"
+            );
+        }
+    }
+
+    /// Text the app laid out through `layout_job` is already in visual order.
+    /// The plugin must recognize that and pass the same galley on: reordering
+    /// it again flips mixed-direction runs back to front.
+    #[test]
+    fn a_laid_out_job_is_not_reordered_twice() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.add_plugin(BidiPlugin::default());
+        for text in ["Hello שלום עולם 42", "مرحبا بالعالم"] {
+            let direct = std::cell::RefCell::new(None);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let job = LayoutJob::simple_singleline(
+                        text.to_owned(),
+                        FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+                    let galley = layout_job(ui, job);
+                    *direct.borrow_mut() = Some(Arc::clone(&galley));
+                    ui.painter().galley(Pos2::ZERO, galley, Color32::WHITE);
+                },
+            );
+            output.textures_delta.clear();
+            let shown = first_text(&output.shapes).expect("the painted galley");
+            let direct = direct.into_inner().expect("the laid-out galley");
+            assert!(
+                Arc::ptr_eq(&shown, &direct),
+                "the plugin reordered {text:?} a second time"
+            );
+        }
+    }
+
+    /// An overflowing cache keeps the strings still on screen instead of
+    /// starting over and reflowing every label the next frame.
+    #[test]
+    fn the_cache_drops_only_its_oldest_entries() {
+        let galley = Arc::new(layout_fixed("x"));
+        let mut reordered = HashMap::new();
+        for index in 0..=BIDI_CACHE {
+            reordered.insert(
+                index,
+                Reordered {
+                    original: Arc::clone(&galley),
+                    visual: Arc::clone(&galley),
+                    last_used: index as u64,
+                },
+            );
+        }
+        evict_oldest(&mut reordered);
+        let kept = BIDI_CACHE * 3 / 4;
+        assert_eq!(reordered.len(), kept);
+        assert!(
+            reordered.keys().all(|key| *key >= BIDI_CACHE + 1 - kept),
+            "the newest entries must survive"
+        );
+    }
+
+    fn first_text(shapes: &[egui::epaint::ClippedShape]) -> Option<Arc<Galley>> {
+        fn find(shape: &egui::Shape) -> Option<Arc<Galley>> {
+            match shape {
+                egui::Shape::Text(text) => Some(text.galley.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(find),
+                _ => None,
+            }
+        }
+        shapes.iter().find_map(|clipped| find(&clipped.shape))
+    }
+
     #[test]
     fn confirmed_mixed_text_matches_the_bidi_algorithm() {
         for text in [
@@ -1100,6 +1342,88 @@ mod tests {
             (ellipsis.pos.x - leftmost).abs() < 1.0,
             "ellipsis at {} should be the left edge {leftmost}",
             ellipsis.pos.x
+        );
+    }
+
+    #[test]
+    fn indented_hebrew_ellipsis_stays_adjacent_to_text() {
+        let text = "הכלב הגדול קפץ מעל החתול";
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let galley = std::cell::RefCell::new(None);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(200.0, 80.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut job = LayoutJob::default();
+                job.wrap.max_width = 36.0;
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = true;
+                job.wrap.overflow_character = Some('…');
+                job.append(
+                    text,
+                    0.0,
+                    TextFormat::simple(FontId::proportional(14.0), Color32::WHITE),
+                );
+                *galley.borrow_mut() = Some(ui.painter().layout_job(job));
+            },
+        );
+        output.textures_delta.clear();
+        let mut galley = Arc::try_unwrap(galley.into_inner().expect("galley"))
+            .unwrap_or_else(|arc| (*arc).clone());
+        let offset = 37.0;
+        for placed in &mut galley.rows {
+            let row = Arc::make_mut(&mut placed.row);
+            shift_all(row, offset);
+            row.size.x += offset;
+        }
+        reorder_rtl_runs(&mut galley);
+        let glyphs = &galley.rows[0].glyphs;
+        let ellipsis = glyphs
+            .iter()
+            .find(|glyph| is_overflow_replacement(glyph, text, Some('…')))
+            .expect("overflow ellipsis");
+        let text_left = glyphs
+            .iter()
+            .filter(|glyph| !is_overflow_replacement(glyph, text, Some('…')))
+            .map(|glyph| glyph.pos.x)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            (ellipsis.pos.x - offset).abs() < 1.0,
+            "ellipsis at {} should retain the row origin {offset}",
+            ellipsis.pos.x
+        );
+        assert!(
+            (text_left - ellipsis.max_x()).abs() < 1.0,
+            "text at {text_left} should follow the ellipsis ending at {}",
+            ellipsis.max_x()
+        );
+    }
+
+    /// A row already placed at a non-zero x keeps that offset when its runs
+    /// move into visual order, instead of snapping back to the galley's left
+    /// edge. Indented labels had lost their indent.
+    #[test]
+    fn reordering_a_row_keeps_its_left_offset() {
+        let ctx = egui::Context::default();
+        let mut galley = layout_raw(&ctx, "hello שלום");
+        let offset = 37.0;
+        for placed in &mut galley.rows {
+            let row = Arc::make_mut(&mut placed.row);
+            shift_all(row, offset);
+            row.size.x += offset;
+        }
+        reorder_rtl_runs(&mut galley);
+        let leftmost = galley.rows[0]
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.pos.x)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            (leftmost - offset).abs() < 1.0,
+            "the reordered row starts at {leftmost}, not {offset}"
         );
     }
 

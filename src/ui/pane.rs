@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use egui::{Align, Align2, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2};
+use egui::{Align2, Frame, Key, Margin, Modifiers, Rect, Sense, Stroke, Vec2};
 use egui::{pos2, vec2};
 use jiff::civil::Date;
 
@@ -112,7 +112,7 @@ pub(super) fn docked(
     // is the reader's, so it comes back when the window widens again.
     ui.ctx()
         .data_mut(|data| data.remove::<egui::PanelState>(id));
-    let response = egui::Panel::right(id)
+    let response = crate::rtl::end_panel(ui.ctx(), id)
         .resizable(true)
         .default_size(wanted)
         .size_range(min..=max)
@@ -120,11 +120,13 @@ pub(super) fn docked(
         .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
         .show(ui, |ui| contents(app, ui));
     let rect = response.response.rect;
-    ui.painter().vline(
-        rect.left(),
-        rect.y_range(),
-        Stroke::new(1.0, palette.outline),
-    );
+    let edge = if crate::rtl::is(ui.ctx()) {
+        rect.right()
+    } else {
+        rect.left()
+    };
+    ui.painter()
+        .vline(edge, rect.y_range(), Stroke::new(1.0, palette.outline));
     Docking::Docked {
         width: rect.width(),
         wanted,
@@ -142,7 +144,7 @@ pub(super) fn overlay(
 ) {
     let palette = app.palette;
     let width = width.max(MIN_WIDTH).min(region.width());
-    let rect = Rect::from_min_max(pos2(region.right() - width, region.top()), region.max);
+    let rect = crate::rtl::end_rect(ctx, region, width);
     // Above the conversation's header too, which a vibrant window draws on
     // a layer of its own over the messages, so the header keeps its glass.
     egui::Area::new(egui::Id::new(id))
@@ -154,7 +156,7 @@ pub(super) fn overlay(
             Frame::new()
                 .fill(palette.panel)
                 .shadow(egui::epaint::Shadow {
-                    offset: [-4, 0],
+                    offset: crate::rtl::pick(ui, [-4, 0], [4, 0]),
                     blur: 16,
                     spread: 0,
                     color: palette.shadow,
@@ -165,7 +167,7 @@ pub(super) fn overlay(
                     contents(app, ui);
                 });
             ui.painter().vline(
-                rect.left(),
+                crate::rtl::start_edge(ui, rect),
                 rect.y_range(),
                 Stroke::new(1.0, palette.outline),
             );
@@ -208,9 +210,10 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
             let room = caption_header(ui, vec2(14.0, 10.0));
-            ui.horizontal(|ui| {
+            let (start_room, _) = crate::rtl::pair(ui, room.left, room.right);
+            crate::rtl::row(ui, |ui| {
                 ui.set_min_height(32.0);
-                ui.add_space(room.left);
+                ui.add_space(start_room);
                 let close = crate::i18n::gettext(app.locale, "Close search");
                 if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
                     .tab_stop(Stop::ChatSearchClose)
@@ -227,7 +230,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 );
             });
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            crate::rtl::row(ui, |ui| {
                 ui.set_min_height(36.0);
                 let calendar = theme::icon_button(
                     ui,
@@ -339,7 +342,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 // The list is capped, so say so rather than dropping the rest
                 // without a word.
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
+                crate::rtl::row(ui, |ui| {
                     ui.add_space(14.0);
                     let notice = crate::i18n::gettext(
                         app.locale,
@@ -414,7 +417,7 @@ fn keyboard(app: &mut App, ui: &egui::Ui) -> (Option<usize>, bool) {
 /// The picked day: clicking it opens the calendar on it, and the cross
 /// beside it clears it.
 fn day_chip(app: &mut App, ui: &mut egui::Ui, palette: &Palette, day: Date) {
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         let label = util::short_date(app.locale, day);
         let chip = widgets::filter_chip(ui, palette, &label, 0, true);
         let change = crate::i18n::gettext(app.locale, "Filter by date");
@@ -483,19 +486,28 @@ fn month_header(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let month = app.chat_search_month;
     let current = util::today();
     let latest = (month.year(), month.month()) >= (current.year(), current.month());
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         theme::text(
             ui,
             util::month_heading(app.locale, month),
             theme::medium(14.5),
             palette.text,
         );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.with_layout(crate::rtl::end(ui), |ui| {
+            // The arrows point the way the reading direction moves through
+            // months: left is later in a right-to-left frame.
+            let next = crate::rtl::pick(ui, Icon::ChevronRight, Icon::ChevronLeft);
+            let previous = crate::rtl::pick(ui, Icon::ChevronLeft, Icon::ChevronRight);
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(egui::Id::new("calendar-next-icon"), next);
+                data.insert_temp(egui::Id::new("calendar-previous-icon"), previous);
+            });
             // Nothing has been said in a month still to come.
             if !latest
                 && theme::icon_button(
                     ui,
-                    Icon::ChevronRight,
+                    next,
                     16.0,
                     palette.secondary,
                     palette.text,
@@ -507,7 +519,7 @@ fn month_header(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             }
             if theme::icon_button(
                 ui,
-                Icon::ChevronLeft,
+                previous,
                 16.0,
                 palette.secondary,
                 palette.text,
