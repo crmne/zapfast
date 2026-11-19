@@ -8011,8 +8011,8 @@ impl Worker {
                     let Some(target) = dialog.save_file() else {
                         return;
                     };
-                    let event = match std::fs::copy(&source, &target) {
-                        Ok(_) => Event::Info(format!(
+                    let event = match copy_unless_same_file(&source, &target) {
+                        Ok(()) => Event::Info(format!(
                             "Saved {}",
                             target.file_name().map_or_else(
                                 || name.clone(),
@@ -12551,6 +12551,33 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
     dir.join(format!("{stem}.{extension}"))
 }
 
+/// Copy `source` to `target`, skipping a target that is the source itself:
+/// `fs::copy` truncates the destination first, which would empty the file.
+fn copy_unless_same_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    if is_same_file(source, target) {
+        return Ok(());
+    }
+    std::fs::copy(source, target).map(|_| ())
+}
+
+/// Whether both paths already name one existing file, through links or case.
+fn is_same_file(source: &Path, target: &Path) -> bool {
+    let (Ok(source_path), Ok(target_path)) = (source.canonicalize(), target.canonicalize()) else {
+        return false;
+    };
+    if source_path == target_path {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(source), std::fs::metadata(target)) {
+            return a.dev() == b.dev() && a.ino() == b.ino();
+        }
+    }
+    false
+}
+
 /// Reserve each destination atomically, including when another save is racing
 /// us. Checking existence before fs::copy could still overwrite a user's file.
 fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
@@ -15181,6 +15208,33 @@ mod tests {
         );
         assert_eq!(std::fs::read(first).unwrap(), b"synthetic picture");
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
+    }
+
+    /// Saving an attachment into its own folder under its own name keeps its bytes.
+    #[test]
+    fn saving_an_attachment_onto_itself_keeps_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("report.pdf");
+        std::fs::write(&source, b"synthetic").unwrap();
+        copy_unless_same_file(&source, &source).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+        let spelled = root.path().join(".").join("report.pdf");
+        copy_unless_same_file(&source, &spelled).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link.pdf");
+            std::os::unix::fs::symlink(&source, &link).unwrap();
+            copy_unless_same_file(&source, &link).unwrap();
+            assert_eq!(std::fs::read(&source).unwrap(), b"synthetic");
+            let hard = root.path().join("hard.pdf");
+            std::fs::hard_link(&source, &hard).unwrap();
+            copy_unless_same_file(&source, &hard).unwrap();
+            assert_eq!(std::fs::read(&hard).unwrap(), b"synthetic");
+        }
+        let other = root.path().join("other.pdf");
+        copy_unless_same_file(&source, &other).unwrap();
+        assert_eq!(std::fs::read(&other).unwrap(), b"synthetic");
     }
 
     /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
