@@ -4118,3 +4118,7 @@ msgstr "Enter untuk mengirim"
 #, fuzzy
 #~ msgid "Next pinned message"
 #~ msgstr "{} pesan belum dibaca"
+
+#: src/ui/dialogs.rs:568
+msgid "Message {number}"
+msgstr "Kirim pesan ke {number}"

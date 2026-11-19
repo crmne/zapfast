@@ -511,6 +511,20 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let contacts = contact_choices(app, &needle);
     let offer_self = app.offers_self(&needle);
+    // A typed number that no listed person has can still be messaged, as on
+    // the phone: WhatsApp checks it and opens its chat without saving it.
+    let typed_number = crate::util::international_phone(&app.new_chat_search).filter(|digits| {
+        !contacts
+            .iter()
+            .any(|contact| crate::model::phone_of(&contact.id) == Some(digits.as_str()))
+    });
+    if contacts.is_empty()
+        && open_first
+        && !app.new_contact_pending
+        && let Some(digits) = &typed_number
+    {
+        app.actions.push(message_number(digits));
+    }
     if let Some(contact) = contacts
         .first()
         .filter(|_| open_first && !needle.is_empty())
@@ -525,10 +539,10 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     // The list is as tall as its rows, up to the space the dialog has, so a
     // search with few matches gives a short list and many give a full one.
     // Its height comes from this frame's rows, not last frame's size.
-    let listed = if contacts.is_empty() && !offer_self {
+    let listed = if contacts.is_empty() && !offer_self && typed_number.is_none() {
         1
     } else {
-        contacts.len() + usize::from(offer_self)
+        contacts.len() + usize::from(offer_self) + usize::from(typed_number.is_some())
     };
     let rows = 2 + listed;
     let spacing = ui.spacing().item_spacing.y;
@@ -550,10 +564,20 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
             if super::chats::action_row(app, ui, Icon::Plus, &add_contact).clicked() {
                 app.actions.push(Action::ShowDialog(Dialog::NewContact));
             }
+            if let Some(digits) = &typed_number {
+                let label = crate::i18n::gettext(app.locale, "Message {number}")
+                    .replace("{number}", &crate::util::phone(digits));
+                let row = ui.add_enabled_ui(!app.new_contact_pending, |ui| {
+                    super::chats::action_row(app, ui, Icon::MessageCircle, &label)
+                });
+                if row.inner.clicked() {
+                    app.actions.push(message_number(digits));
+                }
+            }
             if offer_self {
                 super::chats::self_row(app, ui);
             }
-            if contacts.is_empty() && !offer_self {
+            if contacts.is_empty() && !offer_self && typed_number.is_none() {
                 // No row is drawn to forget the one scrolled into view last.
                 ui.ctx()
                     .data_mut(|data| data.remove::<String>(super::chats::revealed_row_id()));
@@ -571,6 +595,16 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
         });
+}
+
+/// Checks a typed number with WhatsApp and opens its chat, saving nothing.
+fn message_number(digits: &str) -> Action {
+    Action::NewContact {
+        phone: digits.to_owned(),
+        first: String::new(),
+        last: String::new(),
+        to_phone: None,
+    }
 }
 
 /// The people New chat and New call offer, by name: the contacts and the
@@ -601,11 +635,25 @@ pub(super) fn contact_choices(app: &App, needle: &str) -> Vec<crate::model::Cont
                         needle,
                     )
                     || crate::model::phone_of(&contact.id)
-                        .is_some_and(|phone| phone.contains(needle)))
+                        .is_some_and(|phone| phone.contains(needle))
+                    || phone_needle(needle).is_some_and(|digits| {
+                        crate::model::phone_of(&contact.id)
+                            .is_some_and(|phone| phone.contains(digits.as_str()))
+                    }))
         })
         .collect();
     contacts.sort_by_key(|contact| crate::util::search_key(&app.display_name(&contact.id)));
     contacts
+}
+
+/// The digits of a search typed as a number, such as "+33 6 51-47", so it
+/// finds the person whose number holds them; `None` for a name.
+fn phone_needle(needle: &str) -> Option<String> {
+    let phone_like = needle
+        .chars()
+        .all(|character| character.is_ascii_digit() || " +-().".contains(character));
+    let digits: String = needle.chars().filter(char::is_ascii_digit).collect();
+    (phone_like && digits.len() >= 3).then_some(digits)
 }
 
 /// Draws recipient selection or, for two or more recipients, their
@@ -2214,6 +2262,40 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> eg
 
 #[cfg(test)]
 mod tests {
+    /// A search typed as a number finds the person whose number holds its
+    /// digits, whatever the plus, spaces or dashes; a name is not one.
+    #[test]
+    fn a_number_typed_with_its_plus_and_spaces_is_searched_by_digits() {
+        assert_eq!(
+            super::phone_needle("+33 6 51-47"),
+            Some("3365147".to_owned())
+        );
+        assert_eq!(
+            super::phone_needle("+33651479808"),
+            Some("33651479808".to_owned())
+        );
+        assert_eq!(super::phone_needle("benjamin"), None);
+        assert_eq!(super::phone_needle("+3"), None);
+    }
+
+    /// Messaging a typed number checks it without a name, so nothing is saved.
+    #[test]
+    fn messaging_a_typed_number_saves_no_contact() {
+        match super::message_number("33651479808") {
+            crate::model::Action::NewContact {
+                phone,
+                first,
+                last,
+                to_phone,
+            } => {
+                assert_eq!(phone, "33651479808");
+                assert!(first.is_empty() && last.is_empty());
+                assert_eq!(to_phone, None);
+            }
+            _ => panic!("expected a number check"),
+        }
+    }
+
     #[test]
     fn chinese_delete_body_is_neutral_for_one_or_multiple_selected_messages() {
         for count in [1, 2] {

@@ -4123,3 +4123,7 @@ msgstr "Intro envía"
 
 #~ msgid "Next pinned message"
 #~ msgstr "Siguiente mensaje fijado"
+
+#: src/ui/dialogs.rs:568
+msgid "Message {number}"
+msgstr "Enviar mensaje a {number}"

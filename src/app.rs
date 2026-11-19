@@ -4761,7 +4761,9 @@ impl App {
                 self.new_contact_request = None;
                 self.new_contact_pending = false;
                 if live {
-                    if owned_by_dialog && matches!(self.dialog, Some(Dialog::NewContact)) {
+                    if owned_by_dialog
+                        && matches!(self.dialog, Some(Dialog::NewContact | Dialog::NewChat))
+                    {
                         self.dialog = None;
                     }
                     let name = name
@@ -9233,7 +9235,8 @@ impl App {
                 let request = self.new_contact_sequence;
                 self.new_contact_request = Some(request);
                 self.new_contact_dialog_request =
-                    matches!(self.dialog, Some(Dialog::NewContact)).then_some(request);
+                    matches!(self.dialog, Some(Dialog::NewContact | Dialog::NewChat))
+                        .then_some(request);
                 let (full_name, first_name) = compose_name(&first, &last);
                 // The dialog's choice starts the next one.
                 if let Some(to_phone) = to_phone
