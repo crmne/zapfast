@@ -12510,7 +12510,7 @@ fn is_bidi_format(c: char) -> bool {
 }
 
 /// The name with each bidi formatting character replaced by `_`.
-fn replace_bidi_format(name: &str) -> String {
+pub(crate) fn replace_bidi_format(name: &str) -> String {
     name.chars()
         .map(|c| if is_bidi_format(c) { '_' } else { c })
         .collect()
