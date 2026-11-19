@@ -458,9 +458,13 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
             let row = crate::rtl::row(ui, |ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
-                // With no chat list beside it, the header clears the traffic
-                // lights itself. They stay on the window's physical left.
-                if narrow && theme::macos_chrome(ui.ctx()) {
+                // The header reaches the window's physical left in a narrow
+                // pane, or in a right-to-left frame where the chat list sits
+                // on the right. There it clears the traffic lights itself.
+                // They stay on the window's physical left.
+                let lights_reach_header =
+                    (narrow || crate::rtl::is(ui.ctx())) && theme::macos_chrome(ui.ctx());
+                if lights_reach_header {
                     let lights = theme::traffic_light_inset(ui.ctx());
                     let (start, end) = crate::rtl::pair(ui, lights, 0.0);
                     start_room += start;
@@ -2428,8 +2432,15 @@ fn upload_strips(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         let fraction = (upload.percent > 0).then(|| f32::from(upload.percent) / 100.0);
         let _strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                theme::progress(ui, 16.0, fraction, palette.accent);
+            crate::rtl::row(ui, |ui| {
+                let _progress = theme::progress(ui, 16.0, fraction, palette.accent);
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new(("upload-progress", upload.id)),
+                        _progress.rect,
+                    )
+                });
                 ui.with_layout(crate::rtl::end(ui), |ui| {
                     let button = theme::icon_button(
                         ui,

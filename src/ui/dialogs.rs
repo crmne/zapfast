@@ -1856,31 +1856,41 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
-            crate::rtl::row(ui, |ui| {
-                // Set the row height from the field instead of the shorter label.
-                ui.set_min_height(
-                    ui.ctx()
-                        .fonts_mut(|fonts| fonts.row_height(&theme::regular(16.0)))
-                        + 4.0,
-                );
-                theme::text(ui, "+", theme::semibold(16.0), palette.secondary);
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut app.pair_phone)
-                        .id(id)
-                        .hint_text(
-                            egui::RichText::new("15551234567")
-                                .color(palette.dim)
-                                .font(theme::regular(16.0)),
-                        )
-                        .font(theme::regular(16.0))
-                        .text_color(palette.text)
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY),
-                );
-                if !response.has_focus() && app.pair_phone.is_empty() {
-                    response.request_focus();
-                }
-            });
+            // A dial code stays before its number in either reading
+            // direction, so this row does not mirror like the action below.
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), ui.spacing().interact_size.y),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    // Set the row height from the field instead of the shorter label.
+                    ui.set_min_height(
+                        ui.ctx()
+                            .fonts_mut(|fonts| fonts.row_height(&theme::regular(16.0)))
+                            + 4.0,
+                    );
+                    let _prefix = theme::text(ui, "+", theme::semibold(16.0), palette.secondary);
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new("pair-phone-prefix"), _prefix.rect)
+                    });
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut app.pair_phone)
+                            .id(id)
+                            .hint_text(
+                                egui::RichText::new("15551234567")
+                                    .color(palette.dim)
+                                    .font(theme::regular(16.0)),
+                            )
+                            .font(theme::regular(16.0))
+                            .text_color(palette.text)
+                            .frame(egui::Frame::NONE)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if !response.has_focus() && app.pair_phone.is_empty() {
+                        response.request_focus();
+                    }
+                },
+            );
         });
     theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS));
     ui.add_space(8.0);

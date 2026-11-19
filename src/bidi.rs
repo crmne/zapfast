@@ -360,7 +360,17 @@ fn reorder_row<'a>(
     placed.sort_by(|a, b| a.key.cmp(&b.key).then(a.glyphs.start.cmp(&b.glyphs.start)));
 
     let glyph_vertices = row.visuals.glyph_vertex_range.clone();
-    let mut cursor = 0.0f32;
+    // Keep a row's original leftmost position: an indented label stays
+    // indented after its runs move, and a row already at zero still starts
+    // there.
+    let mut cursor = row
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.pos.x)
+        .fold(f32::INFINITY, f32::min);
+    if !cursor.is_finite() {
+        cursor = 0.0;
+    }
     let mut deco: Vec<Moved> = Vec::new();
     for atom in &placed {
         let delta = cursor - atom.min_x;
@@ -1331,6 +1341,31 @@ mod tests {
             (ellipsis.pos.x - leftmost).abs() < 1.0,
             "ellipsis at {} should be the left edge {leftmost}",
             ellipsis.pos.x
+        );
+    }
+
+    /// A row already placed at a non-zero x keeps that offset when its runs
+    /// move into visual order, instead of snapping back to the galley's left
+    /// edge. Indented labels had lost their indent.
+    #[test]
+    fn reordering_a_row_keeps_its_left_offset() {
+        let ctx = egui::Context::default();
+        let mut galley = layout_raw(&ctx, "hello שלום");
+        let offset = 37.0;
+        for placed in &mut galley.rows {
+            let row = Arc::make_mut(&mut placed.row);
+            shift_all(row, offset);
+            row.size.x += offset;
+        }
+        reorder_rtl_runs(&mut galley);
+        let leftmost = galley.rows[0]
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.pos.x)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            (leftmost - offset).abs() < 1.0,
+            "the reordered row starts at {leftmost}, not {offset}"
         );
     }
 

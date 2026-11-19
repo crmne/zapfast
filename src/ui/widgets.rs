@@ -1440,8 +1440,11 @@ pub fn paint_shadow_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edg
 /// beside it paints over, and all but vanish at some display scales.
 pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
     let edge = crate::rtl::end_edge(ui, panel);
+    // The hairline stays inside the panel on both sides: the one point before
+    // the edge in left-to-right, and after it in right-to-left.
+    let (x0, x1) = crate::rtl::pick(ui, (edge - 1.0, edge), (edge, edge + 1.0));
     ui.painter().rect_filled(
-        Rect::from_min_max(pos2(edge - 1.0, panel.top()), pos2(edge, panel.bottom())),
+        Rect::from_min_max(pos2(x0, panel.top()), pos2(x1, panel.bottom())),
         0.0,
         palette.outline,
     );
@@ -3007,5 +3010,36 @@ mod tests {
         assert!(off_outline > 0.0, "the off track is outlined");
         assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
         assert!(on_knob > off_knob, "the knob grows when on");
+    }
+
+    /// The hairline beside a panel stays inside it in both directions, so
+    /// the content painted afterwards cannot cover it in a right-to-left
+    /// frame, where the reading end is the panel's left edge.
+    #[test]
+    fn the_panel_hairline_stays_inside_the_panel() {
+        let panel = Rect::from_min_max(pos2(100.0, 10.0), pos2(300.0, 200.0));
+        let palette = Palette::dark();
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                crate::rtl::set(ui.ctx(), rtl);
+                paint_edge_beside(ui, &palette, panel);
+            });
+            output.textures_delta.clear();
+            let rect = output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(shape) if shape.fill == palette.outline => Some(shape.rect),
+                    _ => None,
+                })
+                .expect("the hairline is painted");
+            assert!(
+                rect.min.x >= panel.left() - 0.01 && rect.max.x <= panel.right() + 0.01,
+                "rtl {rtl}: {rect:?} inside {panel:?}"
+            );
+            assert!((rect.width() - 1.0).abs() < 0.01, "one point wide");
+        }
     }
 }

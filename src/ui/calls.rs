@@ -460,7 +460,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         &label,
         theme::medium(14.5),
         name_color,
-        (crate::rtl::room(ui, content_start, stamp_x + stamp_width) - 8.0).max(0.0),
+        crate::rtl::name_width_before_stamp(ui, content_start, content_end, stamp_width),
         1,
     );
     let name_x = crate::rtl::text_left(ui, content_start, name_line.size().x);
@@ -1211,5 +1211,50 @@ mod tests {
         assert!(entry.group);
         let one_to_one = call(ADA, "1", true, 60, CallStatus::Answered);
         assert_eq!(Entry::of(&one_to_one).unwrap().participants, None);
+    }
+
+    /// A long call name stops before its timestamp in both directions, so the
+    /// stamp stays readable and the call button keeps its own room.
+    #[test]
+    fn a_long_call_name_stops_before_its_timestamp() {
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 80.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::rtl::set(ui.ctx(), rtl);
+                    let (start, end) = if rtl { (300.0, 40.0) } else { (40.0, 300.0) };
+                    let available = crate::rtl::room(ui, start, end) - 8.0;
+                    let stamp_width = 48.0;
+                    let name_width =
+                        crate::rtl::name_width_before_stamp(ui, start, end, stamp_width);
+                    assert!(
+                        (name_width - (available - stamp_width)).abs() < 0.5,
+                        "rtl {rtl}: the stamp takes its own width, {name_width} of {available}"
+                    );
+                    let name = widgets::line(
+                        ui,
+                        "A long call name that would run under the timestamp",
+                        theme::medium(14.5),
+                        egui::Color32::WHITE,
+                        name_width,
+                        1,
+                    );
+                    assert!(
+                        name.size().x < available - stamp_width + 1.0,
+                        "rtl {rtl}: the galley is {} wide, not {available}",
+                        name.size().x
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
     }
 }

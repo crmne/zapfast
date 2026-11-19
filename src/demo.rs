@@ -10882,6 +10882,58 @@ mod tests {
         assert!(app.new_group.is_none());
     }
 
+    /// The new group header puts Back at the reading start and Close at the
+    /// reading end, so Arabic shows Close at the window's left rather than
+    /// beside the title.
+    #[test]
+    fn the_new_group_close_button_sits_at_the_reading_end() {
+        use crate::i18n::Locale;
+        use egui::accesskit::Role;
+        for (locale, ltr) in [(Locale::English, true), (Locale::Arabic, false)] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            app.locale = locale;
+            apply_flags(&mut app, Some("new-chat"));
+            for _ in 0..8 {
+                render(&mut app, &ctx);
+            }
+            let new_group = crate::i18n::gettext(locale, "New group").into_owned();
+            press_labelled(&mut app, &ctx, &new_group, Role::Button);
+            for _ in 0..4 {
+                frame_with(&mut app, &ctx, Vec::new());
+            }
+            let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+            let at = |label: &str| {
+                nodes
+                    .iter()
+                    .find(|(name, _, _)| name == label)
+                    .map(|(_, _, pos)| *pos)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{locale:?}: no {label:?} in {:?}",
+                            nodes.iter().map(|(name, _, _)| name).collect::<Vec<_>>()
+                        )
+                    })
+            };
+            let back = at(crate::i18n::gettext(locale, "Back").as_ref());
+            let close = at(crate::i18n::gettext(locale, "Close").as_ref());
+            let heading = at(crate::i18n::gettext(locale, "Add group members").as_ref());
+            if ltr {
+                assert!(
+                    back.x < heading.x && heading.x < close.x,
+                    "{locale:?}: Back, title, Close read left to right"
+                );
+            } else {
+                assert!(
+                    close.x < heading.x && heading.x < back.x,
+                    "{locale:?}: Close, title, Back read left to right"
+                );
+            }
+        }
+    }
+
     /// The choosing step's search narrows the list, and checking someone
     /// clears it for the next name.
     #[test]
@@ -12309,6 +12361,144 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.uploads.is_empty(), "the X takes the strip away");
         assert!(gate.is_cancelled(), "the X stops it");
+    }
+
+    /// The upload strip mirrors with the reading direction: the progress
+    /// marker and Cancel sit at opposite ends, as they do left to right.
+    #[test]
+    fn the_upload_strip_mirrors_with_the_reading_direction() {
+        for (locale, rtl) in [
+            (crate::i18n::Locale::English, false),
+            (crate::i18n::Locale::Arabic, true),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("transfers"));
+            app.locale = locale;
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let progress = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-progress", 1_u64))))
+                .expect("the progress marker");
+            let cancel = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("upload-cancel", 1_u64))))
+                .expect("the Cancel button");
+            if rtl {
+                assert!(
+                    cancel.right() < progress.left(),
+                    "{locale:?}: Cancel {cancel:?} sits before the progress {progress:?}"
+                );
+            } else {
+                assert!(
+                    progress.right() < cancel.left(),
+                    "{locale:?}: progress {progress:?} sits before Cancel {cancel:?}"
+                );
+            }
+        }
+    }
+
+    /// A dial code stays before its number in Arabic, which mirrors the row
+    /// around it; the actions below still follow the reading direction.
+    #[test]
+    fn a_phone_prefix_stays_before_its_number_in_arabic() {
+        for locale in [crate::i18n::Locale::English, crate::i18n::Locale::Arabic] {
+            let mut app = app();
+            app.locale = locale;
+            apply_flags(&mut app, Some("phone"));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let prefix = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("pair-phone-prefix")))
+                .expect("the dial code");
+            let number = ctx
+                .read_response(egui::Id::new("pair-phone"))
+                .expect("the phone field")
+                .rect;
+            assert!(
+                prefix.right() <= number.left() + 1.0,
+                "{locale:?}: the prefix {prefix:?} stays before the number {number:?}"
+            );
+        }
+    }
+
+    /// The month arrows point the way the reader moves through months: right
+    /// for Next in English, left for Next in Arabic.
+    #[test]
+    fn the_month_chevrons_follow_the_reading_direction() {
+        use crate::theme::Icon;
+        for (locale, next, previous) in [
+            (
+                crate::i18n::Locale::English,
+                Icon::ChevronRight,
+                Icon::ChevronLeft,
+            ),
+            (
+                crate::i18n::Locale::Arabic,
+                Icon::ChevronLeft,
+                Icon::ChevronRight,
+            ),
+        ] {
+            let mut app = app();
+            app.locale = locale;
+            apply_flags(&mut app, Some("chat-search-day"));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let icon = |id: &str| {
+                ctx.data(|data| data.get_temp::<Icon>(egui::Id::new(id)))
+                    .unwrap_or_else(|| panic!("{locale:?}: {id} is not drawn"))
+            };
+            assert_eq!(icon("calendar-next-icon"), next, "{locale:?}: Next");
+            assert_eq!(
+                icon("calendar-previous-icon"),
+                previous,
+                "{locale:?}: Previous"
+            );
+        }
+    }
+
+    /// The settings account row puts the avatar and profile at the reading
+    /// start and the account actions at the reading end, in both directions.
+    #[test]
+    fn the_settings_account_row_mirrors() {
+        for (locale, rtl) in [
+            (crate::i18n::Locale::English, false),
+            (crate::i18n::Locale::Arabic, true),
+        ] {
+            let mut app = app();
+            app.locale = locale;
+            apply_flags(&mut app, Some("settings"));
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let rect = |id: &str| {
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(id)))
+                    .unwrap_or_else(|| panic!("{locale:?}: {id} is not drawn"))
+            };
+            let avatar = rect("settings-account-avatar");
+            let name = rect("settings-account-name");
+            let add = rect("settings-account-add");
+            if rtl {
+                assert!(
+                    avatar.center().x > name.center().x && name.center().x > add.center().x,
+                    "{locale:?}: avatar {avatar:?}, profile {name:?}, actions {add:?}"
+                );
+                assert!(
+                    (avatar.left() - name.right()).abs() < 40.0,
+                    "{locale:?}: the profile starts at the avatar: {name:?} in {avatar:?}"
+                );
+            } else {
+                assert!(
+                    avatar.center().x < name.center().x && name.center().x < add.center().x,
+                    "{locale:?}: avatar {avatar:?}, profile {name:?}, actions {add:?}"
+                );
+                assert!(
+                    (name.left() - avatar.right()).abs() < 40.0,
+                    "{locale:?}: the profile starts at the avatar: {name:?} in {avatar:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -26267,5 +26457,67 @@ mod rail_tests {
         assert_eq!(app.page, Page::Calls);
         assert!(app.open_chat.is_none());
         assert!(rail_rect(&ctx).is_some() && list_header(&ctx).is_some());
+    }
+
+    /// A right-to-left frame puts the expanded chat list on the right, so the
+    /// open chat's header reaches the window's physical left and must leave
+    /// the traffic lights their room there. English keeps the header's start
+    /// at the physical left, and a narrow Arabic header's Back starts after
+    /// the lights too.
+    #[test]
+    fn the_rtl_conversation_header_clears_the_macos_traffic_lights() {
+        for (locale, rtl) in [
+            (crate::i18n::Locale::English, false),
+            (crate::i18n::Locale::Arabic, true),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("chat"));
+            app.locale = locale;
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            crate::theme::preview_macos(&ctx);
+            for _ in 0..4 {
+                frame(&mut app, &ctx, 1180.0, Vec::new());
+            }
+            let lights = crate::theme::traffic_light_inset(&ctx);
+            assert!(lights > 0.0, "{locale:?}: macOS traffic lights");
+            let search = stop_rect(&ctx, Stop::ChatSearch).expect("the header's Search");
+            if rtl {
+                // The header's reading end is the window's physical left.
+                assert!(
+                    search.left() >= lights,
+                    "{locale:?}: {search:?} is under the traffic lights"
+                );
+            } else {
+                // The wide English header follows the list, so the traffic
+                // lights never reach it; its own buttons stay at the reading
+                // end of the conversation.
+                let header = recorded(&ctx, crate::ui::conversation::header_rect_id())
+                    .expect("the open chat's header");
+                let list = list_header(&ctx).expect("the chat list");
+                assert!(
+                    header.left() >= list.right(),
+                    "the chat begins after the list: {header:?} of {list:?}"
+                );
+                assert!(header.left() > lights, "no lights over the header");
+                assert!(
+                    search.center().x > header.center().x,
+                    "the header's buttons stay at the reading end: {search:?}"
+                );
+            }
+            if rtl {
+                // In a narrow pane Back is the header's first control at the
+                // physical left, after the lights.
+                for _ in 0..8 {
+                    frame(&mut app, &ctx, 480.0, Vec::new());
+                }
+                let back = recorded(&ctx, crate::ui::conversation::back_button_id())
+                    .expect("a narrow header's Back");
+                assert!(
+                    back.left() >= lights,
+                    "the Arabic Back starts at the lights: {back:?}"
+                );
+            }
+        }
     }
 }

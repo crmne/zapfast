@@ -494,11 +494,20 @@ fn month_header(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             palette.text,
         );
         ui.with_layout(crate::rtl::end(ui), |ui| {
+            // The arrows point the way the reading direction moves through
+            // months: left is later in a right-to-left frame.
+            let next = crate::rtl::pick(ui, Icon::ChevronRight, Icon::ChevronLeft);
+            let previous = crate::rtl::pick(ui, Icon::ChevronLeft, Icon::ChevronRight);
+            #[cfg(test)]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(egui::Id::new("calendar-next-icon"), next);
+                data.insert_temp(egui::Id::new("calendar-previous-icon"), previous);
+            });
             // Nothing has been said in a month still to come.
             if !latest
                 && theme::icon_button(
                     ui,
-                    Icon::ChevronRight,
+                    next,
                     16.0,
                     palette.secondary,
                     palette.text,
@@ -510,7 +519,7 @@ fn month_header(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             }
             if theme::icon_button(
                 ui,
-                Icon::ChevronLeft,
+                previous,
                 16.0,
                 palette.secondary,
                 palette.text,

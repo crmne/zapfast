@@ -100,6 +100,18 @@ pub fn text_at_end(ui: &Ui, end: f32, width: f32) -> f32 {
     if enabled(ui) { end } else { end - width }
 }
 
+/// The width a row's name may take before its timestamp: the room between
+/// `left` and the stamp's near edge, less the gap the row keeps from it.
+///
+/// `left` is the reading start and `right` the reading end, as [`room`] takes
+/// them, so the stamp's near edge is its left edge in a left-to-right row and
+/// its right edge in a right-to-left one.
+pub fn name_width_before_stamp(ui: &Ui, left: f32, right: f32, stamp_width: f32) -> f32 {
+    let stamp_x = text_at_end(ui, right, stamp_width);
+    let stamp_edge = pick(ui, stamp_x, stamp_x + stamp_width);
+    (room(ui, left, stamp_edge) - 8.0).max(0.0)
+}
+
 /// A horizontal layout whose first child sits at the reading start.
 pub fn start(ui: &Ui, valign: Align) -> Layout {
     if enabled(ui) {
@@ -220,6 +232,11 @@ mod tests {
                 },
                 |ui| {
                     let rect = Rect::from_min_max(pos2(10.0, 0.0), pos2(110.0, 20.0));
+                    let (left, right) = if super::enabled(ui) {
+                        (50.0, 20.0)
+                    } else {
+                        (20.0, 50.0)
+                    };
                     values.set(Some((
                         super::start_edge(ui, rect),
                         super::end_edge(ui, rect),
@@ -229,6 +246,7 @@ mod tests {
                         super::text_left(ui, 100.0, 30.0),
                         super::text_at_end(ui, 100.0, 30.0),
                         super::end_rect(ui.ctx(), rect, 25.0),
+                        super::name_width_before_stamp(ui, left, right, 5.0),
                     )));
                 },
             );
@@ -246,6 +264,7 @@ mod tests {
                 100.0,
                 70.0,
                 Rect::from_min_max(pos2(85.0, 0.0), pos2(110.0, 20.0)),
+                17.0,
             )
         );
         assert_eq!(
@@ -259,6 +278,7 @@ mod tests {
                 70.0,
                 100.0,
                 Rect::from_min_max(pos2(10.0, 0.0), pos2(35.0, 20.0)),
+                17.0,
             )
         );
     }

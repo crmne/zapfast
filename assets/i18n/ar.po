@@ -560,11 +560,11 @@ msgstr "الرسالة المثبّتة {index} من {count}: {text}"
 
 #: src/ui/conversation.rs:308
 msgid "Your chats appear on the left as they load."
-msgstr "تظهر محادثاتك على اليسار أثناء تحميلها."
+msgstr "تظهر محادثاتك أثناء تحميلها."
 
 #: src/ui/conversation.rs:310
 msgid "Select a chat on the left."
-msgstr "اختر محادثة من اليسار."
+msgstr "اختر محادثة."
 
 #: src/ui/conversation.rs:320
 msgid "Ctrl+K to search · ? for keyboard shortcuts"

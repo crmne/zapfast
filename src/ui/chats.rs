@@ -1361,8 +1361,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             stamp_galley.clone(),
             palette.dim,
         );
-        let stamp_edge = stamp_x + stamp_width;
-        let name_width = (crate::rtl::room(ui, left, stamp_edge) - 8.0).max(0.0);
+        let name_width = crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
         let name = widgets::line(ui, &title, theme::medium(14.5), palette.text, name_width, 1);
         name.paint(
             ui,
@@ -1664,8 +1663,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             stamp_galley.clone(),
             stamp_color,
         );
-        let stamp_edge = stamp_x + stamp_width;
-        let name_width = (crate::rtl::room(ui, left, stamp_edge) - 8.0).max(0.0);
+        let name_width = crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
         let name_font = if unread {
             theme::semibold(14.5)
         } else {
@@ -3313,5 +3311,50 @@ mod tests {
         let center = compact_badge_center(avatar);
         assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
         assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
+    }
+
+    /// A name stops before its timestamp in both directions: the timestamp is
+    /// pinned to the reading end, so the name takes the room before its near
+    /// edge, not the row's whole reading width. Long Arabic and English chat
+    /// titles covered their stamps before this.
+    #[test]
+    fn a_long_name_stops_before_its_timestamp() {
+        for rtl in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 80.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::rtl::set(ui.ctx(), rtl);
+                    // Reading start and end, whichever side they are on.
+                    let (left, right) = if rtl { (300.0, 40.0) } else { (40.0, 300.0) };
+                    let available = crate::rtl::room(ui, left, right) - 8.0;
+                    let stamp_width = 48.0;
+                    let name_width =
+                        crate::rtl::name_width_before_stamp(ui, left, right, stamp_width);
+                    assert!(
+                        (name_width - (available - stamp_width)).abs() < 0.5,
+                        "rtl {rtl}: the stamp takes its own width, {name_width} of {available}"
+                    );
+                    let name = widgets::line(
+                        ui,
+                        "A long chat title that would run under the timestamp",
+                        theme::medium(14.5),
+                        egui::Color32::WHITE,
+                        name_width,
+                        1,
+                    );
+                    assert!(
+                        name.size().x < available - stamp_width + 1.0,
+                        "rtl {rtl}: the galley is {} wide, not {available}",
+                        name.size().x
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
     }
 }
