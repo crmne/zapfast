@@ -666,6 +666,10 @@ pub fn phone(digits: &str) -> String {
         return formatted;
     }
     let (country, national) = digits.split_at(country_code_len(&digits).min(digits.len()));
+    if country == "504" && national.len() == 8 {
+        let (prefix, subscriber) = national.split_at(4);
+        return format!("+{country} {prefix}-{subscriber}");
+    }
     let mut out = format!("+{country}");
     // Approximate national grouping: threes, with the last four together
     // rather than leaving a lone digit.
@@ -1233,6 +1237,13 @@ mod tests {
         // A French number of the wrong length keeps the general grouping.
         assert_eq!(phone("3361234567"), "+33 612 345 67");
         assert_eq!(phone(""), "");
+    }
+
+    #[test]
+    fn honduran_phone_numbers_use_two_groups_of_four_digits() {
+        assert_eq!(phone("50481234567"), "+504 8123-4567");
+        assert_eq!(phone("+504 2234-5678"), "+504 2234-5678");
+        assert_eq!(phone("5048123456"), "+504 812 3456");
     }
 
     #[test]
