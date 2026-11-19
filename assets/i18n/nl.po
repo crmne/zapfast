@@ -4045,3 +4045,7 @@ msgstr "afgespeeld"
 #: src/a11y.rs:362
 msgid "not sent"
 msgstr "niet verzonden"
+
+#: src/ui/dialogs.rs:568
+msgid "Message {number}"
+msgstr "Bericht naar {number}"

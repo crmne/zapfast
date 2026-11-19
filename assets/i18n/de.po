@@ -4139,3 +4139,7 @@ msgstr "Enter sendet"
 
 #~ msgid "Next pinned message"
 #~ msgstr "Nächste angepinnte Nachricht"
+
+#: src/ui/dialogs.rs:568
+msgid "Message {number}"
+msgstr "Nachricht an {number}"
