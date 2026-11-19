@@ -719,7 +719,6 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
                     ui,
                     &palette,
                     &entry.message,
-                    entry.starred_at,
                     conversation::Marks { starred: true },
                     &mut actions,
                 );
@@ -728,7 +727,36 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     app.actions.append(&mut actions);
 }
 
-/// One starred message: where it is, when it was starred, and the message's own
+/// The day a starred row shows: the message's own, as the chat's day
+/// separators write it. When it was starred only orders the list. The bubble
+/// below already carries the clock time, so this is the day alone.
+/// A message with no known time (a history message without a timestamp is 0)
+/// has no day to show, so the label is empty rather than an epoch date.
+fn starred_stamp(locale: crate::i18n::Locale, message_timestamp: i64) -> String {
+    if message_timestamp <= 0 {
+        return String::new();
+    }
+    crate::util::day_label(locale, message_timestamp)
+}
+
+/// What a screen reader announces for a starred row: the chat, the day the
+/// message was sent when known, then its words.
+fn starred_label(name: &str, stamp: &str, words: &str) -> String {
+    if stamp.is_empty() {
+        format!("{name}, {words}")
+    } else {
+        format!("{name}, {stamp}, {words}")
+    }
+}
+
+/// The width left for a starred row's chat name once its date is placed: the
+/// row's side margins and a gap come off, so a long date never overlaps it.
+fn starred_name_width(row_width: f32, date_width: f32) -> f32 {
+    let gap = if date_width > 0.0 { 8.0 } else { 0.0 };
+    (row_width - 32.0 - date_width - gap).max(40.0)
+}
+
+/// One starred message: where it is, the day it was sent, and the message's own
 /// words inside a bubble drawn from its side and fill. Clicking opens its chat
 /// at the message; right-clicking the bubble opens the chat's own menu.
 fn starred_row(
@@ -736,7 +764,6 @@ fn starred_row(
     ui: &mut egui::Ui,
     palette: &Palette,
     message: &Message,
-    marked_at: i64,
     marks: conversation::Marks,
     actions: &mut Vec<Action>,
 ) {
@@ -772,7 +799,8 @@ fn starred_row(
     // The chat's own title, as the chat list writes it: a group without a
     // subject is named after its members, never "Unknown".
     let name = app.chat_title_of(&message.chat);
-    let label = format!("{name}, {words}");
+    let when = starred_stamp(app.locale, message.timestamp);
+    let label = starred_label(&name, &when, &words);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
     });
@@ -783,13 +811,18 @@ fn starred_row(
         ui.painter()
             .rect_filled(rect, 6.0, palette.surface_hover.gamma_multiply(0.5));
     }
-    let when = crate::util::moment_stamp(app.locale, marked_at);
+    // The date is measured first; the name takes what is left of the row.
+    let date = (!when.is_empty()).then(|| {
+        ui.painter()
+            .layout_no_wrap(when, theme::regular(11.5), palette.secondary)
+    });
+    let date_width = date.as_ref().map_or(0.0, |galley| galley.size().x);
     let name_line = widgets::line(
         ui,
         &name,
         theme::medium(14.0),
         palette.text,
-        width - 140.0,
+        starred_name_width(width, date_width),
         1,
     );
     name_line.paint(
@@ -800,13 +833,13 @@ fn starred_row(
         ),
         palette.text,
     );
-    ui.painter().text(
-        pos2(rect.right() - 16.0, rect.top() + 14.0),
-        egui::Align2::RIGHT_CENTER,
-        when,
-        theme::regular(11.5),
-        palette.secondary,
-    );
+    if let Some(date) = date {
+        let top_left = pos2(
+            rect.right() - 16.0 - date.size().x,
+            rect.top() + 14.0 - date.size().y / 2.0,
+        );
+        ui.painter().galley(top_left, date, palette.secondary);
+    }
     // The message itself, as the bubble the chat shows: same fill, same side,
     // with the time in its bottom corner.
     let bubble_width = (body.size().x + 20.0 + clock.size().x + 6.0).min(width - 32.0);
@@ -2405,6 +2438,45 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A starred row is dated by its message, never by when it was starred.
+    #[test]
+    fn starred_row_shows_the_message_day() {
+        let locale = crate::i18n::Locale::English;
+        let sent = 86_400 * 400;
+        let label = starred_stamp(locale, sent);
+        assert_eq!(label, crate::util::day_label(locale, sent));
+        assert_ne!(label, crate::util::day_label(locale, crate::util::now()));
+        assert!(!label.contains(" at "), "{label}");
+    }
+
+    /// A message with no known time shows no date, not the epoch.
+    #[test]
+    fn starred_row_omits_an_unknown_date() {
+        let locale = crate::i18n::Locale::English;
+        assert_eq!(starred_stamp(locale, 0), "");
+        assert!(!starred_stamp(locale, 86_400 * 400).is_empty());
+    }
+
+    /// The row's accessible label carries the sent day, with no dangling
+    /// separator when the day is unknown.
+    #[test]
+    fn starred_label_announces_the_sent_day() {
+        assert_eq!(starred_label("Ana", "Mar 3", "hello"), "Ana, Mar 3, hello");
+        let unknown = starred_label("Ana", "", "hello");
+        assert_eq!(unknown, "Ana, hello");
+        assert!(!unknown.contains(", ,"), "{unknown}");
+    }
+
+    /// The chat name never reaches under the date, however long the date is.
+    #[test]
+    fn starred_name_stops_before_the_date() {
+        let (row, date) = (300.0, 150.0);
+        let name = starred_name_width(row, date);
+        assert!(16.0 + name + 8.0 <= row - 16.0 - date, "{name}");
+        assert_eq!(starred_name_width(row, 0.0), row - 32.0);
+        assert!(starred_name_width(100.0, 400.0) > 0.0);
+    }
 
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
