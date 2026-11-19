@@ -346,7 +346,6 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         .interact(rect, row_id(&message.chat, &message.id), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     theme::reveal_focus(&response);
-    let rtl = crate::rtl::enabled(ui);
     let mut label = name.clone();
     if row.len() > 1 {
         label = format!("{label} ({})", row.len());
@@ -374,11 +373,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     // left of the row when Arabic reads right to left.
     let button_rect = Rect::from_center_size(
         pos2(
-            if rtl {
-                rect.left() + 30.0
-            } else {
-                rect.right() - 30.0
-            },
+            crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 30.0),
             rect.center().y,
         ),
         Vec2::splat(34.0),
@@ -424,11 +419,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     }
     let avatar_rect = Rect::from_center_size(
         pos2(
-            if rtl {
-                rect.right() - 38.0
-            } else {
-                rect.left() + 38.0
-            },
+            crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
             rect.center().y,
         ),
         Vec2::splat(48.0),
@@ -445,29 +436,16 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             picture.as_deref(),
         );
     }
-    let content_left = if rtl {
-        button_rect.right() + 6.0
-    } else {
-        rect.left() + 76.0
-    };
-    let content_right = if rtl {
-        rect.right() - 76.0
-    } else {
-        button_rect.left() - 6.0
-    };
+    let content_start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+    let content_end = crate::rtl::behind(ui, crate::rtl::start_edge(ui, button_rect), 6.0);
     let stamp_galley = ui
         .painter()
         .layout_no_wrap(stamp, theme::regular(11.5), palette.dim);
     let name_top = rect.top() + 14.0;
+    let stamp_width = stamp_galley.size().x;
+    let stamp_x = crate::rtl::text_at_end(ui, content_end, stamp_width);
     ui.painter().galley(
-        pos2(
-            if rtl {
-                content_left
-            } else {
-                content_right - stamp_galley.size().x
-            },
-            name_top + 2.0,
-        ),
+        pos2(stamp_x, name_top + 2.0),
         stamp_galley.clone(),
         palette.dim,
     );
@@ -482,22 +460,14 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         &label,
         theme::medium(14.5),
         name_color,
-        (content_right - content_left - stamp_galley.size().x - 8.0).max(0.0),
+        (crate::rtl::room(ui, content_start, stamp_x + stamp_width) - 8.0).max(0.0),
         1,
     );
-    let name_x = if rtl {
-        content_right - name_line.size().x
-    } else {
-        content_left
-    };
+    let name_x = crate::rtl::text_left(ui, content_start, name_line.size().x);
     name_line.paint(ui, pos2(name_x, name_top), name_color);
     let glyph_rect = Rect::from_min_size(
         pos2(
-            if rtl {
-                content_right - 15.0
-            } else {
-                content_left
-            },
+            crate::rtl::text_left(ui, content_start, 15.0),
             rect.top() + 39.0,
         ),
         Vec2::splat(15.0),
@@ -518,17 +488,17 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         &summary,
         theme::regular(13.0),
         palette.secondary,
-        (content_right - content_left - 21.0).max(0.0),
+        (crate::rtl::room(ui, content_start, content_end) - 21.0).max(0.0),
         1,
     );
     detail.paint(
         ui,
         pos2(
-            if rtl {
-                content_right - 21.0 - detail.size().x
-            } else {
-                content_left + 21.0
-            },
+            crate::rtl::text_left(
+                ui,
+                crate::rtl::ahead(ui, content_start, 21.0),
+                detail.size().x,
+            ),
             rect.top() + 38.0,
         ),
         palette.secondary,
@@ -669,56 +639,34 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::hover(),
     );
-    let rtl = crate::rtl::enabled(ui);
     // The buttons sit at the reading end, the left of the row when Arabic
     // reads right to left.
-    let buttons = if rtl {
-        Rect::from_min_max(
-            pos2(rect.left() + 12.0, rect.top()),
-            pos2(rect.left() + 92.0, rect.bottom()),
-        )
-    } else {
-        Rect::from_min_max(
-            pos2(rect.right() - 92.0, rect.top()),
-            pos2(rect.right() - 12.0, rect.bottom()),
-        )
-    };
+    let near = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 12.0);
+    let far = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 92.0);
+    let buttons = Rect::from_min_max(
+        pos2(near.min(far), rect.top()),
+        pos2(near.max(far), rect.bottom()),
+    );
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect = Rect::from_center_size(
             pos2(
-                if rtl {
-                    rect.right() - 38.0
-                } else {
-                    rect.left() + 38.0
-                },
+                crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 38.0),
                 rect.center().y,
             ),
             Vec2::splat(48.0),
         );
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
-        let text_left = if rtl {
-            buttons.right() + 8.0
-        } else {
-            rect.left() + 76.0
-        };
-        let text_right = if rtl {
-            rect.right() - 76.0
-        } else {
-            buttons.left() - 8.0
-        };
-        let width = (text_right - text_left).max(0.0);
+        let text_start = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 76.0);
+        let text_end = crate::rtl::behind(ui, crate::rtl::start_edge(ui, buttons), 8.0);
+        let width = crate::rtl::room(ui, text_start, text_end);
         let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
         name_line.paint(
             ui,
             pos2(
-                if rtl {
-                    text_right - name_line.size().x
-                } else {
-                    text_left
-                },
+                crate::rtl::text_left(ui, text_start, name_line.size().x),
                 rect.top() + 14.0,
             ),
             palette.text,
@@ -728,11 +676,7 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
             phone_line.paint(
                 ui,
                 pos2(
-                    if rtl {
-                        text_right - phone_line.size().x
-                    } else {
-                        text_left
-                    },
+                    crate::rtl::text_left(ui, text_start, phone_line.size().x),
                     rect.top() + 38.0,
                 ),
                 palette.dim,

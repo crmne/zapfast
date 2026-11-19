@@ -144,15 +144,7 @@ pub(super) fn overlay(
 ) {
     let palette = app.palette;
     let width = width.max(MIN_WIDTH).min(region.width());
-    let rtl = crate::rtl::is(ctx);
-    let rect = if rtl {
-        Rect::from_min_max(
-            region.left_top(),
-            pos2(region.left() + width, region.bottom()),
-        )
-    } else {
-        Rect::from_min_max(pos2(region.right() - width, region.top()), region.max)
-    };
+    let rect = crate::rtl::end_rect(ctx, region, width);
     // Above the conversation's header too, which a vibrant window draws on
     // a layer of its own over the messages, so the header keeps its glass.
     egui::Area::new(egui::Id::new(id))
@@ -164,7 +156,7 @@ pub(super) fn overlay(
             Frame::new()
                 .fill(palette.panel)
                 .shadow(egui::epaint::Shadow {
-                    offset: if rtl { [4, 0] } else { [-4, 0] },
+                    offset: crate::rtl::pick(ui, [-4, 0], [4, 0]),
                     blur: 16,
                     spread: 0,
                     color: palette.shadow,
@@ -175,7 +167,7 @@ pub(super) fn overlay(
                     contents(app, ui);
                 });
             ui.painter().vline(
-                if rtl { rect.right() } else { rect.left() },
+                crate::rtl::start_edge(ui, rect),
                 rect.y_range(),
                 Stroke::new(1.0, palette.outline),
             );
@@ -218,10 +210,10 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
             let room = caption_header(ui, vec2(14.0, 10.0));
-            let rtl = crate::rtl::enabled(ui);
+            let (start_room, _) = crate::rtl::pair(ui, room.left, room.right);
             crate::rtl::row(ui, |ui| {
                 ui.set_min_height(32.0);
-                ui.add_space(if rtl { room.right } else { room.left });
+                ui.add_space(start_room);
                 let close = crate::i18n::gettext(app.locale, "Close search");
                 if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
                     .tab_stop(Stop::ChatSearchClose)

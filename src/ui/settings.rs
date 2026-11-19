@@ -245,9 +245,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             ui.ctx()
                 .data_mut(|data| data.insert_temp(column_id(), column.x_range()));
-            let rtl = crate::rtl::enabled(ui);
             let column_layout = crate::rtl::top(ui);
-            let start_room = if rtl { room.right } else { room.left };
+            let (start_room, _) = crate::rtl::pair(ui, room.left, room.right);
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(column)

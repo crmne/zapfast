@@ -683,15 +683,10 @@ pub fn menu_item_focusable(
                 .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
         }
         let color = if enabled { palette.text } else { palette.dim };
-        let rtl = crate::rtl::enabled(ui);
-        let mut x = if rtl {
-            rect.right() - 10.0
-        } else {
-            rect.left() + 10.0
-        };
+        let mut x = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 10.0);
         if let Some(icon) = icon {
             let icon_rect = Rect::from_center_size(
-                pos2(if rtl { x - 8.0 } else { x + 8.0 }, rect.center().y),
+                pos2(crate::rtl::ahead(ui, x, 8.0), rect.center().y),
                 Vec2::splat(16.0),
             );
             icon.image(
@@ -703,7 +698,7 @@ pub fn menu_item_focusable(
                 16.0,
             )
             .paint_at(ui, icon_rect);
-            x += if rtl { -26.0 } else { 26.0 };
+            x = crate::rtl::ahead(ui, x, 26.0);
         }
         let mut job = egui::text::LayoutJob::simple_singleline(
             label.to_string(),
@@ -711,17 +706,13 @@ pub fn menu_item_focusable(
             color,
         );
         job.wrap = egui::text::TextWrapping {
-            max_width: if rtl {
-                (x - rect.left() - 10.0).max(0.0)
-            } else {
-                (rect.right() - 10.0 - x).max(0.0)
-            },
+            max_width: (crate::rtl::room(ui, x, crate::rtl::end_edge(ui, rect)) - 10.0).max(0.0),
             max_rows: 1,
             break_anywhere: true,
             overflow_character: Some('\u{2026}'),
         };
         let galley = crate::bidi::layout_job(ui, job);
-        let left = if rtl { x - galley.size().x } else { x };
+        let left = crate::rtl::text_left(ui, x, galley.size().x);
         ui.painter().galley(
             pos2(left, rect.center().y - galley.size().y / 2.0),
             galley,
@@ -1026,7 +1017,6 @@ pub fn search_field(
 ) -> egui::Response {
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let rtl = crate::rtl::enabled(ui);
     let has_focus = ui.memory(|memory| memory.has_focus(id));
     // Over a vibrant window's material, a tint that lets it show through.
     let fill = match (palette.vibrant(), has_focus) {
@@ -1038,11 +1028,7 @@ pub fn search_field(
     ui.painter().rect_filled(rect, height / 2.0, fill);
     let icon_rect = Rect::from_center_size(
         pos2(
-            if rtl {
-                rect.right() - 18.0
-            } else {
-                rect.left() + 18.0
-            },
+            crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 18.0),
             rect.center().y,
         ),
         Vec2::splat(16.0),
@@ -1061,17 +1047,12 @@ pub fn search_field(
     let line_height = probe.size().y;
     let middle = cap_middle(&probe).unwrap_or(line_height / 2.0);
     let top = fastframe_text::snap_to_pixels(rect.center().y - middle, ui.ctx().pixels_per_point());
-    let field_rect = if rtl {
-        Rect::from_min_max(
-            pos2(rect.left() + 30.0, top),
-            pos2(rect.right() - 34.0, top + line_height),
-        )
-    } else {
-        Rect::from_min_max(
-            pos2(rect.left() + 34.0, top),
-            pos2(rect.right() - 30.0, top + line_height),
-        )
-    };
+    let field_edge = crate::rtl::ahead(ui, crate::rtl::start_edge(ui, rect), 34.0);
+    let field_far = crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 30.0);
+    let field_rect = Rect::from_min_max(
+        pos2(field_edge.min(field_far), top),
+        pos2(field_edge.max(field_far), top + line_height),
+    );
     // The editor is one line tall now; the rest of the pill still focuses
     // it, as it did when the editor filled the pill. Registered first, so
     // the editor and the clear button win their own clicks. Not a tab
@@ -1090,10 +1071,10 @@ pub fn search_field(
     let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
         bidi::layout_field(ui, buffer.as_str(), &format, wrap)
     };
-    let align = if rtl || bidi::base_rtl(text) {
+    let align = if bidi::base_rtl(text) {
         Align::RIGHT
     } else {
-        Align::LEFT
+        crate::rtl::align(ui)
     };
     let output = egui::TextEdit::singleline(text)
         .id(id)
@@ -1125,11 +1106,7 @@ pub fn search_field(
         // which put the cross below the field's middle.
         let clear_rect = Rect::from_center_size(
             pos2(
-                if rtl {
-                    rect.left() + 17.0
-                } else {
-                    rect.right() - 17.0
-                },
+                crate::rtl::behind(ui, crate::rtl::end_edge(ui, rect), 17.0),
                 rect.center().y,
             ),
             Vec2::splat(15.0 + theme::ICON_BUTTON_PAD),
@@ -1462,11 +1439,7 @@ pub fn paint_shadow_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edg
 /// bottom is. A stroke centred on the edge would lose the half the content
 /// beside it paints over, and all but vanish at some display scales.
 pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
-    let edge = if crate::rtl::enabled(ui) {
-        panel.left()
-    } else {
-        panel.right()
-    };
+    let edge = crate::rtl::end_edge(ui, panel);
     ui.painter().rect_filled(
         Rect::from_min_max(pos2(edge - 1.0, panel.top()), pos2(edge, panel.bottom())),
         0.0,
@@ -1478,17 +1451,17 @@ pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
 /// a panel beside content on a lower level, as the chat list is beside the
 /// conversation. The panel draws its own hairline.
 pub fn paint_shadow_beside(ui: &Ui, palette: &Palette, edge: f32, top: f32, bottom: f32) {
-    let (rect, dark) = if crate::rtl::enabled(ui) {
-        (
-            Rect::from_min_max(pos2(edge - SHADOW_REACH, top), pos2(edge, bottom)),
-            [false, true, true, false],
-        )
-    } else {
+    let (rect, dark) = crate::rtl::pick(
+        ui,
         (
             Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom)),
             [true, false, false, true],
-        )
-    };
+        ),
+        (
+            Rect::from_min_max(pos2(edge - SHADOW_REACH, top), pos2(edge, bottom)),
+            [false, true, true, false],
+        ),
+    );
     ui.painter().add(shadow_mesh(palette, rect, dark));
 }
 

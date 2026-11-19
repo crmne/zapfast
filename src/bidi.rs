@@ -122,7 +122,7 @@ pub fn message_rtl(text: &str) -> bool {
 
 /// Places each line in visual order and records logical caret direction.
 pub fn reorder_rtl_runs(galley: &mut Galley) {
-    if !galley.text().chars().any(is_strong_rtl) {
+    if !may_contain_rtl(galley.text()) || !galley.text().chars().any(is_strong_rtl) {
         return;
     }
     // A later paint can widen the galley for selection. Running alignment and
@@ -168,14 +168,27 @@ pub fn reorder_rtl_runs(galley: &mut Galley) {
 /// moves those runs into visual order after layout, as [`layout_job`] does for
 /// text the app lays out itself. Galleys that already carry visual order, and
 /// editors whose caret follows the buffer, are left as they are.
+///
+/// # Ordering
+///
+/// This plugin must be added **before** any plugin that reads glyph positions
+/// (such as the emoji plugin), so that visual order is established first.
+/// Adding it after one breaks that plugin's placement in right-to-left text.
 #[derive(Default)]
 pub(crate) struct BidiPlugin {
     /// Reordered galleys, by the address layout gave their original.
     ///
     /// The original is kept alive so another galley cannot take its address.
-    /// The cache is dropped whole when it outgrows one screen's labels, so a
-    /// long session does not keep every string it ever drew.
-    reordered: HashMap<usize, (Arc<Galley>, Arc<Galley>)>,
+    /// Each entry remembers the frame it last served, so eviction can drop the
+    /// oldest strings rather than the whole cache at once.
+    reordered: HashMap<usize, Reordered>,
+}
+
+/// A galley's visual-order twin, and the frame that last asked for it.
+struct Reordered {
+    original: Arc<Galley>,
+    visual: Arc<Galley>,
+    last_used: u64,
 }
 
 /// How many text layouts the plugin remembers between frames.
@@ -186,20 +199,42 @@ impl egui::Plugin for BidiPlugin {
         "zapfast-bidi"
     }
 
-    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
+        let frame = ctx.cumulative_frame_nr();
         if self.reordered.len() > BIDI_CACHE {
-            self.reordered.clear();
+            evict_oldest(&mut self.reordered);
         }
         for clipped in &mut output.shapes {
-            reorder_shape(&mut clipped.shape, &mut self.reordered);
+            reorder_shape(&mut clipped.shape, &mut self.reordered, frame);
         }
     }
 }
 
-fn reorder_shape(
-    shape: &mut egui::Shape,
-    reordered: &mut HashMap<usize, (Arc<Galley>, Arc<Galley>)>,
-) {
+/// Leaves the newest three quarters of the cache, so a long session keeps its
+/// working set instead of starting over on every overflow.
+fn evict_oldest(reordered: &mut HashMap<usize, Reordered>) {
+    let keep = BIDI_CACHE * 3 / 4;
+    let mut ages: Vec<u64> = reordered.values().map(|entry| entry.last_used).collect();
+    let cut_at = ages.len() - keep;
+    let (_, cut, _) = ages.select_nth_unstable(cut_at);
+    let cut = *cut;
+    reordered.retain(|_, entry| entry.last_used >= cut);
+    // One frame that painted more strings than the whole cache leaves every
+    // entry the same age, so there is nothing to rank and the cache goes.
+    if reordered.len() > BIDI_CACHE {
+        reordered.clear();
+    }
+}
+
+/// A quick byte check before the character scan: the Hebrew block starts at
+/// U+0590, whose UTF-8 lead byte is 0xD6, so a string of ASCII or Latin-1 text
+/// cannot hold a right-to-left character. Characters above that (Cyrillic,
+/// CJK) only cost the full scan, never a missed right-to-left run.
+fn may_contain_rtl(text: &str) -> bool {
+    text.bytes().any(|byte| byte >= 0xD6)
+}
+
+fn reorder_shape(shape: &mut egui::Shape, reordered: &mut HashMap<usize, Reordered>, frame: u64) {
     match shape {
         egui::Shape::Text(text) => {
             // An editor's caret follows the logical buffer, so its galley keeps
@@ -207,7 +242,8 @@ fn reorder_shape(
             if text.galley.job.keep_trailing_whitespace || text.angle != 0.0 {
                 return;
             }
-            if !text.galley.text().chars().any(is_strong_rtl)
+            if !may_contain_rtl(text.galley.text())
+                || !text.galley.text().chars().any(is_strong_rtl)
                 || text.galley.rows.iter().all(|placed| {
                     placed.row.glyphs.is_empty() || already_visual(&placed.row.glyphs)
                 })
@@ -215,20 +251,28 @@ fn reorder_shape(
                 return;
             }
             let key = Arc::as_ptr(&text.galley) as usize;
-            if let Some((original, visual)) = reordered.get(&key)
-                && Arc::ptr_eq(original, &text.galley)
+            if let Some(entry) = reordered.get_mut(&key)
+                && Arc::ptr_eq(&entry.original, &text.galley)
             {
-                text.galley = Arc::clone(visual);
+                entry.last_used = frame;
+                text.galley = Arc::clone(&entry.visual);
                 return;
             }
             let mut visual = Arc::clone(&text.galley);
             reorder_rtl_runs(Arc::make_mut(&mut visual));
-            reordered.insert(key, (Arc::clone(&text.galley), Arc::clone(&visual)));
+            reordered.insert(
+                key,
+                Reordered {
+                    original: Arc::clone(&text.galley),
+                    visual: Arc::clone(&visual),
+                    last_used: frame,
+                },
+            );
             text.galley = visual;
         }
         egui::Shape::Vec(shapes) => {
             for shape in shapes {
-                reorder_shape(shape, reordered);
+                reorder_shape(shape, reordered, frame);
             }
         }
         _ => {}
@@ -1034,6 +1078,67 @@ mod tests {
                 "every Arabic glyph must carry its right-to-left caret for {text:?}"
             );
         }
+    }
+
+    /// Text the app laid out through `layout_job` is already in visual order.
+    /// The plugin must recognize that and pass the same galley on: reordering
+    /// it again flips mixed-direction runs back to front.
+    #[test]
+    fn a_laid_out_job_is_not_reordered_twice() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.add_plugin(BidiPlugin::default());
+        for text in ["Hello שלום עולם 42", "مرحبا بالعالم"] {
+            let direct = std::cell::RefCell::new(None);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(480.0, 160.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let job = LayoutJob::simple_singleline(
+                        text.to_owned(),
+                        FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+                    let galley = layout_job(ui, job);
+                    *direct.borrow_mut() = Some(Arc::clone(&galley));
+                    ui.painter().galley(Pos2::ZERO, galley, Color32::WHITE);
+                },
+            );
+            output.textures_delta.clear();
+            let shown = first_text(&output.shapes).expect("the painted galley");
+            let direct = direct.into_inner().expect("the laid-out galley");
+            assert!(
+                Arc::ptr_eq(&shown, &direct),
+                "the plugin reordered {text:?} a second time"
+            );
+        }
+    }
+
+    /// An overflowing cache keeps the strings still on screen instead of
+    /// starting over and reflowing every label the next frame.
+    #[test]
+    fn the_cache_drops_only_its_oldest_entries() {
+        let galley = Arc::new(layout_fixed("x"));
+        let mut reordered = HashMap::new();
+        for index in 0..=BIDI_CACHE {
+            reordered.insert(
+                index,
+                Reordered {
+                    original: Arc::clone(&galley),
+                    visual: Arc::clone(&galley),
+                    last_used: index as u64,
+                },
+            );
+        }
+        evict_oldest(&mut reordered);
+        let kept = BIDI_CACHE * 3 / 4;
+        assert_eq!(reordered.len(), kept);
+        assert!(
+            reordered.keys().all(|key| *key >= BIDI_CACHE + 1 - kept),
+            "the newest entries must survive"
+        );
     }
 
     fn first_text(shapes: &[egui::epaint::ClippedShape]) -> Option<Arc<Galley>> {

@@ -132,11 +132,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // beside the conversation: it casts the same shadow across it, from
     // under the header down. A narrow window has no list beside it.
     if !super::narrow(ui.ctx()) {
-        let beside = if crate::rtl::enabled(ui) {
-            header.right()
-        } else {
-            header.left()
-        };
+        let beside = crate::rtl::pick(ui, header.left(), header.right());
         widgets::paint_shadow_beside(
             ui,
             &app.palette,
@@ -458,12 +454,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
             let room = super::caption_room(ui.ctx(), ui.max_rect(), HEADER_MIN_CONTENT);
             ui.add_space(room.top);
             let narrow = super::narrow(ui.ctx());
-            let rtl = crate::rtl::enabled(ui);
-            let (mut start_room, mut end_room) = if rtl {
-                (room.right, room.left)
-            } else {
-                (room.left, room.right)
-            };
+            let (mut start_room, mut end_room) = crate::rtl::pair(ui, room.left, room.right);
             let row = crate::rtl::row(ui, |ui| {
                 // Give both rows a fixed height so their contents align.
                 ui.set_min_height(HEADER_ROW);
@@ -471,11 +462,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 // lights itself. They stay on the window's physical left.
                 if narrow && theme::macos_chrome(ui.ctx()) {
                     let lights = theme::traffic_light_inset(ui.ctx());
-                    if rtl {
-                        end_room += lights;
-                    } else {
-                        start_room += lights;
-                    }
+                    let (start, end) = crate::rtl::pair(ui, lights, 0.0);
+                    start_room += start;
+                    end_room += end;
                 } else if app.sidebar_mode() == crate::model::SidebarDisplayMode::CollapsedIconsOnly
                     && app.page == crate::model::Page::Chats
                     && !super::macos_title_strip(app, ui.ctx())
@@ -483,11 +472,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     // Beside the rail alone, the lights reach over this header,
                     // unless they have the strip above it.
                     let over = super::rail::lights_overhang(ui.ctx());
-                    if rtl {
-                        end_room += over;
-                    } else {
-                        start_room += over;
-                    }
+                    let (start, end) = crate::rtl::pair(ui, over, 0.0);
+                    start_room += start;
+                    end_room += end;
                 }
                 ui.add_space(start_room);
                 let picture = app.avatar(&chat.id);
@@ -1835,6 +1822,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                     theme::regular(BODY_SIZE),
                                     palette.text,
                                 );
+                                // When the composer is empty, follow the interface direction. Once the user
+                                // types, the base direction of the text takes over (so typing Latin in an
+                                // Arabic UI switches to LTR), matching common messaging apps.
                                 let composer_rtl = crate::bidi::base_rtl(&app.composer)
                                     || (app.composer.is_empty() && crate::rtl::enabled(ui));
                                 let mut layouter = |ui: &egui::Ui,
