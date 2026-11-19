@@ -8001,7 +8001,7 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Save attachment")
-                        .set_file_name(&name);
+                        .set_file_name(replace_bidi_format(&name));
                     if let Some(downloads) = directories::UserDirs::new()
                         .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
                     {
@@ -12500,6 +12500,22 @@ fn extension_for(mime: &str, file_name: Option<&str>) -> String {
     })
 }
 
+/// Characters that reorder how a file manager draws a name, so a stem can
+/// look like it ends in another extension. They are not `is_control`.
+fn is_bidi_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// The name with each bidi formatting character replaced by `_`.
+pub(crate) fn replace_bidi_format(name: &str) -> String {
+    name.chars()
+        .map(|c| if is_bidi_format(c) { '_' } else { c })
+        .collect()
+}
+
 /// A document's own name in the reader's download folder, made safe for
 /// every platform's file system: no path, no characters Windows refuses, no
 /// device names, no leading dot, at most 120 characters before a validated
@@ -12512,7 +12528,10 @@ fn named_media_path(dir: &Path, mime: &str, file_name: &str) -> Option<PathBuf> 
     let stem: String = stem
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if c.is_control()
+                || is_bidi_format(c)
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
@@ -12555,7 +12574,8 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
 /// us. Checking existence before fs::copy could still overwrite a user's file.
 fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
     use std::io::ErrorKind;
-    let name = Path::new(name)
+    let name = replace_bidi_format(name);
+    let name = Path::new(&name)
         .file_name()
         .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
     let path = Path::new(name);
@@ -15183,6 +15203,32 @@ mod tests {
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
     }
 
+    /// Every bidi formatting character is replaced in a suggested or copied name.
+    #[test]
+    fn bidi_characters_are_replaced_in_every_suggested_name() {
+        let bidi = ('\u{202A}'..='\u{202E}')
+            .chain('\u{2066}'..='\u{2069}')
+            .chain(['\u{061C}', '\u{200E}', '\u{200F}']);
+        for c in bidi {
+            assert!(is_bidi_format(c), "U+{:04X}", c as u32);
+            assert_eq!(replace_bidi_format(&format!("a{c}b.pdf")), "a_b.pdf");
+            let name = format!("invoice{c}fdp.pdf");
+            assert_eq!(
+                named_media_path(Path::new("/d"), "application/pdf", &name),
+                Some(PathBuf::from("/d/invoice_fdp.pdf")),
+                "U+{:04X}",
+                c as u32
+            );
+        }
+        assert_eq!(replace_bidi_format("דוח – تقرير.pdf"), "דוח – تقرير.pdf");
+
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.pdf");
+        std::fs::write(&source, b"synthetic").unwrap();
+        let saved = save_album_copy(&source, root.path(), "photo\u{202E}gpj.png").unwrap();
+        assert_eq!(saved.file_name().unwrap(), "photo_gpj.png");
+    }
+
     /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
     #[test]
     fn failed_album_backfill_retries_without_losing_downloaded_media() {
@@ -15907,6 +15953,23 @@ mod tests {
         assert_eq!(
             named("COM1.txt.pdf"),
             Some(PathBuf::from("/downloads/_COM1.txt.pdf"))
+        );
+        // Bidi formatting characters would reorder the name a file manager shows.
+        assert_eq!(
+            named("invoice\u{202E}fdp.pdf"),
+            Some(PathBuf::from("/downloads/invoice_fdp.pdf"))
+        );
+        assert_eq!(
+            named("a\u{2066}b\u{2069}.pdf"),
+            Some(PathBuf::from("/downloads/a_b_.pdf"))
+        );
+        assert_eq!(
+            named("x\u{200F}y\u{200E}z\u{061C}.pdf"),
+            Some(PathBuf::from("/downloads/x_y_z_.pdf"))
+        );
+        assert_eq!(
+            named("דוח שנתי – تقرير.pdf"),
+            Some(PathBuf::from("/downloads/דוח שנתי – تقرير.pdf"))
         );
         assert_eq!(named("..."), None);
         assert_eq!(named(" .pdf"), None);
