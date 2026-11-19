@@ -33,7 +33,7 @@ pub fn member_row_id(id: &str) -> egui::Id {
 fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
     let palette = app.palette;
     let back = crate::i18n::gettext(app.locale, "Back");
-    ui.horizontal(|ui| {
+    crate::rtl::row(ui, |ui| {
         if theme::icon_button(
             ui,
             crate::rtl::back_icon(ui),

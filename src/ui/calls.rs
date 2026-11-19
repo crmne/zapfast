@@ -615,7 +615,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
 
 fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
     ui.add_space(10.0);
-    crate::rtl::row(ui, |ui| {
+    ui.with_layout(crate::rtl::top(ui), |ui| {
         Frame::new()
             .inner_margin(Margin {
                 left: 16,

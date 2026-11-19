@@ -227,9 +227,11 @@ fn evict_oldest(reordered: &mut HashMap<usize, Reordered>) {
 }
 
 /// A quick byte check before the character scan: the Hebrew block starts at
-/// U+0590, whose UTF-8 lead byte is 0xD6, so a string of ASCII or Latin-1 text
-/// cannot hold a right-to-left character. Characters above that (Cyrillic,
-/// CJK) only cost the full scan, never a missed right-to-left run.
+/// U+0590, whose UTF-8 lead byte is 0xD6, so a string of ASCII, Latin-1,
+/// Greek, or Cyrillic text cannot hold a right-to-left character. Characters
+/// at or above U+0560 (Armenian's tail, Hebrew, Arabic, Thai, CJK, …) only
+/// pay for the full scan; none of them is RTL except the ones the scan will
+/// find. No string that holds an RTL character is ever skipped.
 fn may_contain_rtl(text: &str) -> bool {
     text.bytes().any(|byte| byte >= 0xD6)
 }

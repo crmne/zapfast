@@ -28,12 +28,18 @@ pub fn enabled(ui: &Ui) -> bool {
     is(ui.ctx())
 }
 
-/// Orders a pair the way the reader sees it: the reading start first.
-pub fn pair<T>(ui: &Ui, start: T, end: T) -> (T, T) {
+/// Reorders a physical `(left, right)` pair into reading order: returns
+/// `(left, right)` on an LTR frame and `(right, left)` on an RTL one.
+///
+/// Callers pass coordinates in **physical left-to-right order**, the same
+/// order a `Rect` reports them, and receive them swapped on an RTL frame, so
+/// downstream code can speak in terms of the reading start and end without
+/// branching on direction.
+pub fn pair<T>(ui: &Ui, left: T, right: T) -> (T, T) {
     if enabled(ui) {
-        (end, start)
+        (right, left)
     } else {
-        (start, end)
+        (left, right)
     }
 }
 
