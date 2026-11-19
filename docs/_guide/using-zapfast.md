@@ -702,6 +702,7 @@ the clipboard is only available while the window is open.
 Someone without a saved contact or profile name shows as their phone number. In
 a group that hides numbers, WhatsApp sends only a masked one such as
 `+233∙∙∙∙∙∙42`, and ZapFast shows that until WhatsApp reveals the whole number.
+Honduran numbers are displayed as `+504 XXXX-XXXX`.
 
 To find a contact in **New chat**, type part of their name or number. Each
 word you type matches the start of a word in the name, in order: `will shak`
