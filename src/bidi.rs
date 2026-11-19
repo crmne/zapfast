@@ -371,6 +371,7 @@ fn reorder_row<'a>(
     if !cursor.is_finite() {
         cursor = 0.0;
     }
+    let row_origin = cursor;
     let mut deco: Vec<Moved> = Vec::new();
     for atom in &placed {
         let delta = cursor - atom.min_x;
@@ -408,7 +409,7 @@ fn reorder_row<'a>(
                 glyph.pos.x += extra;
                 shift_glyph_mesh(&mut row.visuals.mesh, glyph, egui::vec2(extra, 0.0));
             }
-            let mut pen = 0.0f32;
+            let mut pen = row_origin;
             for index in replacement {
                 let glyph = &mut row.glyphs[index];
                 let delta = pen - glyph.pos.x;
@@ -1341,6 +1342,63 @@ mod tests {
             (ellipsis.pos.x - leftmost).abs() < 1.0,
             "ellipsis at {} should be the left edge {leftmost}",
             ellipsis.pos.x
+        );
+    }
+
+    #[test]
+    fn indented_hebrew_ellipsis_stays_adjacent_to_text() {
+        let text = "הכלב הגדול קפץ מעל החתול";
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let galley = std::cell::RefCell::new(None);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(200.0, 80.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut job = LayoutJob::default();
+                job.wrap.max_width = 36.0;
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = true;
+                job.wrap.overflow_character = Some('…');
+                job.append(
+                    text,
+                    0.0,
+                    TextFormat::simple(FontId::proportional(14.0), Color32::WHITE),
+                );
+                *galley.borrow_mut() = Some(ui.painter().layout_job(job));
+            },
+        );
+        output.textures_delta.clear();
+        let mut galley = Arc::try_unwrap(galley.into_inner().expect("galley"))
+            .unwrap_or_else(|arc| (*arc).clone());
+        let offset = 37.0;
+        for placed in &mut galley.rows {
+            let row = Arc::make_mut(&mut placed.row);
+            shift_all(row, offset);
+            row.size.x += offset;
+        }
+        reorder_rtl_runs(&mut galley);
+        let glyphs = &galley.rows[0].glyphs;
+        let ellipsis = glyphs
+            .iter()
+            .find(|glyph| is_overflow_replacement(glyph, text, Some('…')))
+            .expect("overflow ellipsis");
+        let text_left = glyphs
+            .iter()
+            .filter(|glyph| !is_overflow_replacement(glyph, text, Some('…')))
+            .map(|glyph| glyph.pos.x)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            (ellipsis.pos.x - offset).abs() < 1.0,
+            "ellipsis at {} should retain the row origin {offset}",
+            ellipsis.pos.x
+        );
+        assert!(
+            (text_left - ellipsis.max_x()).abs() < 1.0,
+            "text at {text_left} should follow the ellipsis ending at {}",
+            ellipsis.max_x()
         );
     }
 
