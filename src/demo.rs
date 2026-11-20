@@ -20073,12 +20073,21 @@ mod tests {
     #[test]
     fn right_click_on_a_link_offers_copy_link() {
         for (text, copied) in [
-            ("https://example.com/page then plain words", "https://example.com/page"),
+            (
+                "https://example.com/page then plain words",
+                "https://example.com/page",
+            ),
             ("ada@example.com then plain words", "ada@example.com"),
         ] {
             let mut app = app();
             let chat = SAMPLES[0].id.to_owned();
-            let row = message(&chat, "link-menu", false, 1_700_000_000, Content::text(text));
+            let row = message(
+                &chat,
+                "link-menu",
+                false,
+                1_700_000_000,
+                Content::text(text),
+            );
             app.conversations.get_mut(&chat).unwrap().messages = vec![row];
             let ctx = egui::Context::default();
             app.attach(&ctx);
@@ -20125,27 +20134,43 @@ mod tests {
 
             // On the link, at the start of the text.
             let on_link = egui::pos2(body.left() + 6.0, body.center().y);
-            run(vec![egui::Event::PointerMoved(on_link), press(on_link, secondary, true)]);
+            run(vec![
+                egui::Event::PointerMoved(on_link),
+                press(on_link, secondary, true),
+            ]);
             run(vec![press(on_link, secondary, false)]);
             run(Vec::new());
-            assert!(egui::Popup::is_id_open(&ctx, id.with("popup")), "{text}: menu open");
+            assert!(
+                egui::Popup::is_id_open(&ctx, id.with("popup")),
+                "{text}: menu open"
+            );
             let item = ctx
                 .data(|data| data.get_temp::<egui::Rect>(link_id.with("item")))
                 .unwrap_or_else(|| panic!("{text}: Copy link is drawn"));
             let at = item.center();
-            run(vec![egui::Event::PointerMoved(at), press(at, primary, true)]);
+            run(vec![
+                egui::Event::PointerMoved(at),
+                press(at, primary, true),
+            ]);
             let copies = run(vec![press(at, primary, false)]);
             assert_eq!(copies, [copied], "{text}: Copy link copies the address");
             run(Vec::new());
 
             // On plain words, at the end of the same text.
             let plain = egui::pos2(body.right() - 6.0, body.center().y);
-            run(vec![egui::Event::PointerMoved(plain), press(plain, secondary, true)]);
+            run(vec![
+                egui::Event::PointerMoved(plain),
+                press(plain, secondary, true),
+            ]);
             run(vec![press(plain, secondary, false)]);
             run(Vec::new());
-            assert!(egui::Popup::is_id_open(&ctx, id.with("popup")), "{text}: menu open again");
             assert!(
-                ctx.data(|data| data.get_temp::<(u64, String)>(link_id)).is_none(),
+                egui::Popup::is_id_open(&ctx, id.with("popup")),
+                "{text}: menu open again"
+            );
+            assert!(
+                ctx.data(|data| data.get_temp::<(u64, String)>(link_id))
+                    .is_none(),
                 "{text}: no Copy link off the link"
             );
         }

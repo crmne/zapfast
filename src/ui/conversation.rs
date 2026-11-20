@@ -7535,9 +7535,9 @@ fn context_menu(
     // Opened by a right-click on a link in the chat: the address, as a
     // browser's Copy link does, and a mail address without its `mailto:`.
     if origin == MenuOrigin::Chat
-        && let Some((_, link)) = ui.ctx().data(|data| {
-            data.get_temp::<(u64, String)>(menu_link_id(chat, &message.id))
-        })
+        && let Some((_, link)) = ui
+            .ctx()
+            .data(|data| data.get_temp::<(u64, String)>(menu_link_id(chat, &message.id)))
     {
         #[cfg(test)]
         let item_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
