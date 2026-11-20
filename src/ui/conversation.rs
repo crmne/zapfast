@@ -13596,13 +13596,14 @@ mod reaction_tests {
             assert!(measured.contains(label), "menu width leaves out {label}");
         }
         // The fixtures reach every entry a list row's menu can show. A private
-        // reply starts from the group on screen, so only the chat offers it.
+        // reply starts from the group on screen, so only the chat offers it;
+        // Copy link needs a right-click on a link in the chat as well.
         let undrawn: Vec<&str> = measured
             .iter()
             .map(String::as_str)
             .filter(|label| !labels.iter().any(|drawn| drawn == label))
             .collect();
-        assert_eq!(undrawn, ["Reply privately"]);
+        assert_eq!(undrawn, ["Reply privately", "Copy link"]);
         // Hover texts are not in the accessibility tree (React with any
         // emoji is, as its button's name).
         labels.extend(["React with any emoji".into(), "Remove your reaction".into()]);
