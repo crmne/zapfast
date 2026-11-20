@@ -771,21 +771,29 @@ fn snippet(line: &str, query: &str) -> (String, Option<Range<usize>>) {
 
 /// Where `needle` first appears in `text`, compared in lower case, as a
 /// byte range of `text`. Lowercasing can change a letter's length, so the
-/// comparison walks `text` instead of searching a lowercased copy.
+/// comparison walks `text` instead of searching a lowercased copy. ß
+/// compares as ss, as in `util::search_key`, so "WEISS" finds "Weiß".
 fn find_ignoring_case(text: &str, needle: &str) -> Option<Range<usize>> {
-    let needle = needle.trim().to_lowercase();
+    let needle = needle.trim().to_lowercase().replace('ß', "ss");
     if needle.is_empty() {
         return None;
     }
     for (start, _) in text.char_indices() {
         let mut lowered = String::new();
         for (offset, letter) in text[start..].char_indices() {
-            lowered.extend(letter.to_lowercase());
+            for lower in letter.to_lowercase() {
+                if lower == 'ß' {
+                    lowered.push_str("ss");
+                } else {
+                    lowered.push(lower);
+                }
+            }
+            // One letter can fold to two, so "weis" ends inside the ß of "Weiß".
+            if lowered.starts_with(&needle) {
+                return Some(start..start + offset + letter.len_utf8());
+            }
             if !needle.starts_with(&lowered) {
                 break;
-            }
-            if lowered.len() == needle.len() {
-                return Some(start..start + offset + letter.len_utf8());
             }
         }
     }
@@ -849,6 +857,9 @@ mod tests {
     fn a_match_is_found_whatever_its_case_and_letters() {
         assert_eq!(find_ignoring_case("The Engine room", "engine"), Some(4..10));
         assert_eq!(find_ignoring_case("ÜBER alles", "über"), Some(0..5));
+        assert_eq!(find_ignoring_case("Herr Weiß", "WEISS"), Some(5..10));
+        assert_eq!(find_ignoring_case("Weiß", "weis"), Some(0..5));
+        assert_eq!(find_ignoring_case("STRASSE", "straße"), Some(0..7));
         // "İ" lowercases to two characters; the range still covers the
         // original letter.
         assert_eq!(find_ignoring_case("İstanbul", "i\u{307}s"), Some(0..3));

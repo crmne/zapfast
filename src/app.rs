@@ -3282,7 +3282,8 @@ impl App {
         if !chat.is_group() {
             return Vec::new();
         }
-        let needle = query.trim().to_lowercase();
+        let typed = query.trim();
+        let needle = crate::util::search_key(typed);
         let digits: String = query.chars().filter(char::is_ascii_digit).collect();
         let mut found: Vec<(String, String)> = self
             .participant_list(chat)
@@ -3291,12 +3292,11 @@ impl App {
                 if self.me.as_deref() == Some(id) {
                     return false;
                 }
-                if needle.is_empty() {
+                if typed.is_empty() {
                     return true;
                 }
-                name.trim_start_matches('~')
-                    .to_lowercase()
-                    .contains(&needle)
+                // A query of accents alone folds to nothing and must not match everyone.
+                (!needle.is_empty() && self.text_matches(name.trim_start_matches('~'), &needle))
                     || (!digits.is_empty()
                         && id
                             .split('@')
@@ -25820,6 +25820,39 @@ mod tests {
 
         let direct = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         assert!(app.mention_candidates(&direct, "").is_empty());
+    }
+
+    #[test]
+    fn mention_search_ignores_accents_and_case() {
+        let mut app = app();
+        for (id, name) in [
+            ("0@s.whatsapp.net", "José Guilherme"),
+            ("1@s.whatsapp.net", "Begoña Núñez"),
+        ] {
+            let contact = crate::model::Contact {
+                id: id.into(),
+                full_name: Some(name.into()),
+                first_name: None,
+                push_name: None,
+            };
+            app.contacts.insert(id.into(), contact);
+        }
+        let chat = group_chat(2);
+        for (query, name) in [
+            ("Jose", "José Guilherme"),
+            ("josé", "José Guilherme"),
+            ("JOSE", "José Guilherme"),
+            ("begona", "Begoña Núñez"),
+            ("nunez", "Begoña Núñez"),
+        ] {
+            let found = app.mention_candidates(&chat, query);
+            assert_eq!(found.len(), 1, "{query}");
+            assert_eq!(found[0].1, name);
+        }
+        assert!(
+            app.mention_candidates(&chat, "\u{301}").is_empty(),
+            "a lone accent offers nobody"
+        );
     }
 
     #[test]
