@@ -20066,6 +20066,116 @@ mod tests {
         );
     }
 
+    /// A right-click on a web link or a mail address adds Copy link to the
+    /// message menu, which copies the address (a mail address without its
+    /// `mailto:`). A right-click elsewhere in the message leaves it out, also
+    /// after a right-click on the link opened the menu before.
+    #[test]
+    fn right_click_on_a_link_offers_copy_link() {
+        for (text, copied) in [
+            (
+                "https://example.com/page then plain words",
+                "https://example.com/page",
+            ),
+            ("ada@example.com then plain words", "ada@example.com"),
+        ] {
+            let mut app = app();
+            let chat = SAMPLES[0].id.to_owned();
+            let row = message(
+                &chat,
+                "link-menu",
+                false,
+                1_700_000_000,
+                Content::text(text),
+            );
+            app.conversations.get_mut(&chat).unwrap().messages = vec![row];
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            for _ in 0..4 {
+                render(&mut app, &ctx);
+            }
+            let id = crate::ui::conversation::bubble_id(&chat, "link-menu");
+            let link_id = crate::ui::conversation::menu_link_id(&chat, "link-menu");
+            let body = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id.with("body")))
+                .expect("the message is on screen");
+            let mut run = |events: Vec<egui::Event>| {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                });
+                output.textures_delta.clear();
+                output
+                    .platform_output
+                    .commands
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let press = |pos, button, pressed| egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let secondary = egui::PointerButton::Secondary;
+            let primary = egui::PointerButton::Primary;
+
+            // On the link, at the start of the text.
+            let on_link = egui::pos2(body.left() + 6.0, body.center().y);
+            run(vec![
+                egui::Event::PointerMoved(on_link),
+                press(on_link, secondary, true),
+            ]);
+            run(vec![press(on_link, secondary, false)]);
+            run(Vec::new());
+            assert!(
+                egui::Popup::is_id_open(&ctx, id.with("popup")),
+                "{text}: menu open"
+            );
+            let item = ctx
+                .data(|data| data.get_temp::<egui::Rect>(link_id.with("item")))
+                .unwrap_or_else(|| panic!("{text}: Copy link is drawn"));
+            let at = item.center();
+            run(vec![
+                egui::Event::PointerMoved(at),
+                press(at, primary, true),
+            ]);
+            let copies = run(vec![press(at, primary, false)]);
+            assert_eq!(copies, [copied], "{text}: Copy link copies the address");
+            run(Vec::new());
+
+            // On plain words, at the end of the same text.
+            let plain = egui::pos2(body.right() - 6.0, body.center().y);
+            run(vec![
+                egui::Event::PointerMoved(plain),
+                press(plain, secondary, true),
+            ]);
+            run(vec![press(plain, secondary, false)]);
+            run(Vec::new());
+            assert!(
+                egui::Popup::is_id_open(&ctx, id.with("popup")),
+                "{text}: menu open again"
+            );
+            assert!(
+                ctx.data(|data| data.get_temp::<(u64, String)>(link_id))
+                    .is_none(),
+                "{text}: no Copy link off the link"
+            );
+        }
+    }
+
     #[test]
     fn expanded_text_selection_preserves_quote_and_preview_clicks() {
         for kind in ["quote", "preview"] {
