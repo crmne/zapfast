@@ -2,7 +2,7 @@
 //! from plain data so it can be tested without a UI.
 
 use crate::i18n::{Locale, gettext, ngettext};
-use crate::model::{Content, Delivery, OnceMedia, Reaction};
+use crate::model::{Content, Delivery, MentionRef, OnceMedia, Reaction};
 
 /// Everything read for one message, in reading order.
 pub struct MessageLabel<'a> {
@@ -33,6 +33,9 @@ pub struct MessageLabel<'a> {
     /// `attachment_state(..)`; read last, so a message that cannot be opened
     /// yet ends with why.
     pub attachment: Option<&'a str>,
+    /// `targets_count(..)`: what the arrows move between inside the message,
+    /// said at the very end, so the reader knows there is more than one.
+    pub targets: Option<&'a str>,
 }
 
 /// Fills each `{name}` of a translated template with the value given for
@@ -71,7 +74,7 @@ pub(crate) fn fill(template: &str, values: &[(&str, &str)]) -> String {
 /// One spoken line: whitespace runs (newlines included) become single spaces,
 /// and the glyphs `markup::plain` draws for quotes and list items are dropped,
 /// so a screen reader never reads them or a stray gap before a comma.
-fn spoken(text: &str) -> String {
+pub(crate) fn spoken(text: &str) -> String {
     let words: Vec<&str> = text
         .split_whitespace()
         .map(|word| word.trim_start_matches('\u{258E}'))
@@ -153,6 +156,9 @@ pub fn message_label(locale: Locale, label: &MessageLabel<'_>) -> String {
     if let Some(attachment) = label.attachment {
         parts.push(spoken(attachment));
     }
+    if let Some(targets) = label.targets {
+        parts.push(targets.to_owned());
+    }
     parts.retain(|part| !part.is_empty());
     parts.join(", ")
 }
@@ -181,6 +187,230 @@ pub fn album_description(locale: Locale, photos: u32, videos: u32, captions: &[S
             .cloned(),
     );
     parts.join(", ")
+}
+
+/// What a reader can act on inside a message from the keyboard, in reading
+/// order. In the focused message list, Left and Right move between them and
+/// Space acts on the current one, as clicking it does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeyTarget {
+    /// The link preview card, which opens its address.
+    Preview,
+    /// A link in the text: as the text writes it, and the address it opens.
+    Link { written: String, url: String },
+    /// A phone number in the text: as the text writes it, and its `tel:`
+    /// address. Space opens its menu, as clicking it does.
+    Phone { written: String, url: String },
+    /// The message's own file: its photo, video, voice message, document or
+    /// sticker, or an interactive card's header image.
+    Attachment,
+    /// A carousel card, by its index.
+    Card(usize),
+    /// A location's "Open in a map".
+    Map,
+    /// A shared contact's "Chat" button.
+    Contact,
+    /// A shared contact's "Add" button.
+    AddContact,
+    /// A sticker pack's "View stickers".
+    StickerPack,
+    /// One item of an album, which the list reads as one message: its photo
+    /// or video, by its message's id. Never among a single message's own
+    /// targets.
+    AlbumItem(String),
+    /// A poll option, by its index.
+    PollOption(usize),
+    /// A poll's "Show votes".
+    PollResults,
+}
+
+impl KeyTarget {
+    /// The address of a link or a phone number.
+    fn address(&self) -> Option<&str> {
+        match self {
+            KeyTarget::Link { url, .. } | KeyTarget::Phone { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+}
+
+/// The targets of a message, in the order the keys walk them: its file
+/// first, then the links and phone numbers of its text or caption, in the
+/// order the text has them. `mentions` are the
+/// message's: a mention's id is digits, which the bubble draws as the name
+/// it mentions, never as a phone number to call.
+pub fn key_targets(content: &Content, mentions: &[MentionRef]) -> Vec<KeyTarget> {
+    // Only the ids matter here: a mention's name is never a link.
+    let mentions: Vec<crate::markup::Mention> = mentions
+        .iter()
+        .map(|mention| crate::markup::Mention {
+            user: mention.user.clone(),
+            name: String::new(),
+        })
+        .collect();
+    // The preview's address was normalised when it was archived; a link
+    // in the text is compared the same way, so one typed without its scheme
+    // is not listed beside its preview.
+    let normalise = |url: &str| crate::safety::preview_url(url).unwrap_or_else(|| url.to_owned());
+    let links = |text: &str, skip: Option<&str>| {
+        crate::markup::written_links(text, &mentions)
+            .into_iter()
+            .filter(|(_, url)| skip.is_none_or(|skip| normalise(url) != normalise(skip)))
+            .map(|(written, url)| {
+                if url.starts_with("tel:") {
+                    KeyTarget::Phone { written, url }
+                } else {
+                    KeyTarget::Link { written, url }
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    match content {
+        Content::Text { text, preview } => {
+            let preview = preview.as_ref();
+            preview
+                .map(|_| KeyTarget::Preview)
+                .into_iter()
+                .chain(links(text, preview.map(|preview| preview.url.as_str())))
+                .collect()
+        }
+        Content::Image { caption, .. }
+        | Content::Document { caption, .. }
+        | Content::Video { caption, .. } => std::iter::once(KeyTarget::Attachment)
+            .chain(caption.iter().flat_map(|caption| links(caption, None)))
+            .collect(),
+        Content::Audio { .. } | Content::Sticker { .. } => vec![KeyTarget::Attachment],
+        Content::Interactive { text, card: None } => links(text, None),
+        Content::Interactive {
+            card: Some(card), ..
+        } => {
+            let mut targets = Vec::new();
+            // Each address once, in the order the bubble draws them: the
+            // links in the carousel's text, above the cards, then the cards
+            // in order, each followed by the links in its own text.
+            let add_links = |targets: &mut Vec<KeyTarget>, text: &str| {
+                for link in links(text, None) {
+                    let seen = targets.iter().any(|target| {
+                        target
+                            .address()
+                            .is_some_and(|seen| Some(seen) == link.address())
+                    });
+                    if !seen {
+                        targets.push(link);
+                    }
+                }
+            };
+            // A carousel shows its cards in place of a header image; a card
+            // without one has its image above its text.
+            if card.carousel.is_empty() {
+                targets.extend(card.image.iter().map(|_| KeyTarget::Attachment));
+            }
+            add_links(&mut targets, &card.body);
+            for (index, child) in card.carousel.iter().enumerate() {
+                targets.push(KeyTarget::Card(index));
+                add_links(&mut targets, &child.body);
+            }
+            targets
+        }
+        Content::Location { .. } | Content::LiveLocation { .. } => vec![KeyTarget::Map],
+        // The bubble shows each only for a contact with a WhatsApp account,
+        // and Add only for one not saved yet: the caller drops what it hides.
+        Content::Contact { .. } => vec![KeyTarget::Contact, KeyTarget::AddContact],
+        Content::StickerPack { .. } => vec![KeyTarget::StickerPack],
+        // "Show votes" takes a click only once someone has voted.
+        Content::Poll { options, state, .. } => (0..options.len())
+            .map(KeyTarget::PollOption)
+            .chain((state.voters > 0).then_some(KeyTarget::PollResults))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// What the end of a message's label says about its targets when there are
+/// two or more: "3 links", "4 cards", "attachment and 2 links", "1 link and
+/// 1 phone number", or "video and 2 links" for a video.
+pub fn targets_count(locale: Locale, content: &Content, mentions: &[MentionRef]) -> Option<String> {
+    let targets = key_targets(content, mentions);
+    if targets.len() < 2 {
+        return None;
+    }
+    let count = |wanted: fn(&KeyTarget) -> bool| {
+        targets.iter().filter(|target| wanted(target)).count() as u32
+    };
+    let mut parts = Vec::new();
+    if targets.contains(&KeyTarget::Attachment) {
+        parts.push(match content {
+            Content::Video { .. } => gettext(locale, "video").into_owned(),
+            _ => gettext(locale, "attachment").into_owned(),
+        });
+    }
+    let options = count(|target| matches!(target, KeyTarget::PollOption(_)));
+    if options > 0 {
+        parts.push(fill(
+            &ngettext(locale, "{count} option", "{count} options", options),
+            &[("count", &options.to_string())],
+        ));
+    }
+    let cards = count(|target| matches!(target, KeyTarget::Card(_)));
+    if cards > 0 {
+        parts.push(fill(
+            &ngettext(locale, "{count} card", "{count} cards", cards),
+            &[("count", &cards.to_string())],
+        ));
+    }
+    let links = count(|target| matches!(target, KeyTarget::Preview | KeyTarget::Link { .. }));
+    if links > 0 {
+        parts.push(fill(
+            &ngettext(locale, "{count} link", "{count} links", links),
+            &[("count", &links.to_string())],
+        ));
+    }
+    let phones = count(|target| matches!(target, KeyTarget::Phone { .. }));
+    if phones > 0 {
+        parts.push(fill(
+            &ngettext(
+                locale,
+                "{count} phone number",
+                "{count} phone numbers",
+                phones,
+            ),
+            &[("count", &phones.to_string())],
+        ));
+    }
+    // Only buttons, such as a contact's Chat and Add, leave no count to say.
+    spoken_list(locale, &parts)
+}
+
+/// `parts` said as one list: "a", "a and b", "a, b and c", and with more,
+/// each one before the last two joined on by "{list}, {next}": "a, b, c
+/// and d". Every joint is a template, so a translation puts its own commas
+/// and "and" in. None for no parts.
+fn spoken_list(locale: Locale, parts: &[String]) -> Option<String> {
+    Some(match parts {
+        [] => return None,
+        [one] => one.clone(),
+        [first, second] => fill(
+            &gettext(locale, "{first} and {second}"),
+            &[("first", first), ("second", second)],
+        ),
+        [head @ .., second, third] => {
+            // Three or more: the first of the three holds every part
+            // before the last two.
+            let first = head[1..].iter().fold(head[0].clone(), |list, next| {
+                fill(
+                    // Translators: adds one more part to a list that ends
+                    // with "{first}, {second} and {third}", such as "video,
+                    // 2 cards" in "video, 2 cards, 3 links and 1 phone number".
+                    &gettext(locale, "{list}, {next}"),
+                    &[("list", &list), ("next", next)],
+                )
+            });
+            fill(
+                &gettext(locale, "{first}, {second} and {third}"),
+                &[("first", &first), ("second", second), ("third", third)],
+            )
+        }
+    })
 }
 
 /// What a message's content is, in words. `text` is the plain message text or
@@ -323,7 +553,6 @@ pub fn call_description(locale: Locale, entry: &crate::ui::calls::Entry) -> Stri
 /// so there is nothing to report yet. Failures read the text the bubble shows
 /// for them, without the "click to retry" hint a pointer user needs.
 pub fn attachment_state(locale: Locale, content: &Content, auto: bool) -> Option<String> {
-    use crate::model::MediaState;
     let media = match content {
         Content::Image { media, .. }
         | Content::Video { media, .. }
@@ -332,6 +561,12 @@ pub fn attachment_state(locale: Locale, content: &Content, auto: bool) -> Option
         | Content::Sticker { media, .. } => media,
         _ => return None,
     };
+    media_state(locale, media, auto)
+}
+
+/// [`attachment_state`] for any file, such as a carousel card's picture.
+pub fn media_state(locale: Locale, media: &crate::model::Media, auto: bool) -> Option<String> {
+    use crate::model::MediaState;
     if media.path.is_some() {
         return None;
     }
@@ -348,6 +583,24 @@ pub fn attachment_state(locale: Locale, content: &Content, auto: bool) -> Option
         MediaState::Idle if !auto => Some(gettext(locale, "not downloaded").into_owned()),
         MediaState::Idle => None,
     }
+}
+
+/// What kind of file a message holds, in a word or two: "Photo", "Video",
+/// "Voice message", "Document". An interactive card's header is a photo.
+pub fn file_kind(locale: Locale, content: &Content) -> String {
+    match content {
+        Content::Video { gif: true, .. } => gettext(locale, "GIF"),
+        Content::Video { note: true, .. } => gettext(locale, "Video message"),
+        Content::Video { .. } => gettext(locale, "Video"),
+        Content::Audio {
+            voice_note: true, ..
+        } => gettext(locale, "Voice message"),
+        Content::Audio { .. } => gettext(locale, "Audio"),
+        Content::Document { .. } => gettext(locale, "Document"),
+        Content::Sticker { .. } => gettext(locale, "Sticker"),
+        _ => gettext(locale, "Photo"),
+    }
+    .into_owned()
 }
 
 /// The delivery state of an own message as a word; incoming messages have none.
@@ -463,6 +716,7 @@ mod tests {
             pinned: false,
             reactions: &[],
             attachment: None,
+            targets: None,
         }
     }
 
@@ -488,6 +742,267 @@ mod tests {
         assert_eq!(
             messages_list_label(Locale::English, "~Ana", false),
             "Messages with Ana"
+        );
+    }
+
+    fn text(text: &str, preview: Option<&str>) -> Content {
+        Content::Text {
+            text: text.to_owned(),
+            preview: preview.map(|url| crate::model::LinkPreview {
+                url: url.to_owned(),
+                title: None,
+                description: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_text_walks_its_preview_then_its_other_links() {
+        let link = |written: &str, url: &str| KeyTarget::Link {
+            written: written.to_owned(),
+            url: url.to_owned(),
+        };
+        assert_eq!(
+            key_targets(
+                &text("https://a.org and https://b.org", Some("https://a.org")),
+                &[]
+            ),
+            [KeyTarget::Preview, link("https://b.org", "https://b.org")]
+        );
+        assert_eq!(
+            key_targets(&text("https://a.org", None), &[]),
+            [link("https://a.org", "https://a.org")]
+        );
+        assert!(key_targets(&text("no links", None), &[]).is_empty());
+    }
+
+    /// The preview's address is normalised when it is archived, and one
+    /// typed without its scheme is the same address: it is the preview
+    /// alone, not a link beside it.
+    #[test]
+    fn a_link_written_without_its_scheme_is_its_preview() {
+        assert_eq!(
+            key_targets(&text("see example.com", Some("https://example.com/")), &[]),
+            [KeyTarget::Preview]
+        );
+    }
+
+    /// A numeric mention is drawn as the name it mentions, so the keys never
+    /// offer its digits as a phone number to call. The number written beside
+    /// it still is a target.
+    #[test]
+    fn a_numeric_mention_is_not_a_phone_target() {
+        let en = Locale::default();
+        let content = text("Ask @174057861464188 or call +1 (212) 555-1212", None);
+        let mentions = [MentionRef {
+            user: "174057861464188".into(),
+            id: "174057861464188@lid".into(),
+        }];
+        let targets = format!("{:?}", key_targets(&content, &mentions));
+        assert!(!targets.contains("tel:174057861464188"), "{targets}");
+        assert!(targets.contains("tel:+12125551212"), "{targets}");
+        assert_eq!(key_targets(&content, &mentions).len(), 1, "{targets}");
+        assert_eq!(targets_count(en, &content, &mentions), None, "one target");
+    }
+
+    /// Phone numbers are items as links are, in the order the text has
+    /// them, each once.
+    #[test]
+    fn phone_numbers_are_items_in_text_order_with_links() {
+        let link = |written: &str, url: &str| KeyTarget::Link {
+            written: written.to_owned(),
+            url: url.to_owned(),
+        };
+        let phone = |written: &str, url: &str| KeyTarget::Phone {
+            written: written.to_owned(),
+            url: url.to_owned(),
+        };
+        assert_eq!(
+            key_targets(
+                &text(
+                    "Call +1 (555) 010-2040, see https://a.org, or 0501234567; again +1 (555) 010-2040",
+                    None
+                ),
+                &[]
+            ),
+            [
+                phone("+1 (555) 010-2040", "tel:+15550102040"),
+                link("https://a.org", "https://a.org"),
+                phone("0501234567", "tel:0501234567"),
+            ]
+        );
+        // A caption's numbers follow the file.
+        let photo = Content::Image {
+            caption: Some("ring 0501234567".into()),
+            media: media(),
+            motion: None,
+        };
+        assert_eq!(
+            key_targets(&photo, &[]),
+            [KeyTarget::Attachment, phone("0501234567", "tel:0501234567")]
+        );
+        // A card's number and the same number in the carousel's text are
+        // one item, where the carousel's text has it, above the cards.
+        let card = |body: &str| crate::model::InteractiveCard {
+            body: body.into(),
+            buttons: Vec::new(),
+            image: None,
+            needs_phone: false,
+            carousel: Vec::new(),
+            thumbnail: None,
+        };
+        let carousel = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                carousel: vec![card("Book on 0501234567")],
+                ..card("Or call 0501234567 or 0507654321")
+            })),
+        };
+        assert_eq!(
+            key_targets(&carousel, &[]),
+            [
+                phone("0501234567", "tel:0501234567"),
+                phone("0507654321", "tel:0507654321"),
+                KeyTarget::Card(0),
+            ]
+        );
+    }
+
+    /// Four parts or more join as the three-part list does, through
+    /// templates only: no comma of the code's own is said in a language
+    /// whose list reads otherwise.
+    #[test]
+    fn a_long_list_joins_through_templates() {
+        let en = Locale::default();
+        let parts = |count: usize| -> Vec<String> {
+            ["video", "1 option", "2 cards", "3 links", "1 phone number"][..count]
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect()
+        };
+        assert_eq!(spoken_list(en, &parts(0)), None);
+        assert_eq!(spoken_list(en, &parts(1)).as_deref(), Some("video"));
+        assert_eq!(
+            spoken_list(en, &parts(3)).as_deref(),
+            Some("video, 1 option and 2 cards")
+        );
+        assert_eq!(
+            spoken_list(en, &parts(4)).as_deref(),
+            Some("video, 1 option, 2 cards and 3 links")
+        );
+        assert_eq!(
+            spoken_list(en, &parts(5)).as_deref(),
+            Some("video, 1 option, 2 cards, 3 links and 1 phone number")
+        );
+        // A part with braces in it is said as it is.
+        let braced = vec![
+            "{list}".to_owned(),
+            "{next}".to_owned(),
+            "b".into(),
+            "c".into(),
+        ];
+        assert_eq!(
+            spoken_list(en, &braced).as_deref(),
+            Some("{list}, {next}, b and c")
+        );
+    }
+
+    /// The label's count names phone numbers apart from links.
+    #[test]
+    fn the_label_counts_phone_numbers() {
+        let en = Locale::default();
+        let count = |content: &Content| targets_count(en, content, &[]);
+        assert_eq!(count(&text("call 0501234567", None)), None, "one target");
+        assert_eq!(
+            count(&text("call 0501234567 or 0507654321", None)).as_deref(),
+            Some("2 phone numbers")
+        );
+        assert_eq!(
+            count(&text("call 0501234567 or see https://a.org", None)).as_deref(),
+            Some("1 link and 1 phone number")
+        );
+        let photo = Content::Image {
+            caption: Some("https://a.org, 0501234567 or 0507654321".into()),
+            media: media(),
+            motion: None,
+        };
+        assert_eq!(
+            count(&photo).as_deref(),
+            Some("attachment, 1 link and 2 phone numbers")
+        );
+    }
+
+    #[test]
+    fn the_label_ends_with_the_count_of_targets() {
+        let en = Locale::default();
+        let count = |content: &Content| targets_count(en, content, &[]);
+        assert_eq!(count(&text("https://a.org", None)), None, "one target");
+        assert_eq!(
+            count(&text("https://a.org https://b.org", Some("https://c.org"))).as_deref(),
+            Some("3 links")
+        );
+        let photo = Content::Image {
+            caption: Some("https://a.org and https://b.org".into()),
+            media: media(),
+            motion: None,
+        };
+        assert_eq!(count(&photo).as_deref(), Some("attachment and 2 links"));
+        let empty = crate::model::InteractiveCard {
+            body: String::new(),
+            buttons: Vec::new(),
+            image: None,
+            needs_phone: false,
+            carousel: Vec::new(),
+            thumbnail: None,
+        };
+        let cards = vec![empty; 4];
+        let carousel = Content::Interactive {
+            text: String::new(),
+            card: Some(Box::new(crate::model::InteractiveCard {
+                body: "More at https://a.org".into(),
+                buttons: Vec::new(),
+                image: None,
+                needs_phone: false,
+                carousel: cards,
+                thumbnail: None,
+            })),
+        };
+        assert_eq!(count(&carousel).as_deref(), Some("4 cards and 1 link"));
+        // A card's own links count too.
+        let mut linked = carousel.clone();
+        if let Content::Interactive {
+            card: Some(card), ..
+        } = &mut linked
+        {
+            card.carousel[1].body = "Book at https://b.org".into();
+        }
+        assert_eq!(count(&linked).as_deref(), Some("4 cards and 2 links"));
+        let video = Content::Video {
+            caption: Some("https://a.org https://b.org".into()),
+            media: media(),
+            seconds: None,
+            gif: false,
+            note: false,
+        };
+        assert_eq!(count(&video).as_deref(), Some("video and 2 links"));
+        let poll = Content::Poll {
+            question: "When?".into(),
+            options: vec!["Morning".into(), "Afternoon".into(), "Evening".into()],
+            state: crate::model::PollState {
+                voters: 1,
+                ..Default::default()
+            },
+        };
+        assert_eq!(count(&poll).as_deref(), Some("3 options"), "not Show votes");
+        let label = MessageLabel {
+            body: "Photo",
+            attachment: Some("not downloaded"),
+            targets: Some("attachment and 2 links"),
+            ..base()
+        };
+        assert_eq!(
+            message_label(en, &label),
+            "Ahmed, Photo, 10:32 PM, not downloaded, attachment and 2 links"
         );
     }
 

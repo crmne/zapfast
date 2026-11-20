@@ -3283,6 +3283,14 @@ pub enum Action {
     /// The menu asked for by `OpenMessageMenu` is open: stop asking, so it
     /// opens once and closes as any menu does.
     MessageMenuOpened,
+    /// Opens the menu of a phone number in a message of the open chat, by
+    /// the number's `tel:` address, from the keyboard.
+    OpenPhoneMenu {
+        message: String,
+        url: String,
+    },
+    /// The menu asked for by `OpenPhoneMenu` is open: stop asking.
+    PhoneMenuOpened,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
     /// Goes to a replied message from the keys: as `ScrollTo`, but the

@@ -1,6 +1,7 @@
-//! Deliberate Tab navigation for the main chat view. Message text and chat rows
-//! remain pointer/accessibility targets; phone links join the primary cycle, and
-//! the message list as a whole is one stop.
+//! Deliberate Tab navigation for the main chat view. Message content and chat
+//! rows remain pointer/accessibility targets, not stops in the primary cycle:
+//! the message list as a whole is one stop, and its keys reach a message's
+//! links and phone numbers.
 
 use egui::{Context, FocusDirection, Id, Response};
 
@@ -17,7 +18,6 @@ pub enum Stop {
     ReviewAdd,
     ReviewEdit,
     ReviewClose,
-    PhoneLink(u32),
     /// The chat header's Search, then the search pane's controls in reading
     /// order. The arrows walk its results from the field.
     ChatSearch,
@@ -99,23 +99,6 @@ impl TabStop for Response {
         }
         self
     }
-}
-
-/// Register each phone link in draw order so Tab can reach every link,
-/// including multiple wrapped hit regions in a conversation.
-pub(crate) fn phone_link(response: Response) -> Response {
-    let index = response.ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Order>(order_id())
-            .controls
-            .iter()
-            .filter_map(|(stop, _)| match stop {
-                Stop::PhoneLink(index) => Some(*index),
-                _ => None,
-            })
-            .max()
-            .map_or(0, |index| index.saturating_add(1))
-    });
-    response.tab_stop(Stop::PhoneLink(index))
 }
 
 /// The widget last registered for `stop`, such as an icon button without
