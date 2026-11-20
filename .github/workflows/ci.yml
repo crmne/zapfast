@@ -125,7 +125,7 @@ jobs:
     name: compile (Debian 12)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    container: debian:12
+    container: debian:13
     timeout-minutes: 45
     steps:
       - name: GUI build dependencies
