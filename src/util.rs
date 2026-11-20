@@ -554,9 +554,11 @@ pub fn search_key(text: &str) -> String {
             .filter(|c| marks.get(*c) != GeneralCategory::NonspacingMark),
     );
     // A word-final Σ lowercases to ς, which would never match a query typed
-    // with Σ: both forms become σ so one sigma matches the other.
+    // with Σ: both forms become σ so one sigma matches the other. ß becomes
+    // ss, as full case folding does, so "Weiß" matches "WEISS" typed.
     stripped
         .to_lowercase()
+        .replace('ß', "ss")
         .chars()
         .map(|c| if c == 'ς' { 'σ' } else { c })
         .collect()
@@ -1212,6 +1214,8 @@ mod tests {
             ("Алёна", "алена"),
             ("مُحَمَّد", "محمد"),
             ("がくと", "かくと"),
+            ("Weiß", "WEISS"),
+            ("STRAẞE", "strasse"),
         ] {
             assert_eq!(search_key(name), search_key(typed), "{name}");
         }
