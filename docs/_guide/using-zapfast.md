@@ -895,6 +895,10 @@ description, use your phone.
 A phone number in a message is a link: clicking it offers to start a chat
 with that number or to copy the number as it is written.
 
+Right-click a web link or an email address in a message and the message menu
+also offers **Copy link**, which copies the full address. Right-clicking
+elsewhere in the message leaves it out.
+
 ZapFast registers the `whatsapp:` and `wa:` schemes, so a link that names a
 chat opens that chat here. This works from a terminal, a script, or anything
 else that hands a link to the desktop.
