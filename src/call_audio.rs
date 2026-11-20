@@ -448,6 +448,8 @@ enum Sink {
         layout: Layout,
         /// Set once the output lost what it was playing, so the writer reopens it.
         lost: bool,
+        /// How many buffers were handed to the player, so the ones it finished can be counted.
+        appended: u64,
     },
     /// Installed only by a test, and only while its guard lives.
     #[cfg(test)]
@@ -488,6 +490,7 @@ impl Sink {
             player,
             layout: Layout { rate, channels },
             lost: false,
+            appended: 0,
         }
     }
 
@@ -500,9 +503,15 @@ impl Sink {
         }
     }
 
-    fn append(&self, samples: Vec<f32>) {
+    fn append(&mut self, samples: Vec<f32>) {
         match self {
-            Sink::Real { player, layout, .. } => {
+            Sink::Real {
+                player,
+                layout,
+                appended,
+                ..
+            } => {
+                *appended += 1;
                 player.append(SamplesBuffer::new(
                     NonZero::new(layout.channels).unwrap_or(NonZero::<u16>::MIN),
                     NonZero::new(layout.rate)
@@ -519,7 +528,16 @@ impl Sink {
     /// How far the stream has played, which is how a stuck device is told from a busy one.
     fn position(&self) -> Duration {
         match self {
-            Sink::Real { player, .. } => player.get_pos(),
+            // The player's own position restarts with every buffer it plays, and a writer that
+            // looks once per buffer can see the same reading each time on a device that is
+            // playing (a Bluetooth headset did, and its stream was torn down every 2 seconds).
+            // Each finished buffer counts a whole second, so the reading only ever goes up.
+            Sink::Real {
+                player, appended, ..
+            } => {
+                let finished = appended.saturating_sub(player.len() as u64);
+                Duration::from_secs(finished) + player.get_pos()
+            }
             #[cfg(test)]
             Sink::Fake(speaker) => speaker.position(),
         }
