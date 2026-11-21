@@ -497,7 +497,7 @@ impl LineIndex {
                     false
                 };
                 if maybe_scheme || maybe_email || maybe_domain {
-                    let raw_end_byte = link_token_end(line, start_byte).min(next_mono[i]);
+                    let raw_end_byte = link_token_end(&line[..next_mono[i]], start_byte);
                     if let Some((trimmed_end_byte, _)) =
                         classify_link_token(line, start_byte, raw_end_byte, [true; 3])
                     {
@@ -1318,6 +1318,12 @@ mod tests {
 
         let repeated_dots = "a.a.".repeat(2_000);
         assert_eq!(plain(&repeated_dots, &[]), repeated_dots);
+
+        let repeated_url_code = "https://example.com/a`code`".repeat(2_000);
+        assert_eq!(
+            plain(&repeated_url_code, &[]),
+            "https://example.com/acode".repeat(2_000)
+        );
     }
 
     #[test]
