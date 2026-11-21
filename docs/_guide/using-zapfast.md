@@ -11,6 +11,8 @@ nav_order: 3
 Undo and redo in the message field apply to its current chat and account.
 Switching chats or accounts, closing a chat, or unlinking clears the editor's
 undo history. Saved drafts remain available when you return to their chat.
+When a draft is longer than the message field, drag a text selection above or
+below the field to scroll the draft and keep extending the selection.
 
 ZapFast reconnects by itself after a lost connection, within about five
 seconds once it notices. Text refused while offline goes back to its chat's

@@ -22519,6 +22519,91 @@ mod tests {
         }
     }
 
+    /// A selection dragged down out of the composer, past the window's foot
+    /// where the platform reports the pointer gone, keeps scrolling the draft
+    /// while the button is held still, and selects what scrolls past.
+    #[test]
+    fn a_selection_held_below_the_composer_scrolls_the_draft() {
+        let mut app = app();
+        app.composer = (1..=80)
+            .map(|n| format!("Synthetic line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        for _ in 0..3 {
+            frame_with(&mut app, &ctx, Vec::new());
+        }
+        let text = |ctx: &egui::Context| {
+            ctx.data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::composer_text_id())
+            })
+            .expect("the composer's text is drawn")
+        };
+        let field = text(&ctx);
+        let start = egui::pos2(field.center().x, field.top() + 10.0);
+        let press = egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let below = egui::pos2(start.x, 900.0);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start), press],
+        );
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(below)]);
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerGone]);
+        let cursor = |ctx: &egui::Context| {
+            egui::TextEdit::load_state(ctx, egui::Id::new("composer-text"))
+                .and_then(|state| state.cursor.char_range())
+                .expect("a selection")
+        };
+        let held = cursor(&ctx).primary.index.0;
+        let before = text(&ctx).top();
+        // Held still: no pointer events at all.
+        for _ in 0..30 {
+            frame_with(&mut app, &ctx, Vec::new());
+        }
+        let scrolled = before - text(&ctx).top();
+        assert!(
+            scrolled > 60.0,
+            "the draft scrolled under the held selection: {scrolled}"
+        );
+        let range = cursor(&ctx);
+        assert!(
+            range.primary.index.0 > held && range.secondary.index.0 < held,
+            "the selection grew with the scroll: {held} then {range:?}"
+        );
+        // Letting go outside lands on the draft, and the scrolling stops.
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: below,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        // A reveal egui started may still glide to its end.
+        for _ in 0..30 {
+            frame_with(&mut app, &ctx, Vec::new());
+        }
+        let released = text(&ctx).top();
+        for _ in 0..10 {
+            frame_with(&mut app, &ctx, Vec::new());
+        }
+        assert!(
+            (text(&ctx).top() - released).abs() < 0.5,
+            "nothing scrolls once the button is up"
+        );
+        assert_eq!(app.composer.lines().count(), 80, "the draft is untouched");
+    }
+
     /// The send button sits evenly in the field's rounded end: as far from
     /// its right edge as from its top and bottom.
     #[test]
