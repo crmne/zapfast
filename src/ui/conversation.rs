@@ -9960,6 +9960,7 @@ fn rich_body(
     }
     if ui.input(|input| input.pointer.secondary_clicked())
         && let Some(pos) = ui.input(|input| input.pointer.interact_pos())
+        && ui.clip_rect().contains(pos)
         && let Some(url) = link_at_pos(&laid, origin, pos).and_then(copyable_link)
     {
         ui.ctx().data_mut(|data| {
@@ -10017,6 +10018,7 @@ fn preview_card(
     }
     if ui.input(|input| input.pointer.secondary_clicked())
         && let Some(pos) = ui.input(|input| input.pointer.interact_pos())
+        && ui.clip_rect().contains(pos)
         && response.rect.contains(pos)
         && let Some(url) = copyable_link(&preview.url)
     {
@@ -13263,11 +13265,13 @@ mod tests {
             "expected CopyText for album caption link, got {actions:?}"
         );
 
-        // 2. Carousel card body with a link.
+        // 2. Multi-card carousel: visible card link offers Copy link, while
+        // clipped text from the next card extending into the bubble margin does not.
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::theme::install(&ctx);
         let card_text = "Visit https://example.com/card";
+        let clipped_text = "https://example.com/clipped-card";
         let carousel_msg = Message {
             id: "car-parent".into(),
             ..message(Content::Interactive {
@@ -13277,14 +13281,24 @@ mod tests {
                     buttons: Vec::new(),
                     image: None,
                     needs_phone: false,
-                    carousel: vec![crate::model::InteractiveCard {
-                        body: card_text.into(),
-                        buttons: Vec::new(),
-                        image: None,
-                        needs_phone: false,
-                        carousel: Vec::new(),
-                        thumbnail: None,
-                    }],
+                    carousel: vec![
+                        crate::model::InteractiveCard {
+                            body: card_text.into(),
+                            buttons: Vec::new(),
+                            image: None,
+                            needs_phone: false,
+                            carousel: Vec::new(),
+                            thumbnail: None,
+                        },
+                        crate::model::InteractiveCard {
+                            body: clipped_text.into(),
+                            buttons: Vec::new(),
+                            image: None,
+                            needs_phone: false,
+                            carousel: Vec::new(),
+                            thumbnail: None,
+                        },
+                    ],
                     thumbnail: None,
                 })),
             })
@@ -13292,6 +13306,7 @@ mod tests {
         let run_carousel = |events: Vec<egui::Event>| {
             let mut actions = Vec::new();
             let mut output = None;
+            let mut bubble_rect = Rect::NOTHING;
             with_still_view(|view| {
                 let mut out = ctx.run_ui(
                     egui::RawInput {
@@ -13315,27 +13330,28 @@ mod tests {
                             },
                             &mut actions,
                         );
+                        bubble_rect = ui.min_rect();
                     },
                 );
                 out.textures_delta.clear();
                 output = Some(out);
             });
-            (output.unwrap(), actions)
+            (output.unwrap(), actions, bubble_rect)
         };
-        run_carousel(Vec::new());
+        let (_, _, bubble_rect) = run_carousel(Vec::new());
         let card_body = ctx
             .data(|data| {
                 data.get_temp::<Rect>(
                     bubble_id("1@s.whatsapp.net", "car-parent-card-0").with("body"),
                 )
             })
-            .expect("carousel card body rect");
+            .expect("carousel card 0 body rect");
         let card_link_pos = link_point(&ctx, card_body, card_text, "https://example.com/card");
         run_carousel(click_events(card_link_pos, egui::PointerButton::Secondary));
-        let (out, _) = run_carousel(Vec::new());
+        let (out, _, _) = run_carousel(Vec::new());
         let copy_link_rect = menu_button_rect(&out, "Copy link")
-            .expect("Copy link should appear for a carousel card link");
-        let (_, actions) = run_carousel(click_events(
+            .expect("Copy link should appear for a visible carousel card link");
+        let (_, actions, _) = run_carousel(click_events(
             copy_link_rect.center(),
             egui::PointerButton::Primary,
         ));
@@ -13345,6 +13361,33 @@ mod tests {
                 Action::CopyText(copied) if copied == "https://example.com/card"
             )),
             "expected CopyText for carousel card link, got {actions:?}"
+        );
+        // Settle frame after menu closes.
+        run_carousel(Vec::new());
+
+        // Right-click in the bubble's right margin where card 1's link is laid
+        // out beyond the horizontal ScrollArea's clip rect.
+        let clipped_body = ctx
+            .data(|data| {
+                data.get_temp::<Rect>(
+                    bubble_id("1@s.whatsapp.net", "car-parent-card-1").with("body"),
+                )
+            })
+            .expect("carousel card 1 body rect");
+        let clipped_pos = pos2(bubble_rect.right() - 3.0, clipped_body.center().y);
+        assert!(
+            clipped_body.contains(clipped_pos),
+            "expected clipped point {clipped_pos:?} inside card 1 body {clipped_body:?}"
+        );
+        run_carousel(click_events(clipped_pos, egui::PointerButton::Secondary));
+        let (out, _, _) = run_carousel(Vec::new());
+        assert!(
+            menu_button_rect(&out, "Reply").is_some(),
+            "bubble context menu should open when right-clicking the bubble margin"
+        );
+        assert!(
+            menu_button_rect(&out, "Copy link").is_none(),
+            "clipped carousel link outside ScrollArea clip_rect must not offer Copy link"
         );
     }
 
