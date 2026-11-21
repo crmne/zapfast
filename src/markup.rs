@@ -294,10 +294,15 @@ fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
 /// Inline markers within one line.
 fn inline(line: &str) -> Vec<Span> {
     let chars: Vec<char> = line.chars().collect();
+    let byte_offsets: Vec<usize> = line.char_indices().map(|(offset, _)| offset).collect();
+    let index = LineIndex::build(line, &chars, &byte_offsets);
     let mut spans = Vec::new();
     let mut run = String::new();
     // bold, italic, strike
     let mut flags = [false; 3];
+    // Once a marker fails to find a closer with no other markers open, no later
+    // opener of that marker with no other markers open can close either.
+    let mut no_closer = [false; 3];
     let flush = |run: &mut String, spans: &mut Vec<Span>, flags: [bool; 3]| {
         if !run.is_empty() {
             spans.push(Span {
@@ -310,58 +315,43 @@ fn inline(line: &str) -> Vec<Span> {
         }
     };
     let mut i = 0;
-    let triple = |at: usize| {
-        at + 2 < chars.len() && chars[at] == '`' && chars[at + 1] == '`' && chars[at + 2] == '`'
-    };
     while i < chars.len() {
-        let c = chars[i];
-        // WhatsApp inline monospace: ```text```.
-        if triple(i)
-            && let Some(close) = (i + 3..chars.len()).find(|&at| triple(at))
-            && close > i + 3
-        {
+        if let Some((start, end, after)) = index.mono[i] {
             flush(&mut run, &mut spans, flags);
             spans.push(Span {
-                text: chars[i + 3..close].iter().collect(),
+                text: chars[start..end].iter().collect(),
                 mono: true,
                 ..Default::default()
             });
-            i = close + 3;
+            i = after;
             continue;
         }
-        if c == '`'
-            && let Some(close) = chars[i + 1..].iter().position(|c| *c == '`')
-        {
-            let close = i + 1 + close;
-            if close > i + 1 {
-                flush(&mut run, &mut spans, flags);
-                spans.push(Span {
-                    text: chars[i + 1..close].iter().collect(),
-                    mono: true,
-                    ..Default::default()
-                });
-                i = close + 1;
-                continue;
-            }
+        // Keep formatting characters inside URLs and email addresses literal.
+        if let Some(end) = index.link_end_at(line, &byte_offsets, i, flags) {
+            run.extend(&chars[i..end]);
+            i = end;
+            continue;
         }
-        if matches!(c, '*' | '_' | '~') {
-            let index = match c {
-                '*' => 0,
-                '_' => 1,
-                _ => 2,
-            };
-            if flags[index] {
+        let c = chars[i];
+        if let Some(marker_idx) = marker_index(c) {
+            if flags[marker_idx] {
                 if is_closer(&chars, i) {
                     flush(&mut run, &mut spans, flags);
-                    flags[index] = false;
+                    flags[marker_idx] = false;
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(&chars, i + 1, c) {
-                flush(&mut run, &mut spans, flags);
-                flags[index] = true;
-                i += 1;
-                continue;
+            } else if is_opener(&chars, i) && !(flags == [false; 3] && no_closer[marker_idx]) {
+                let mut candidate = flags;
+                candidate[marker_idx] = true;
+                if has_closer(line, &chars, &byte_offsets, &index, i + 1, c, candidate) {
+                    flush(&mut run, &mut spans, flags);
+                    flags[marker_idx] = true;
+                    i += 1;
+                    continue;
+                } else if flags == [false; 3] {
+                    no_closer[marker_idx] = true;
+                }
             }
         }
         run.push(c);
@@ -369,6 +359,187 @@ fn inline(line: &str) -> Vec<Span> {
     }
     flush(&mut run, &mut spans, flags);
     spans
+}
+
+fn marker_index(c: char) -> Option<usize> {
+    match c {
+        '*' => Some(0),
+        '_' => Some(1),
+        '~' => Some(2),
+        _ => None,
+    }
+}
+
+fn is_triple_backtick(chars: &[char], at: usize) -> bool {
+    at + 2 < chars.len() && chars[at] == '`' && chars[at + 1] == '`' && chars[at + 2] == '`'
+}
+
+/// Precomputed inline monospace and link candidates for one line so `inline()`
+/// and `has_closer()` stay linear even with many unmatched markers.
+struct LineIndex {
+    mono: Vec<Option<(usize, usize, usize)>>,
+    link_raw_end: Vec<usize>,
+}
+
+impl LineIndex {
+    fn build(line: &str, chars: &[char], byte_offsets: &[usize]) -> Self {
+        let len = chars.len();
+        let mut mono = vec![None; len];
+        let mut no_triple_close = false;
+        let mut no_single_close = false;
+        let mut i = 0;
+        while i < len {
+            if !no_triple_close && is_triple_backtick(chars, i) {
+                match (i + 3..len).find(|&at| is_triple_backtick(chars, at)) {
+                    Some(close) if close > i + 3 => {
+                        mono[i] = Some((i + 3, close, close + 3));
+                        i = close + 3;
+                        continue;
+                    }
+                    None => no_triple_close = true,
+                    Some(_) => {}
+                }
+            }
+            if !no_single_close && chars[i] == '`' {
+                match chars[i + 1..].iter().position(|c| *c == '`') {
+                    Some(offset) => {
+                        let close = i + 1 + offset;
+                        if close > i + 1 {
+                            mono[i] = Some((i + 1, close, close + 1));
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                    None => no_single_close = true,
+                }
+            }
+            i += 1;
+        }
+
+        let mut next_delim = vec![line.len(); len];
+        let mut next_mono = vec![line.len(); len];
+        let mut next_bracket_or_delim = vec![line.len(); len];
+        let mut next_non_host = vec![line.len(); len];
+        let mut next_slash = vec![usize::MAX; len];
+        let mut next_at = vec![usize::MAX; len];
+        let mut next_dot = vec![usize::MAX; len];
+        let mut delim = line.len();
+        let mut mono_at = line.len();
+        let mut bracket_or_delim = line.len();
+        let mut non_host = line.len();
+        let mut slash = usize::MAX;
+        let mut at = usize::MAX;
+        let mut dot = usize::MAX;
+        for idx in (0..len).rev() {
+            let c = chars[idx];
+            let byte = byte_offsets[idx];
+            if mono[idx].is_some() {
+                mono_at = byte;
+            }
+            if is_link_delimiter(c) {
+                delim = byte;
+                bracket_or_delim = byte;
+                non_host = byte;
+                slash = usize::MAX;
+                at = usize::MAX;
+                dot = usize::MAX;
+            } else {
+                if matches!(c, '(' | ')' | '[' | ']') {
+                    bracket_or_delim = byte;
+                }
+                if !(c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':')) {
+                    non_host = byte;
+                }
+                if c == '/' {
+                    slash = byte;
+                } else if c == '@' {
+                    at = byte;
+                } else if c == '.' {
+                    dot = byte;
+                }
+            }
+            next_delim[idx] = delim;
+            next_mono[idx] = mono_at;
+            next_bracket_or_delim[idx] = bracket_or_delim;
+            next_non_host[idx] = non_host;
+            next_slash[idx] = slash;
+            next_at[idx] = at;
+            next_dot[idx] = dot;
+        }
+
+        let mut link_raw_end = vec![0usize; len];
+        let mut i = 0;
+        while i < len {
+            if let Some((_, _, after)) = mono[i] {
+                i = after;
+                continue;
+            }
+            let at_boundary = i == 0 || !chars[i - 1].is_alphanumeric();
+            if at_boundary && chars[i].is_ascii_alphanumeric() {
+                let start_byte = byte_offsets[i];
+                let limit_byte = next_delim[i].min(next_mono[i]);
+                let chunk = &line[start_byte..limit_byte];
+                let maybe_scheme = starts_with_link_scheme(chunk);
+                let email_limit = next_bracket_or_delim[i].min(limit_byte);
+                let maybe_email = next_at[i] < email_limit
+                    && next_at[i] > start_byte
+                    && next_slash[i] >= email_limit;
+                let maybe_domain = if !maybe_scheme && !maybe_email {
+                    let host_limit = next_non_host[i].min(limit_byte);
+                    next_dot[i] < host_limit && {
+                        let mut host = &line[start_byte..host_limit];
+                        while let Some(stripped) = strip_trailing_link_punct(host, [true; 3]) {
+                            host = stripped;
+                        }
+                        is_domain(host)
+                    }
+                } else {
+                    false
+                };
+                if maybe_scheme || maybe_email || maybe_domain {
+                    let raw_end_byte = link_token_end(&line[..next_mono[i]], start_byte);
+                    if let Some((trimmed_end_byte, _)) =
+                        classify_link_token(line, start_byte, raw_end_byte, [true; 3])
+                    {
+                        let raw_end_char = byte_offsets.binary_search(&raw_end_byte).unwrap_or(len);
+                        let min_end_char =
+                            byte_offsets.binary_search(&trimmed_end_byte).unwrap_or(len);
+                        link_raw_end[i] = raw_end_char;
+                        i = min_end_char.max(i + 1);
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        Self { mono, link_raw_end }
+    }
+
+    fn link_end_at(
+        &self,
+        line: &str,
+        byte_offsets: &[usize],
+        i: usize,
+        open_markers: [bool; 3],
+    ) -> Option<usize> {
+        let raw_end_char = self.link_raw_end[i];
+        if raw_end_char == 0 {
+            return None;
+        }
+        let start_byte = byte_offsets[i];
+        let raw_end_byte = byte_offsets
+            .get(raw_end_char)
+            .copied()
+            .unwrap_or(line.len());
+        let (trimmed_end_byte, _) =
+            classify_link_token(line, start_byte, raw_end_byte, open_markers)?;
+        Some(
+            byte_offsets
+                .binary_search(&trimmed_end_byte)
+                .unwrap_or(byte_offsets.len()),
+        )
+    }
 }
 
 fn is_opener(chars: &[char], i: usize) -> bool {
@@ -385,8 +556,37 @@ fn is_closer(chars: &[char], i: usize) -> bool {
     before_ok && after_ok
 }
 
-fn has_closer(chars: &[char], from: usize, marker: char) -> bool {
-    (from..chars.len()).any(|j| chars[j] == marker && is_closer(chars, j))
+fn has_closer(
+    line: &str,
+    chars: &[char],
+    byte_offsets: &[usize],
+    index: &LineIndex,
+    from: usize,
+    marker: char,
+    mut open_markers: [bool; 3],
+) -> bool {
+    let mut j = from;
+    while j < chars.len() {
+        if let Some((_, _, after)) = index.mono[j] {
+            j = after;
+            continue;
+        }
+        if let Some(end) = index.link_end_at(line, byte_offsets, j, open_markers) {
+            j = end;
+            continue;
+        }
+        if chars[j] == marker && is_closer(chars, j) {
+            return true;
+        }
+        if let Some(other) = marker_index(chars[j])
+            && open_markers[other]
+            && is_closer(chars, j)
+        {
+            open_markers[other] = false;
+        }
+        j += 1;
+    }
+    false
 }
 
 /// Splits a plain span around web addresses and mentions.
@@ -556,19 +756,41 @@ fn mention_at<'m>(text: &str, at: usize, mentions: &'m [Mention]) -> Option<(usi
     Some((at + 1 + digits.len(), mention))
 }
 
-/// Parses a web or email address at `at` and returns its end and target.
-fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
+#[derive(Clone, Copy)]
+enum LinkScheme {
+    Exact,
+    Https,
+    Mailto,
+}
+
+fn is_link_delimiter(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '{' | '}')
+}
+
+fn starts_with_ignore_ascii_case(text: &str, prefix: &str) -> bool {
+    text.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+fn starts_with_link_scheme(text: &str) -> bool {
+    starts_with_ignore_ascii_case(text, "http://")
+        || starts_with_ignore_ascii_case(text, "https://")
+        || starts_with_ignore_ascii_case(text, "www.")
+        || starts_with_ignore_ascii_case(text, "mailto:")
+}
+
+/// Scans the raw link token starting at `at`, keeping brackets opened inside
+/// the address (such as `https://en.wikipedia.org/wiki/Rust_(programming_language)`)
+/// and stopping before an unmatched closing bracket (such as `(see example.com)`).
+fn link_token_end(text: &str, at: usize) -> usize {
     let rest = &text[at..];
-    // Brackets opened inside the address belong to it, as in
-    // `https://en.wikipedia.org/wiki/Rust_(programming_language)`; a closing
-    // one without its opener closes the text around it: `(see example.com)`.
     let (mut parens, mut squares) = (0usize, 0usize);
-    let token_end = rest
+    let offset = rest
         .find(|c: char| {
             let depth = match c {
                 '(' | ')' => &mut parens,
                 '[' | ']' => &mut squares,
-                _ => return c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '{' | '}'),
+                _ => return is_link_delimiter(c),
             };
             if matches!(c, '(' | '[') {
                 *depth += 1;
@@ -581,75 +803,100 @@ fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
             }
         })
         .unwrap_or(rest.len());
-    let mut token = &rest[..token_end];
-    while let Some(stripped) = token.strip_suffix(['.', ',', ';', ':', '!', '?', '*', '_', '~']) {
+    at + offset
+}
+
+/// Classifies `text[at..raw_end]` after trimming sentence punctuation and any
+/// currently open inline markers (`*`, `_`, `~`) without allocating.
+fn classify_link_token(
+    text: &str,
+    at: usize,
+    raw_end: usize,
+    open_markers: [bool; 3],
+) -> Option<(usize, LinkScheme)> {
+    let mut token = &text[at..raw_end];
+    while let Some(stripped) = strip_trailing_link_punct(token, open_markers) {
         token = stripped;
     }
     if token.len() < 4 {
         return None;
     }
-    let lower = token.to_ascii_lowercase();
     let end = at + token.len();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
-        return (token.len() > 8).then(|| (end, token.to_owned()));
+    if starts_with_ignore_ascii_case(token, "http://")
+        || starts_with_ignore_ascii_case(token, "https://")
+    {
+        return (token.len() > 8).then_some((end, LinkScheme::Exact));
     }
-    if lower.starts_with("www.") {
-        return Some((end, format!("https://{token}")));
+    if starts_with_ignore_ascii_case(token, "www.") {
+        return Some((end, LinkScheme::Https));
     }
-    if lower.starts_with("mailto:") {
-        return Some((end, token.to_owned()));
+    if starts_with_ignore_ascii_case(token, "mailto:") {
+        return Some((end, LinkScheme::Exact));
     }
     if let Some((user, host)) = token.split_once('@')
         && !user.is_empty()
         && !user.contains('/')
         && is_domain(host)
     {
-        return Some((end, format!("mailto:{token}")));
+        return Some((end, LinkScheme::Mailto));
     }
     let (host, _) = token.split_once('/').unwrap_or((token, ""));
     if is_domain(host) {
-        return Some((end, format!("https://{token}")));
+        return Some((end, LinkScheme::Https));
     }
     None
+}
+
+/// Parses a web or email address at `at` and returns its end and target.
+fn link_at(text: &str, at: usize) -> Option<(usize, String)> {
+    let raw_end = link_token_end(text, at);
+    let (end, scheme) = classify_link_token(text, at, raw_end, [false; 3])?;
+    let token = &text[at..end];
+    let target = match scheme {
+        LinkScheme::Exact => token.to_owned(),
+        LinkScheme::Https => format!("https://{token}"),
+        LinkScheme::Mailto => format!("mailto:{token}"),
+    };
+    Some((end, target))
+}
+
+fn strip_trailing_link_punct(token: &str, open_markers: [bool; 3]) -> Option<&str> {
+    let last = token.chars().next_back()?;
+    let strip = matches!(last, '.' | ',' | ';' | ':' | '!' | '?')
+        || (open_markers[0] && last == '*')
+        || (open_markers[1] && last == '_')
+        || (open_markers[2] && last == '~');
+    strip.then(|| &token[..token.len() - last.len_utf8()])
 }
 
 /// Whether a token is a hostname without a scheme.
 fn is_domain(host: &str) -> bool {
     let host = host.split_once(':').map_or(host, |(name, _)| name);
-    let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() < 2 || labels.iter().any(|label| label.is_empty()) {
+    let Some((rest, tld)) = host.rsplit_once('.') else {
+        return false;
+    };
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
         return false;
     }
-    if !labels.iter().all(|label| {
-        label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    let tld_ok = match tld.len() {
+        2 => ![
+            "js", "rs", "py", "ts", "md", "sh", "go", "rb", "cs", "cc", "hs", "ml", "so",
+        ]
+        .iter()
+        .any(|ext| tld.eq_ignore_ascii_case(ext)),
+        _ => KNOWN_TLDS
+            .iter()
+            .any(|known| tld.eq_ignore_ascii_case(known)),
+    };
+    if !tld_ok {
+        return false;
+    }
+    rest.split('.').all(|label| {
+        !label.is_empty()
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             && !label.starts_with('-')
             && !label.ends_with('-')
-    }) {
-        return false;
-    }
-    let tld = labels[labels.len() - 1].to_ascii_lowercase();
-    if !tld.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    match tld.len() {
-        0..=1 => false,
-        2 => !matches!(
-            tld.as_str(),
-            "js" | "rs"
-                | "py"
-                | "ts"
-                | "md"
-                | "sh"
-                | "go"
-                | "rb"
-                | "cs"
-                | "cc"
-                | "hs"
-                | "ml"
-                | "so"
-        ),
-        _ => KNOWN_TLDS.contains(&tld.as_str()),
-    }
+    })
 }
 
 const KNOWN_TLDS: &[&str] = &[
@@ -907,6 +1154,176 @@ mod tests {
         );
         let spans = parse("(see https://example.com)", &[]);
         assert_eq!(spans.last().map(|span| span.text.as_str()), Some(")"));
+    }
+
+    #[test]
+    fn addresses_keep_inline_formatting_characters() {
+        let all_links = |text: &str| -> Vec<String> {
+            parse(text, &[])
+                .into_iter()
+                .filter_map(|span| span.link)
+                .collect()
+        };
+
+        // Issue #810 exact reproduction: tildes inside a URL path stay intact.
+        let tilde_url = "https://example.com/test~~/token~/example";
+        assert_eq!(plain(tilde_url, &[]), tilde_url);
+        assert_eq!(all_links(tilde_url), vec![tilde_url]);
+        let spans = parse(tilde_url, &[]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, tilde_url);
+        assert_eq!(spans[0].link.as_deref(), Some(tilde_url));
+        assert!(!spans[0].strike);
+
+        // Other inline markers inside URLs and email addresses also stay literal.
+        for (input, expected_url) in [
+            (
+                "https://example.com/_foo_/bar",
+                "https://example.com/_foo_/bar",
+            ),
+            (
+                "https://example.com/*foo*/bar",
+                "https://example.com/*foo*/bar",
+            ),
+            (
+                "https://example.com/~user/a~b~c?x=_1_&y=*2*",
+                "https://example.com/~user/a~b~c?x=_1_&y=*2*",
+            ),
+            ("https://example.com/token~", "https://example.com/token~"),
+            ("https://example.com/path_", "https://example.com/path_"),
+            (
+                "example.com/test~~/token~/example",
+                "https://example.com/test~~/token~/example",
+            ),
+            ("www.example.com/_a_/b", "https://www.example.com/_a_/b"),
+            ("user._name_@example.com", "mailto:user._name_@example.com"),
+        ] {
+            assert_eq!(plain(input, &[]), input);
+            assert_eq!(all_links(input), vec![expected_url]);
+            let spans = parse(input, &[]);
+            assert_eq!(spans.len(), 1, "expected single link span for {input}");
+            assert!(!spans[0].bold && !spans[0].italic && !spans[0].strike);
+        }
+
+        // Non-ASCII prefix exercises UTF-8 byte/char offset mapping.
+        let prefixed = format!("🚀 দেখো {tilde_url}");
+        assert_eq!(plain(&prefixed, &[]), prefixed);
+        assert_eq!(all_links(&prefixed), vec![tilde_url]);
+
+        // Formatting markers wrapping a URL still apply and close cleanly.
+        let struck = parse(&format!("~{tilde_url}~"), &[]);
+        assert_eq!(struck.len(), 1);
+        assert_eq!(struck[0].text, tilde_url);
+        assert_eq!(struck[0].link.as_deref(), Some(tilde_url));
+        assert!(struck[0].strike);
+
+        let bold = parse("*https://example.com/*foo*/bar*", &[]);
+        assert_eq!(bold.len(), 1);
+        assert_eq!(bold[0].text, "https://example.com/*foo*/bar");
+        assert_eq!(
+            bold[0].link.as_deref(),
+            Some("https://example.com/*foo*/bar")
+        );
+        assert!(bold[0].bold);
+
+        let italic = parse("_https://example.com/_foo_/bar_", &[]);
+        assert_eq!(italic.len(), 1);
+        assert_eq!(italic[0].text, "https://example.com/_foo_/bar");
+        assert_eq!(
+            italic[0].link.as_deref(),
+            Some("https://example.com/_foo_/bar")
+        );
+        assert!(italic[0].italic);
+
+        let nested = parse("*_https://example.com_*", &[]);
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].link.as_deref(), Some("https://example.com"));
+        assert!(nested[0].bold && nested[0].italic);
+
+        let with_period = parse("~see https://example.com/token~.", &[]);
+        assert_eq!(
+            all_links("~see https://example.com/token~."),
+            vec!["https://example.com/token"]
+        );
+        assert_eq!(
+            with_period.last().map(|s| (s.text.as_str(), s.strike)),
+            Some((".", false))
+        );
+
+        // An unclosed marker before a URL must not match markers inside the URL.
+        let unclosed = format!("~unclosed {tilde_url}");
+        assert_eq!(plain(&unclosed, &[]), unclosed);
+        assert_eq!(all_links(&unclosed), vec![tilde_url]);
+        assert!(parse(&unclosed, &[]).iter().all(|span| !span.strike));
+
+        let unclosed_bold = "*unclosed https://example.com/*foo*/bar";
+        assert_eq!(plain(unclosed_bold, &[]), unclosed_bold);
+        assert_eq!(
+            all_links(unclosed_bold),
+            vec!["https://example.com/*foo*/bar"]
+        );
+        assert!(parse(unclosed_bold, &[]).iter().all(|span| !span.bold));
+
+        // Monospace URLs remain literal monospace and are not linkified.
+        let mono = parse(&format!("`{tilde_url}`"), &[]);
+        assert_eq!(mono.len(), 1);
+        assert_eq!(mono[0].text, tilde_url);
+        assert!(mono[0].mono);
+        assert!(mono[0].link.is_none());
+
+        // An inline monospace span immediately after a URL ends the URL.
+        let url_then_code = "https://example.com/a`code`";
+        let spans = parse(url_then_code, &[]);
+        assert_eq!(all_links(url_then_code), vec!["https://example.com/a"]);
+        assert!(spans.iter().any(|span| span.mono && span.text == "code"));
+
+        // A slash after a closing parenthesis does not hide a preceding email.
+        let email_then_slash = "(user._name_@example.com)/x";
+        assert_eq!(
+            all_links(email_then_slash),
+            vec!["mailto:user._name_@example.com"]
+        );
+        assert!(parse(email_then_slash, &[]).iter().all(|span| !span.italic));
+
+        // Closer lookahead tracks outer marker transitions so closing `*` does
+        // not let an unclosed `_` strip `_*` off a later URL.
+        let transition = "*bold _unclosed* https://example.com/path_*";
+        let spans = parse(transition, &[]);
+        assert_eq!(
+            plain(transition, &[]),
+            "bold _unclosed https://example.com/path_*"
+        );
+        assert_eq!(all_links(transition), vec!["https://example.com/path_*"]);
+        assert!(spans.iter().all(|span| !span.italic));
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.bold && span.text == "bold _unclosed")
+        );
+    }
+
+    #[test]
+    fn unmatched_markers_with_long_suffixes_stay_linear() {
+        let repeated_underscore = "_a!".repeat(2_000);
+        assert_eq!(plain(&repeated_underscore, &[]), repeated_underscore);
+
+        let repeated_star_and_slashes = format!("{}{}", "*a ".repeat(1_000), "a/".repeat(5_000));
+        assert_eq!(
+            plain(&repeated_star_and_slashes, &[]),
+            repeated_star_and_slashes
+        );
+
+        let repeated_domain_like = "a-*b*.".repeat(2_000);
+        assert_eq!(plain(&repeated_domain_like, &[]), "a-b.".repeat(2_000));
+
+        let repeated_dots = "a.a.".repeat(2_000);
+        assert_eq!(plain(&repeated_dots, &[]), repeated_dots);
+
+        let repeated_url_code = "https://example.com/a`code`".repeat(2_000);
+        assert_eq!(
+            plain(&repeated_url_code, &[]),
+            "https://example.com/acode".repeat(2_000)
+        );
     }
 
     #[test]
