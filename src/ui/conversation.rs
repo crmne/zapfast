@@ -5649,6 +5649,10 @@ fn bubble_frame(
             let settled = album
                 .map(|_| CARD_WIDTH.min(cap))
                 .or_else(|| settled_width(ui, view, message, cap));
+            if ui.input(|input| input.pointer.secondary_clicked()) {
+                ui.ctx()
+                    .data_mut(|data| data.remove::<String>(right_clicked_link_id()));
+            }
             let slot = if let Some(messages) = album {
                 let mut quoted_targets = HashMap::new();
                 let mut quotes: Vec<(&Message, &crate::model::Quoted)> = Vec::new();
@@ -5894,16 +5898,11 @@ fn bubble_frame(
     ui.ctx()
         .data_mut(|data| data.insert_temp(keys_menu_id(popup_id), keys_menu));
     if right_clicked {
-        let frame = ui.ctx().cumulative_frame_nr();
-        let link = ui
-            .ctx()
-            .data(|data| {
-                data.get_temp::<(u64, String)>(right_clicked_link_id(
-                    &view.chat.id,
-                    &menu_target.id,
-                ))
-            })
-            .and_then(|(seen, url)| (seen == frame).then_some(url));
+        let link = ui.ctx().data_mut(|data| {
+            let url = data.get_temp::<String>(right_clicked_link_id());
+            data.remove::<String>(right_clicked_link_id());
+            url
+        });
         ui.ctx().data_mut(|data| {
             if let Some(url) = link {
                 data.insert_temp(context_link_id(popup_id), url);
@@ -7831,9 +7830,11 @@ fn context_link_id(popup: egui::Id) -> egui::Id {
     popup.with("context-link")
 }
 
-/// Where a bubble's text or preview card records a right-clicked link for this frame.
-fn right_clicked_link_id(chat: &str, message: &str) -> egui::Id {
-    bubble_id(chat, message).with("right-clicked-link")
+/// Where the bubble currently being drawn records a right-clicked link.
+/// Cleared before each bubble draws its contents so nested bodies (album
+/// member captions, carousel cards) report to their enclosing bubble.
+fn right_clicked_link_id() -> egui::Id {
+    egui::Id::new("bubble-right-clicked-link")
 }
 
 /// The address copied by "Copy link". Phone links already have "Copy number";
@@ -9961,12 +9962,8 @@ fn rich_body(
         && let Some(pos) = ui.input(|input| input.pointer.interact_pos())
         && let Some(url) = link_at_pos(&laid, origin, pos).and_then(copyable_link)
     {
-        let frame = ui.ctx().cumulative_frame_nr();
         ui.ctx().data_mut(|data| {
-            data.insert_temp(
-                right_clicked_link_id(&view.chat.id, &message.id),
-                (frame, url.to_owned()),
-            );
+            data.insert_temp(right_clicked_link_id(), url.to_owned());
         });
     }
     inline.map(|reserve| {
@@ -10023,12 +10020,8 @@ fn preview_card(
         && response.rect.contains(pos)
         && let Some(url) = copyable_link(&preview.url)
     {
-        let frame = ui.ctx().cumulative_frame_nr();
         ui.ctx().data_mut(|data| {
-            data.insert_temp(
-                right_clicked_link_id(&view.chat.id, &message.id),
-                (frame, url.to_owned()),
-            );
+            data.insert_temp(right_clicked_link_id(), url.to_owned());
         });
     }
 }
@@ -13131,6 +13124,228 @@ mod tests {
             Some("hello@example.com")
         );
         assert_eq!(copyable_link("tel:+15550109999"), None);
+    }
+
+    #[test]
+    fn right_clicking_a_link_in_album_caption_and_carousel_card_offers_copy_link() {
+        fn menu_button_rect(output: &egui::FullOutput, label: &str) -> Option<Rect> {
+            let tree = output.platform_output.accesskit_update.as_ref()?;
+            tree.nodes.iter().find_map(|(_, node)| {
+                if node.label() == Some(label) {
+                    let b = node.bounds()?;
+                    Some(Rect::from_min_max(
+                        pos2(b.x0 as f32, b.y0 as f32),
+                        pos2(b.x1 as f32, b.y1 as f32),
+                    ))
+                } else {
+                    None
+                }
+            })
+        }
+
+        fn click_events(pos: egui::Pos2, button: egui::PointerButton) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        fn link_point(ctx: &egui::Context, body: Rect, text: &str, target: &str) -> egui::Pos2 {
+            let mut laid = None;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 500.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let style = markup::Style {
+                        size: BODY_SIZE,
+                        color: Color32::WHITE,
+                        secondary: Color32::GRAY,
+                        link: Color32::LIGHT_BLUE,
+                        mention: Color32::GREEN,
+                    };
+                    laid = Some(markup::layout(ui, text, &[], &style, body.width() + 2.0));
+                },
+            );
+            let laid = laid.unwrap();
+            let mid_y = body.center().y;
+            (0..=(body.width() as i32))
+                .map(|dx| pos2(body.left() + dx as f32, mid_y))
+                .find(|&p| link_at_pos(&laid, body.min, p) == Some(target))
+                .unwrap_or_else(|| panic!("no point found for {target:?}"))
+        }
+
+        // 1. Non-first album member caption with a link.
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::install(&ctx);
+        let caption_text = "See https://example.com/album";
+        let first = Message {
+            id: "alb-1".into(),
+            ..message(Content::Image {
+                media: media(Some(400), Some(300)),
+                caption: None,
+                motion: None,
+            })
+        };
+        let second = Message {
+            id: "alb-2".into(),
+            ..message(Content::Image {
+                media: media(Some(400), Some(300)),
+                caption: Some(caption_text.into()),
+                motion: None,
+            })
+        };
+        let members = [first.clone(), second];
+        let run_album = |events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let mut output = None;
+            with_still_view(|view| {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(600.0, 500.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        bubble(
+                            ui,
+                            view,
+                            &members[0],
+                            Some(&members),
+                            RunPlace {
+                                show_sender: false,
+                                show_avatar: false,
+                                tailed: false,
+                            },
+                            &mut actions,
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                output = Some(out);
+            });
+            (output.unwrap(), actions)
+        };
+        run_album(Vec::new());
+        let body = ctx
+            .data(|data| data.get_temp::<Rect>(bubble_id("1@s.whatsapp.net", "alb-2").with("body")))
+            .expect("second album member caption rect");
+        let link_pos = link_point(&ctx, body, caption_text, "https://example.com/album");
+        run_album(click_events(link_pos, egui::PointerButton::Secondary));
+        let (out, _) = run_album(Vec::new());
+        let copy_link_rect = menu_button_rect(&out, "Copy link")
+            .expect("Copy link should appear for a non-first album member caption");
+        let (_, actions) = run_album(click_events(
+            copy_link_rect.center(),
+            egui::PointerButton::Primary,
+        ));
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                Action::CopyText(copied) if copied == "https://example.com/album"
+            )),
+            "expected CopyText for album caption link, got {actions:?}"
+        );
+
+        // 2. Carousel card body with a link.
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::theme::install(&ctx);
+        let card_text = "Visit https://example.com/card";
+        let carousel_msg = Message {
+            id: "car-parent".into(),
+            ..message(Content::Interactive {
+                text: String::new(),
+                card: Some(Box::new(crate::model::InteractiveCard {
+                    body: String::new(),
+                    buttons: Vec::new(),
+                    image: None,
+                    needs_phone: false,
+                    carousel: vec![crate::model::InteractiveCard {
+                        body: card_text.into(),
+                        buttons: Vec::new(),
+                        image: None,
+                        needs_phone: false,
+                        carousel: Vec::new(),
+                        thumbnail: None,
+                    }],
+                    thumbnail: None,
+                })),
+            })
+        };
+        let run_carousel = |events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let mut output = None;
+            with_still_view(|view| {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(600.0, 500.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        bubble(
+                            ui,
+                            view,
+                            &carousel_msg,
+                            None,
+                            RunPlace {
+                                show_sender: false,
+                                show_avatar: false,
+                                tailed: false,
+                            },
+                            &mut actions,
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                output = Some(out);
+            });
+            (output.unwrap(), actions)
+        };
+        run_carousel(Vec::new());
+        let card_body = ctx
+            .data(|data| {
+                data.get_temp::<Rect>(
+                    bubble_id("1@s.whatsapp.net", "car-parent-card-0").with("body"),
+                )
+            })
+            .expect("carousel card body rect");
+        let card_link_pos = link_point(&ctx, card_body, card_text, "https://example.com/card");
+        run_carousel(click_events(card_link_pos, egui::PointerButton::Secondary));
+        let (out, _) = run_carousel(Vec::new());
+        let copy_link_rect = menu_button_rect(&out, "Copy link")
+            .expect("Copy link should appear for a carousel card link");
+        let (_, actions) = run_carousel(click_events(
+            copy_link_rect.center(),
+            egui::PointerButton::Primary,
+        ));
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                Action::CopyText(copied) if copied == "https://example.com/card"
+            )),
+            "expected CopyText for carousel card link, got {actions:?}"
+        );
     }
 
     /// Runs `check` with a still view of one plain chat, as a footer test
