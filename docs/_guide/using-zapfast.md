@@ -72,7 +72,9 @@ ZapFast makes no previews either, and it makes none until it has read that
 setting from your phone.
 
 Right-click a message to reply, react with any emoji, edit, forward, delete, or
-check when it was sent, delivered, and read. The reaction row has a **+** that
+check when it was sent, delivered, and read. Right-click a web or email link
+inside a message, or its link preview card, and choose **Copy link** to copy
+just that address. The reaction row has a **+** that
 opens the full emoji picker. Hover over a reaction to see who added it; in
 released builds, clicking it adds that reaction or removes your own. When
 someone reacts to one of your messages, the chat moves to the top of the list.
