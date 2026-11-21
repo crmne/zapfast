@@ -11907,6 +11907,81 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn group_description_links_are_clickable() {
+        let mut app = app();
+        apply_flags(&mut app, Some("group-info"));
+        let url = "https://zapfast.rocks/group";
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == SAMPLES[1].id)
+            .unwrap()
+            .group_description = Some(url.to_owned());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.background_frame(ui.ctx());
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let mut output = draw(&mut app, Vec::new());
+        for _ in 0..2 {
+            output = draw(&mut app, Vec::new());
+        }
+        fn find(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(text)
+                    if text
+                        .galley
+                        .text()
+                        .starts_with("https://zapfast.rocks/group") =>
+                {
+                    Some(text)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(find),
+                _ => None,
+            }
+        }
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| find(&shape.shape))
+            .expect("description label");
+        let link_pos = text.pos + text.galley.rows.first().unwrap().rect().center().to_vec2();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut opened = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(link_pos), button(link_pos, true)],
+            vec![button(link_pos, false)],
+        ] {
+            let output = draw(&mut app, events);
+            for command in output.platform_output.commands {
+                if let egui::OutputCommand::OpenUrl(opened_url) = command {
+                    opened.push(opened_url.url);
+                }
+            }
+        }
+        assert_eq!(opened, [url]);
+    }
+
     /// The pencil opens the name editor; Enter renames the group on WhatsApp,
     /// an unchanged name sends nothing, and Escape cancels without closing the
     /// dialog. The photo opens its menu.

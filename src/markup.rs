@@ -58,16 +58,16 @@ impl Text {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Span {
-    text: String,
-    bold: bool,
-    italic: bool,
-    strike: bool,
-    mono: bool,
-    link: Option<String>,
-    mention: bool,
+pub(crate) struct Span {
+    pub(crate) text: String,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) strike: bool,
+    pub(crate) mono: bool,
+    pub(crate) link: Option<String>,
+    pub(crate) mention: bool,
     /// Paints a quoted line's bar and indent.
-    quote: bool,
+    pub(crate) quote: bool,
 }
 
 /// Lays text out within `max_width`.
@@ -229,7 +229,7 @@ pub fn name_mentions(text: &str, mentions: &[Mention]) -> String {
     plain(text, mentions)
 }
 
-fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
+pub(crate) fn parse(text: &str, mentions: &[Mention]) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut in_block = false;
     let mut first = true;

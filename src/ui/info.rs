@@ -748,7 +748,9 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             .max_height(120.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                theme::selectable_text(ui, description, theme::regular(13.5), palette.text);
+                if let Some(url) = group_description_text(ui, palette, description) {
+                    app.actions.push(Action::OpenUrl(url));
+                }
             });
     }
     // A locked chat's media stays in the locked folder: the section is not
@@ -2370,6 +2372,98 @@ fn group_name_field(app: &App, ui: &mut egui::Ui, draft: &mut String) -> Option<
         }
     });
     outcome
+}
+
+/// Renders selectable group description with clickable links.
+fn group_description_text(
+    ui: &mut egui::Ui,
+    palette: theme::Palette,
+    text: &str,
+) -> Option<String> {
+    let size = 13.5;
+    let max_width = ui.available_width();
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = max_width;
+
+    let mut links: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut char_count = 0;
+
+    for span in crate::markup::parse(text, &[]) {
+        let font_id = if span.mono {
+            egui::FontId::monospace(size * 0.95)
+        } else if span.bold {
+            theme::bold(size)
+        } else {
+            theme::regular(size)
+        };
+        let is_link = span.link.is_some();
+        let color = if is_link { palette.link } else { palette.text };
+        let format = egui::TextFormat {
+            font_id,
+            color,
+            italics: span.italic,
+            underline: if is_link {
+                egui::Stroke::new(1.0, palette.link)
+            } else {
+                egui::Stroke::NONE
+            },
+            strikethrough: if span.strike {
+                egui::Stroke::new(1.0, palette.text)
+            } else {
+                egui::Stroke::NONE
+            },
+            ..Default::default()
+        };
+        let start = char_count;
+        let count = span.text.chars().count();
+        let end = start + count;
+        if let Some(url) = span.link {
+            links.push((start..end, url));
+        }
+        char_count = end;
+        job.append(&span.text, 0.0, format);
+    }
+
+    if job.text.is_empty() {
+        job.append(
+            " ",
+            0.0,
+            egui::TextFormat::simple(theme::regular(size), palette.text),
+        );
+    }
+
+    let galley = crate::bidi::layout_job(ui, job);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click_and_drag());
+
+    egui::text_selection::LabelSelectionState::label_text_selection(
+        ui,
+        &response,
+        rect.min,
+        galley.clone(),
+        palette.text,
+        egui::Stroke::NONE,
+    );
+
+    let mut clicked_url = None;
+    if !links.is_empty()
+        && let Some(pos) = response.hover_pos()
+        && galley.rows.iter().any(|row| {
+            egui::Rect::from_min_size(rect.min + row.pos.to_vec2(), row.row.size).contains(pos)
+        })
+    {
+        let cursor = galley.cursor_from_pos(pos - rect.min);
+        let char_idx = cursor.index.0;
+        if let Some((_, url)) = links.iter().find(|(range, _)| range.contains(&char_idx))
+            && !url.starts_with("tel:")
+        {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                clicked_url = Some(url.clone());
+            }
+        }
+    }
+
+    clicked_url
 }
 
 /// The group name editor's text field.
