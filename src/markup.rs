@@ -417,22 +417,39 @@ impl LineIndex {
         }
 
         let mut next_delim = vec![line.len(); len];
+        let mut next_mono = vec![line.len(); len];
+        let mut next_bracket_or_delim = vec![line.len(); len];
+        let mut next_non_host = vec![line.len(); len];
         let mut next_slash = vec![usize::MAX; len];
         let mut next_at = vec![usize::MAX; len];
         let mut next_dot = vec![usize::MAX; len];
         let mut delim = line.len();
+        let mut mono_at = line.len();
+        let mut bracket_or_delim = line.len();
+        let mut non_host = line.len();
         let mut slash = usize::MAX;
         let mut at = usize::MAX;
         let mut dot = usize::MAX;
         for idx in (0..len).rev() {
             let c = chars[idx];
             let byte = byte_offsets[idx];
+            if mono[idx].is_some() {
+                mono_at = byte;
+            }
             if is_link_delimiter(c) {
                 delim = byte;
+                bracket_or_delim = byte;
+                non_host = byte;
                 slash = usize::MAX;
                 at = usize::MAX;
                 dot = usize::MAX;
             } else {
+                if matches!(c, '(' | ')' | '[' | ']') {
+                    bracket_or_delim = byte;
+                }
+                if !(c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':')) {
+                    non_host = byte;
+                }
                 if c == '/' {
                     slash = byte;
                 } else if c == '@' {
@@ -442,6 +459,9 @@ impl LineIndex {
                 }
             }
             next_delim[idx] = delim;
+            next_mono[idx] = mono_at;
+            next_bracket_or_delim[idx] = bracket_or_delim;
+            next_non_host[idx] = non_host;
             next_slash[idx] = slash;
             next_at[idx] = at;
             next_dot[idx] = dot;
@@ -457,21 +477,17 @@ impl LineIndex {
             let at_boundary = i == 0 || !chars[i - 1].is_alphanumeric();
             if at_boundary && chars[i].is_ascii_alphanumeric() {
                 let start_byte = byte_offsets[i];
-                let delim_byte = next_delim[i];
-                let chunk = &line[start_byte..delim_byte];
+                let limit_byte = next_delim[i].min(next_mono[i]);
+                let chunk = &line[start_byte..limit_byte];
                 let maybe_scheme = starts_with_link_scheme(chunk);
-                let maybe_email = next_at[i] < delim_byte
+                let email_limit = next_bracket_or_delim[i].min(limit_byte);
+                let maybe_email = next_at[i] < email_limit
                     && next_at[i] > start_byte
-                    && next_slash[i] >= delim_byte;
+                    && next_slash[i] >= email_limit;
                 let maybe_domain = if !maybe_scheme && !maybe_email {
-                    let host_limit = next_slash[i].min(delim_byte);
+                    let host_limit = next_non_host[i].min(limit_byte);
                     next_dot[i] < host_limit && {
-                        let host_chunk = &line[start_byte..host_limit];
-                        let host_chunk = host_chunk
-                            .split(['(', ')', '[', ']'])
-                            .next()
-                            .unwrap_or(host_chunk);
-                        let mut host = host_chunk;
+                        let mut host = &line[start_byte..host_limit];
                         while let Some(stripped) = strip_trailing_link_punct(host, [true; 3]) {
                             host = stripped;
                         }
@@ -481,7 +497,7 @@ impl LineIndex {
                     false
                 };
                 if maybe_scheme || maybe_email || maybe_domain {
-                    let raw_end_byte = link_token_end(line, start_byte);
+                    let raw_end_byte = link_token_end(line, start_byte).min(next_mono[i]);
                     if let Some((trimmed_end_byte, _)) =
                         classify_link_token(line, start_byte, raw_end_byte, [true; 3])
                     {
@@ -856,40 +872,31 @@ fn strip_trailing_link_punct(token: &str, open_markers: [bool; 3]) -> Option<&st
 /// Whether a token is a hostname without a scheme.
 fn is_domain(host: &str) -> bool {
     let host = host.split_once(':').map_or(host, |(name, _)| name);
-    let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() < 2 || labels.iter().any(|label| label.is_empty()) {
+    let Some((rest, tld)) = host.rsplit_once('.') else {
+        return false;
+    };
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
         return false;
     }
-    if !labels.iter().all(|label| {
-        label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    let tld_ok = match tld.len() {
+        2 => ![
+            "js", "rs", "py", "ts", "md", "sh", "go", "rb", "cs", "cc", "hs", "ml", "so",
+        ]
+        .iter()
+        .any(|ext| tld.eq_ignore_ascii_case(ext)),
+        _ => KNOWN_TLDS
+            .iter()
+            .any(|known| tld.eq_ignore_ascii_case(known)),
+    };
+    if !tld_ok {
+        return false;
+    }
+    rest.split('.').all(|label| {
+        !label.is_empty()
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             && !label.starts_with('-')
             && !label.ends_with('-')
-    }) {
-        return false;
-    }
-    let tld = labels[labels.len() - 1].to_ascii_lowercase();
-    if !tld.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    match tld.len() {
-        0..=1 => false,
-        2 => !matches!(
-            tld.as_str(),
-            "js" | "rs"
-                | "py"
-                | "ts"
-                | "md"
-                | "sh"
-                | "go"
-                | "rb"
-                | "cs"
-                | "cc"
-                | "hs"
-                | "ml"
-                | "so"
-        ),
-        _ => KNOWN_TLDS.contains(&tld.as_str()),
-    }
+    })
 }
 
 const KNOWN_TLDS: &[&str] = &[
@@ -1264,6 +1271,20 @@ mod tests {
         assert!(mono[0].mono);
         assert!(mono[0].link.is_none());
 
+        // An inline monospace span immediately after a URL ends the URL.
+        let url_then_code = "https://example.com/a`code`";
+        let spans = parse(url_then_code, &[]);
+        assert_eq!(all_links(url_then_code), vec!["https://example.com/a"]);
+        assert!(spans.iter().any(|span| span.mono && span.text == "code"));
+
+        // A slash after a closing parenthesis does not hide a preceding email.
+        let email_then_slash = "(user._name_@example.com)/x";
+        assert_eq!(
+            all_links(email_then_slash),
+            vec!["mailto:user._name_@example.com"]
+        );
+        assert!(parse(email_then_slash, &[]).iter().all(|span| !span.italic));
+
         // Closer lookahead tracks outer marker transitions so closing `*` does
         // not let an unclosed `_` strip `_*` off a later URL.
         let transition = "*bold _unclosed* https://example.com/path_*";
@@ -1291,6 +1312,12 @@ mod tests {
             plain(&repeated_star_and_slashes, &[]),
             repeated_star_and_slashes
         );
+
+        let repeated_domain_like = "a-*b*.".repeat(2_000);
+        assert_eq!(plain(&repeated_domain_like, &[]), "a-b.".repeat(2_000));
+
+        let repeated_dots = "a.a.".repeat(2_000);
+        assert_eq!(plain(&repeated_dots, &[]), repeated_dots);
     }
 
     #[test]
