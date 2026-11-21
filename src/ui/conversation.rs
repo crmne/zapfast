@@ -1706,7 +1706,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             // field and the panel holding it grow on the keystroke that wraps
             // a line rather than a frame later, which made them jump.
             let wrap_id = id.with("wrap");
-            let text_height = ui
+            let draft_height = ui
                 .ctx()
                 .data(|data| data.get_temp::<f32>(wrap_id))
                 .map(|wrap| {
@@ -1718,8 +1718,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         .y
                 })
                 .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
-                .unwrap_or(line_height)
-                .clamp(line_height, line_height * 6.0);
+                .unwrap_or(line_height);
+            let text_height = draft_height.clamp(line_height, line_height * 6.0);
+            // Only a draft taller than the field scrolls inside it.
+            let overflows = draft_height > text_height + 0.5;
             let row_height = (text_height + 2.0 * field_margin).max(line);
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
@@ -1807,6 +1809,33 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                             .min_scrolled_height(text_height)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                // A selection dragged past the field's top or
+                                // bottom scrolls the draft, as one in the
+                                // messages does: the leash holds the pointer
+                                // at the edge, and the field moves under it.
+                                let viewport = ui.clip_rect();
+                                let scrollable = overflows && viewport.is_positive() && viewport.height() > 4.0;
+                                *app.composer_view.lock().unwrap_or_else(|p| p.into_inner()) =
+                                    scrollable.then_some(viewport);
+                                if scrollable
+                                    && ui.ctx().is_being_dragged(id)
+                                    && let Some(pointer) =
+                                        ui.input(|input| input.pointer.latest_pos())
+                                {
+                                    let speed = composer_edge_scroll(
+                                        pointer.y,
+                                        viewport.top(),
+                                        viewport.bottom(),
+                                    );
+                                    if speed != 0.0 {
+                                        let dt = ui.input(|input| input.stable_dt.min(0.1));
+                                        ui.scroll_with_delta_animation(
+                                            vec2(0.0, -speed * dt),
+                                            egui::style::ScrollAnimation::none(),
+                                        );
+                                        ui.ctx().request_repaint();
+                                    }
+                                }
                                 // Keep emoji in the buffer so character offsets match, then
                                 // paint their color bitmaps over the transparent glyphs.
                                 let mut clusters: Vec<(usize, usize, String)> = Vec::new();
@@ -5009,20 +5038,45 @@ fn bubble(
     response
 }
 
-/// Clamps message-selection drags to the view while the pointer is outside it.
-/// This keeps a row under the pointer during edge scrolling. The input hook
+/// Clamps message-selection drags to the view while the pointer is outside it,
+/// and text-selection drags in the composer to its visible text. This keeps a
+/// row under the pointer during edge scrolling: the composer sits at the
+/// window's foot, where a drag down leaves the window at once. The input hook
 /// adjusts positions before egui processes them, using the previous frame's
-/// view rectangle.
+/// rectangles.
 pub struct SelectionLeash {
     pub view: std::sync::Arc<std::sync::Mutex<Option<Rect>>>,
-    holding: bool,
+    /// The composer's visible text, as [`App::composer_view`] holds it.
+    composer: std::sync::Arc<std::sync::Mutex<Option<Rect>>>,
+    holding: Option<Leashed>,
+}
+
+/// What a held drag is leashed to.
+#[derive(Clone, Copy)]
+enum Leashed {
+    Messages,
+    Composer,
+}
+
+impl Leashed {
+    /// Brings a position outside `rect`, this leash's rectangle, back in.
+    fn clamp(self, pos: egui::Pos2, rect: Rect) -> egui::Pos2 {
+        match self {
+            Self::Messages => clamp_into(pos, rect),
+            Self::Composer => clamp_into_text(pos, rect),
+        }
+    }
 }
 
 impl SelectionLeash {
-    pub fn new(view: std::sync::Arc<std::sync::Mutex<Option<Rect>>>) -> Self {
+    pub fn new(
+        view: std::sync::Arc<std::sync::Mutex<Option<Rect>>>,
+        composer: std::sync::Arc<std::sync::Mutex<Option<Rect>>>,
+    ) -> Self {
         Self {
             view,
-            holding: false,
+            composer,
+            holding: None,
         }
     }
 }
@@ -5033,18 +5087,24 @@ impl egui::plugin::Plugin for SelectionLeash {
     }
 
     fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        let Some(view) = *self.view.lock().unwrap_or_else(|p| p.into_inner()) else {
-            self.holding = false;
-            return;
-        };
+        let view = *self.view.lock().unwrap_or_else(|p| p.into_inner());
+        let composer = *self.composer.lock().unwrap_or_else(|p| p.into_inner());
         // The chat list's resize handle reaches into the view from its left
         // edge, as the scroll bar does on the right. Leashing a drag of the
         // handle pinned the pointer, and the list's edge, just inside the
         // view: stuck at its widest, or growing while dragged left (#239).
         let handle = ctx.global_style().interaction.resize_grab_radius_side;
-        let inside = |pos: &egui::Pos2| {
+        let inside = |view: Rect, pos: &egui::Pos2| {
             view.contains(*pos) && pos.x >= view.left() + handle && pos.x < view.right() - 16.0
         };
+        let leash = |held: Leashed| match held {
+            Leashed::Messages => view,
+            Leashed::Composer => composer,
+        };
+        // A rectangle no longer drawn lets its drag go.
+        if self.holding.is_some_and(|held| leash(held).is_none()) {
+            self.holding = None;
+        }
         let mut gone = Vec::new();
         for (index, event) in input.events.iter_mut().enumerate() {
             match event {
@@ -5055,19 +5115,33 @@ impl egui::plugin::Plugin for SelectionLeash {
                     ..
                 } => {
                     if *pressed {
-                        self.holding = inside(pos);
+                        self.holding = if view.is_some_and(|view| inside(view, pos)) {
+                            Some(Leashed::Messages)
+                        } else if composer.is_some_and(|text| text.contains(*pos)) {
+                            Some(Leashed::Composer)
+                        } else {
+                            None
+                        };
                     } else {
-                        if self.holding && !view.contains(*pos) {
-                            *pos = clamp_into(*pos, view);
+                        if let Some(held) = self.holding
+                            && let Some(rect) = leash(held)
+                            && !rect.contains(*pos)
+                        {
+                            *pos = held.clamp(*pos, rect);
                         }
-                        self.holding = false;
+                        self.holding = None;
                     }
                 }
-                egui::Event::PointerMoved(pos) if self.holding && !view.contains(*pos) => {
-                    *pos = clamp_into(*pos, view);
+                egui::Event::PointerMoved(pos) => {
+                    if let Some(held) = self.holding
+                        && let Some(rect) = leash(held)
+                        && !rect.contains(*pos)
+                    {
+                        *pos = held.clamp(*pos, rect);
+                    }
                 }
                 // Ignore PointerGone during a drag so selection continues.
-                egui::Event::PointerGone if self.holding => gone.push(index),
+                egui::Event::PointerGone if self.holding.is_some() => gone.push(index),
                 _ => {}
             }
         }
@@ -5081,6 +5155,16 @@ fn clamp_into(pos: egui::Pos2, view: Rect) -> egui::Pos2 {
     egui::pos2(
         pos.x.clamp(view.left() + 2.0, view.right() - 18.0),
         pos.y.clamp(view.top() + 2.0, view.bottom() - 2.0),
+    )
+}
+
+/// Holds a position on the composer's visible text: across its whole width,
+/// so a line's ends can still be reached, and just inside its top and bottom,
+/// on the edge [`composer_edge_scroll`] scrolls at.
+fn clamp_into_text(pos: egui::Pos2, text: Rect) -> egui::Pos2 {
+    egui::pos2(
+        pos.x.clamp(text.left(), text.right()),
+        pos.y.clamp(text.top() + 2.0, text.bottom() - 2.0),
     )
 }
 
@@ -5235,6 +5319,23 @@ pub fn edge_scroll(pointer: f32, top: f32, bottom: f32) -> f32 {
         -(top + EDGE - pointer).min(EDGE * 1.5) * PACE
     } else if pointer > bottom - EDGE {
         (pointer - (bottom - EDGE)).min(EDGE * 1.5) * PACE
+    } else {
+        0.0
+    }
+}
+
+/// How fast, in points a second, the composer's draft scrolls while a
+/// selection is held at `pointer`: at full speed within a few points of the
+/// field's top or bottom edge, where the leash holds a pointer dragged past
+/// it, and not at all elsewhere. A field a few lines tall has no room for the
+/// messages' wide, graded edge (see [`edge_scroll`]).
+fn composer_edge_scroll(pointer: f32, top: f32, bottom: f32) -> f32 {
+    const EDGE: f32 = 4.0;
+    const SPEED: f32 = 240.0;
+    if pointer < top + EDGE {
+        -SPEED
+    } else if pointer > bottom - EDGE {
+        SPEED
     } else {
         0.0
     }
