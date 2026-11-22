@@ -45,6 +45,7 @@ pub(crate) fn last_line<R>(
 
 pub(crate) fn reviewing_attachments(app: &App, chat: &Chat) -> bool {
     !app.pending.is_empty()
+        && !app.blocklist.contains(&chat.id)
         && chat.can_send()
         && app.selection.is_none()
         && app.editing.is_none()
@@ -192,10 +193,11 @@ impl Composer {
                     .data_mut(|data| data.insert_temp(composer_pill_id(), pill_rect));
 
                 if (send_key || send_click)
-                    && (!app.composer.trim().is_empty() || !app.pending.is_empty())
+                    && (!app.composer.trim().is_empty()
+                        || (app.editing.is_none() && !app.pending.is_empty()))
                 {
                     let text = std::mem::take(&mut app.composer);
-                    if app.pending.is_empty() {
+                    if app.editing.is_some() || app.pending.is_empty() {
                         app.actions.push(Action::SendText {
                             chat: chat.id.clone(),
                             text,
@@ -285,9 +287,16 @@ impl Composer {
     }
 }
 
+/// Content rendered inside [`ReplyDrawer`].
+#[derive(Clone)]
+pub enum ReplyContent {
+    Quoted(Box<Message>),
+    Unavailable,
+}
+
 /// Animated reply preview drawer that expands the top of `ComposerPill` upwards without moving the input row.
 pub struct ReplyDrawer {
-    pub quoted: Option<Message>,
+    pub content: Option<ReplyContent>,
     pub progress: f32,
 }
 
@@ -296,20 +305,44 @@ impl ReplyDrawer {
     pub const ANIM_DURATION: f32 = 0.22;
 
     pub fn prepare(app: &mut App, ui: &egui::Ui, chat: &Chat) -> Self {
-        let reply_quoted = if app.editing.is_some() {
+        let account_id = app.account().id.clone();
+        let anim_id = egui::Id::new("composer-reply-tween");
+        let cache_id = anim_id.with("cached-quoted");
+
+        let live_content = if app.editing.is_some() {
             None
         } else if let Some(reply_id) = app.reply_to.clone() {
-            let quoted = app.reply_preview(&reply_id, &chat.id).cloned();
-            if quoted.is_none() && reply_id.chat.is_none() {
-                app.reply_to = None;
+            match app.reply_preview(&reply_id, &chat.id).cloned() {
+                Some(msg) => {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            cache_id,
+                            (account_id.clone(), chat.id.clone(), reply_id, msg.clone()),
+                        );
+                    });
+                    Some(ReplyContent::Quoted(Box::new(msg)))
+                }
+                None if reply_id.chat.is_some() => {
+                    ui.ctx().data_mut(|d| {
+                        d.remove::<(
+                            crate::model::AccountId,
+                            String,
+                            crate::model::ReplyTarget,
+                            Message,
+                        )>(cache_id);
+                    });
+                    Some(ReplyContent::Unavailable)
+                }
+                None => {
+                    app.reply_to = None;
+                    None
+                }
             }
-            quoted
         } else {
             None
         };
 
-        let anim_id = egui::Id::new("composer-reply-tween");
-        let is_open = app.reply_to.is_some() && app.editing.is_none();
+        let is_open = live_content.is_some();
         let raw_progress = if cfg!(test) {
             if is_open { 1.0 } else { 0.0 }
         } else {
@@ -321,22 +354,55 @@ impl ReplyDrawer {
         } else {
             egui::emath::easing::cubic_in(raw_progress)
         };
-        let cache_id = anim_id.with("cached-quoted");
 
-        let quoted = if let Some(msg) = reply_quoted {
-            ui.ctx().data_mut(|d| d.insert_temp(cache_id, msg.clone()));
-            Some(msg)
+        let content = if live_content.is_some() {
+            live_content
         } else if progress > 0.0 {
-            ui.ctx().data(|d| d.get_temp::<Message>(cache_id))
+            let cached = ui.ctx().data(|d| {
+                d.get_temp::<(
+                    crate::model::AccountId,
+                    String,
+                    crate::model::ReplyTarget,
+                    Message,
+                )>(cache_id)
+            });
+            match cached {
+                Some((cached_account, cached_chat, cached_target, msg))
+                    if cached_account == account_id
+                        && cached_chat == chat.id
+                        && app.reply_preview(&cached_target, &chat.id).is_some() =>
+                {
+                    Some(ReplyContent::Quoted(Box::new(msg)))
+                }
+                _ => {
+                    ui.ctx().data_mut(|d| {
+                        d.remove::<(
+                            crate::model::AccountId,
+                            String,
+                            crate::model::ReplyTarget,
+                            Message,
+                        )>(cache_id);
+                    });
+                    None
+                }
+            }
         } else {
+            ui.ctx().data_mut(|d| {
+                d.remove::<(
+                    crate::model::AccountId,
+                    String,
+                    crate::model::ReplyTarget,
+                    Message,
+                )>(cache_id);
+            });
             None
         };
 
-        Self { quoted, progress }
+        Self { content, progress }
     }
 
     pub fn current_height(&self) -> f32 {
-        if self.quoted.is_some() {
+        if self.content.is_some() {
             Self::TARGET_HEIGHT * self.progress
         } else {
             0.0
@@ -345,7 +411,7 @@ impl ReplyDrawer {
 
     pub fn show(&self, app: &mut App, ui: &mut egui::Ui, palette: &Palette, width: f32) {
         let extra_height = self.current_height();
-        let Some(quoted) = &self.quoted else {
+        let Some(content) = &self.content else {
             return;
         };
         if extra_height <= 0.0 {
@@ -353,20 +419,8 @@ impl ReplyDrawer {
         }
 
         let (_, section_rect) = ui.allocate_space(vec2(width, extra_height));
-        let reported_rect = if cfg!(test) {
-            let pill_top = section_rect.top() - COMPOSER_INSET as f32;
-            Rect::from_min_size(
-                pos2(
-                    section_rect.left(),
-                    pill_top - STRIP_GAP - Self::TARGET_HEIGHT,
-                ),
-                vec2(width, Self::TARGET_HEIGHT),
-            )
-        } else {
-            section_rect
-        };
         ui.ctx()
-            .data_mut(|data| data.insert_temp(reply_strip_id(), reported_rect));
+            .data_mut(|data| data.insert_temp(reply_strip_id(), section_rect));
 
         let clip = section_rect.intersect(ui.clip_rect());
         if !clip.is_positive() {
@@ -425,10 +479,10 @@ impl ReplyDrawer {
                 card_rect.bottom() - bar_inset_y,
             ),
         );
-        let sender_color = if quoted.from_me {
-            palette.accent
-        } else {
-            palette.sender(crate::util::hue(&quoted.sender))
+        let sender_color = match content {
+            ReplyContent::Quoted(quoted) if quoted.from_me => palette.accent,
+            ReplyContent::Quoted(quoted) => palette.sender(crate::util::hue(&quoted.sender)),
+            ReplyContent::Unavailable => palette.secondary,
         };
         child
             .painter()
@@ -443,14 +497,27 @@ impl ReplyDrawer {
         card_ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.set_max_width((ui.available_width() - 36.0).max(0.0));
-            let who = if quoted.from_me {
-                crate::i18n::gettext(app.locale, "You").into_owned()
-            } else {
-                app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
-            };
-            let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
-            widgets::rich_text(ui, &who, theme::semibold(12.5), sender_color);
-            widgets::rich_text(ui, &summary, theme::regular(12.0), palette.secondary);
+            match content {
+                ReplyContent::Quoted(quoted) => {
+                    let who = if quoted.from_me {
+                        crate::i18n::gettext(app.locale, "You").into_owned()
+                    } else {
+                        app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
+                    };
+                    let summary =
+                        markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
+                    widgets::rich_text(ui, &who, theme::semibold(12.5), sender_color);
+                    widgets::rich_text(ui, &summary, theme::regular(12.0), palette.secondary);
+                }
+                ReplyContent::Unavailable => {
+                    widgets::rich_text(
+                        ui,
+                        &crate::i18n::gettext(app.locale, "Original group message unavailable"),
+                        theme::regular(12.5),
+                        palette.secondary,
+                    );
+                }
+            }
         });
         card_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(6.0);
@@ -516,8 +583,7 @@ impl ComposerPill {
             .max(COMPOSER_CONTROL);
         let field_margin = ((line - line_height) * 0.5).round().max(4.0);
         let wrap_id = id.with("wrap");
-        let mut format = egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
-        format.line_height = Some(20.0);
+        let format = egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
         let (measured_height, rows) = ui
             .ctx()
             .data(|data| data.get_temp::<f32>(wrap_id))
@@ -572,6 +638,7 @@ impl ComposerPill {
                 send_click,
             );
         });
+        theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
         pill.response.rect
     }
 }
@@ -669,131 +736,147 @@ impl ComposerInputRow {
             .inner_margin(Margin {
                 left: 8,
                 right: 8,
-                top: top as i8,
-                bottom: bottom as i8,
+                top: 0,
+                bottom: 0,
             })
             .show(ui, |ui| {
                 ui.set_width((field_width - 16.0).max(0.0));
-                let scroll_visibility = if rows > 5 {
-                    egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
-                } else {
-                    egui::scroll_area::ScrollBarVisibility::AlwaysHidden
-                };
-                egui::ScrollArea::vertical()
-                    .id_salt("composer-scroll")
-                    .min_scrolled_height(text_height)
-                    .max_height(text_height)
-                    .scroll_bar_visibility(scroll_visibility)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let mut clusters: Vec<(usize, usize, String)> = Vec::new();
-                        let mut format =
-                            egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
-                        format.line_height = Some(20.0);
-                        let composer_rtl = crate::bidi::base_rtl(&app.composer);
-                        let mut layouter = |ui: &egui::Ui,
-                                            text: &dyn egui::TextBuffer,
-                                            wrap: f32| {
-                            let (galley, found) =
-                                crate::bidi::layout_editor(ui, text.as_str(), &format, wrap, true);
-                            clusters = found;
-                            galley
-                        };
-                        let wrap = ui.available_width();
-                        ui.ctx().data_mut(|data| data.insert_temp(wrap_id, wrap));
-                        let selection_before = egui::TextEdit::load_state(ui.ctx(), id)
-                            .and_then(|state| state.cursor.char_range())
-                            .filter(|range| !range.is_empty());
-                        let mut output = egui::TextEdit::multiline(&mut app.composer)
-                            .id(id)
-                            .frame(Frame::NONE)
-                            .margin(Margin::ZERO)
-                            .hint_text(
-                                egui::RichText::new(if app.pending.is_empty() {
-                                    crate::i18n::gettext(app.locale, "Type a message").into_owned()
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.add_space(top);
+                    let scroll_visibility = if rows > 5 {
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+                    } else {
+                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden
+                    };
+                    egui::ScrollArea::vertical()
+                        .id_salt("composer-scroll")
+                        .min_scrolled_height(text_height)
+                        .max_height(text_height)
+                        .scroll_bar_visibility(scroll_visibility)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let mut clusters: Vec<(usize, usize, String)> = Vec::new();
+                            let format =
+                                egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
+                            let composer_rtl = crate::bidi::base_rtl(&app.composer);
+                            let mut layouter =
+                                |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                                    let (galley, found) = crate::bidi::layout_editor(
+                                        ui,
+                                        text.as_str(),
+                                        &format,
+                                        wrap,
+                                        true,
+                                    );
+                                    clusters = found;
+                                    galley
+                                };
+                            let wrap = ui.available_width();
+                            ui.ctx().data_mut(|data| data.insert_temp(wrap_id, wrap));
+                            let selection_before = egui::TextEdit::load_state(ui.ctx(), id)
+                                .and_then(|state| state.cursor.char_range())
+                                .filter(|range| !range.is_empty());
+                            let mut output = egui::TextEdit::multiline(&mut app.composer)
+                                .id(id)
+                                .frame(Frame::NONE)
+                                .margin(Margin::ZERO)
+                                .hint_text(
+                                    egui::RichText::new(if app.pending.is_empty() {
+                                        crate::i18n::gettext(app.locale, "Type a message")
+                                            .into_owned()
+                                    } else {
+                                        crate::i18n::gettext(app.locale, "Add a caption")
+                                            .into_owned()
+                                    })
+                                    .color(palette.dim)
+                                    .font(theme::regular(BODY_SIZE)),
+                                )
+                                .font(theme::regular(BODY_SIZE))
+                                .text_color(palette.text)
+                                .desired_rows(1)
+                                .desired_width(f32::INFINITY)
+                                .horizontal_align(if composer_rtl {
+                                    Align::RIGHT
                                 } else {
-                                    crate::i18n::gettext(app.locale, "Add a caption").into_owned()
+                                    Align::LEFT
                                 })
-                                .color(palette.dim)
-                                .font(theme::regular(BODY_SIZE)),
-                            )
-                            .font(theme::regular(BODY_SIZE))
-                            .text_color(palette.text)
-                            .desired_rows(1)
-                            .desired_width(f32::INFINITY)
-                            .horizontal_align(if composer_rtl {
-                                Align::RIGHT
-                            } else {
-                                Align::LEFT
-                            })
-                            .return_key(if enter_sends {
-                                Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                            } else {
-                                Some(KeyboardShortcut::new(Modifiers::NONE, Key::Enter))
-                            })
-                            .layouter(&mut layouter)
-                            .show(ui);
+                                .return_key(if enter_sends {
+                                    Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                                } else {
+                                    Some(KeyboardShortcut::new(Modifiers::NONE, Key::Enter))
+                                })
+                                .layouter(&mut layouter)
+                                .show(ui);
 
-                        if (egui::Popup::is_id_open(ui.ctx(), id.with("popup"))
-                            || (ui.input(|input| {
-                                input.pointer.button_pressed(egui::PointerButton::Secondary)
-                            }) && output.response.response.contains_pointer()))
-                            && let Some(range) = selection_before
-                        {
-                            output.state.cursor.set_char_range(Some(range));
-                            output.cursor_range = Some(range);
-                            egui::TextEdit::store_state(ui.ctx(), id, output.state.clone());
-                        }
-                        for (start, length, cluster) in &clusters {
-                            let Some(bounds) =
-                                crate::bidi::char_bounds(&output.galley, *start, start + length)
-                            else {
-                                continue;
-                            };
-                            if bounds.height() > line_height * 1.5 {
-                                continue;
+                            if (egui::Popup::is_id_open(ui.ctx(), id.with("popup"))
+                                || (ui.input(|input| {
+                                    input.pointer.button_pressed(egui::PointerButton::Secondary)
+                                }) && output.response.response.contains_pointer()))
+                                && let Some(range) = selection_before
+                            {
+                                output.state.cursor.set_char_range(Some(range));
+                                output.cursor_range = Some(range);
+                                egui::TextEdit::store_state(ui.ctx(), id, output.state.clone());
                             }
-                            let rect = bounds.translate(output.galley_pos.to_vec2());
-                            crate::emoji::paint_cluster(ui, cluster, rect);
-                        }
+                            for (start, length, cluster) in &clusters {
+                                let Some(bounds) = crate::bidi::char_bounds(
+                                    &output.galley,
+                                    *start,
+                                    start + length,
+                                ) else {
+                                    continue;
+                                };
+                                if bounds.height() > line_height * 1.5 {
+                                    continue;
+                                }
+                                let rect = bounds.translate(output.galley_pos.to_vec2());
+                                crate::emoji::paint_cluster(ui, cluster, rect);
+                            }
 
-                        let painted = Rect::from_min_size(output.galley_pos, output.galley.size());
-                        let galley =
-                            crate::bidi::layout_editor(ui, &app.composer, &format, wrap, true).0;
-                        let after_height = if app.composer.is_empty() {
-                            line_height
-                        } else {
-                            galley.size().y.max(line_height)
-                        };
-                        let measured = after_height.clamp(line_height, line_height * 5.0);
-                        ui.ctx().data_mut(|data| {
-                            data.insert_temp(composer_text_id(), painted);
+                            let painted =
+                                Rect::from_min_size(output.galley_pos, output.galley.size());
+                            let galley =
+                                crate::bidi::layout_editor(ui, &app.composer, &format, wrap, true)
+                                    .0;
+                            let after_height = if app.composer.is_empty() {
+                                line_height
+                            } else {
+                                galley.size().y.max(line_height)
+                            };
+                            let measured = after_height.clamp(line_height, line_height * 5.0);
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(composer_text_id(), painted);
+                            });
+                            if (measured - text_height).abs() > 0.5 {
+                                ui.ctx().request_discard("composer height changed");
+                            }
+
+                            let response =
+                                output.response.response.clone().tab_stop(Stop::Composer);
+                            ui.ctx().accesskit_node_builder(response.id, |node| {
+                                node.set_label("Message")
+                            });
+                            Self::format_context_menu(app, ui, &response, &output);
+                            Self::handle_text_changes(
+                                app,
+                                chat,
+                                &response,
+                                &output,
+                                typed_colon,
+                                typed_at,
+                            );
+
+                            if app.focus_composer
+                                && app.image_preview.is_none()
+                                && app.sticker_view.is_none()
+                            {
+                                app.focus_composer = false;
+                                response.request_focus();
+                            }
                         });
-                        if (measured - text_height).abs() > 0.5 {
-                            ui.ctx().request_discard("composer height changed");
-                        }
-
-                        let response = output.response.response.clone().tab_stop(Stop::Composer);
-                        ui.ctx()
-                            .accesskit_node_builder(response.id, |node| node.set_label("Message"));
-                        Self::format_context_menu(app, ui, &response, &output);
-                        Self::handle_text_changes(
-                            app,
-                            chat,
-                            &response,
-                            &output,
-                            typed_colon,
-                            typed_at,
-                        );
-
-                        if app.focus_composer
-                            && app.image_preview.is_none()
-                            && app.sticker_view.is_none()
-                        {
-                            app.focus_composer = false;
-                            response.request_focus();
-                        }
-                    });
+                    ui.add_space(bottom);
+                });
             });
 
         if view_once
@@ -954,7 +1037,9 @@ impl ComposerInputRow {
                 .map(|range| range.primary.index.0)
                 .unwrap_or_else(|| app.composer.chars().count());
             if typed_colon && let Some(at) = standalone_trigger(&app.composer, cursor, ':') {
-                app.picker = None;
+                if app.picker.is_some() {
+                    app.actions.push(Action::ClosePicker);
+                }
                 app.emoji_start = Some(at);
                 app.emoji_selected = 0;
                 app.mention_start = None;
@@ -1012,7 +1097,21 @@ impl ComposerInputRow {
                         let locale = app.locale;
                         let palette = app.palette;
 
-                        let document = crate::i18n::gettext(locale, "Document");
+                        let send_files = crate::i18n::gettext(locale, "Send files");
+                        if widgets::menu_item_icon_colored(
+                            ui,
+                            &palette,
+                            Icon::Paperclip,
+                            Color32::from_rgb(0x00, 0x7b, 0xfc),
+                            &send_files,
+                            item_height,
+                        ) {
+                            app.actions.push(Action::Attach { documents: false });
+                        }
+
+                        // Pictures picked here keep their own bytes instead of
+                        // becoming compressed photos.
+                        let document = crate::i18n::gettext(locale, "Send as document");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1024,90 +1123,30 @@ impl ComposerInputRow {
                             app.actions.push(Action::Attach { documents: true });
                         }
 
-                        let photos = crate::i18n::gettext(locale, "Photos & videos");
+                        let send_location = crate::i18n::gettext(locale, "Send location");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
-                            Icon::Image,
-                            Color32::from_rgb(0x00, 0x7b, 0xfc),
-                            &photos,
-                            item_height,
-                        ) {
-                            app.actions.push(Action::Attach { documents: false });
-                        }
-
-                        let camera = crate::i18n::gettext(locale, "Camera");
-                        if widgets::menu_item_icon_colored(
-                            ui,
-                            &palette,
-                            Icon::Video,
-                            Color32::from_rgb(0xeb, 0x12, 0x60),
-                            &camera,
-                            item_height,
-                        ) {
-                            app.actions.push(Action::Attach { documents: false });
-                        }
-
-                        let audio = crate::i18n::gettext(locale, "Audio");
-                        if widgets::menu_item_icon_colored(
-                            ui,
-                            &palette,
-                            Icon::Music,
-                            Color32::from_rgb(0xf3, 0x6b, 0x00),
-                            &audio,
-                            item_height,
-                        ) {
-                            app.actions.push(Action::Attach { documents: false });
-                        }
-
-                        let contact = crate::i18n::gettext(locale, "Contact");
-                        if widgets::menu_item_icon_colored(
-                            ui,
-                            &palette,
-                            Icon::Contact,
-                            Color32::from_rgb(0x00, 0xa5, 0xf4),
-                            &contact,
-                            item_height,
-                        ) {
-                            app.actions.push(Action::ShowDialog(Dialog::NewContact));
-                        }
-
-                        let poll = crate::i18n::gettext(locale, "Poll");
-                        if widgets::menu_item_icon_colored(
-                            ui,
-                            &palette,
-                            Icon::ListChecks,
-                            Color32::from_rgb(0xff, 0xb0, 0x00),
-                            &poll,
-                            item_height,
-                        ) {
-                            app.actions
-                                .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
-                        }
-
-                        let event = crate::i18n::gettext(locale, "Event");
-                        if widgets::menu_item_icon_colored(
-                            ui,
-                            &palette,
-                            Icon::Calendar,
-                            Color32::from_rgb(0xff, 0x57, 0x57),
-                            &event,
+                            Icon::MapPin,
+                            Color32::from_rgb(0x00, 0xc9, 0x82),
+                            &send_location,
                             item_height,
                         ) {
                             app.actions
                                 .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
                         }
 
-                        let sticker = crate::i18n::gettext(locale, "New sticker");
+                        let create_poll = crate::i18n::gettext(locale, "Create poll");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
-                            Icon::Sticker,
-                            Color32::from_rgb(0x00, 0xc9, 0x82),
-                            &sticker,
+                            Icon::ListChecks,
+                            Color32::from_rgb(0xff, 0xb0, 0x00),
+                            &create_poll,
                             item_height,
                         ) {
-                            app.actions.push(Action::Attach { documents: false });
+                            app.actions
+                                .push(Action::ShowDialog(Dialog::CreatePoll(chat.id.clone())));
                         }
                     });
                 });

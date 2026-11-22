@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]

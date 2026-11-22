@@ -19,11 +19,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, anim_t: f32) {
     let is_animating = anim_t < 0.999;
     let animated_width = (target_width * ease).max(1.0);
 
-    let panel_id = egui::Id::new("chats");
-    if is_animating {
-        ui.ctx()
-            .data_mut(|data| data.remove::<egui::PanelState>(panel_id));
-    }
+    let panel_id = if is_animating {
+        egui::Id::new("chats-animating")
+    } else {
+        egui::Id::new("chats")
+    };
 
     let panel = egui::Panel::left(panel_id)
         .show_separator_line(false)
@@ -46,6 +46,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, anim_t: f32) {
         ui.set_clip_rect(panel_rect);
         if is_animating {
             ui.ctx().request_repaint();
+            let pending_reveal = app.scroll_chat_into_view.take();
             let left_x = panel_rect.right() - target_width;
             let content_rect = Rect::from_min_size(
                 pos2(left_x, panel_rect.top()),
@@ -59,6 +60,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, anim_t: f32) {
             child_ui.set_clip_rect(panel_rect.intersect(ui.clip_rect()));
             header(app, &mut child_ui);
             body(app, &mut child_ui);
+            if app.scroll_chat_into_view.is_none() {
+                app.scroll_chat_into_view = pending_reveal;
+            }
         } else {
             header(app, ui);
             body(app, ui);
@@ -347,8 +351,10 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
             &mut text,
             hint.as_ref(),
             width,
-        )
-        .tab_stop(Stop::Search);
+        );
+        if ui.clip_rect().intersects(response.rect) {
+            response.clone().tab_stop(Stop::Search);
+        }
         if app.new_call {
             // The list opens ready for a name, as New chat does.
             if ui.memory(|memory| memory.focused().is_none()) && ui.is_enabled() {
@@ -369,8 +375,10 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
         &mut text,
         crate::i18n::gettext(app.locale, "Search").as_ref(),
         width,
-    )
-    .tab_stop(Stop::Search);
+    );
+    if ui.clip_rect().intersects(response.rect) {
+        response.clone().tab_stop(Stop::Search);
+    }
     if text != app.search {
         app.actions.push(Action::Search(text));
     }
@@ -1812,9 +1820,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let menu_width = widgets::menu_width(
         ui,
         &[
-            "Mark as read",
-            "Mark as unread",
-            "Pin to top",
+            &crate::i18n::gettext(app.locale, "Mark as read"),
+            &crate::i18n::gettext(app.locale, "Mark as unread"),
+            &crate::i18n::gettext(app.locale, "Pin to top"),
             favorite_label.as_ref(),
             "Unarchive",
             &crate::i18n::gettext(app.locale, "Leave group"),
@@ -2174,19 +2182,19 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     if widgets::menu_item(ui, palette, Some(icon), &label) {
         app.actions.push(act);
     }
-    if let Some((icon, label, act)) = actions::favorite_action(chat, locale) {
-        if widgets::menu_item(ui, palette, Some(icon), &label) {
-            app.actions.push(act);
-        }
+    if let Some((icon, label, act)) = actions::favorite_action(chat, locale)
+        && widgets::menu_item(ui, palette, Some(icon), &label)
+    {
+        app.actions.push(act);
     }
     let (icon, label, act) = actions::archive_action(chat, locale);
     if widgets::menu_item(ui, palette, Some(icon), &label) {
         app.actions.push(act);
     }
-    if let Some((icon, label, act)) = actions::leave_action(chat, locale, &app.our_ids()) {
-        if widgets::menu_item(ui, palette, Some(icon), &label) {
-            app.actions.push(act);
-        }
+    if let Some((icon, label, act)) = actions::leave_action(chat, locale, &app.our_ids())
+        && widgets::menu_item(ui, palette, Some(icon), &label)
+    {
+        app.actions.push(act);
     }
     let now = crate::util::now();
     if chat.muted(now) {
@@ -2209,10 +2217,10 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions.push(act);
     }
     widgets::menu_separator(ui, palette);
-    if let Some((icon, label, act)) = actions::copy_number_action(chat, locale) {
-        if widgets::menu_item(ui, palette, Some(icon), &label) {
-            app.actions.push(act);
-        }
+    if let Some((icon, label, act)) = actions::copy_number_action(chat, locale)
+        && widgets::menu_item(ui, palette, Some(icon), &label)
+    {
+        app.actions.push(act);
     }
     if widgets::menu_item(
         ui,
@@ -3134,7 +3142,7 @@ mod tests {
     fn collapsing_and_expanding_keeps_the_saved_list_width() {
         let (_directory, mut app, _ids, ctx) = rail_app(3);
         app.settings.sidebar_width = 400.0;
-        let frame = |app: &mut App, collapsed: bool| {
+        let frame = |app: &mut App, collapsed: bool, anim_t: f32| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 600.0))),
@@ -3144,15 +3152,16 @@ mod tests {
                     if collapsed {
                         super::super::rail::show(app, ui, true);
                     } else {
-                        show(app, ui, 1.0);
+                        show(app, ui, anim_t);
                     }
                 },
             );
             output.textures_delta.clear();
         };
-        frame(&mut app, false);
-        frame(&mut app, true);
-        frame(&mut app, false);
+        frame(&mut app, false, 1.0);
+        frame(&mut app, true, 0.0);
+        frame(&mut app, false, 0.5);
+        frame(&mut app, false, 1.0);
         assert!(
             (app.settings.sidebar_width - 400.0).abs() < 1.0,
             "the full list came back {} points wide",

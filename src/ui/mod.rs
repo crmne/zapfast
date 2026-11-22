@@ -172,8 +172,8 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     let sidebar_visible = full_list || sidebar_t > 0.001;
 
     let mut list_width = chats::compact_width(ui.ctx());
-    if sidebar_visible {
-        list_width += app.settings.sidebar_width * pane::ease_out_cubic(sidebar_t);
+    if full_list {
+        list_width += app.settings.sidebar_width;
     }
     let crowded = app.info_visible()
         && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;

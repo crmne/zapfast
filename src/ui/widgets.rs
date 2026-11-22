@@ -1037,6 +1037,7 @@ pub fn menu_item_icon_colored(
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     theme::reveal_focus(&response);
+    note_menu_row(ui, response.id, label);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -1141,17 +1142,14 @@ pub fn search_field(
         (false, true) => palette.surface_hover,
         (false, false) => palette.surface,
     };
-    let stroke = if has_focus {
+    let keyboard_focus = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(theme::keyboard_focus_id()))
+        .unwrap_or(false);
+    let stroke = if has_focus && !keyboard_focus {
         Stroke::new(1.0, palette.accent)
     } else {
-        Stroke::new(
-            1.0,
-            if palette.dark {
-                Color32::from_rgb(0x2d, 0x3d, 0x47)
-            } else {
-                palette.outline
-            },
-        )
+        Stroke::new(1.0, palette.outline)
     };
     ui.painter()
         .rect(rect, height * 0.5, fill, stroke, egui::StrokeKind::Inside);

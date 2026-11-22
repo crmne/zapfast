@@ -156,10 +156,8 @@ pub(crate) fn bubble(
     };
     let layout = Layout::top_down(if own { Align::Max } else { Align::Min });
     if progress < 1.0 {
-        let dy = (1.0 - progress) * 16.0;
-        let transform = egui::emath::TSTransform::from_translation(vec2(0.0, dy));
         let opacity = (progress * 1.6).min(1.0);
-        ui.with_visual_transform(transform, |ui| {
+        ui.scope(|ui| {
             ui.multiply_opacity(opacity);
             ui.with_layout(layout, |ui| {
                 render_bubble(ui, &mut response, actions);
@@ -619,6 +617,11 @@ pub(crate) fn bubble_frame(
 
     let at_chevron_id = bubble_id.with("menu-at-chevron");
     if chevron_clicked && !was_open {
+        if album.is_some() {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(target_id, message.id.clone());
+            });
+        }
         let raw_x = if own {
             chevron_rect.right() - width
         } else {
@@ -793,7 +796,7 @@ pub(crate) fn bubble_frame(
     let pad = 8.0;
     let min_x = viewport.left() + pad;
     let max_x = if reacting {
-        (viewport.right() - width - 340.0).max(min_x)
+        (viewport.right() - width - 460.0).max(min_x)
     } else {
         (viewport.right() - width - pad).max(min_x)
     };

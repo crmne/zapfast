@@ -628,15 +628,15 @@ pub(crate) fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 app.actions.push(clear_act);
                             }
                             widgets::menu_separator(ui, &palette);
-                            if let Some((icon, label, act)) = leave {
-                                if widgets::menu_item(ui, &palette, Some(icon), &label) {
-                                    app.actions.push(act);
-                                }
+                            if let Some((icon, label, act)) = leave
+                                && widgets::menu_item(ui, &palette, Some(icon), &label)
+                            {
+                                app.actions.push(act);
                             }
-                            if let Some((icon, label, act)) = copy_number {
-                                if widgets::menu_item(ui, &palette, Some(icon), &label) {
-                                    app.actions.push(act);
-                                }
+                            if let Some((icon, label, act)) = copy_number
+                                && widgets::menu_item(ui, &palette, Some(icon), &label)
+                            {
+                                app.actions.push(act);
                             }
                             if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref())
                             {

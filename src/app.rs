@@ -269,6 +269,8 @@ impl Conversation {
         // Prepend new older rows, but refresh duplicates too: on-demand
         // history can supply edits and phone ordering absent from our archive.
         let old_len = self.messages.len();
+        let track_arrivals = !older && (self.initial_loaded || old_len > 0);
+        let now = track_arrivals.then(Instant::now);
         let mut positions: HashMap<String, usize> = self
             .messages
             .iter()
@@ -295,10 +297,19 @@ impl Conversation {
                     }
                 }
                 None => {
+                    if let Some(at) = now {
+                        self.arrivals.insert(message.id.clone(), at);
+                    }
                     positions.insert(message.id.clone(), self.messages.len());
                     self.messages.push(message);
                 }
             }
+        }
+        if !older {
+            if track_arrivals {
+                self.arrivals.retain(|_, at| at.elapsed().as_secs() < 5);
+            }
+            self.initial_loaded = true;
         }
         if older {
             let added = self.messages.len() - old_len;
@@ -3977,20 +3988,6 @@ impl App {
                 let messages_empty = messages.is_empty();
                 if older && !messages.is_empty() {
                     conversation.phone_delivered = true;
-                }
-                if !older {
-                    if conversation.initial_loaded || !was_empty {
-                        let now = Instant::now();
-                        for msg in &messages {
-                            if !conversation.messages.iter().any(|m| m.id == msg.id) {
-                                conversation.arrivals.insert(msg.id.clone(), now);
-                            }
-                        }
-                        conversation
-                            .arrivals
-                            .retain(|_, at| at.elapsed().as_secs() < 5);
-                    }
-                    conversation.initial_loaded = true;
                 }
                 conversation.merge(messages, older);
                 if older {

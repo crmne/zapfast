@@ -190,7 +190,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && !app.show_update
         && app.picker.is_none()
         && app.reaction_target.is_none()
-        && (app.call.is_none() || app.call_surface_hidden)
+        && !super::call::is_in_window_overlay(app, ctx)
         && !menu_open
         && let Some(chat) = app.open_chat.clone()
         && ctx.memory(|memory| memory.has_focus(crate::ui::conversation::messages_list_id(&chat)))
@@ -229,7 +229,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && !app.show_update
         && app.picker.is_none()
         && app.reaction_target.is_none()
-        && (app.call.is_none() || app.call_surface_hidden)
+        && !super::call::is_in_window_overlay(app, ctx)
         && !menu_open
     {
         ctx.input_mut(|input| {

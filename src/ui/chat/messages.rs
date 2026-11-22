@@ -1060,6 +1060,9 @@ pub(crate) fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32
                                     actions.push(Action::SelectMessage(message.id.clone()));
                                 }
                                 if current && let Some(response) = &response {
+                                    if list_focused {
+                                        theme::focus_outline(ui, list_id, response.rect, 10.0);
+                                    }
                                     if reveal {
                                         let mut target = response.clone();
                                         target.rect = target.rect.expand(4.0);
@@ -1800,16 +1803,18 @@ pub(crate) fn reaction_affordance(
             },
         );
     }
+    let hover_target = || {
+        ui.ctx()
+            .data(|data| data.get_temp::<String>(album_target))
+            .unwrap_or_else(|| message.id.clone())
+    };
     if response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(crate::i18n::gettext(view.locale, "React"))
         .clicked()
     {
-        actions.push(open_reaction_picker_action(
-            &view.chat.id,
-            &message.id,
-            false,
-        ));
+        let target = hover_target();
+        actions.push(open_reaction_picker_action(&view.chat.id, &target, false));
     }
     if reply_fits {
         let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::CLICK);
@@ -1832,7 +1837,7 @@ pub(crate) fn reaction_affordance(
             .on_hover_text(crate::i18n::gettext(view.locale, "Reply"))
             .clicked()
         {
-            actions.push(Action::Reply(message.id.clone()));
+            actions.push(Action::Reply(hover_target()));
         }
     }
     if forward_fits {
@@ -1856,13 +1861,9 @@ pub(crate) fn reaction_affordance(
             .on_hover_text(crate::i18n::gettext(view.locale, "Forward").as_ref())
             .clicked()
         {
-            let target = ui
-                .ctx()
-                .data(|data| data.get_temp::<String>(album_target))
-                .unwrap_or_else(|| message.id.clone());
             actions.push(Action::ShowDialog(Dialog::Forward {
                 chat: view.chat.id.clone(),
-                messages: vec![target],
+                messages: vec![hover_target()],
             }));
         }
     }

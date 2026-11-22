@@ -71,13 +71,24 @@ pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+fn cached_view_allowed(app: &App, ctx: &egui::Context) -> bool {
+    let cached_id = egui::Id::new("chat-info-cached-view");
+    let Some((chat, _)) =
+        ctx.data(|data| data.get_temp::<(crate::model::ChatId, InfoView)>(cached_id))
+    else {
+        return false;
+    };
+    !app.chat(&chat).is_some_and(|c| c.locked) || app.locked_folder_open()
+}
+
 /// Docks the panel when there is room, before the conversation is laid out.
 /// Otherwise returns the conversation's rect for [`show_overlay`], drawn
 /// after the conversation so it lies on top.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
     let anim_id = egui::Id::new("chat-info-pane-anim");
     let is_open = app.info_visible();
-    let t = if cfg!(test) {
+    let allow_close_tween = is_open || cached_view_allowed(app, ui.ctx());
+    let t = if cfg!(test) || !allow_close_tween {
         if is_open { 1.0 } else { 0.0 }
     } else {
         ui.ctx().animate_bool_with_time(anim_id, is_open, 0.24)
@@ -127,7 +138,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
     let anim_id = egui::Id::new("chat-info-pane-anim");
     let is_open = app.info_visible();
-    let t = if cfg!(test) {
+    let allow_close_tween = is_open || cached_view_allowed(app, ctx);
+    let t = if cfg!(test) || !allow_close_tween {
         if is_open { 1.0 } else { 0.0 }
     } else {
         ctx.animate_bool_with_time(anim_id, is_open, 0.24)
@@ -167,6 +179,11 @@ fn contents(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
         .ctx()
         .data_mut(|data| data.get_temp::<(crate::model::ChatId, InfoView)>(cached_id))
     {
+        if app.chat(&cached.0).is_some_and(|c| c.locked) && !app.locked_folder_open() {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(crate::model::ChatId, InfoView)>(cached_id));
+            return;
+        }
         cached
     } else {
         return;
@@ -1886,7 +1903,7 @@ fn invite_link(app: &mut App, ui: &mut egui::Ui, id: &str, can_reset: bool) {
         .as_ref()
         .filter(|(chat, _)| chat == id)
         .map(|(_, state)| state.clone());
-    if state.is_none() {
+    if state.is_none() && app.info.is_some() {
         app.actions.push(Action::FetchInviteLink(id.to_owned()));
     }
     let state = state.unwrap_or(LinkState::Loading);

@@ -133,6 +133,7 @@ impl ChatView {
                     ChatHeader::show(app, ui, &chat);
                     super::banner(app, ui);
                     super::voice_bar::show(app, ui);
+                    PinBanner::show(app, ui, &chat);
                     let bar = ui.min_rect();
                     let frosted = bar.with_max_y(bar.bottom() + HEADER_TAIL);
                     let ease = HEADER_TAIL + bar.height() * HEADER_EASE;

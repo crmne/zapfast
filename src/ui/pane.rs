@@ -137,6 +137,7 @@ pub(super) fn dock(
 
 /// Docks a right-hand pane whatever the room, narrowing the conversation
 /// down to `conversation_min` and the pane down to `min`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn docked(
     app: &mut App,
     ui: &mut egui::Ui,

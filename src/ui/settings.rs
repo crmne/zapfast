@@ -3,8 +3,7 @@
 use std::borrow::Cow;
 
 use egui::{
-    Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2,
-    vec2,
+    Align, Align2, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2,
 };
 
 use crate::app::App;
@@ -197,15 +196,10 @@ impl Section {
                         egui::vec2(ui.available_width(), 1.0),
                         egui::Sense::hover(),
                     );
-                    let divider_color = if palette.dark {
-                        Color32::from_rgb(0x28, 0x37, 0x40)
-                    } else {
-                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
-                    };
                     ui.painter().hline(
                         divider_rect.x_range(),
                         divider_rect.center().y,
-                        Stroke::new(1.0, divider_color),
+                        Stroke::new(1.0, palette.outline.gamma_multiply(0.7)),
                     );
                     ui.add_space(8.0);
                 }
@@ -272,33 +266,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     ui.set_width(width);
 
-                    let is_dark = palette.dark;
-                    let ctrl_bg = if is_dark {
-                        Color32::from_rgb(0x24, 0x32, 0x3a)
-                    } else {
-                        Color32::from_rgb(0xf3, 0xf4, 0xf6)
-                    };
-                    let ctrl_stroke = Stroke::new(
-                        1.0,
-                        if is_dark {
-                            Color32::from_rgb(0x38, 0x4b, 0x56)
-                        } else {
-                            Color32::from_rgb(0xd1, 0xd5, 0xdb)
-                        },
-                    );
-                    let ctrl_hover_bg = if is_dark {
-                        Color32::from_rgb(0x2c, 0x3c, 0x46)
-                    } else {
-                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
-                    };
-                    let ctrl_hover_stroke = Stroke::new(
-                        1.0,
-                        if is_dark {
-                            Color32::from_rgb(0x48, 0x5d, 0x6b)
-                        } else {
-                            Color32::from_rgb(0x9c, 0xa3, 0xaf)
-                        },
-                    );
+                    let ctrl_bg = theme::blend(palette.panel, palette.surface, 0.5);
+                    let ctrl_stroke = Stroke::new(1.0, palette.outline);
+                    let ctrl_hover_bg = palette.surface_hover;
+                    let ctrl_hover_stroke =
+                        Stroke::new(1.0, theme::blend(palette.outline, palette.secondary, 0.35));
 
                     let widgets = &mut ui.visuals_mut().widgets;
                     widgets.inactive.bg_fill = ctrl_bg;
@@ -440,31 +412,20 @@ fn sections(app: &App) -> Vec<Section> {
             } else {
                 wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
             };
-            let button_bg = if palette.dark {
-                Color32::from_rgb(0x24, 0x32, 0x3a)
-            } else {
-                Color32::from_rgb(0xf3, 0xf4, 0xf6)
-            };
-            let button_stroke = Stroke::new(
-                1.0,
-                if palette.dark {
-                    Color32::from_rgb(0x38, 0x4b, 0x56)
-                } else {
-                    Color32::from_rgb(0xd1, 0xd5, 0xdb)
-                },
-            );
+            let button_bg = theme::blend(palette.panel, palette.surface, 0.5);
+            let button_stroke = Stroke::new(1.0, palette.outline);
             let text_galley =
                 ui.painter()
                     .layout_no_wrap(label.clone(), theme::regular(13.5), palette.text);
             let size = vec2(text_galley.size().x + 36.0, 30.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+            });
             if ui.is_rect_visible(rect) {
                 let fill = if response.hovered() {
-                    if palette.dark {
-                        Color32::from_rgb(0x2c, 0x3c, 0x46)
-                    } else {
-                        Color32::from_rgb(0xe5, 0xe7, 0xeb)
-                    }
+                    palette.surface_hover
                 } else {
                     button_bg
                 };
@@ -502,19 +463,8 @@ fn sections(app: &App) -> Vec<Section> {
             "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it.",
         )),
         move |ui, app| {
-            let pill_bg = if palette.dark {
-                Color32::from_rgb(0x24, 0x32, 0x3a)
-            } else {
-                Color32::from_rgb(0xf3, 0xf4, 0xf6)
-            };
-            let pill_stroke = Stroke::new(
-                1.0,
-                if palette.dark {
-                    Color32::from_rgb(0x38, 0x4b, 0x56)
-                } else {
-                    Color32::from_rgb(0xd1, 0xd5, 0xdb)
-                },
-            );
+            let pill_bg = theme::blend(palette.panel, palette.surface, 0.5);
+            let pill_stroke = Stroke::new(1.0, palette.outline);
             Frame::new()
                 .fill(pill_bg)
                 .stroke(pill_stroke)
@@ -1764,14 +1714,9 @@ fn section(
     ui.add_space(10.0);
     theme::text(ui, title, theme::semibold(13.0), palette.secondary);
     ui.add_space(6.0);
-    let card_stroke = if palette.dark {
-        Color32::from_rgb(0x2d, 0x3d, 0x47)
-    } else {
-        Color32::from_rgb(0xdc, 0xe0, 0xe5)
-    };
     Frame::new()
         .fill(palette.surface)
-        .stroke(Stroke::new(1.0, card_stroke))
+        .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(8))
         // Every row ends with its own gap, so the bottom margin is smaller.
         .inner_margin(Margin {
