@@ -246,8 +246,14 @@ fn parse(verb: &str) -> Option<ControlCommand> {
 
 /// Asks a running copy that predates the lock to handle `verb`.
 fn legacy_instance_answers(verb: &str) -> bool {
-    // The port is free, and released at once, when no older copy runs.
-    if TcpListener::bind((Ipv4Addr::LOCALHOST, LEGACY_PORT)).is_ok() {
+    legacy_instance_answer(verb, TcpListener::bind((Ipv4Addr::LOCALHOST, LEGACY_PORT)))
+}
+
+/// [`legacy_instance_answers`] for the result of binding the legacy port.
+fn legacy_instance_answer(verb: &str, bind: std::io::Result<TcpListener>) -> bool {
+    // A port that is free, or one the system refuses to hand out, has nothing
+    // listening behind it, so there is no copy to ask.
+    if !bind.as_ref().err().is_some_and(copy_may_hold_port) {
         return false;
     }
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, LEGACY_PORT));
@@ -257,6 +263,20 @@ fn legacy_instance_answers(verb: &str) -> bool {
     // A background start never runs beside a copy that may be ZapFast,
     // including older ones that do not answer `ping`.
     answered || verb == "ping"
+}
+
+/// Whether a refused bind on the legacy port leaves room for a copy from
+/// before the lock to be the one holding it.
+///
+/// Such a copy listens on that port, so it had to bind it: only a port another
+/// process holds can hide one. A port the system refuses outright has no
+/// listener at all, so no copy can be behind that failure. Windows refuses a
+/// port inside a reserved range with `PermissionDenied`, and WSL2's mirrored
+/// networking reserves such a range that can cover 47119. Reading every
+/// refusal as a running copy made a hidden start exit with no window, tray
+/// icon, or log (#1120).
+fn copy_may_hold_port(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::AddrInUse
 }
 
 /// Sends `verb` the way copies before the lock expect it, and checks the
@@ -476,6 +496,31 @@ mod tests {
         assert_eq!(legacy_verb("ping"), "ping");
         assert_eq!(legacy_verb(INVITE), "show");
         assert_eq!(legacy_verb("open 20123456789@s.whatsapp.net"), "show");
+    }
+
+    /// Only a port another process holds can hold a copy from before the
+    /// lock. A port the system refuses to hand out has nothing listening on
+    /// it, so a hidden start must go on and run rather than report a copy
+    /// already running and exit with no window, tray icon, or log (#1120).
+    ///
+    /// Windows refuses a port inside a reserved range with
+    /// `PermissionDenied` (WSL2's mirrored networking reserves such a range
+    /// that can cover 47119); a port another process holds is `AddrInUse`.
+    #[test]
+    fn a_port_the_system_refuses_is_not_a_running_copy() {
+        let refused = |kind| {
+            let bind: std::io::Result<TcpListener> = Err(std::io::Error::from(kind));
+            legacy_instance_answer("ping", bind)
+        };
+        assert!(!refused(std::io::ErrorKind::PermissionDenied));
+        assert!(!refused(std::io::ErrorKind::AddrNotAvailable));
+        assert!(!copy_may_hold_port(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+        // A port another process holds may hide a copy from before the lock.
+        assert!(copy_may_hold_port(&std::io::Error::from(
+            std::io::ErrorKind::AddrInUse
+        )));
     }
 
     fn connect(port: u16) -> TcpStream {
