@@ -1,6 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, UiBuilder, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::model::{Action, Chat, ChatActivity, ChatFilter, Contact, Dialog, Message, Page};
@@ -11,30 +11,76 @@ use super::focus::{Stop, TabStop};
 use super::labels;
 use super::widgets;
 
-pub fn show(app: &mut App, ui: &mut egui::Ui) {
+pub fn show(app: &mut App, ui: &mut egui::Ui, anim_t: f32) {
     search_keyboard(app, ui);
     let palette = app.palette;
-    let panel = egui::Panel::left("chats")
-        .resizable(true)
-        .default_size(app.settings.sidebar_width)
-        .size_range(260.0..=520.0)
+    let ease = super::pane::ease_out_cubic(anim_t);
+    let target_width = app.settings.sidebar_width;
+    let is_animating = anim_t < 0.999;
+    let animated_width = (target_width * ease).max(1.0);
+
+    let panel_id = egui::Id::new("chats");
+    if is_animating {
+        ui.ctx()
+            .data_mut(|data| data.remove::<egui::PanelState>(panel_id));
+    }
+
+    let panel = egui::Panel::left(panel_id)
         .show_separator_line(false)
         .frame(
             Frame::new()
                 .fill(palette.sidebar())
                 .inner_margin(Margin::ZERO),
         );
+    let panel = if is_animating {
+        panel.resizable(false).exact_size(animated_width)
+    } else {
+        panel
+            .resizable(true)
+            .default_size(target_width)
+            .size_range(260.0..=520.0)
+    };
+
     let response = panel.show(ui, |ui| {
-        header(app, ui);
-        body(app, ui);
+        let panel_rect = ui.max_rect();
+        ui.set_clip_rect(panel_rect);
+        if is_animating {
+            ui.ctx().request_repaint();
+            let left_x = panel_rect.right() - target_width;
+            let content_rect = Rect::from_min_size(
+                pos2(left_x, panel_rect.top()),
+                vec2(target_width, panel_rect.height()),
+            );
+            let mut child_ui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(content_rect)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            child_ui.set_clip_rect(panel_rect.intersect(ui.clip_rect()));
+            header(app, &mut child_ui);
+            body(app, &mut child_ui);
+        } else {
+            header(app, ui);
+            body(app, ui);
+        }
     });
-    let width = response.response.rect.width();
-    if (width - app.settings.sidebar_width).abs() > 1.0 {
-        app.settings.sidebar_width = width;
-        app.actions.push(Action::SettingsChanged);
+
+    if !is_animating {
+        let width = response.response.rect.width();
+        if (width - app.settings.sidebar_width).abs() > 1.0 {
+            app.settings.sidebar_width = width;
+            app.actions.push(Action::SettingsChanged);
+        }
     }
     // Separate the panel from the conversation, as the header's line does.
-    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    if ease > 0.01 {
+        let rect = response.response.rect;
+        ui.painter().vline(
+            rect.right(),
+            rect.y_range(),
+            egui::Stroke::new(1.0, palette.outline.gamma_multiply(ease)),
+        );
+    }
 }
 
 /// The chat list across the whole window, when the window is too narrow to
@@ -883,7 +929,7 @@ fn starred_row(
             &app.settings.reaction_emoji,
             message,
         ))
-        .frame(widgets::menu_frame(palette));
+        .frame(egui::Frame::NONE);
     let popup = if force_menu {
         popup.at_position(bubble.left_top() + vec2(12.0, 8.0))
     } else {
@@ -2117,76 +2163,30 @@ fn compact_badge_center(avatar: Rect) -> egui::Pos2 {
 }
 
 fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette) {
+    use crate::ui::chat::actions;
+
     let locale = app.locale;
-    if chat.looks_unread()
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::CheckCheck),
-            &crate::i18n::gettext(locale, "Mark as read"),
-        )
-    {
-        app.actions.push(Action::MarkRead(chat.id.clone()));
+    let (icon, label, act) = actions::mark_read_action(chat, locale);
+    if widgets::menu_item(ui, palette, Some(icon), &label) {
+        app.actions.push(act);
     }
-    if !chat.looks_unread()
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::MessageCircle),
-            &crate::i18n::gettext(locale, "Mark as unread"),
-        )
-    {
-        app.actions.push(Action::MarkUnread(chat.id.clone()));
+    let (icon, label, act) = actions::pin_action(chat, locale);
+    if widgets::menu_item(ui, palette, Some(icon), &label) {
+        app.actions.push(act);
     }
-    let pin_label = if chat.pinned {
-        crate::i18n::gettext(locale, "Unpin")
-    } else {
-        crate::i18n::gettext(locale, "Pin to top")
-    };
-    if widgets::menu_item(
-        ui,
-        palette,
-        Some(if chat.pinned { Icon::PinOff } else { Icon::Pin }),
-        pin_label.as_ref(),
-    ) {
-        app.actions
-            .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
-    }
-    // Channels cannot be favorites, as on the phone.
-    if !chat.is_channel() {
-        // Bound before the call so the translated text outlives the borrow.
-        let favorite_label = if chat.favorite {
-            crate::i18n::gettext(locale, "Remove from favorites")
-        } else {
-            crate::i18n::gettext(locale, "Add to favorites")
-        };
-        if widgets::menu_item(ui, palette, Some(Icon::Heart), favorite_label.as_ref()) {
-            app.actions
-                .push(Action::SetFavorite(chat.id.clone(), !chat.favorite));
+    if let Some((icon, label, act)) = actions::favorite_action(chat, locale) {
+        if widgets::menu_item(ui, palette, Some(icon), &label) {
+            app.actions.push(act);
         }
     }
-    let archive_label = if chat.archived {
-        crate::i18n::gettext(locale, "Unarchive")
-    } else {
-        crate::i18n::gettext(locale, "Archive")
-    };
-    if widgets::menu_item(ui, palette, Some(Icon::Archive), archive_label.as_ref()) {
-        app.actions
-            .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+    let (icon, label, act) = actions::archive_action(chat, locale);
+    if widgets::menu_item(ui, palette, Some(icon), &label) {
+        app.actions.push(act);
     }
-    // Bound before the call so the translated text outlives the borrow.
-    let leave_label = if chat.is_channel() {
-        crate::i18n::gettext(locale, "Leave channel")
-    } else {
-        crate::i18n::gettext(locale, "Leave group")
-    };
-    if chat.can_leave(&app.our_ids())
-        && widgets::menu_item(ui, palette, Some(Icon::LogOut), leave_label.as_ref())
-    {
-        app.actions
-            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
-                chat.id.clone(),
-            )));
+    if let Some((icon, label, act)) = actions::leave_action(chat, locale, &app.our_ids()) {
+        if widgets::menu_item(ui, palette, Some(icon), &label) {
+            app.actions.push(act);
+        }
     }
     let now = crate::util::now();
     if chat.muted(now) {
@@ -2204,37 +2204,15 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     sound_menu(app, ui, palette, chat);
     voice_speed_menu(app, ui, palette, chat);
     labels::chat_menu(app, ui, chat, palette);
-    let lock_label = if chat.locked {
-        crate::i18n::gettext(locale, "Unlock chat")
-    } else {
-        crate::i18n::gettext(locale, "Lock chat")
-    };
-    if widgets::menu_item(
-        ui,
-        palette,
-        Some(if chat.locked {
-            Icon::LockOpen
-        } else {
-            Icon::Lock
-        }),
-        lock_label.as_ref(),
-    ) {
-        app.actions.push(if chat.locked {
-            Action::SetLocked(chat.id.clone(), false)
-        } else {
-            Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
-        });
+    let (icon, label, act) = actions::lock_action(chat, locale);
+    if widgets::menu_item(ui, palette, Some(icon), &label) {
+        app.actions.push(act);
     }
     widgets::menu_separator(ui, palette);
-    if let Some(phone) = chat.phone()
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::Copy),
-            &crate::i18n::gettext(locale, "Copy number"),
-        )
-    {
-        app.actions.push(Action::CopyText(format!("+{phone}")));
+    if let Some((icon, label, act)) = actions::copy_number_action(chat, locale) {
+        if widgets::menu_item(ui, palette, Some(icon), &label) {
+            app.actions.push(act);
+        }
     }
     if widgets::menu_item(
         ui,
@@ -2242,36 +2220,18 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         Some(Icon::Info),
         &crate::i18n::gettext(locale, "Info"),
     ) {
-        // The panel sits beside the conversation, so the chat opens first.
         app.actions.push(Action::OpenChat(chat.id.clone()));
         app.actions.push(Action::OpenInfo(chat.id.clone()));
     }
-    // Blocking, clearing and deleting reach WhatsApp and need a connection.
     let connected = app.is_connected();
     super::blocking::menu(app, ui, &chat.id);
-    if widgets::menu_item_enabled(
-        ui,
-        palette,
-        Some(Icon::Eraser),
-        &crate::i18n::gettext(locale, "Clear chat"),
-        connected,
-    ) {
-        app.actions
-            .push(Action::ShowDialog(Dialog::ConfirmClearChat(
-                chat.id.clone(),
-            )));
+    let (icon, label, act) = actions::clear_chat_action(chat, locale);
+    if widgets::menu_item_enabled(ui, palette, Some(icon), &label, connected) {
+        app.actions.push(act);
     }
-    if widgets::menu_item_enabled(
-        ui,
-        palette,
-        Some(Icon::Trash),
-        &crate::i18n::gettext(locale, "Delete chat"),
-        connected,
-    ) {
-        app.actions
-            .push(Action::ShowDialog(Dialog::ConfirmDeleteChat(
-                chat.id.clone(),
-            )));
+    let (icon, label, act) = actions::delete_chat_action(chat, locale);
+    if widgets::menu_item_enabled(ui, palette, Some(icon), &label, connected) {
+        app.actions.push(act);
     }
 }
 
@@ -3184,7 +3144,7 @@ mod tests {
                     if collapsed {
                         super::super::rail::show(app, ui, true);
                     } else {
-                        show(app, ui);
+                        show(app, ui, 1.0);
                     }
                 },
             );

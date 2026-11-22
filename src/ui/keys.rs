@@ -229,6 +229,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && !app.show_update
         && app.picker.is_none()
         && app.reaction_target.is_none()
+        && (app.call.is_none() || app.call_surface_hidden)
         && !menu_open
     {
         ctx.input_mut(|input| {

@@ -206,6 +206,8 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
+    pub(crate) initial_loaded: bool,
+    pub(crate) arrivals: HashMap<String, Instant>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -3975,6 +3977,20 @@ impl App {
                 let messages_empty = messages.is_empty();
                 if older && !messages.is_empty() {
                     conversation.phone_delivered = true;
+                }
+                if !older {
+                    if conversation.initial_loaded || !was_empty {
+                        let now = Instant::now();
+                        for msg in &messages {
+                            if !conversation.messages.iter().any(|m| m.id == msg.id) {
+                                conversation.arrivals.insert(msg.id.clone(), now);
+                            }
+                        }
+                        conversation
+                            .arrivals
+                            .retain(|_, at| at.elapsed().as_secs() < 5);
+                    }
+                    conversation.initial_loaded = true;
                 }
                 conversation.merge(messages, older);
                 if older {

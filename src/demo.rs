@@ -494,6 +494,7 @@ pub fn populate(app: &mut App) {
             requested: true,
             // Demo mode has no phone connection.
             phone_exhausted: true,
+            initial_loaded: true,
             ..Default::default()
         };
         let count = sample.lines.len() as i64;
