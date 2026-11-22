@@ -9,7 +9,10 @@
 
 use std::time::Instant;
 
-use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2, vec2};
+use egui::{
+    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2,
+    ViewportBuilder, ViewportId, vec2,
+};
 
 use crate::app::{App, CallPerson};
 use crate::calls::{CallOutcome, CallPhase, CallUpdate, PeerAudio, SilenceReason};
@@ -36,11 +39,16 @@ const VIDEO_SCRIM: Color32 = Color32::from_black_alpha(150);
 /// A call the reader stepped away from is drawn by [`strip`] instead.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(call) = app.call.clone() else {
+        app.call_pip = false;
         return;
     };
     if app.call_surface_hidden {
+        if app.call_pip && call.phase.is_live() && !app.call_is_private() {
+            pip(app, ctx, &call);
+        }
         return;
     }
+    app.call_pip = false;
     let palette = app.palette;
     let peer = app.call_name();
     let picture = app.call_avatar();
@@ -138,6 +146,24 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                     .clicked()
                     {
                         app.actions.push(Action::HangupCall);
+                    }
+                    let pip_tip = gettext(locale, "Picture in picture").into_owned();
+                    let pip_icon = if app.call_pip {
+                        Icon::Maximize
+                    } else {
+                        Icon::ExternalLink
+                    };
+                    if theme::icon_button(
+                        ui,
+                        pip_icon,
+                        16.0,
+                        palette.on_accent,
+                        palette.on_accent,
+                        &pip_tip,
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::ToggleCallPip);
                     }
                     let back = gettext(locale, "Return to the call").into_owned();
                     let response = ui.add(
@@ -323,6 +349,21 @@ fn corner_buttons(
                 };
                 if theme::icon_button(ui, icon, 18.0, corner_tint, corner_hover, &tip).clicked() {
                     app.actions.push(Action::ToggleCallFullscreen);
+                }
+                if call.phase.is_live() {
+                    let pip_tip = gettext(locale, "Picture in picture");
+                    if theme::icon_button(
+                        ui,
+                        Icon::ExternalLink,
+                        18.0,
+                        corner_tint,
+                        corner_hover,
+                        &pip_tip,
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::ToggleCallPip);
+                    }
                 }
             });
         });
@@ -1302,6 +1343,190 @@ fn call_texture(
             });
             id
         }
+    }
+}
+
+/// The floating Picture-in-Picture window for active calls.
+pub fn pip(app: &mut App, ctx: &egui::Context, call: &CallUpdate) {
+    let peer = app.call_name();
+    let palette = app.palette;
+    let locale = app.locale;
+    let remote = if call.video {
+        if call.group.is_some() {
+            app.call_member_frames.values().next().cloned()
+        } else if call.remote_video {
+            app.call_remote_frame.clone()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let local_frame = (call.video && call.camera_on)
+        .then(|| app.call_local_frame.clone())
+        .flatten();
+    let picture = app.call_avatar();
+    let status_str = status(locale, call).to_string();
+
+    let viewport_id = ViewportId::from_hash_of("zapfast-call-pip");
+    let builder = ViewportBuilder::default()
+        .with_title(format!("ZapFast - {peer}"))
+        .with_inner_size([340.0, 220.0])
+        .with_min_inner_size([240.0, 160.0])
+        .with_always_on_top()
+        .with_decorations(true);
+
+    let mut actions = Vec::new();
+    let mut close_pip = false;
+
+    let mut local_texture = app.call_local_texture.take();
+    let mut remote_texture = app.call_remote_texture.take();
+
+    ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+        if ui.input(|i| i.viewport().close_requested()) {
+            close_pip = true;
+        }
+
+        let area = ui.max_rect();
+        let backdrop = if remote.is_some() {
+            Color32::BLACK
+        } else {
+            palette.window
+        };
+        ui.painter().rect_filled(area, 0.0, backdrop);
+
+        if let Some(image) = &remote {
+            let at = fit_inside(area, image_size(image));
+            let texture = call_texture(ui, &mut remote_texture, "zapfast-call-remote-pip", image);
+            egui::Image::new((texture, at.size())).paint_at(ui, at);
+        } else {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(((area.height() - 90.0) / 2.0).max(8.0));
+                    widgets::avatar(ui, &palette, &peer, &call.chat, 48.0, picture.as_deref());
+                    ui.add_space(6.0);
+                    theme::text(ui, &peer, theme::semibold(13.0), palette.text);
+                    theme::text(ui, &status_str, theme::regular(11.0), palette.secondary);
+                });
+            });
+        }
+
+        // Small corner preview of own camera if active
+        if let Some(image) = &local_frame {
+            let bounds = vec2(area.width(), area.height()) * PREVIEW_SHARE;
+            let size = fit_inside(Rect::from_min_size(area.min, bounds), image_size(image)).size();
+            let at = Rect::from_min_size(
+                egui::pos2(area.right() - size.x - 8.0, area.top() + 8.0),
+                size,
+            );
+            let texture = call_texture(ui, &mut local_texture, "zapfast-call-local-pip", image);
+            egui::Image::new((texture, size))
+                .corner_radius(CornerRadius::same(8))
+                .paint_at(ui, at);
+            ui.painter().rect_stroke(
+                at,
+                CornerRadius::same(8),
+                egui::Stroke::new(1.0, palette.outline),
+                egui::StrokeKind::Outside,
+            );
+        }
+
+        // Bottom control bar (overlay)
+        let bar_height = 36.0;
+        let bar_rect = Rect::from_min_size(
+            egui::pos2(area.left(), area.bottom() - bar_height),
+            vec2(area.width(), bar_height),
+        );
+        ui.painter()
+            .rect_filled(bar_rect, 0.0, Color32::from_black_alpha(170));
+
+        let mut bar_ui = ui.new_child(egui::UiBuilder::new().max_rect(bar_rect));
+        bar_ui.horizontal_centered(|ui| {
+            ui.add_space(8.0);
+            let mic_icon = if call.muted { Icon::MicOff } else { Icon::Mic };
+            let mic_tip = if call.muted {
+                gettext(locale, "Unmute")
+            } else {
+                gettext(locale, "Mute")
+            };
+            let mic_tint = if call.muted {
+                palette.danger
+            } else {
+                Color32::WHITE
+            };
+            if theme::icon_button(ui, mic_icon, 14.0, mic_tint, Color32::LIGHT_GRAY, &mic_tip)
+                .clicked()
+            {
+                actions.push(Action::SetCallMuted(!call.muted));
+            }
+
+            if call.video {
+                ui.add_space(4.0);
+                let cam_icon = if call.camera_on {
+                    Icon::Video
+                } else {
+                    Icon::VideoOff
+                };
+                let cam_tip = if call.camera_on {
+                    gettext(locale, "Turn camera off")
+                } else {
+                    gettext(locale, "Turn camera on")
+                };
+                let cam_tint = if !call.camera_on {
+                    palette.danger
+                } else {
+                    Color32::WHITE
+                };
+                if theme::icon_button(ui, cam_icon, 14.0, cam_tint, Color32::LIGHT_GRAY, &cam_tip)
+                    .clicked()
+                {
+                    actions.push(Action::SetCallCamera(!call.camera_on));
+                }
+            }
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(8.0);
+                let hangup_tip = gettext(locale, "Hang up");
+                if theme::icon_button(
+                    ui,
+                    Icon::PhoneOff,
+                    15.0,
+                    palette.danger,
+                    Color32::from_rgb(255, 120, 120),
+                    &hangup_tip,
+                )
+                .clicked()
+                {
+                    actions.push(Action::HangupCall);
+                }
+
+                ui.add_space(4.0);
+                let expand_tip = gettext(locale, "Return to the call");
+                if theme::icon_button(
+                    ui,
+                    Icon::Maximize,
+                    14.0,
+                    Color32::WHITE,
+                    Color32::LIGHT_GRAY,
+                    &expand_tip,
+                )
+                .clicked()
+                {
+                    actions.push(Action::ReturnToCall);
+                }
+            });
+        });
+    });
+
+    app.call_local_texture = local_texture;
+    app.call_remote_texture = remote_texture;
+
+    if close_pip {
+        actions.push(Action::ReturnToCall);
+    }
+
+    for action in actions {
+        app.actions.push(action);
     }
 }
 

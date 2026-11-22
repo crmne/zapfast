@@ -871,6 +871,8 @@ pub struct App {
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
     pub call_fullscreen: bool,
+    /// Whether the call is popped out into a floating Picture-in-Picture window.
+    pub call_pip: bool,
     /// The incoming call the desktop was told about, so its notification can
     /// be taken back once it is answered or given up.
     call_notified: Option<u64>,
@@ -1764,6 +1766,7 @@ impl App {
             call_devices_open: false,
             call_surface_hidden: false,
             call_fullscreen: false,
+            call_pip: false,
             call_notified: None,
             call_rings: None,
             call_answering: None,
@@ -2203,6 +2206,7 @@ impl App {
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
+        self.call_pip = false;
         // Wayland's clipboard belongs to the client that made the selection,
         // and this one stops answering for it with its window: eframe keeps
         // the event loop for the next window without dispatching it, so other
@@ -7520,7 +7524,8 @@ impl App {
             | Action::SetCallCameraDevice(_)
             | Action::LeaveCallSurface
             | Action::ReturnToCall
-            | Action::ToggleCallFullscreen => {}
+            | Action::ToggleCallFullscreen
+            | Action::ToggleCallPip => {}
             Action::PickCall { chat, message } => {
                 self.new_call = false;
                 self.picked_call = Some((chat.clone(), message.clone()));

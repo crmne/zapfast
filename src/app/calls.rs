@@ -223,6 +223,7 @@ impl App {
     pub(super) fn hide_private_call(&mut self) {
         if self.call_is_private() {
             self.call_surface_hidden = true;
+            self.call_pip = false;
             // No picture lingers for the strip to lift.
             self.drop_call_frames();
         }
@@ -349,6 +350,7 @@ impl App {
                 // take down or say farewell to.
                 self.call = None;
                 self.call_account = None;
+                self.call_pip = false;
                 return;
             }
             self.call_surface_until = Some(Instant::now() + CALL_FAREWELL);
@@ -359,8 +361,10 @@ impl App {
         } else {
             self.call_surface_until = None;
             // A call that has just begun takes the screen, unless its chat is
-            // locked: then it waits in the bar under the folder's name.
-            if !was_live {
+            // locked: then it waits in the bar under the folder's name. An
+            // incoming call replacing a detached call brings the ringing screen back.
+            if !was_live || ringing {
+                self.call_pip = false;
                 self.call_surface_hidden = self.call_is_private();
             }
         }
@@ -648,6 +652,7 @@ impl App {
             self.call_surface_until = None;
             self.call = None;
             self.call_account = None;
+            self.call_pip = false;
             self.drop_call_frames();
         }
         if let Some(placed) = self.call_placed
@@ -729,6 +734,7 @@ impl App {
             Action::ReturnToCall if self.call.is_some() => {
                 if !self.call_is_private() {
                     self.call_surface_hidden = false;
+                    self.call_pip = false;
                 } else if self.call_account.as_ref() == Some(&self.account().id) {
                     self.apply(Action::OpenLockedFolder, ctx);
                 }
@@ -738,6 +744,21 @@ impl App {
                 if self.call.is_some() {
                     let fullscreen = !self.call_fullscreen;
                     self.set_call_fullscreen(ctx, fullscreen);
+                }
+            }
+            Action::ToggleCallPip => {
+                if self.call.is_some() {
+                    if self.call_is_private() {
+                        if self.call_account.as_ref() == Some(&self.account().id) {
+                            self.apply(Action::OpenLockedFolder, ctx);
+                        }
+                        return None;
+                    }
+                    self.call_pip = !self.call_pip;
+                    self.call_surface_hidden = self.call_pip;
+                    if self.call_pip && self.call_fullscreen {
+                        self.set_call_fullscreen(ctx, false);
+                    }
                 }
             }
             other => return Some(other),
@@ -751,6 +772,7 @@ impl App {
         if self.call_account.as_ref() == Some(account) {
             self.call = None;
             self.call_account = None;
+            self.call_pip = false;
             self.call_surface_until = None;
             self.call_rings = None;
             self.call_cancel = None;
@@ -919,6 +941,56 @@ mod tests {
                 .any(|command| matches!(command, Command::HangupCall)),
             "the hang-up button does"
         );
+    }
+
+    #[test]
+    fn pip_detaches_call_surface_and_returns_cleanly() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.handle_call_update(update(1, CallPhase::Active));
+        assert!(!app.call_pip);
+        assert!(!app.call_surface_hidden);
+
+        // Entering full screen then toggling PiP leaves full screen and enables PiP
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(app.call_fullscreen);
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(app.call_pip);
+        assert!(app.call_surface_hidden);
+        assert!(!app.call_fullscreen);
+
+        // Toggling again restores the surface
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(!app.call_pip);
+        assert!(!app.call_surface_hidden);
+
+        // PiP then returning to call restores the surface
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(app.call_pip);
+        assert!(app.call_surface_hidden);
+        app.apply(Action::ReturnToCall, &ctx);
+        assert!(!app.call_pip);
+        assert!(!app.call_surface_hidden);
+
+        // Locked chat protection: PiP refuses to detach while locked, prompts for unlock
+        app.chats[0].locked = true;
+        app.settings.set_chat_lock_code(Some("pass"));
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(!app.call_pip);
+        assert_eq!(app.dialog, Some(Dialog::UnlockLockedChats));
+        app.apply(Action::UnlockLockedFolder("pass".into()), &ctx);
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(app.call_pip);
+        // Closing the locked folder dismisses PiP
+        app.close_locked_folder();
+        assert!(!app.call_pip);
+        assert!(app.call_surface_hidden);
+
+        // Toggling PiP without a call is a no-op
+        app.call = None;
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(!app.call_pip);
     }
 
     #[test]
@@ -1455,13 +1527,51 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, mut commands) = app(directory.path());
         let (generation, _) = press_call(&mut app, &mut commands, false);
+        app.call_pip = true;
+        app.call_surface_hidden = true;
         // The offer reached the worker first, under an older generation (no
         // call is ever given generation 0).
         app.handle_call_update(update(0, CallPhase::Incoming));
         assert_eq!(app.call.as_ref().unwrap().phase, CallPhase::Incoming);
+        assert!(
+            !app.call_pip,
+            "incoming call restores main surface from PiP"
+        );
+        assert!(!app.call_surface_hidden);
         // The worker refuses the placing call as busy; that is not drawn.
         app.handle_call_update(outgoing(generation, CallPhase::Placing).not_placed());
         assert_eq!(app.call.as_ref().unwrap().phase, CallPhase::Incoming);
+
+        // A user putting the ringing call in PiP is preserved across same-generation updates
+        let ctx = egui::Context::default();
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(app.call_pip);
+        assert!(app.call_surface_hidden);
+        app.handle_call_update(update(0, CallPhase::Incoming));
+        assert!(
+            app.call_pip,
+            "subsequent update for same call preserves PiP"
+        );
+        assert!(app.call_surface_hidden);
+
+        // A newly ringing call under a different generation restores the main surface
+        app.handle_call_update(update(2, CallPhase::Incoming));
+        assert!(!app.call_pip, "different incoming call resets PiP");
+        assert!(!app.call_surface_hidden);
+
+        // A user putting the ringing call in PiP is preserved across same-generation updates
+        let ctx = egui::Context::default();
+        app.apply(Action::ToggleCallPip, &ctx);
+        assert!(app.call_pip);
+        assert!(app.call_surface_hidden);
+        app.handle_call_update(update(0, CallPhase::Incoming));
+        assert!(app.call_pip, "subsequent update for same call preserves PiP");
+        assert!(app.call_surface_hidden);
+
+        // A newly ringing call under a different generation restores the main surface
+        app.handle_call_update(update(2, CallPhase::Incoming));
+        assert!(!app.call_pip, "different incoming call resets PiP");
+        assert!(!app.call_surface_hidden);
     }
 
     #[test]
