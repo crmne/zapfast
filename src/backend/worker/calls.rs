@@ -1194,7 +1194,7 @@ impl Worker {
             caller: None,
             call_id: call.call_id.clone(),
             from_me: false,
-            timestamp: call.timestamp.timestamp(),
+            timestamp: call.timestamp.as_secs(),
             video: false,
             status: calls::CallOutcome::Missed,
             duration: 0,
