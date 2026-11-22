@@ -624,9 +624,9 @@ microphone (by at most the same amount voice messages are raised), but it never
 changes your system's microphone volume. With headphones there is no echo to
 take out and your voice goes out as it is; there is nothing to switch.
 The other side's voice is evened out before the speaker plays it: a quiet one is
-raised (by at most 15 dB) and a loud one is held below full scale so it never
-clips. This only changes what you hear; your microphone and what is sent stay
-as they are.
+raised by at most 18 dB (up to 15 dB that adapts to the voice, plus 3 dB
+fixed), and a loud one is held below full scale so it never clips. This only
+changes what you hear; your microphone and what is sent stay as they are.
 
 ### Group calls
 
