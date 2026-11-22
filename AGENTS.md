@@ -98,8 +98,8 @@ protocol. These notes are for coding agents and new contributors.
   the open chat beside its history (`App::chat_view`), and a picked call row
   opens its chat there. Our avatar opens the account switcher
   (`src/ui/accounts.rs`): only the accounts (picture with the account's
-  `badge_mark`, name or number, a check on the one on screen) and Add account. A dot on the avatar
-  means another account has unread chats. Events from an account that is not on screen are
+  `badge_mark`, name or number, a check on the one on screen) and Add account. With several accounts the avatar
+  carries the sum of their badges (`App::badge_mark_everywhere`). Events from an account that is not on screen are
   applied with `App::events_hidden` set: they update that account only, never
   the window's composer, dialogs, playback, or read state (a hidden account's
   remembered chat is not being read, so it sends no receipts). Process-wide

@@ -25,8 +25,9 @@ pub fn button_id() -> egui::Id {
     egui::Id::new("account-switcher")
 }
 
-/// Our avatar as the switcher's button. A dot on it says another account has
-/// unread chats.
+/// Our avatar as the switcher's button. With several accounts it carries the
+/// sum of their badges, the app icon's own: a number for unread messages, else
+/// a dot.
 pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Response {
     let palette = app.palette;
     let me = app.me.clone().unwrap_or_default();
@@ -40,12 +41,16 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
         .inner;
     #[cfg(any(test, feature = "demo"))]
     super::focus::name_button(ui.ctx(), &label, response.id);
-    let elsewhere = app.unread_chat_count_elsewhere();
-    if elsewhere > 0 {
+    let mark = if app.has_several_accounts() {
+        app.badge_mark_everywhere()
+    } else {
+        crate::notify::BadgeMark::default()
+    };
+    if mark.count > 0 || mark.dot {
         // Ringed in the panel colour so it reads on any picture.
         let at = response.rect.right_top() + vec2(-3.0, 3.0);
-        ui.painter().circle_filled(at, 6.0, palette.panel);
-        ui.painter().circle_filled(at, 4.5, palette.accent);
+        ui.painter().circle_filled(at, 7.0, palette.panel);
+        widgets::unread_indicator(ui, &palette, at, mark.count, mark.dot, false);
     }
     let tooltip = match (&app.me_about, app.has_several_accounts()) {
         (_, true) => app.account().display_label(app.locale),

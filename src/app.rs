@@ -1864,17 +1864,6 @@ impl App {
             )
     }
 
-    /// Unread chats in the accounts that are not on screen and not muted, for
-    /// the mark on the account switcher.
-    pub fn unread_chat_count_elsewhere(&self) -> u32 {
-        self.accounts
-            .iter()
-            .enumerate()
-            .filter(|(index, account)| *index != self.active && account.settings.notifications)
-            .map(|(_, account)| account.unread_chat_count())
-            .fold(0, u32::saturating_add)
-    }
-
     fn save_roster(&mut self) {
         self.roster.active = self.account().id.0.clone();
         self.roster.order = self
@@ -15137,7 +15126,7 @@ mod tests {
     }
 
     #[test]
-    fn the_taskbar_counts_every_account_and_the_switcher_the_others() {
+    fn the_taskbar_counts_every_account_and_the_switcher_their_sum() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _commands) = two_accounts(directory.path());
         let mut mine = Chat::new("15550004444@s.whatsapp.net".into(), "Ada".into());
@@ -15150,12 +15139,13 @@ mod tests {
         }
         assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chat_count_everywhere(), 3);
-        assert_eq!(app.unread_chat_count_elsewhere(), 2);
+        // The switcher's avatar sums every account's badge: 1 + 3 + 3.
+        assert_eq!(app.badge_mark_everywhere().count, 7);
 
         // A muted account counts toward neither, as a muted chat does not.
         app.accounts[1].settings.notifications = false;
         assert_eq!(app.unread_chat_count_everywhere(), 1);
-        assert_eq!(app.unread_chat_count_elsewhere(), 0);
+        assert_eq!(app.badge_mark_everywhere().count, 1);
         app.accounts[0].settings.notifications = false;
         assert_eq!(app.unread_chat_count_everywhere(), 0);
     }
