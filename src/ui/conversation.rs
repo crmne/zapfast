@@ -2260,8 +2260,8 @@ fn composer_pill(palette: &Palette) -> Frame {
         })
 }
 
-/// The plus menu beside the composer: send files, documents or a location,
-/// or create a poll.
+/// The plus menu beside the composer: send files, documents, a photo from the
+/// camera or a location, or create a poll.
 fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
     let id = plus.id.with("composer-tools");
     let mut open = app.composer_tools_open;
@@ -2290,6 +2290,11 @@ fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
                 let document = crate::i18n::gettext(app.locale, "Send as document");
                 if widgets::menu_item(ui, &app.palette, Some(Icon::FileText), &document) {
                     app.actions.push(Action::Attach { documents: true });
+                }
+                let take_photo = crate::i18n::gettext(app.locale, "Take photo");
+                if widgets::menu_item(ui, &app.palette, Some(Icon::Camera), &take_photo) {
+                    app.actions
+                        .push(Action::ShowDialog(Dialog::TakePhoto(chat.id.clone())));
                 }
                 let send_location = crate::i18n::gettext(app.locale, "Send location");
                 if widgets::menu_item(ui, &app.palette, Some(Icon::MapPin), &send_location) {

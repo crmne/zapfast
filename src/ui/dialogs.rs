@@ -12,6 +12,10 @@ pub(crate) fn modal_id() -> egui::Id {
 }
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    // The camera runs only while its dialog is on screen, however the dialog went away.
+    if !matches!(app.dialog, Some(Dialog::TakePhoto(_))) {
+        app.viewfinder = None;
+    }
     let Some(dialog) = app.dialog.clone() else {
         return;
     };
@@ -66,6 +70,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
                 Dialog::CreatePoll(_) => 420.0,
                 Dialog::SendLocation(_) => 420.0,
+                Dialog::TakePhoto(_) => {
+                    560.0_f32.min((ui.ctx().content_rect().width() - 48.0).max(180.0))
+                }
                 Dialog::PollResults { .. }
                 | Dialog::InteractiveList { .. }
                 | Dialog::MessageInfo { .. } => {
@@ -79,6 +86,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             match dialog {
                 Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
                 Dialog::SendLocation(chat) => super::locations::send(app, ui, &chat),
+                Dialog::TakePhoto(chat) => super::take_photo::show(app, ui, &chat),
                 Dialog::PollResults { chat, message } => {
                     super::polls::results(app, ui, &chat, &message)
                 }

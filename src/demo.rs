@@ -1223,6 +1223,32 @@ fn animated_sticker_sample(app: &mut App) {
     app.stickers = animated.into_iter().chain(app.stickers.clone()).collect();
 }
 
+/// A synthetic camera picture for the camera dialog: a sky over a hill with a
+/// sun, drawn here so no real camera or person is ever captured.
+fn camera_sample() -> egui::ColorImage {
+    let (width, height) = (640_usize, 480_usize);
+    let mut pixels = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            let (fx, fy) = (x as f32 / width as f32, y as f32 / height as f32);
+            let hill = 0.62 + 0.08 * (fx * std::f32::consts::TAU).sin();
+            let sun = (fx - 0.72).hypot((fy - 0.28) * 0.75) < 0.08;
+            let shade = |from: u8, to: u8| {
+                let (from, to) = (f32::from(from), f32::from(to));
+                (from + (to - from) * fy).round() as u8
+            };
+            pixels.push(if sun {
+                egui::Color32::from_rgb(255, 214, 102)
+            } else if fy > hill {
+                egui::Color32::from_rgb(shade(70, 30), shade(150, 95), shade(80, 50))
+            } else {
+                egui::Color32::from_rgb(shade(90, 190), shade(150, 220), shade(230, 245))
+            });
+        }
+    }
+    egui::ColorImage::new([width, height], pixels)
+}
+
 /// Applies the UI state selected by `--demo-page`.
 fn interactive_sample(app: &mut App, with_image: bool) {
     use crate::model::{InteractiveButton, InteractiveCard};
@@ -2929,6 +2955,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "location" => {
                 app.dialog = app.open_chat.clone().map(Dialog::SendLocation);
                 app.location_draft = "-23.5505, -46.6333".into();
+            }
+            // The camera dialog, showing a synthetic picture instead of a camera.
+            "camera" => {
+                app.dialog = app.open_chat.clone().map(Dialog::TakePhoto);
+                app.viewfinder = Some(crate::viewfinder::Viewfinder::still(camera_sample()));
             }
             "shortcuts" => app.dialog = Some(Dialog::Shortcuts),
             "about" => app.dialog = Some(Dialog::About),
@@ -22980,6 +23011,7 @@ mod tests {
             "new-group",
             "new-group-name",
             "location",
+            "camera",
         ] {
             let mut app = app();
             apply_flags(&mut app, Some(page));

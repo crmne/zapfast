@@ -28,6 +28,7 @@ pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod settings;
+mod take_photo;
 pub mod update;
 mod voice_bar;
 pub mod widgets;

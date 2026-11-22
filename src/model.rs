@@ -2534,6 +2534,8 @@ pub enum Dialog {
     CreatePoll(ChatId),
     /// Picks the spot to send, from coordinates or a map link.
     SendLocation(ChatId),
+    /// Takes a photo with the camera for the chat's composer.
+    TakePhoto(ChatId),
     PollResults {
         chat: ChatId,
         message: String,

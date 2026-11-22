@@ -301,6 +301,14 @@ instead. The files you select there go as documents with their own name and
 bytes, pictures included, and show as files in the review area until you send
 them.
 
+To send a photo taken right now, choose **Take photo** in the plus menu. A
+window shows your first camera, mirrored as a mirror shows you; the photo itself
+is not. Select **Take photo** in that window and the photo waits in the review
+area like a pasted picture, ready for a caption or an edit before you send it.
+The camera turns off when the window closes. If the camera is missing, busy in
+another app or a call, or not allowed (macOS asks the first time), the window
+says so.
+
 Videos go as playable video messages only when they are MP4. WhatsApp does
 not deliver a video message in another format, and ZapFast does not convert
 videos, so a QuickTime `.mov`, WebM, MKV, or AVI file goes as a document

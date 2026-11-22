@@ -62,5 +62,6 @@ pub mod updates;
 pub mod util;
 pub mod video;
 pub mod video_rate;
+pub mod viewfinder;
 pub mod voice;
 pub mod wallpaper;

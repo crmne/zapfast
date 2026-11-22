@@ -749,6 +749,8 @@ pub struct App {
 
     pub page: Page,
     pub dialog: Option<Dialog>,
+    /// The camera behind the Take photo dialog, while it is on screen.
+    pub viewfinder: Option<crate::viewfinder::Viewfinder>,
     /// Places visited in this window, for the mouse's back and forward
     /// buttons. Cleared when the account on screen changes.
     nav_history: History,
@@ -1709,6 +1711,7 @@ impl App {
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
             dialog: None,
+            viewfinder: None,
             nav_history: History::default(),
             forward_search: String::new(),
             forward_recipients: Vec::new(),
@@ -2871,6 +2874,7 @@ impl App {
             Some(
                 Dialog::CreatePoll(chat)
                     | Dialog::SendLocation(chat)
+                    | Dialog::TakePhoto(chat)
                     | Dialog::ConfirmDeleteChat(chat)
                     | Dialog::ConfirmClearChat(chat)
             ) if chat == id
@@ -9173,6 +9177,8 @@ impl App {
                 }
                 self.cancel_contact_dialog_request();
                 self.clear_chat_lock_entry();
+                // Lets the camera go at once rather than at the next frame.
+                self.viewfinder = None;
                 self.dialog = if matches!(
                     self.dialog,
                     Some(Dialog::ConfirmBlock {
@@ -21315,6 +21321,49 @@ mod tests {
         app.handle_events();
         assert_eq!(app.dialog, Some(Dialog::SendLocation(chat.into())));
         assert_eq!(app.location_draft, "-23.55050, -46.63330");
+    }
+
+    /// The shutter closes the dialog, lets the camera go, and leaves the photo
+    /// in the composer for a caption, as a pasted picture.
+    #[test]
+    fn a_photo_taken_lets_the_camera_go_and_waits_in_the_composer() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.dialog = Some(Dialog::TakePhoto(chat.into()));
+        app.viewfinder = Some(crate::viewfinder::Viewfinder::still(egui::ColorImage::new(
+            [2, 2],
+            vec![egui::Color32::RED; 4],
+        )));
+        let (width, height, rgba) = app
+            .viewfinder
+            .as_ref()
+            .and_then(crate::viewfinder::Viewfinder::shot)
+            .expect("the camera has a picture");
+        let ctx = egui::Context::default();
+        app.apply(Action::CloseDialog, &ctx);
+        app.apply(
+            Action::PasteImage {
+                width,
+                height,
+                rgba,
+            },
+            &ctx,
+        );
+        assert_eq!(app.dialog, None);
+        assert!(app.viewfinder.is_none(), "the camera is let go");
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Staged {
+                item: Pending::Picture {
+                    width: 2,
+                    height: 2,
+                    ..
+                },
+                ..
+            }]
+        ));
     }
 
     /// A refusal that arrives late never replaces a dialog opened since, and
