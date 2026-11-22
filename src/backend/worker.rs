@@ -61,6 +61,7 @@ mod poll_history;
 mod polls;
 mod prefetch;
 mod star_recovery;
+mod statuses;
 mod sticker_pace;
 mod stickers;
 #[cfg(test)]
@@ -984,6 +985,7 @@ pub async fn run(
                 .set_meta(star_recovery::STARS_RECOVERED, "complete")
                 .is_ok());
     let mut worker = Worker {
+        status_posts: Default::default(),
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
         privacy_snapshot,
@@ -1203,6 +1205,7 @@ pub async fn run(
                 worker.emit_chats();
             }
             _ = tick.tick() => {
+                worker.expire_statuses();
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -1257,6 +1260,51 @@ impl Worker {
     /// Handles one event from the protocol runtime.
     async fn runtime_event(&mut self, event: RuntimeEvent) {
         match event {
+            RuntimeEvent::StatusMedia {
+                sender,
+                id,
+                token,
+                result,
+            } => self.status_media_ready(&sender, &id, token, result),
+            RuntimeEvent::StatusPublished {
+                token,
+                recipients,
+                privacy,
+                result,
+            } => self.status_published(token, recipients, privacy, result),
+            RuntimeEvent::StatusDeleted {
+                session,
+                id,
+                result,
+            } => {
+                if session == self.account_session {
+                    self.status_deleted(id, result);
+                }
+            }
+            RuntimeEvent::StatusStickerPrepared {
+                session,
+                sender,
+                id,
+                result,
+            } => {
+                if session == self.account_session {
+                    self.status_sticker_ready(sender, id, result);
+                }
+            }
+            RuntimeEvent::StatusReplySent {
+                session,
+                sender,
+                id,
+                text,
+                reaction,
+                outgoing,
+                result,
+            } => {
+                if session == self.account_session {
+                    self.status_reply_sent(sender, id, text, reaction, outgoing, result)
+                        .await;
+                }
+            }
             RuntimeEvent::WhatsApp { session, event } => {
                 self.whatsapp_event(session, event).await;
             }
@@ -1297,6 +1345,44 @@ const EVENT_BATCH: usize = 500;
 const EVENT_BATCH_TIME: Duration = Duration::from_millis(250);
 
 enum RuntimeEvent {
+    StatusStickerPrepared {
+        session: u64,
+        sender: String,
+        id: String,
+        result: Result<(Box<Message>, Vec<u8>), String>,
+    },
+    StatusReplySent {
+        session: u64,
+        sender: String,
+        id: String,
+        text: String,
+        reaction: bool,
+        outgoing: Option<String>,
+        result: Result<whatsapp_rust::send::SendResult, String>,
+    },
+    StatusDeleted {
+        session: u64,
+        id: String,
+        result: Result<(), String>,
+    },
+    StatusPublished {
+        token: u64,
+        recipients: Vec<Jid>,
+        privacy: whatsapp_rust::StatusPrivacySetting,
+        result: Result<
+            (
+                whatsapp_rust::send::SendResult,
+                Option<(PathBuf, tempfile::TempDir)>,
+            ),
+            String,
+        >,
+    },
+    StatusMedia {
+        sender: String,
+        id: String,
+        token: u64,
+        result: Result<(PathBuf, tempfile::TempDir), String>,
+    },
     /// A callback from a connection's event handler, under the session that
     /// started it.
     WhatsApp {
@@ -1488,6 +1574,7 @@ enum AwaitingAck {
 }
 
 struct Worker {
+    status_posts: statuses::Posts,
     /// Private content may reach the UI.
     privacy_ready: bool,
     /// Phone lock state is known to be mirrored in the archive.
@@ -1789,6 +1876,7 @@ struct ParsedHistory {
     lids: Vec<(String, String)>,
     /// Recent phone stickers included with history sync.
     stickers: Vec<wa::StickerMetadata>,
+    statuses: Vec<wa::WebMessageInfo>,
 }
 
 /// A phone-history request waiting for its chunk.
@@ -2021,6 +2109,11 @@ impl Worker {
                 event,
                 Event::Blocklist { .. }
                     | Event::BlocklistMapped { .. }
+                    | Event::StatusViews { .. }
+                    | Event::StatusLocalState { .. }
+                    | Event::StatusDeletable(_)
+                    | Event::StatusAudiences(_)
+                    | Event::Statuses(_)
                     | Event::Chats(_)
                     | Event::Drafts(_)
                     | Event::ChatHits { .. }
@@ -2603,6 +2696,8 @@ impl Worker {
         }
         self.emit(Event::LinkPreviewsDisabled(self.link_previews_disabled));
         self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
+        self.load_status_audiences();
+        self.restore_statuses();
         self.emit_chats();
     }
 
@@ -3471,6 +3566,7 @@ impl Worker {
         }
         self.privacy_ready = true;
         self.load_state();
+        self.emit_statuses();
         self.publish_blocklist(None);
         self.emit(Event::Syncing(self.syncing));
         // A call that was withheld while the locks were unknown is re-sent now that they are: the
@@ -3564,6 +3660,17 @@ impl Worker {
             self.settle_early_receipts(&chat, &id);
         }
         let mapped = self.canonical_str(&lid_chat);
+        if self
+            .archive
+            .remap_status_identity(&lid_chat, &mapped)
+            .is_err()
+        {
+            log::warn!("could not remap saved status updates");
+        }
+        if self.status_posts.remap(&lid_chat, &mapped) {
+            self.prune_status_media();
+            self.emit_statuses();
+        }
         for id in self.early.rekey(&lid_chat, &mapped) {
             if matches!(self.archive.message(&mapped, &id), Ok(Some(_))) {
                 self.settle_early_events(&mapped, &id);
@@ -4192,6 +4299,7 @@ impl Worker {
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
                 self.fetch_blocklist();
+                self.load_status_audiences();
                 self.retry_message_removals();
                 // A new connection may reach a phone that was away before.
                 self.older_warned.clear();
@@ -4829,6 +4937,7 @@ impl Worker {
         self.privacy_warned = false;
         self.privacy_recovering = false;
         self.privacy_retry = Instant::now();
+        self.status_posts.clear();
         self.set_status(LinkStatus::LoggedOut);
         // Recreate the store so the next connection starts linking.
         self.start_bot().await;
@@ -4871,6 +4980,10 @@ impl Worker {
 
     fn on_receipt(&mut self, receipt: &wa_events::Receipt) {
         self.learn_source(&receipt.source);
+        if receipt.source.chat.is_status_broadcast() {
+            self.status_receipt(receipt);
+            return;
+        }
         let chat = self.canonical(&receipt.source.chat);
         log::debug!(
             "receipt {:?} from {} (chat {chat}, from me: {}, offline: {}) for {:?}",
@@ -5166,6 +5279,7 @@ impl Worker {
     fn ingest(&mut self, message: &Arc<wa::Message>, info: &MessageInfo) {
         self.learn_source(&info.source);
         if info.source.chat.is_status_broadcast() {
+            self.ingest_status(message, info);
             return;
         }
         let Some(chat) = self.message_chat(info) else {
@@ -6838,6 +6952,9 @@ impl Worker {
         for (id, _, _) in &filed {
             self.emit_chat(id);
         }
+        // After the chats: a contact this chunk locks must reach the window
+        // locked before any of their updates do.
+        self.ingest_status_history(parsed.statuses);
         for chat in media_changed_in {
             self.emit(Event::ChatSharedChanged(chat));
         }
@@ -9013,6 +9130,42 @@ impl Worker {
                 self.stop_bot().await;
                 self.start_bot().await;
             }
+            Command::MarkStatusSeen { sender, id } => self.mark_status_seen(sender, id),
+            Command::PickStatusMedia { token } => self.pick_status_media(token),
+            Command::DeleteStatus(id) => self.delete_status(id),
+            Command::SaveStatusAudience(audience) => {
+                let result = self.save_status_audience(audience);
+                self.emit(Event::StatusAudienceSaved(result));
+            }
+            Command::RenderStatusPhoto {
+                target,
+                revision,
+                path,
+                scene,
+                apply,
+            } => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                let dir = self.dirs.media_cache_dir().join("edited");
+                tokio::task::spawn_blocking(move || {
+                    let event = crate::backend::render_status_photo(
+                        target, revision, &path, &scene, apply, &dir,
+                    );
+                    let _ = events.send(event);
+                    waker.wake();
+                });
+            }
+            Command::PublishStatus { draft, audience } => self.publish_status(draft, audience),
+            Command::ReplyStatusSticker { sender, id, path } => {
+                self.reply_status_sticker(sender, id, path)
+            }
+            Command::ReplyStatus {
+                sender,
+                id,
+                text,
+                reaction,
+            } => self.reply_status(sender, id, text, reaction),
+            Command::DownloadStatus { sender, id } => self.download_status(&sender, &id),
             Command::Shutdown => {}
             Command::OlderSent {
                 chat,
@@ -14300,13 +14453,23 @@ pub(super) async fn file_outbound(
 fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
     let mut stream = HistorySyncStream::new(compressed, MAX_DECOMPRESSED);
     let mut chats = Vec::new();
+    let mut statuses = Vec::new();
     loop {
         let conversation = match stream.next_conversation() {
             Ok(Some(conversation)) => conversation,
             Ok(None) => break,
             Err(error) => return Err(error.to_string()),
         };
-        chats.push(parse_conversation(conversation));
+        if conversation.id == "status@broadcast" {
+            statuses.extend(
+                conversation
+                    .messages
+                    .iter()
+                    .filter_map(|entry| entry.message.as_option().cloned()),
+            );
+        } else {
+            chats.push(parse_conversation(conversation));
+        }
     }
     let remainder = stream.remainder().map_err(|error| error.to_string())?;
     let push_names = remainder
@@ -14319,11 +14482,13 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
         .iter()
         .filter_map(|entry| Some((entry.lid_jid.clone()?, entry.pn_jid.clone()?)))
         .collect();
+    statuses.extend(remainder.status_v3_messages);
     Ok(ParsedHistory {
         chats,
         push_names,
         lids,
         stickers: remainder.recent_stickers,
+        statuses,
     })
 }
 
@@ -16629,6 +16794,7 @@ mod tests {
                     push_names: Vec::new(),
                     lids: Vec::new(),
                     stickers: Vec::new(),
+                    statuses: Vec::new(),
                 },
                 true,
             );
@@ -20366,6 +20532,7 @@ mod receipt_tests {
         let root =
             std::env::temp_dir().join(format!("zapfast-worker-test-{}-{n}", std::process::id()));
         let worker = Worker {
+            status_posts: Default::default(),
             privacy_ready: true,
             privacy_confirmed: true,
             privacy_snapshot: false,
@@ -21017,6 +21184,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             true,
         );
@@ -21051,6 +21219,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             false,
         );
@@ -22084,6 +22253,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             false,
         );
@@ -22648,6 +22818,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             true,
         );
@@ -22716,6 +22887,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             true,
         );
@@ -22919,6 +23091,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             false,
         );
@@ -22985,6 +23158,7 @@ mod receipt_tests {
             push_names: Vec::new(),
             lids: Vec::new(),
             stickers: Vec::new(),
+            statuses: Vec::new(),
         }
     }
 
@@ -23047,6 +23221,7 @@ mod receipt_tests {
             push_names: Vec::new(),
             lids: Vec::new(),
             stickers: Vec::new(),
+            statuses: Vec::new(),
         };
         worker.apply_history(replay, true);
         let chat = worker.archive.chat(CHANNEL).unwrap().unwrap();
@@ -24901,6 +25076,7 @@ mod receipt_tests {
                 push_names: Vec::new(),
                 lids: Vec::new(),
                 stickers: Vec::new(),
+                statuses: Vec::new(),
             },
             true,
         );
@@ -26211,6 +26387,7 @@ mod chat_removal_tests {
             push_names: Vec::new(),
             lids: Vec::new(),
             stickers: Vec::new(),
+            statuses: Vec::new(),
         }
     }
 
