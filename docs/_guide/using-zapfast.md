@@ -573,7 +573,7 @@ aspect ratio, and captions sit over the image. A small blurred media preview
 fills the background. Unsupported videos use the
 system player. Closing the viewer stops playback.
 
-Selecting a media update downloads it; **Retry** retries a failed download.
+Selecting a media update downloads it; **Retry** retries a failed download, including one opened before ZapFast connected.
 Each attachment is limited to 16 MiB, including unknown lengths. The
 viewer retains up to 1,024 updates per account, prioritizing your own posts.
 Updates and their local viewed state are stored separately from chats in the
@@ -590,7 +590,9 @@ fetch them later.
 
 Viewing does not send a view receipt, mark its author's chat as read, or
 create a notification. Blocked contacts and updates from locked chats stay
-hidden. **More options > Hide updates from this contact** hides that contact's
+hidden. Other people's updates appear once your blocklist has loaded after
+connecting, so someone blocked since their update was saved never shows; your
+own updates show straight away. **More options > Hide updates from this contact** hides that contact's
 updates for this session; **Show hidden updates** restores them.
 
 **Publishing.** Choose **My status**, the plus button, **Text status**, or
@@ -635,7 +637,10 @@ requires confirmation and the original recipient list captured when this app
 published the update. Posts received from another device without that audience
 cannot be deleted here. A timeout keeps the update visible until confirmed.
 
-**Replies and reactions.** Type in the reply field, open its emoji or sticker
+**Replies and reactions.** They follow your read receipts: with read receipts
+turned off in WhatsApp's privacy settings, the reply field, stickers and
+reactions are not offered, since replying would show that you saw the update.
+Type in the reply field, open its emoji or sticker
 panel, or choose an emoji from the heart menu. The sticker panel reuses your
 recent, favorite, received and locally installed stickers. Selecting a sticker
 replies to the Status author and keeps any typed text. Sticker animations play

@@ -35,6 +35,9 @@ impl Audience {
     }
 }
 
+/// The most characters a Status text or caption may have, as WhatsApp allows.
+pub const TEXT_LIMIT: usize = 700;
+
 /// Independent remembered selections, stored inside this account's encrypted archive.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

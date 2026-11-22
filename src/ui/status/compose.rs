@@ -239,7 +239,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
                                             .hint_text(gettext(locale, "Add a caption"))
                                             .frame(Frame::NONE)
                                             .desired_width(width)
-                                            .char_limit(700),
+                                            .char_limit(crate::status::TEXT_LIMIT),
                                     );
                                 }
                                 emoji_menu(app, ui);
@@ -290,7 +290,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
                                             as usize),
                                 )
                                 .horizontal_align(Align::Center)
-                                .char_limit(700),
+                                .char_limit(crate::status::TEXT_LIMIT),
                         );
                     }
                 });
@@ -320,7 +320,10 @@ fn emoji_menu(app: &mut App, ui: &mut egui::Ui) {
         if let Some(emoji) = crate::ui::picker::status_emoji(app, ui)
             && let Some(draft) = app.status_draft.as_mut().filter(|draft| !draft.busy)
         {
-            draft.text.push_str(&emoji);
+            // The field's own limit covers only what is typed into it.
+            if draft.text.chars().count() + emoji.chars().count() <= crate::status::TEXT_LIMIT {
+                draft.text.push_str(&emoji);
+            }
             ui.close();
         }
     });

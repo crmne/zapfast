@@ -260,18 +260,28 @@ fn paint_text(
     });
     let origin = at - galley.size() * 0.5;
     if boxed {
-        let rect = Rect::from_min_size(origin, galley.size()).expand(8.0);
+        // Only the part over the picture: a long text at the largest size can
+        // run far past it, and the whole box would take gigabytes.
+        let canvas = Rect::from_min_size(
+            Pos2::ZERO,
+            egui::vec2(picture.width() as f32, picture.height() as f32),
+        );
+        let rect = Rect::from_min_size(origin, galley.size())
+            .expand(8.0)
+            .intersect(canvas);
         let ink = if color.intensity() > 0.5 {
             [0, 0, 0, 210]
         } else {
             [255, 255, 255, 230]
         };
-        let background = image::RgbaImage::from_pixel(
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-            image::Rgba(ink),
-        );
-        image::imageops::overlay(picture, &background, rect.left() as i64, rect.top() as i64);
+        if rect.is_positive() {
+            let background = image::RgbaImage::from_pixel(
+                rect.width().ceil() as u32,
+                rect.height().ceil() as u32,
+                image::Rgba(ink),
+            );
+            image::imageops::overlay(picture, &background, rect.left() as i64, rect.top() as i64);
+        }
     }
     for row in &galley.rows {
         let mesh = &row.row.visuals.mesh;

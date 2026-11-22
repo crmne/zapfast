@@ -350,10 +350,20 @@ fn contacts(app: &mut App, ui: &mut egui::Ui, palette: &theme::Palette) {
                 }
             });
     });
-    let count = app
-        .status_privacy_picker
-        .as_ref()
-        .map_or(0, |audience| audience.selected.len());
+    // Count, and confirm, only the people this picker can show: a saved id
+    // since blocked or unnamed would read as included with no chip for it.
+    let eligible = |app: &App, id: &str| {
+        app.status_privacy_contacts
+            .as_ref()
+            .is_some_and(|cache| cache.ids.contains(id))
+    };
+    let count = app.status_privacy_picker.as_ref().map_or(0, |audience| {
+        audience
+            .selected
+            .iter()
+            .filter(|id| eligible(app, id))
+            .count()
+    });
     ui.add_space(8.0);
     let footer = Rect::from_min_max(
         pos2(ui.max_rect().left() - 16.0, ui.max_rect().bottom() - 32.0),
@@ -409,8 +419,11 @@ fn contacts(app: &mut App, ui: &mut egui::Ui, palette: &theme::Palette) {
             })
             .inner
             .clicked()
-            && let Some(audience) = app.status_privacy_picker.take()
+            && let Some(mut audience) = app.status_privacy_picker.take()
         {
+            if mode == AudienceMode::Only {
+                audience.selected.retain(|id| eligible(app, id));
+            }
             app.actions.push(Action::SetStatusAudience {
                 account: app.account().id.clone(),
                 audience,

@@ -99,6 +99,12 @@ impl Posts {
             let expires = self.revoked.entry((sender, id)).or_default();
             *expires = (*expires).max(until);
         }
+        // An update and its deletion filed under the two ids of one author
+        // meet only now: the deletion wins, as it would have on arrival.
+        let revoked = &self.revoked;
+        self.entries.retain(|entry| {
+            !revoked.contains_key(&(entry.item.sender.clone(), entry.item.id.clone()))
+        });
         true
     }
 
@@ -478,9 +484,15 @@ impl Worker {
         self.emit_statuses();
     }
 
+    /// Someone else's updates wait for the blocklist: until it is known, a
+    /// person blocked since their update was saved cannot be told apart.
+    fn status_author_hidden(&self, sender: &str) -> bool {
+        self.blocklist.contains(sender) || (self.blocklist.ids.is_none() && !self.is_me(sender))
+    }
+
     pub(super) fn mark_status_seen(&mut self, sender: String, id: String) {
         if !self.privacy_ready
-            || self.blocklist.contains(&sender)
+            || self.status_author_hidden(&sender)
             || !matches!(
                 self.archive.chat(&sender),
                 Ok(None) | Ok(Some(Chat { locked: false, .. }))
@@ -690,7 +702,13 @@ impl Worker {
                     .is_some_and(|name| !name.is_empty())
             })
             .map(|contact| self.canonical_str(&contact.id))
-            .filter(|id| !self.is_me(id) && !self.blocklist.contains(id));
+            .filter(|id| !self.is_me(id) && !self.blocklist.contains(id))
+            // Exclusions name phone numbers; a contact known only by privacy
+            // id cannot be shown not to be one of them.
+            .filter(|id| {
+                audience.mode != crate::status::AudienceMode::Except
+                    || Self::jid_of(id).is_some_and(|jid| !jid.is_lid())
+            });
         audience
             .recipients(contacts)
             .iter()
@@ -731,6 +749,16 @@ impl Worker {
                     ));
                     return;
                 };
+                // Deleted from the phone before this answer came back: it went
+                // out, but it must not reappear here.
+                if self
+                    .status_posts
+                    .revoked
+                    .contains_key(&(self.me(), sent.message_id.to_string()))
+                {
+                    self.emit(Event::StatusPublished(Ok(())));
+                    return;
+                }
                 let (path, directory) =
                     file.map_or((None, None), |(path, dir)| (Some(path), Some(dir)));
                 if let Some(media) = content.media_mut() {
@@ -925,7 +953,7 @@ impl Worker {
             })
         };
         if !self.privacy_ready
-            || self.blocklist.contains(&sender)
+            || self.status_author_hidden(&sender)
             || self.is_me(&sender)
             || !matches!(
                 self.archive.chat(&sender),
@@ -1080,7 +1108,7 @@ impl Worker {
             })
         };
         if !self.privacy_ready
-            || self.blocklist.contains(&sender)
+            || self.status_author_hidden(&sender)
             || self.is_me(&sender)
             || !matches!(
                 self.archive.chat(&sender),
@@ -1166,7 +1194,7 @@ impl Worker {
         result: Result<(Box<Message>, Vec<u8>), String>,
     ) {
         if !self.privacy_ready
-            || self.blocklist.contains(&sender)
+            || self.status_author_hidden(&sender)
             || self.is_me(&sender)
             || !matches!(
                 self.archive.chat(&sender),
@@ -1178,6 +1206,9 @@ impl Worker {
                     && entry.item.alive(crate::util::now())
             })
         {
+            if let Ok((row, _)) = &result {
+                discard_staged_file(row);
+            }
             self.emit(Event::StatusReplied {
                 sender,
                 id,
@@ -1187,6 +1218,7 @@ impl Worker {
             });
             return;
         }
+        let staged = result.as_ref().ok().map(|(row, _)| row.clone());
         let prepared = result.and_then(|(row, raw)| {
             let mut message = wa::Message::decode_from_slice(&raw)
                 .map_err(|_| "Could not prepare the sticker reply".to_owned())?;
@@ -1212,13 +1244,18 @@ impl Worker {
                     author,
                 );
             }
-            Err(error) => self.emit(Event::StatusReplied {
-                sender,
-                id,
-                text: String::new(),
-                reaction: false,
-                result: Err(error),
-            }),
+            Err(error) => {
+                if let Some(row) = &staged {
+                    discard_staged_file(row);
+                }
+                self.emit(Event::StatusReplied {
+                    sender,
+                    id,
+                    text: String::new(),
+                    reaction: false,
+                    result: Err(error),
+                });
+            }
         }
     }
 
@@ -1233,8 +1270,10 @@ impl Worker {
     ) {
         let result = result.map(|_| ());
         if let Some(outgoing) = outgoing {
+            // The staged row follows the author if their phone number was
+            // learned while the reply was out.
             self.handle_command(Command::Sent {
-                chat: sender.clone(),
+                chat: self.canonical_str(&sender),
                 id: outgoing,
                 error: result.as_ref().err().cloned(),
             })
@@ -1430,8 +1469,7 @@ impl Worker {
 
     pub(super) fn download_status(&mut self, sender: &str, id: &str) {
         self.expire_statuses();
-        if !self.privacy_ready
-            || self.blocklist.contains(sender)
+        if self.status_author_hidden(sender)
             || !matches!(
                 self.archive.chat(sender),
                 Ok(None) | Ok(Some(Chat { locked: false, .. }))
@@ -1439,9 +1477,7 @@ impl Worker {
         {
             return;
         }
-        let Some(client) = self.connected_client() else {
-            return;
-        };
+        let client = self.connected_client().filter(|_| self.privacy_ready);
         let Some(entry) = self
             .status_posts
             .entries
@@ -1460,6 +1496,12 @@ impl Worker {
         if media.path.is_some() || matches!(media.state, MediaState::Downloading) {
             return;
         }
+        // Offline, say so and leave Retry, rather than a spinner that never ends.
+        let Some(client) = client else {
+            media.state = MediaState::Failed("Not connected to WhatsApp".into());
+            self.emit_statuses();
+            return;
+        };
         media.state = MediaState::Downloading;
         let raw = Arc::clone(&entry.raw);
         let token = entry.token;
@@ -1514,7 +1556,16 @@ impl Worker {
             Err(error) => media.state = MediaState::Failed(error),
         }
         self.save_status_record(&sender, id);
+        // Pruning waits for downloads; this may have been the last one.
+        self.prune_status_media();
         self.emit_statuses();
+    }
+}
+
+/// Removes the file a sticker reply staged when no message will own it.
+fn discard_staged_file(row: &Message) {
+    if let Some(path) = row.content.media().and_then(|media| media.path.as_ref()) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1717,6 +1768,7 @@ mod tests {
         let now = crate::util::now();
         let me = "15550009999@s.whatsapp.net";
         worker.me_pn = Some(me.into());
+        worker.blocklist.ids = Some(Default::default());
         let mut history = wa::HistorySync::default();
         history.sync_type = wa::history_sync::HistorySyncType::INITIAL_STATUS_V3;
         history.status_v3_messages = vec![
@@ -2267,5 +2319,100 @@ mod tests {
                 .path
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_deletion_under_the_other_id_removes_the_update_once_they_are_linked() {
+        let (mut worker, _events, _commands, _runtime) = super::super::receipt_tests::worker();
+        let now = crate::util::now();
+        worker.ingest(&text(), &info(AUTHOR, "one", now));
+        worker.ingest(&revoke("one"), &info("9001@lid", "delete-one", now));
+        assert_eq!(
+            worker.status_posts.entries.len(),
+            1,
+            "two ids, not yet known to be one person"
+        );
+        worker.learn_lid("9001", "15550002222");
+        assert!(worker.status_posts.entries.is_empty());
+    }
+
+    #[test]
+    fn excluding_contacts_skips_a_contact_known_only_by_privacy_id() {
+        let (mut worker, _events, _commands, _runtime) = super::super::receipt_tests::worker();
+        for id in [AUTHOR, "9002@lid"] {
+            worker.contacts.insert(
+                id.into(),
+                Contact {
+                    id: id.into(),
+                    full_name: Some("Saved contact".into()),
+                    first_name: None,
+                    push_name: None,
+                },
+            );
+        }
+        let mut audience = crate::status::Audience {
+            mode: crate::status::AudienceMode::Except,
+            selected: [OTHER.to_owned()].into(),
+        };
+        // The privacy id could be the excluded number.
+        assert_eq!(
+            worker
+                .status_recipients(&audience)
+                .iter()
+                .map(Jid::to_non_ad_string)
+                .collect::<Vec<_>>(),
+            [AUTHOR]
+        );
+        audience.mode = crate::status::AudienceMode::Only;
+        audience.selected = ["9002@lid".to_owned()].into();
+        assert_eq!(
+            worker
+                .status_recipients(&audience)
+                .iter()
+                .map(Jid::to_non_ad_string)
+                .collect::<Vec<_>>(),
+            ["9002@lid"]
+        );
+    }
+
+    #[test]
+    fn opening_media_offline_offers_retry_instead_of_waiting_forever() {
+        let (mut worker, _events, _commands, _runtime) = super::super::receipt_tests::worker();
+        worker.blocklist.ids = Some(Default::default());
+        let mut raw = wa::Message::default();
+        raw.image_message = MessageField::some(wa::message::ImageMessage::default());
+        worker.ingest(&Arc::new(raw), &info(AUTHOR, "photo", crate::util::now()));
+        worker.download_status(AUTHOR, "photo");
+        assert!(matches!(
+            worker.status_posts.entries[0]
+                .item
+                .content
+                .media()
+                .unwrap()
+                .state,
+            MediaState::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn others_media_waits_for_the_blocklist() {
+        let (mut worker, _events, _commands, _runtime) = super::super::receipt_tests::worker();
+        let mut raw = wa::Message::default();
+        raw.image_message = MessageField::some(wa::message::ImageMessage::default());
+        worker.ingest(&Arc::new(raw), &info(AUTHOR, "photo", crate::util::now()));
+        assert!(worker.blocklist.ids.is_none());
+        assert!(worker.status_author_hidden(AUTHOR));
+        worker.download_status(AUTHOR, "photo");
+        assert!(matches!(
+            worker.status_posts.entries[0]
+                .item
+                .content
+                .media()
+                .unwrap()
+                .state,
+            MediaState::Idle
+        ));
+        worker.blocklist.ids = Some(Default::default());
+        assert!(!worker.status_author_hidden(AUTHOR));
     }
 }

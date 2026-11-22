@@ -330,7 +330,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
                 draft.editor = None;
             }
         } else if app.page == Page::Status && app.status_draft.is_some() {
-            if !app.status_draft.as_ref().is_some_and(|draft| draft.busy) {
+            // A crop asked for but not yet open still owns the draft.
+            if !app.status_draft.as_ref().is_some_and(|draft| draft.busy)
+                && !app.status_picture_busy()
+            {
                 app.status_draft = None;
             }
         } else if app.page == Page::Status && app.status_selected.is_some() {

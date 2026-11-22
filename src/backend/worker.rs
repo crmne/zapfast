@@ -3668,6 +3668,7 @@ impl Worker {
             log::warn!("could not remap saved status updates");
         }
         if self.status_posts.remap(&lid_chat, &mapped) {
+            self.prune_status_media();
             self.emit_statuses();
         }
         for id in self.early.rekey(&lid_chat, &mapped) {
@@ -6529,7 +6530,6 @@ impl Worker {
             let id = self.canonical_str(id);
             self.remember_push_name(&id, name);
         }
-        self.ingest_status_history(parsed.statuses);
         for mut chat in parsed.chats {
             let id = self.canonical_str(&chat.id);
             if id.ends_with("@broadcast") {
@@ -6952,6 +6952,9 @@ impl Worker {
         for (id, _, _) in &filed {
             self.emit_chat(id);
         }
+        // After the chats: a contact this chunk locks must reach the window
+        // locked before any of their updates do.
+        self.ingest_status_history(parsed.statuses);
         for chat in media_changed_in {
             self.emit(Event::ChatSharedChanged(chat));
         }

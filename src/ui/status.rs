@@ -62,7 +62,7 @@ pub(super) fn audience_button(app: &App, ui: &mut egui::Ui) -> egui::Response {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
             ui.is_enabled(),
-            gettext(app.locale, "Status audience"),
+            format!("{}: {label}", gettext(app.locale, "Status audience")),
         )
     });
     ui.painter().rect_stroke(
@@ -452,7 +452,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("status-contacts")
         .show(ui, |ui| {
-            if rows.is_empty() {
+            if rows.is_empty() && !query.is_empty() && !authors.is_empty() {
+                Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| {
+                    ui.label(gettext(locale, "No matching contacts"));
+                });
+            } else if rows.is_empty() {
                 Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| {
                     ui.label(gettext(locale, "No status updates loaded"));
                     ui.small(gettext(
@@ -687,11 +691,14 @@ fn viewer(app: &mut App, ui: &mut egui::Ui, item: &Item) {
                 .status_playback
                 .as_ref()
                 .map_or(0.0, crate::status::Playback::fraction);
-            let segment = (header.width() - 4.0 * (posts.len().saturating_sub(1)) as f32)
-                / posts.len().max(1) as f32;
+            // The gaps shrink as an author's posts grow, so the tracks always
+            // fit the header and never turn negative.
+            let count = posts.len().max(1) as f32;
+            let gap = (header.width() / count * 0.25).min(4.0);
+            let segment = ((header.width() - gap * (count - 1.0)) / count).max(0.0);
             for i in 0..posts.len() {
                 let track = Rect::from_min_size(
-                    pos2(header.left() + i as f32 * (segment + 4.0), top),
+                    pos2(header.left() + i as f32 * (segment + gap), top),
                     vec2(segment, 3.0),
                 );
                 ui.painter()
@@ -933,7 +940,12 @@ fn viewer(app: &mut App, ui: &mut egui::Ui, item: &Item) {
                 );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        let count = app.status_views.get(&item.id).map_or(0, |views| views.len());
+                        let count = app.status_views.get(&item.id).map_or(0, |views| {
+                            views
+                                .iter()
+                                .filter(|viewer| app.shows_status_viewer(viewer))
+                                .count()
+                        });
                         if button(ui, Icon::Eye, &gettext(locale, "Show status viewers")).clicked()
                         {
                             app.status_viewers_open = true;

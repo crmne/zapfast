@@ -183,7 +183,9 @@ impl App {
         if draft.editor.is_some() {
             return;
         }
-        if draft.text.trim().is_empty() && draft.media.is_none() {
+        if draft.text.trim().is_empty() && draft.media.is_none()
+            || draft.text.chars().count() > crate::status::TEXT_LIMIT
+        {
             return;
         }
         let outgoing = draft.clone();
@@ -348,6 +350,9 @@ impl App {
             && !self.status_viewers_open
             && self.status_delete_confirm.is_none()
             && self.status_delete_pending.is_none()
+            // A reply on its way keeps the story, so a failed send still has
+            // its text and its update.
+            && !self.status_reply_busy
             && !ctx.text_edit_focused()
             && !egui::Popup::is_any_open(ctx)
             && !ctx.input(|input| input.pointer.primary_down());
@@ -437,7 +442,12 @@ impl App {
 /// Moves a voice Status's clock with its clip. A finished clip reads as idle
 /// at position zero, which ends the story rather than restarting it.
 fn follow_audio(clock: &mut crate::status::Playback, audio: &crate::audio::Status) {
-    if audio.state == crate::audio::State::Idle && clock.started && !clock.elapsed.is_zero() {
+    // The player reports a length while idle only for a clip it finished, so
+    // that ends the story even if no playing frame was seen.
+    if audio.state == crate::audio::State::Idle
+        && clock.started
+        && (!clock.elapsed.is_zero() || !audio.total.is_zero())
+    {
         clock.elapsed = clock.duration;
     } else if !audio.total.is_zero() {
         clock.duration = audio.total;

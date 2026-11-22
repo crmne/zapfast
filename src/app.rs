@@ -1996,6 +1996,12 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.status_playback = None;
+        // The cropper shows the previous account's picture, and keeping it
+        // would write that picture into the next account's cache. The draft
+        // keeps its photo, so the cropper reopens on the way back.
+        self.picture_edit = None;
+        self.picture_inspecting = None;
+        self.picture_edit_followed = None;
         self.invalidate_composer_undo();
         self.gif_request = self.gif_request.wrapping_add(1);
         self.gif_query.clear();
@@ -2916,11 +2922,21 @@ impl App {
         self.me.as_ref() == Some(&item.sender) || self.me_lid.as_ref() == Some(&item.sender)
     }
 
+    /// Who viewed our update is shown, and counted, only for people whose
+    /// chats are shown: never someone blocked or behind the locked folder.
+    pub fn shows_status_viewer(&self, viewer: &crate::status::Viewer) -> bool {
+        !self.blocklist.contains(&viewer.contact)
+            && !self.chat(&viewer.contact).is_some_and(|chat| chat.locked)
+    }
+
     /// Status follows the account's blocks and locked-chat visibility.
     pub fn can_view_status(&self, item: &crate::status::Item) -> bool {
         item.alive(crate::util::now())
             && !self.status_hidden.contains(&item.sender)
             && !self.blocklist.contains(&item.sender)
+            // Until the blocklist is known, someone blocked since their update
+            // was saved cannot be told apart, so only our own updates show.
+            && (self.blocklist.ids.is_some() || self.is_own_status(item))
             && self.chat(&item.sender).is_none_or(|chat| !chat.locked)
     }
 
@@ -3927,10 +3943,20 @@ impl App {
                 }
             }
             Event::StatusAudiences(lists) => {
-                self.status_audience = lists.current.clone();
                 self.status_audiences = lists;
+                if self.status_audience_saving > 0 || self.status_audience_unsaved {
+                    if let Some(audience) = self.status_audience.clone() {
+                        self.status_audiences.choose(audience);
+                    }
+                } else {
+                    self.status_audience = self.status_audiences.current.clone();
+                }
             }
             Event::StatusAudienceSaved(result) => {
+                self.status_audience_saving = self.status_audience_saving.saturating_sub(1);
+                // Saves are answered in order, so a later success covers an
+                // earlier failure.
+                self.status_audience_unsaved = result.is_err();
                 if result.is_err() {
                     self.toast_error(
                         "Could not save the status audience. This draft still keeps your selection",
@@ -4009,6 +4035,7 @@ impl App {
                     draft.error = None;
                 }
                 if !self.events_hidden
+                    && !self.app_lock.is_locked()
                     && let Some(path) = preview
                 {
                     self.video.set_expanded(true);
@@ -4042,7 +4069,7 @@ impl App {
                     Ok(()) => {
                         if !reaction
                             && self.status_selected.as_ref() == Some(&(sender, id))
-                            && self.status_reply == text
+                            && self.status_reply.trim() == text
                         {
                             self.status_reply.clear();
                         }
@@ -5490,6 +5517,8 @@ impl App {
                 self.status_playback = None;
                 self.status_draft = None;
                 self.status_audience = None;
+                self.status_audience_saving = 0;
+                self.status_audience_unsaved = false;
                 self.status_audiences = Default::default();
                 self.status_views.clear();
                 self.status_deletable.clear();
@@ -7800,6 +7829,7 @@ impl App {
                 if account == self.account().id {
                     self.status_audience = Some(audience.clone());
                     self.status_audiences.choose(audience.clone());
+                    self.status_audience_saving += 1;
                     self.backend.send(Command::SaveStatusAudience(audience));
                 }
             }
@@ -11377,6 +11407,23 @@ impl App {
     /// Plays or pauses a video in its message. A video message, the round
     /// kind, sends its played receipt like a voice message.
     fn play_video(&mut self, message: String, path: PathBuf) {
+        // The Status draft's preview belongs to no chat: the Status page
+        // usually has none open.
+        if self.status_draft.as_ref().is_some_and(|draft| {
+            message == format!("status:compose:{}", draft.token)
+                && draft.media.as_ref() == Some(&path)
+        }) {
+            if self.app_lock.is_locked() {
+                return;
+            }
+            self.player.stop();
+            self.voice_chat = None;
+            self.voice_wanted = None;
+            self.video.set_expanded(true);
+            self.video.toggle(&message, &path);
+            self.video_chat = None;
+            return;
+        }
         let Some(chat) = self.open_chat.clone() else {
             return;
         };
@@ -27752,6 +27799,8 @@ mod status_tests {
     fn status_photo_previews_are_coalesced_and_failed_edits_keep_the_draft() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         app.page = Page::Status;
         let original = root.path().join("source.png");
@@ -27843,6 +27892,8 @@ mod status_tests {
     fn status_audience_lists_are_independent_and_account_bound() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let ctx = egui::Context::default();
         for mode in [
@@ -27901,6 +27952,8 @@ mod status_tests {
     fn status_stickers_reply_to_the_author_and_keep_the_typed_text() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let item = item();
         app.statuses.push(item.clone());
@@ -27946,6 +27999,8 @@ mod status_tests {
     fn status_cropping_reuses_the_picture_editor_without_changing_chat_attachments() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         app.page = Page::Status;
         let chat_path = root.path().join("chat.png");
@@ -28036,6 +28091,8 @@ mod status_tests {
     fn opening_status_keeps_chat_unread_and_never_sends_read_commands() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let item = item();
         let mut chat = Chat::new(item.sender.clone(), "Ada".into());
@@ -28065,6 +28122,8 @@ mod status_tests {
     fn status_controls_ignore_actions_from_another_account() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let item = item();
         app.statuses.push(item.clone());
@@ -28095,6 +28154,8 @@ mod status_tests {
     fn blocked_locked_and_expired_statuses_cannot_be_viewed() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         let mut item = item();
         assert!(app.can_view_status(&item));
         app.blocklist.ids = Some([item.sender.clone()].into());
@@ -28110,9 +28171,143 @@ mod status_tests {
     }
 
     #[test]
+    fn others_statuses_wait_for_the_blocklist_and_our_own_do_not() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.me = Some("15550009999@s.whatsapp.net".into());
+        let theirs = item();
+        let mut ours = item();
+        ours.sender = "15550009999@s.whatsapp.net".into();
+        assert!(app.blocklist.ids.is_none());
+        assert!(
+            !app.can_view_status(&theirs),
+            "someone blocked since the update was saved cannot be told apart yet"
+        );
+        assert!(app.can_view_status(&ours));
+        app.blocklist.ids = Some(Default::default());
+        assert!(app.can_view_status(&theirs));
+    }
+
+    #[test]
+    fn a_sent_reply_with_trailing_spaces_leaves_the_field() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.blocklist.ids = Some(Default::default());
+        app.backend.record_demo_commands();
+        let item = item();
+        app.statuses.push(item.clone());
+        app.status_selected = Some((item.sender.clone(), item.id.clone()));
+        app.status_reply = "Thanks ".into();
+        app.reply_status(None);
+        assert!(
+            matches!(app.backend.take_demo_commands().as_slice(), [Command::ReplyStatus { text, .. }] if text == "Thanks")
+        );
+        app.apply_backend_event(
+            Event::StatusReplied {
+                sender: item.sender,
+                id: item.id,
+                text: "Thanks".into(),
+                reaction: false,
+                result: Ok(()),
+            },
+            true,
+        );
+        assert!(app.status_reply.is_empty(), "the reply must not go twice");
+    }
+
+    #[test]
+    fn a_reconnect_keeps_an_audience_chosen_but_not_saved() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        let saved = crate::status::Audience {
+            mode: crate::status::AudienceMode::Only,
+            selected: ["15550002222@s.whatsapp.net".to_owned()].into(),
+        };
+        let chosen = crate::status::Audience {
+            mode: crate::status::AudienceMode::Only,
+            selected: ["15550003333@s.whatsapp.net".to_owned()].into(),
+        };
+        let mut lists = crate::status::AudienceLists::default();
+        lists.choose(saved.clone());
+        app.apply_backend_event(Event::StatusAudiences(lists.clone()), true);
+        assert_eq!(app.status_audience.as_ref(), Some(&saved));
+        app.apply(
+            Action::SetStatusAudience {
+                account: app.account().id.clone(),
+                audience: chosen.clone(),
+            },
+            &egui::Context::default(),
+        );
+        // Reloaded on connecting while the save is still out, then after it failed.
+        app.apply_backend_event(Event::StatusAudiences(lists.clone()), true);
+        assert_eq!(app.status_audience.as_ref(), Some(&chosen));
+        app.apply_backend_event(Event::StatusAudienceSaved(Err("Offline".into())), true);
+        app.apply_backend_event(Event::StatusAudiences(lists.clone()), true);
+        assert_eq!(app.status_audience.as_ref(), Some(&chosen));
+        assert_eq!(app.status_audiences.current.as_ref(), Some(&chosen));
+        // Once saved, the worker's lists are ours again.
+        app.apply(
+            Action::SetStatusAudience {
+                account: app.account().id.clone(),
+                audience: chosen.clone(),
+            },
+            &egui::Context::default(),
+        );
+        app.apply_backend_event(Event::StatusAudienceSaved(Ok(())), true);
+        lists.choose(chosen.clone());
+        app.apply_backend_event(Event::StatusAudiences(lists), true);
+        assert_eq!(app.status_audience.as_ref(), Some(&chosen));
+        assert!(!app.status_audience_unsaved);
+    }
+
+    #[test]
+    fn the_status_video_preview_plays_without_an_open_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.page = Page::Status;
+        let path = root.path().join("clip.mp4");
+        let draft = crate::status::Draft {
+            media: Some(path.clone()),
+            ..Default::default()
+        };
+        let key = format!("status:compose:{}", draft.token);
+        app.status_draft = Some(draft);
+        assert!(app.open_chat.is_none());
+        app.play_video(key.clone(), path);
+        assert_eq!(app.video.message(), Some(key.as_str()));
+        assert!(app.video_chat.is_none());
+    }
+
+    #[test]
+    fn a_status_text_over_the_limit_is_not_published() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        app.backend.record_demo_commands();
+        app.status_audience = Some(crate::status::Audience {
+            mode: crate::status::AudienceMode::Contacts,
+            selected: Default::default(),
+        });
+        app.status_draft = Some(crate::status::Draft {
+            text: "a".repeat(crate::status::TEXT_LIMIT + 1),
+            ..Default::default()
+        });
+        app.publish_status();
+        assert!(app.backend.take_demo_commands().is_empty());
+        app.status_draft.as_mut().unwrap().text.pop();
+        app.publish_status();
+        assert!(matches!(
+            app.backend.take_demo_commands().as_slice(),
+            [Command::PublishStatus { .. }]
+        ));
+    }
+
+    #[test]
     fn publishing_requires_an_explicit_audience_and_failure_keeps_the_draft() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         app.status_draft = Some(crate::status::Draft {
             text: "A day outside".into(),
@@ -28141,6 +28336,8 @@ mod status_tests {
     fn a_late_file_picker_cannot_replace_a_new_status_draft() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         let old = crate::status::Draft::default();
         let current = crate::status::Draft::default();
         assert_ne!(old.token, current.token);
@@ -28159,6 +28356,8 @@ mod status_tests {
     fn clearing_the_media_cache_leaves_status_ready_to_download_again() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         let mut item = item();
         item.content = Content::Image {
             motion: None,
@@ -28197,6 +28396,8 @@ mod status_tests {
     fn failed_status_replies_keep_text_and_do_not_open_the_authors_chat() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let item = item();
         app.statuses.push(item.clone());
@@ -28226,6 +28427,8 @@ mod status_tests {
     fn status_replies_follow_the_accounts_read_receipts() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let item = item();
         app.statuses.push(item.clone());
@@ -28252,6 +28455,8 @@ mod status_tests {
     fn advancing_status_skips_contacts_that_cannot_be_viewed() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         app.backend.record_demo_commands();
         let first = item();
         let mut hidden = first.clone();
@@ -28273,6 +28478,8 @@ mod status_tests {
     fn leaving_status_or_losing_visibility_closes_playback() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // A connected account: the blocklist is known.
+        app.blocklist.ids = Some(Default::default());
         let item = item();
         app.statuses.push(item.clone());
         app.page = Page::Status;

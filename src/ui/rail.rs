@@ -380,8 +380,11 @@ fn destination_button(
         .interact(plate, destination_id(destination), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     theme::reveal_focus(&response);
+    let unseen = destination == Destination::Status && unseen_status(app);
     let spoken = if badge > 0 {
         format!("{label}, {badge}")
+    } else if unseen {
+        format!("{label}, {}", gettext(app.locale, "new updates"))
     } else {
         label.clone()
     };
@@ -411,7 +414,7 @@ fn destination_button(
             1.0
         };
         theme::paint_icon(ui, icon, plate, ICON * scale, tint);
-        if destination == Destination::Status && unseen_status(app) {
+        if unseen {
             ui.painter()
                 .circle_filled(badge_anchor(plate), 4.0, palette.accent);
         }

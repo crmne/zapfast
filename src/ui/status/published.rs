@@ -41,10 +41,7 @@ pub(super) fn show(app: &mut App, ctx: &egui::Context) {
             .unwrap_or_default();
         let views: Vec<_> = all
             .iter()
-            .filter(|viewer| {
-                !app.blocklist.contains(&viewer.contact)
-                    && !app.chat(&viewer.contact).is_some_and(|chat| chat.locked)
-            })
+            .filter(|viewer| app.shows_status_viewer(viewer))
             .collect();
         let response = egui::Modal::new(egui::Id::new("own-status-viewers")).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 64.0).clamp(240.0, 360.0));

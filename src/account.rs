@@ -44,6 +44,11 @@ pub struct Account {
     pub status_step: i8,
     pub status_draft: Option<crate::status::Draft>,
     pub status_audience: Option<crate::status::Audience>,
+    /// Saves of `status_audience` not yet answered, and whether the last one
+    /// answered failed. Either way the choice is ours alone, and lists the
+    /// worker reloads (on every connection) must not replace it.
+    pub status_audience_saving: u32,
+    pub status_audience_unsaved: bool,
     pub status_audiences: crate::status::AudienceLists,
     pub status_privacy_contacts: Option<crate::status::ContactChoices>,
     pub status_privacy_open: bool,
@@ -219,6 +224,8 @@ impl Account {
             status_step: 0,
             status_draft: None,
             status_audience: None,
+            status_audience_saving: 0,
+            status_audience_unsaved: false,
             status_audiences: Default::default(),
             status_privacy_contacts: None,
             status_privacy_open: false,

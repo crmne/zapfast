@@ -472,7 +472,9 @@ fn gesture(editor: &mut Editor, response: &egui::Response, photo: Rect) {
     {
         editor.gesture = vec![normalized(point)];
     }
-    if response.dragged()
+    // The release frame counts too: a quick flick can end where the last
+    // held frame had not reached yet.
+    if (response.dragged() || response.drag_stopped())
         && let Some(point) = response.interact_pointer_pos()
     {
         let point = normalized(point);
