@@ -406,7 +406,7 @@ fn live(
     let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
     if app.call_devices_open && call.phase.is_live() {
         let above = area.with_max_y(controls_row.top() - 20.0);
-        bottom_row(ui, above, devices_height(above.width(), call.video), |ui| {
+        bottom_block(ui, above, devices_height(above.width(), call.video), |ui| {
             devices(ui, app, call, palette)
         });
     }
@@ -499,6 +499,24 @@ fn bottom_row(ui: &mut egui::Ui, area: Rect, height: f32, add: impl FnOnce(&mut 
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(Layout::left_to_right(Align::Center)),
+        add,
+    );
+    rect
+}
+
+/// Top-aligned block of `height` anchored to the bottom of `area`, used for
+/// wrapped device pickers so multi-row blocks grow from the top of their slot.
+fn bottom_block(
+    ui: &mut egui::Ui,
+    area: Rect,
+    height: f32,
+    add: impl FnOnce(&mut egui::Ui),
+) -> Rect {
+    let rect = Rect::from_min_max(egui::pos2(area.left(), area.bottom() - height), area.max);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::top_down(Align::Min)),
         add,
     );
     rect
@@ -1110,7 +1128,7 @@ fn group_live(
     let mut bottom = controls_row.top() - 20.0;
     if app.call_devices_open && call.phase.is_live() {
         let above = area.with_max_y(controls_row.top() - 20.0);
-        let pickers = bottom_row(ui, above, devices_height(above.width(), call.video), |ui| {
+        let pickers = bottom_block(ui, above, devices_height(above.width(), call.video), |ui| {
             devices(ui, app, call, palette)
         });
         bottom = pickers.top() - 16.0;
