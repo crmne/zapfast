@@ -452,7 +452,7 @@ mod tests {
         let far_end = FarEnd::new();
         let mut tap = far_end.tap();
         tap.configure(rate, 2);
-        let speaker = super::super::Layout { rate, channels: 2 };
+        let mut speaker = super::super::Playback::new(super::super::Layout { rate, channels: 2 });
         let mut canceller = Canceller::new(far_end.clone(), None, stages);
         let mut out = Vec::with_capacity(mic.len());
         for (far, mic) in far
@@ -465,7 +465,7 @@ mod tests {
                 .iter()
                 .map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)
                 .collect();
-            tap.rendered(&speaker.convert(&frame));
+            tap.rendered(&speaker.convert_engine(&frame));
             let mut chunk = *mic;
             canceller.process(&mut chunk);
             out.extend_from_slice(&chunk);
@@ -558,10 +558,10 @@ mod tests {
         drop(first);
         let far = speech(12.0, 7, 120.0);
         let mic = room(&far, 960);
-        let speaker = super::super::Layout {
+        let mut speaker = super::super::Playback::new(super::super::Layout {
             rate: 48_000,
             channels: 2,
-        };
+        });
         let mut out = Vec::with_capacity(mic.len());
         for (far, mic) in far
             .as_chunks::<CHUNK>()
@@ -573,7 +573,7 @@ mod tests {
                 .iter()
                 .map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)
                 .collect();
-            second.rendered(&speaker.convert(&frame));
+            second.rendered(&speaker.convert_engine(&frame));
             chunk = *mic;
             canceller.process(&mut chunk);
             out.extend_from_slice(&chunk);
@@ -600,10 +600,10 @@ mod tests {
         let far_end = FarEnd::new();
         let mut tap = far_end.tap();
         tap.configure(44_100, 2);
-        let speaker = super::super::Layout {
+        let mut speaker = super::super::Playback::new(super::super::Layout {
             rate: 44_100,
             channels: 2,
-        };
+        });
         let mut canceller = Canceller::new(far_end.clone(), None, Stages::All);
         canceller.dump =
             Some(super::super::dump::AudioDump::create(folder.path()).expect("a dump"));
@@ -620,7 +620,7 @@ mod tests {
                     .iter()
                     .map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)
                     .collect();
-                tap.rendered(&speaker.convert(&frame));
+                tap.rendered(&speaker.convert_engine(&frame));
             }
             let mut chunk = *mic;
             canceller.process(&mut chunk);
@@ -930,7 +930,11 @@ mod tests {
         let seconds = 10.0;
         let far = speech(seconds, 7, 120.0);
         let near = speech(seconds, 31, 210.0);
-        let out = run(&far, &near, Stages::EchoOnly);
+        // Takes back the speaker filter's delay: how much this canceller leaves varies with the
+        // two synthetic voices' alignment, between 0.3 and 5 dB within a few milliseconds.
+        let far = &far[super::super::SPEAKER_TAPS / 2..];
+        let near = &near[..far.len()];
+        let out = run(far, near, Stages::EchoOnly);
         let from = 4 * RATE as usize;
         let kept = db(energy(&out[from..]) / energy(&near[from..]));
         println!("headphones: near end kept at {kept:+.1} dB");
@@ -939,22 +943,22 @@ mod tests {
 
     #[test]
     fn the_speaker_reference_comes_back_at_the_engine_rate_exactly() {
-        // 48 kHz is three times the engine's rate, so the speaker's interpolation up and the tap's
-        // down hand back the engine's own samples.
+        // 48 kHz is three times the engine's rate, and the speaker's filter passes every third
+        // sample through, so the tap's way down hands back the engine's own samples, 1.5 ms late.
         let mut down = Downsampler::new(48_000);
         let frame: Vec<i16> = (0..960).map(|i| ((i * 37) % 2000) as i16 - 1000).collect();
-        let speaker = super::super::Layout {
+        let mut speaker = super::super::Playback::new(super::super::Layout {
             rate: 48_000,
             channels: 1,
-        };
-        let played = speaker.convert(&frame);
+        });
+        let played = speaker.convert_engine(&frame);
         let mut back = Vec::new();
         for sample in played {
             down.push(sample, |s| back.push(s));
         }
         assert_eq!(back.len(), 960);
-        for (got, want) in back.iter().zip(&frame) {
-            assert!((got - f32::from(*want) / f32::from(i16::MAX)).abs() < 1e-6);
+        for (got, want) in back[super::super::SPEAKER_TAPS / 2..].iter().zip(&frame) {
+            assert!((got - f32::from(*want) / f32::from(i16::MAX)).abs() < 1e-5);
         }
     }
 

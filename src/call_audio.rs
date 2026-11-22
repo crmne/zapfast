@@ -132,6 +132,80 @@ pub fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
+/// Taps of the speaker's filter: 3 ms of the call's audio, so 1.5 ms of delay.
+const SPEAKER_TAPS: usize = 48;
+/// The speaker filter's cutoff, as a fraction of the slower rate. Half is the band's edge, 8 kHz
+/// for a call, and it leaves the input samples themselves unchanged, which the echo reference
+/// relies on.
+const SPEAKER_CUTOFF: f64 = 0.5;
+
+/// Resamples the peer's voice for the speaker with a windowed sinc, keeping its place between
+/// frames.
+///
+/// Linear interpolation from 16 kHz takes about 4 dB off 6 kHz and 8 dB off 8 kHz, and adds images
+/// above them, which is what made voices sound dull.
+struct SpeakerResampler {
+    /// One filter for each position an output sample can take between two input samples.
+    phases: Vec<[f32; SPEAKER_TAPS]>,
+    /// Input advanced per output sample, in units of one phase.
+    step: usize,
+    phase: usize,
+    input: Vec<f32>,
+}
+
+impl SpeakerResampler {
+    fn new(from: u32, to: u32) -> Self {
+        let (mut a, mut b) = (from, to);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        let (step, count) = ((from / a) as usize, (to / a) as usize);
+        let cutoff = SPEAKER_CUTOFF * (f64::from(to) / f64::from(from)).min(1.0);
+        let taps = SPEAKER_TAPS as f64;
+        let phases = (0..count)
+            .map(|phase| {
+                let mut filter = [0.0_f64; SPEAKER_TAPS];
+                for (tap, weight) in filter.iter_mut().enumerate() {
+                    let x = tap as f64 - (taps / 2.0 - 1.0) - phase as f64 / count as f64;
+                    let turn = std::f64::consts::PI * 2.0 * cutoff * x;
+                    let sinc = if turn == 0.0 { 1.0 } else { turn.sin() / turn };
+                    *weight = sinc * (std::f64::consts::PI * x / taps).cos().powi(2);
+                }
+                let sum: f64 = filter.iter().sum();
+                filter.map(|weight| (weight / sum) as f32)
+            })
+            .collect();
+        Self {
+            phases,
+            step,
+            phase: 0,
+            input: vec![0.0; SPEAKER_TAPS - 1],
+        }
+    }
+
+    fn process(&mut self, samples: &[f32]) -> Vec<f32> {
+        self.input.extend_from_slice(samples);
+        let count = self.phases.len();
+        let mut out = Vec::with_capacity(samples.len() * count / self.step + 1);
+        let mut at = 0;
+        while at + SPEAKER_TAPS <= self.input.len() {
+            let window = &self.input[at..at + SPEAKER_TAPS];
+            out.push(
+                window
+                    .iter()
+                    .zip(&self.phases[self.phase])
+                    .map(|(sample, weight)| sample * weight)
+                    .sum(),
+            );
+            self.phase += self.step;
+            at += self.phase / count;
+            self.phase %= count;
+        }
+        self.input.drain(..at);
+        out
+    }
+}
+
 /// Turns device audio into whole engine frames.
 ///
 /// A device delivers whatever it likes per read; the engine only ever wants 960 samples at 16 kHz,
@@ -205,14 +279,40 @@ struct Layout {
     channels: u16,
 }
 
-impl Layout {
-    /// Turns an engine frame into the interleaved samples this device wants.
-    fn convert(&self, frame: &[i16]) -> Vec<f32> {
+/// One speaker stream's conversion from the call's mono audio to what the device wants.
+struct Playback {
+    channels: u16,
+    resampler: Option<SpeakerResampler>,
+}
+
+impl Playback {
+    fn new(layout: Layout) -> Self {
+        Self {
+            channels: layout.channels,
+            resampler: (layout.rate != RATE && layout.rate != 0)
+                .then(|| SpeakerResampler::new(RATE, layout.rate)),
+        }
+    }
+
+    #[cfg(test)]
+    fn convert_engine(&mut self, frame: &[i16]) -> Vec<f32> {
         let mono: Vec<f32> = frame
             .iter()
             .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
             .collect();
-        let at_rate = resample(&mono, RATE, self.rate);
+        self.convert(&mono)
+    }
+
+    /// Turns the call's samples into the interleaved samples this device wants.
+    fn convert(&mut self, mono: &[f32]) -> Vec<f32> {
+        let mut at_rate = match &mut self.resampler {
+            Some(resampler) => resampler.process(mono),
+            None => mono.to_vec(),
+        };
+        // The sinc's negative lobes can carry a peak the limiter held at full scale past it.
+        for sample in &mut at_rate {
+            *sample = sample.clamp(-1.0, 1.0);
+        }
         if self.channels <= 1 {
             return at_rate;
         }
@@ -1235,6 +1335,8 @@ fn write_speaker(
             return;
         }
     };
+    let mut playback = Playback::new(sink.layout());
+    let mut level = chain::VoiceLevel::new();
     let mut last_position = Duration::ZERO;
     let mut quiet_since: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
@@ -1246,7 +1348,10 @@ fn write_speaker(
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        sink.append(sink.layout().convert(&frame));
+        let voice = level.process(&frame);
+        if !voice.is_empty() {
+            sink.append(playback.convert(&voice));
+        }
         accepted.store(true, Ordering::Relaxed);
         if sink.failed() {
             // Reopened the way a stalled stream is.
@@ -1697,39 +1802,120 @@ mod tests {
 
     #[test]
     fn the_speaker_gets_the_layout_its_device_wants() {
-        let frame: Vec<i16> = (0..FRAME_SAMPLES)
-            .map(|index| if index % 2 == 0 { 16_384 } else { -16_384 })
+        let frame: Vec<f32> = (0..FRAME_SAMPLES)
+            .map(|index| if index % 2 == 0 { 0.5 } else { -0.5 })
             .collect();
-        // A mono device at the call's own rate gets the frame back, scaled to `f32`.
-        let same = Layout {
-            rate: RATE,
-            channels: 1,
-        }
-        .convert(&frame);
-        assert_eq!(same.len(), FRAME_SAMPLES);
-        assert!((same[0] - 0.5).abs() < 1e-3 && (same[1] + 0.5).abs() < 1e-3);
+        let convert = |rate, channels| Playback::new(Layout { rate, channels }).convert(&frame);
+        // A mono device at the call's own rate gets the frame back.
+        assert_eq!(convert(RATE, 1), frame);
 
         // A 48 kHz stereo device gets three samples per input sample, on both channels.
-        let wide = Layout {
-            rate: 48_000,
-            channels: 2,
-        }
-        .convert(&frame);
+        let wide = convert(48_000, 2);
         assert_eq!(wide.len(), FRAME_SAMPLES * 6);
         for pair in wide.chunks(2) {
             assert_eq!(pair[0], pair[1], "both channels carry the same mono sample");
         }
 
         // An odd rate still yields the samples the device's own rate asks for.
-        let odd = Layout {
-            rate: 44_100,
-            channels: 1,
-        }
-        .convert(&frame);
         assert_eq!(
-            odd.len(),
+            convert(44_100, 1).len(),
             (FRAME_SAMPLES as f64 * 44_100.0 / RATE as f64).floor() as usize
         );
+    }
+
+    /// Part of a chunk waits for the rest, and a full-scale voice stays inside full scale all the
+    /// way to the device, including the peak the resampler builds between two full-scale samples.
+    #[test]
+    fn the_voice_level_carries_partial_chunks_and_never_clips() {
+        let mut level = chain::VoiceLevel::new();
+        assert!(level.process(&[i16::MAX; 100]).is_empty());
+        let out = level.process(&[i16::MAX; 220]);
+        assert_eq!(out.len(), 320);
+        assert!(out.iter().all(|sample| sample.abs() <= 1.0));
+
+        let mut pulses = vec![0.0_f32; FRAME_SAMPLES];
+        for at in (0..FRAME_SAMPLES - 1).step_by(40) {
+            pulses[at] = 1.0;
+            pulses[at + 1] = 1.0;
+        }
+        for rate in [44_100_u32, 48_000] {
+            let mut resampler = SpeakerResampler::new(RATE, rate);
+            let raw = resampler.process(&pulses);
+            assert!(
+                raw.iter().any(|sample| sample.abs() > 1.0),
+                "{rate} Hz: no overshoot"
+            );
+            let mut playback = Playback::new(Layout { rate, channels: 2 });
+            for input in [&pulses[..], &out[..]] {
+                let played = playback.convert(input);
+                assert!(played.iter().all(|sample| sample.abs() <= 1.0), "{rate} Hz");
+            }
+        }
+    }
+
+    /// A quiet, speech-like voice comes out louder once the level has settled, without being
+    /// raised past the leveller's ceiling.
+    #[test]
+    fn the_voice_level_raises_quiet_speech() {
+        // Harmonics of 150 Hz at about -25 dBFS RMS, swelling in 4 Hz syllables.
+        let speech: Vec<i16> = (0..RATE as usize * 4)
+            .map(|at| {
+                let t = at as f32 / RATE as f32;
+                let syllable = 0.5 - 0.5 * (std::f32::consts::TAU * 4.0 * t).cos();
+                let voice: f32 = (1..=12)
+                    .map(|harmonic| {
+                        (std::f32::consts::TAU * 150.0 * harmonic as f32 * t).sin()
+                            / harmonic as f32
+                    })
+                    .sum();
+                (voice * syllable * 0.06 * f32::from(i16::MAX)) as i16
+            })
+            .collect();
+        let mut level = chain::VoiceLevel::new();
+        let out: Vec<f32> = speech
+            .chunks(FRAME_SAMPLES)
+            .flat_map(|frame| level.process(frame))
+            .collect();
+        let rms = |samples: &[f32]| {
+            (samples.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>() / samples.len() as f64)
+                .sqrt()
+        };
+        let half = out.len() / 2;
+        let input: Vec<f32> = speech[speech.len() - (out.len() - half)..]
+            .iter()
+            .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
+            .collect();
+        let gain_db = 20.0 * (rms(&out[half..]) / rms(&input)).log10();
+        assert!((6.0..=18.5).contains(&gain_db), "gain {gain_db} dB");
+    }
+
+    /// A 6 kHz tone crosses frame boundaries at nearly full level and without images, where linear
+    /// interpolation lost about 4 dB.
+    #[test]
+    fn the_speaker_keeps_the_top_of_the_voice() {
+        for rate in [44_100_u32, 48_000] {
+            let tone: Vec<f32> = (0..FRAME_SAMPLES * 20)
+                .map(|at| (std::f32::consts::TAU * 6_000.0 * at as f32 / RATE as f32).sin() * 0.5)
+                .collect();
+            let mut resampler = SpeakerResampler::new(RATE, rate);
+            let out: Vec<f32> = tone
+                .chunks(FRAME_SAMPLES)
+                .flat_map(|frame| resampler.process(frame))
+                .collect();
+            let settled = &out[out.len() / 2..];
+            let (mut sine, mut cosine, mut energy) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for (at, sample) in settled.iter().enumerate() {
+                let angle = std::f64::consts::TAU * 6_000.0 * at as f64 / f64::from(rate);
+                sine += f64::from(*sample) * angle.sin();
+                cosine += f64::from(*sample) * angle.cos();
+                energy += f64::from(*sample).powi(2);
+            }
+            let count = settled.len() as f64;
+            let amplitude = 2.0 * sine.hypot(cosine) / count;
+            let residual = energy / count - amplitude.powi(2) / 2.0;
+            assert!(amplitude > 0.5 * 0.89, "{rate} Hz: amplitude {amplitude}");
+            assert!(residual < 0.125 * 0.001, "{rate} Hz: residual {residual}");
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! drives AEC3's block processor itself, framing exactly as sonora's wrapper does, and hands the
 //! result to sonora's pipeline for the noise suppressor and AGC2 only.
 
-use sonora::config::{AdaptiveDigital, GainController2, NoiseSuppression};
+use sonora::config::{AdaptiveDigital, FixedDigital, GainController2, NoiseSuppression};
 use sonora::{AudioProcessing, Config, StreamConfig};
 use sonora_aec3::block::Block;
 use sonora_aec3::block_framer::BlockFramer;
@@ -216,6 +216,79 @@ pub fn apply_setting(
         other => return Err(format!("unknown AEC3 setting {other}")),
     }
     Ok(())
+}
+
+/// The most the peer's voice is raised: enough for a quiet phone, short of lifting a poor line's
+/// noise into the room.
+const VOICE_MAX_GAIN_DB: f32 = 15.0;
+/// Where the peer's voice starts, so a quiet call is not quiet for its first seconds.
+const VOICE_INITIAL_GAIN_DB: f32 = 6.0;
+/// Headroom and fixed gain that bring speech from -25 to about -17 dBFS, with the limiter
+/// holding its peaks.
+const VOICE_HEADROOM_DB: f32 = 0.0;
+const VOICE_FIXED_GAIN_DB: f32 = 3.0;
+
+/// Evens out the level of the peer's voice before the speaker, with AGC2 and its limiter.
+pub struct VoiceLevel {
+    processor: AudioProcessing,
+    /// Samples not yet a whole chunk.
+    pending: Vec<f32>,
+}
+
+impl VoiceLevel {
+    pub fn new() -> Self {
+        let stream = StreamConfig::new(RATE, 1);
+        Self {
+            processor: AudioProcessing::builder()
+                .config(Config {
+                    gain_controller2: Some(GainController2 {
+                        input_volume_controller: false,
+                        adaptive_digital: Some(AdaptiveDigital {
+                            max_gain_db: VOICE_MAX_GAIN_DB,
+                            initial_gain_db: VOICE_INITIAL_GAIN_DB,
+                            headroom_db: VOICE_HEADROOM_DB,
+                            ..AdaptiveDigital::default()
+                        }),
+                        fixed_digital: FixedDigital {
+                            gain_db: VOICE_FIXED_GAIN_DB,
+                        },
+                    }),
+                    ..Config::default()
+                })
+                .capture_config(stream)
+                .render_config(stream)
+                .build(),
+            pending: Vec::with_capacity(2 * CHUNK),
+        }
+    }
+
+    /// Takes an engine frame and returns every whole chunk now ready, as `f32`.
+    pub fn process(&mut self, frame: &[i16]) -> Vec<f32> {
+        self.pending.extend(
+            frame
+                .iter()
+                .map(|sample| f32::from(*sample) / f32::from(i16::MAX)),
+        );
+        let whole = self.pending.len() / CHUNK * CHUNK;
+        let mut out: Vec<f32> = self.pending.drain(..whole).collect();
+        let mut scratch = [0.0_f32; CHUNK];
+        for chunk in out.as_chunks_mut::<CHUNK>().0 {
+            if self
+                .processor
+                .process_capture_f32(&[&chunk[..]], &mut [&mut scratch[..]])
+                .is_ok()
+            {
+                *chunk = scratch;
+            }
+        }
+        out
+    }
+}
+
+impl Default for VoiceLevel {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The chain's state: one call's microphone stream.
