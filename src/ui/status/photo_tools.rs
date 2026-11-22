@@ -472,62 +472,92 @@ fn gesture(editor: &mut Editor, response: &egui::Response, photo: Rect) {
     {
         editor.gesture = vec![normalized(point)];
     }
-    // The release frame counts too: a quick flick can end where the last
-    // held frame had not reached yet.
-    if (response.dragged() || response.drag_stopped())
-        && let Some(point) = response.interact_pointer_pos()
-    {
-        let point = normalized(point);
-        if editor.tool == Tool::Pen {
-            if editor.gesture.len() < 4096
-                && editor
-                    .gesture
-                    .last()
-                    .is_none_or(|last| last.distance(point) > 0.002)
-            {
-                editor.gesture.push(point);
-            }
-        } else if editor.gesture.len() == 1 {
-            editor.gesture.push(point);
-        } else if let Some(last) = editor.gesture.last_mut() {
-            *last = point;
+    // A drag ends either by letting go, which keeps the mark, or by egui
+    // aborting it (Escape, a long touch), which keeps nothing.
+    let point = response.interact_pointer_pos().map(normalized);
+    if response.drag_stopped() {
+        if response.ctx.input(|input| input.pointer.primary_released()) {
+            end_gesture(editor, GestureEnd::Released(point));
+        } else {
+            end_gesture(editor, GestureEnd::Cancelled);
         }
+        return;
+    }
+    if response.dragged()
+        && let Some(point) = point
+    {
+        extend_gesture(editor, point);
     }
     if response.clicked()
-        && let Some(point) = response.interact_pointer_pos()
+        && let Some(point) = point
     {
-        editor.gesture = vec![normalized(point)];
+        editor.gesture = vec![point];
+        end_gesture(editor, GestureEnd::Released(None));
     }
-    if response.drag_stopped() || response.clicked() {
-        let points = std::mem::take(&mut editor.gesture);
-        if editor.tool != Tool::Pen && points.len() < 2 {
-            return;
+}
+
+/// How a markup gesture ended, with the pointer where it was let go.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GestureEnd {
+    Released(Option<Pos2>),
+    Cancelled,
+}
+
+fn extend_gesture(editor: &mut Editor, point: Pos2) {
+    if editor.tool == Tool::Pen {
+        if editor.gesture.len() < 4096
+            && editor
+                .gesture
+                .last()
+                .is_none_or(|last| last.distance(point) > 0.002)
+        {
+            editor.gesture.push(point);
         }
-        if let Some(&from) = points.first() {
-            let to = points.last().copied().unwrap_or(from);
-            let color = if editor.highlighter && editor.tool == Tool::Pen {
-                editor.color.gamma_multiply(0.35)
-            } else {
-                editor.color
-            };
-            let mark = match editor.tool {
-                Tool::Pen => Mark::Pen {
-                    points,
-                    color,
-                    width: editor.width,
-                },
-                Tool::Blur => Mark::Blur { from, to },
-                tool => Mark::Shape {
-                    tool,
-                    from,
-                    to,
-                    color,
-                    width: editor.width,
-                    filled: editor.filled,
-                },
-            };
-            editor.add(mark);
-        }
+    } else if editor.gesture.len() == 1 {
+        editor.gesture.push(point);
+    } else if let Some(last) = editor.gesture.last_mut() {
+        *last = point;
+    }
+}
+
+/// Turns the gesture into a mark when it was let go. The release frame's
+/// position counts: a quick flick can end past the last held frame.
+fn end_gesture(editor: &mut Editor, end: GestureEnd) {
+    let GestureEnd::Released(at) = end else {
+        editor.gesture.clear();
+        return;
+    };
+    if let Some(point) = at {
+        extend_gesture(editor, point);
+    }
+    let points = std::mem::take(&mut editor.gesture);
+    if editor.tool != Tool::Pen && points.len() < 2 {
+        return;
+    }
+    if let Some(&from) = points.first() {
+        let to = points.last().copied().unwrap_or(from);
+        let color = if editor.highlighter && editor.tool == Tool::Pen {
+            editor.color.gamma_multiply(0.35)
+        } else {
+            editor.color
+        };
+        let mark = match editor.tool {
+            Tool::Pen => Mark::Pen {
+                points,
+                color,
+                width: editor.width,
+            },
+            Tool::Blur => Mark::Blur { from, to },
+            tool => Mark::Shape {
+                tool,
+                from,
+                to,
+                color,
+                width: editor.width,
+                filled: editor.filled,
+            },
+        };
+        editor.add(mark);
     }
 }
 
@@ -570,5 +600,36 @@ fn paint_gesture(ui: &egui::Ui, editor: &Editor, photo: Rect) {
                 egui::StrokeKind::Inside,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_released_blur_reaches_where_it_was_let_go() {
+        let mut editor = Editor::new(1, Tool::Blur);
+        editor.gesture = vec![pos2(0.1, 0.1)];
+        extend_gesture(&mut editor, pos2(0.4, 0.4));
+        end_gesture(&mut editor, GestureEnd::Released(Some(pos2(0.8, 0.9))));
+        assert!(editor.gesture.is_empty());
+        assert_eq!(
+            editor.scene.marks.last().map(|mark| (**mark).clone()),
+            Some(Mark::Blur {
+                from: pos2(0.1, 0.1),
+                to: pos2(0.8, 0.9),
+            })
+        );
+    }
+
+    #[test]
+    fn a_cancelled_drag_leaves_no_mark() {
+        let mut editor = Editor::new(1, Tool::Blur);
+        editor.gesture = vec![pos2(0.1, 0.1)];
+        extend_gesture(&mut editor, pos2(0.4, 0.4));
+        end_gesture(&mut editor, GestureEnd::Cancelled);
+        assert!(editor.gesture.is_empty());
+        assert!(editor.scene.marks.is_empty());
     }
 }
