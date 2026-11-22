@@ -731,6 +731,42 @@ mod backend {
         Ok(())
     }
 
+    pub(crate) fn open_camera_with_fallbacks<F, C, E>(
+        index: &CameraIndex,
+        mut open: F,
+    ) -> Result<C, String>
+    where
+        F: FnMut(&CameraIndex, RequestedFormat) -> Result<C, E>,
+        E: std::fmt::Display,
+    {
+        let any =
+            RequestedFormat::with_formats(RequestedFormatType::AbsoluteHighestFrameRate, &READABLE);
+        match open(index, any) {
+            Ok(camera) => Ok(camera),
+            Err(error) => {
+                log::warn!(
+                    "[CALL] opening camera with highest frame rate failed: {error}; trying highest resolution"
+                );
+                let fallback = RequestedFormat::with_formats(
+                    RequestedFormatType::AbsoluteHighestResolution,
+                    &READABLE,
+                );
+                match open(index, fallback) {
+                    Ok(camera) => Ok(camera),
+                    Err(error) => {
+                        log::warn!(
+                            "[CALL] opening camera with highest resolution failed: {error}; trying default formats"
+                        );
+                        let any_default =
+                            RequestedFormat::with_formats(RequestedFormatType::None, &READABLE);
+                        open(index, any_default)
+                            .map_err(|error| format!("the camera could not be opened: {error}"))
+                    }
+                }
+            }
+        }
+    }
+
     pub struct Camera {
         camera: nokhwa::Camera,
         mode: Mode,
@@ -745,9 +781,9 @@ mod backend {
                 Ok(number) => CameraIndex::Index(number),
                 Err(_) => CameraIndex::String(id.to_owned()),
             };
-            let any = RequestedFormat::with_formats(RequestedFormatType::None, &READABLE);
-            let mut camera = nokhwa::Camera::new(index, any)
-                .map_err(|error| format!("the camera could not be opened: {error}"))?;
+            let mut camera = open_camera_with_fallbacks(&index, |idx, fmt| {
+                nokhwa::Camera::new(idx.clone(), fmt)
+            })?;
             let modes: Vec<Mode> = camera
                 .compatible_camera_formats()
                 .map_err(|error| format!("the camera's formats could not be read: {error}"))?
@@ -1031,5 +1067,68 @@ mod tests {
         // A portrait camera fits the budget turned upright.
         let upright = [mode(720, 1280, Pixel::Nv12, 30)];
         assert_eq!(choose_mode(&upright, (1280, 720), 20).unwrap().height, 1280);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn format_negotiation_succeeds_on_highest_frame_rate() {
+        let index = nokhwa::utils::CameraIndex::Index(0);
+        let mut attempts = 0;
+        let res = backend::open_camera_with_fallbacks(&index, |_idx, _fmt| {
+            attempts += 1;
+            Ok::<&'static str, &'static str>("camera-ok")
+        });
+        assert_eq!(res, Ok("camera-ok"));
+        assert_eq!(attempts, 1);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn format_negotiation_falls_back_to_highest_resolution() {
+        let index = nokhwa::utils::CameraIndex::Index(0);
+        let mut attempts = 0;
+        let res = backend::open_camera_with_fallbacks(&index, |_idx, _fmt| {
+            attempts += 1;
+            if attempts == 1 {
+                Err("frame rate unsupported")
+            } else {
+                Ok("camera-ok")
+            }
+        });
+        assert_eq!(res, Ok("camera-ok"));
+        assert_eq!(attempts, 2);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn format_negotiation_falls_back_to_defaults() {
+        let index = nokhwa::utils::CameraIndex::Index(0);
+        let mut attempts = 0;
+        let res = backend::open_camera_with_fallbacks(&index, |_idx, _fmt| {
+            attempts += 1;
+            if attempts <= 2 {
+                Err("unsupported")
+            } else {
+                Ok("camera-ok")
+            }
+        });
+        assert_eq!(res, Ok("camera-ok"));
+        assert_eq!(attempts, 3);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn format_negotiation_returns_error_when_all_fail() {
+        let index = nokhwa::utils::CameraIndex::Index(0);
+        let mut attempts = 0;
+        let res = backend::open_camera_with_fallbacks(&index, |_idx, _fmt| {
+            attempts += 1;
+            Err::<(), _>("device busy")
+        });
+        assert_eq!(
+            res,
+            Err("the camera could not be opened: device busy".to_owned())
+        );
+        assert_eq!(attempts, 3);
     }
 }
