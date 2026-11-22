@@ -423,6 +423,9 @@ pub struct Settings {
     /// drivers a frameless window shows a black band at the top and its
     /// clicks land below where they are drawn (Spotifast #348, #554).
     pub custom_titlebar: bool,
+    /// How round corners are, from 0 (square) to 1 (as each view draws
+    /// them). Circles such as avatars follow it too (`ui::corners`).
+    pub corner_roundness: f32,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -558,6 +561,7 @@ impl Default for Settings {
             messages_theme: false,
             font: FontChoice::System,
             custom_titlebar: false,
+            corner_roundness: 0.0,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,

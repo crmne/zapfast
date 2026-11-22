@@ -137,6 +137,9 @@ name or description, in the interface language or in English.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
+- **Rounded corners**: how round bubbles, buttons, menus, dialogs and
+  pictures are, from 0% (everything square, avatars and round buttons
+  included) to 100% (ZapFast's usual shapes). The default is 0%.
 - **Language**: the interface language, or **Auto** to follow the system.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
   Chinese, Traditional Chinese, Turkish, Indonesian, and Dutch are available; otherwise English.

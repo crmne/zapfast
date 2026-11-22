@@ -3301,6 +3301,8 @@ pub enum Action {
     /// (`true`) or the desktop's. Decorations are fixed when a window is
     /// made, so the window is replaced.
     SetCustomTitlebar(bool),
+    /// How round corners are, 0 square to 1 as drawn (`ui::corners`).
+    SetCornerRoundness(f32),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
