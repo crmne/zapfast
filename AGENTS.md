@@ -97,8 +97,8 @@ protocol. These notes are for coding agents and new contributors.
   free; a narrow window hides the rail with the list. The Calls tab keeps
   the open chat beside its history (`App::chat_view`), and a picked call row
   opens its chat there. Our avatar opens the account switcher
-  (`src/ui/accounts.rs`): only the accounts (picture, name or number, unread
-  chats, a check on the one on screen) and Add account. A dot on the avatar
+  (`src/ui/accounts.rs`): only the accounts (picture with the account's
+  `badge_mark`, name or number, a check on the one on screen) and Add account. A dot on the avatar
   means another account has unread chats. Events from an account that is not on screen are
   applied with `App::events_hidden` set: they update that account only, never
   the window's composer, dialogs, playback, or read state (a hidden account's
