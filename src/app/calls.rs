@@ -213,7 +213,12 @@ impl App {
     fn set_call_fullscreen(&mut self, ctx: &egui::Context, fullscreen: bool) {
         if self.call_fullscreen != fullscreen {
             self.call_fullscreen = fullscreen;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
+            let cmd = egui::ViewportCommand::Fullscreen(fullscreen);
+            if crate::ui::call::is_detached(ctx) {
+                ctx.send_viewport_cmd_to(crate::ui::call::viewport_id(), cmd);
+            } else {
+                ctx.send_viewport_cmd(cmd);
+            }
         }
     }
 

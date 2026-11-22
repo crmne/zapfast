@@ -494,6 +494,7 @@ pub fn populate(app: &mut App) {
             requested: true,
             // Demo mode has no phone connection.
             phone_exhausted: true,
+            initial_loaded: true,
             ..Default::default()
         };
         let count = sample.lines.len() as i64;
@@ -4656,7 +4657,7 @@ mod tests {
         let from_the_dots = |causes: &[egui::RepaintCause]| {
             causes
                 .iter()
-                .any(|cause| cause.file.ends_with("conversation.rs"))
+                .any(|cause| cause.file.ends_with("messages.rs"))
         };
         let (plain, causes) = run(false);
         assert_eq!(plain, std::time::Duration::ZERO, "{causes:?}");
@@ -22265,10 +22266,9 @@ mod tests {
             strip.expect("the strip is drawn"),
             pill.expect("the composer"),
         );
-        let gap = pill.top() - strip.bottom();
         assert!(
-            (gap - crate::ui::conversation::STRIP_GAP).abs() < 0.5,
-            "the strip ends {gap} above the composer"
+            pill.contains_rect(strip),
+            "the reply drawer {strip:?} sits inside the composer pill {pill:?}"
         );
     }
 

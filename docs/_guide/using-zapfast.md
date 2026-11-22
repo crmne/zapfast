@@ -559,17 +559,18 @@ When someone else records a voice message, a microphone replaces the typing dots
 
 The phone and camera buttons in a one-to-one chat's header start a voice or a
 video call; while that chat has a call, a hang-up button takes their place.
-The call screen opens as soon as you press the button and says
-**Connecting…** while the call is set up, **Calling…** once it is sent, and
-**Ringing…** once the other phone rings, when you also hear a ringback tone.
-Hanging up before then cancels the call before it reaches them. An incoming call takes over the
+The call screen opens in a separate compact window as soon as you press the
+button (leaving the main window free to browse chats) and says **Connecting…**
+while the call is set up, **Calling…** once it is sent, and **Ringing…** once
+the other phone rings, when you also hear a ringback tone. Hanging up before
+then cancels the call before it reaches them. An incoming call opens the call
 window with the caller's picture and name, and **Accept** and **Decline**. It
-also raises a desktop notification and plays a ringtone until it is answered, declined,
-or given up, so a window hidden in the tray does not hide the call. If word
-that a call ended never arrives (a dropped connection can lose it), a call
-still ringing after two minutes is filed as missed, so the next call rings. The
-ringtone follows your notification sound: with the sound set to **None**, or
-notifications off, a call shows without ringing. A call in a
+also raises a desktop notification and plays a ringtone until it is answered,
+declined, or given up, so a window hidden in the tray does not hide the call.
+If word that a call ended never arrives (a dropped connection can lose it), a
+call still ringing after two minutes is filed as missed, so the next call
+rings. The ringtone follows your notification sound: with the sound set to
+**None**, or notifications off, a call shows without ringing. A call in a
 muted, archived, or locked chat stays as quiet as a message in it. A locked
 chat's call waits in a strip at the bottom of the window as "Locked chat" until
 you open the locked chats with their code.
@@ -577,13 +578,15 @@ you open the locked chats with their code.
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
 microphone and speaker pickers, and hang up. Mute tells the other side, as on
-the phone. The arrow in the top corner puts the call screen aside: the call
-keeps running in a strip at the bottom of the window with **Return to the
+the phone. The arrow in the top corner puts the call window aside: the call
+keeps running in a strip at the bottom of the main window with **Return to the
 call** and a hang-up button, and you can read and write in any chat meanwhile.
-Escape does the same, and leaves full screen first. Only hanging up ends a
-call; closing the window to the tray keeps it running. A call you hang up or
-decline leaves the screen at once; one the other side ends, declines, or
-misses, or one that could not connect, says so for a second and a half.
+Escape in the call window does the same, and leaves full screen first. Closing
+the call window with its window-close button declines a ringing call or hangs
+up an active call; closing the main ZapFast window to the tray keeps the call
+running. A call you hang up or decline leaves the screen at once; one the other
+side ends, declines, or misses, or one that could not connect, says so for a
+second and a half.
 
 In a video call the other side's picture fills the window and yours sits in the
 top corner. The camera button turns your camera off and on; in a voice call it
