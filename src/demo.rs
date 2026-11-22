@@ -10822,6 +10822,101 @@ mod tests {
         assert!(app.new_group.as_ref().unwrap().creating);
     }
 
+    /// Next and Create stay reachable with a long member list. The focused
+    /// name field stays visible and accepts a click after the window shrinks.
+    #[test]
+    fn large_group_controls_stay_clickable_in_a_small_window() {
+        use crate::new_group::Stage;
+        use crate::ui::new_group::name_field_id;
+        use egui::accesskit::Role;
+
+        let (mut app, ctx) = new_group_dialog();
+        apply_flags(&mut app, Some("new-group"));
+        app.new_chat_search.clear();
+        for index in 0..80 {
+            let id = format!("15550010{index:03}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some(format!("Sample Member {index:02}")),
+                    ..Default::default()
+                },
+            );
+            app.new_group.as_mut().unwrap().members.push(id);
+        }
+        let members = app.new_group.as_ref().unwrap().members.clone();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0));
+        let click_at = |app: &mut App, pos| {
+            accessible_nodes_in(app, &ctx, screen, vec![egui::Event::PointerMoved(pos)]);
+            accessible_nodes_in(app, &ctx, screen, Vec::new());
+            for pressed in [true, false] {
+                accessible_nodes_in(
+                    app,
+                    &ctx,
+                    screen,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+        };
+        let click = |app: &mut App, label: &str| {
+            render_sized(app, &ctx, screen.size());
+            let nodes = accessible_nodes_in(app, &ctx, screen, Vec::new());
+            let pos = nodes
+                .iter()
+                .find_map(|(name, role, pos)| {
+                    (name == label && *role == Role::Button).then_some(*pos)
+                })
+                .unwrap_or_else(|| panic!("missing {label} button"));
+            assert!(
+                screen.contains(pos),
+                "{label} is outside the window: {pos:?}"
+            );
+            click_at(app, pos);
+            render_sized(app, &ctx, screen.size());
+        };
+
+        click(&mut app, "Next");
+        assert_eq!(app.new_group.as_ref().unwrap().stage, Stage::Naming);
+        // Grow the dialog so the form fits at its natural position, then shrink
+        // it while the name still has keyboard focus.
+        render_sized(&mut app, &ctx, egui::vec2(540.0, 420.0));
+        assert_eq!(ctx.memory(|memory| memory.focused()), Some(name_field_id()));
+        render_sized(&mut app, &ctx, screen.size());
+        let field = ctx
+            .read_response(name_field_id())
+            .expect("group name field");
+        assert!(field.has_focus());
+        assert!(screen.contains_rect(field.rect));
+        assert_eq!(field.interact_rect, field.rect, "the name field is clipped");
+        click_at(&mut app, field.rect.center());
+        assert!(
+            ctx.read_response(name_field_id())
+                .unwrap()
+                .clicked_by(egui::PointerButton::Primary)
+        );
+
+        accessible_nodes_in(
+            &mut app,
+            &ctx,
+            screen,
+            vec![egui::Event::Text("Book club".into())],
+        );
+        assert_eq!(app.new_group.as_ref().unwrap().name, "Book club");
+        app.backend.take_demo_commands();
+        click(&mut app, "Create");
+        assert!(app.backend.take_demo_commands().into_iter().any(|command| {
+            matches!(command, crate::backend::Command::CreateGroup {
+                subject, members: picked, ..
+            } if subject == "Book club" && picked == members)
+        }));
+    }
+
     /// Back steps out one stage at a time, unchecking everyone leaves the
     /// choice, and Escape closes the dialog as before.
     #[test]
@@ -16600,12 +16695,19 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> Vec<(String, egui::accesskit::Role, egui::Pos2)> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1180.0, 780.0));
+        accessible_nodes_in(app, ctx, screen, events)
+    }
+
+    fn accessible_nodes_in(
+        app: &mut App,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::accesskit::Role, egui::Pos2)> {
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1180.0, 780.0),
-                )),
+                screen_rect: Some(screen),
                 events,
                 ..Default::default()
             },

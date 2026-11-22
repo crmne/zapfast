@@ -39,6 +39,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmLeaveGroup(_) => 380.0,
                 Dialog::PairWithPhone => 380.0,
                 Dialog::NewContact => 380.0,
+                Dialog::NewChat | Dialog::AddGroupMembers(_) if app.new_group.is_some() => {
+                    420.0_f32.min((ui.ctx().content_rect().width() - 48.0).max(1.0))
+                }
                 Dialog::NewChat => 420.0,
                 Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
                 Dialog::ConfirmDeleteChat(_) | Dialog::JoinGroup | Dialog::ConfirmStartOver => {
