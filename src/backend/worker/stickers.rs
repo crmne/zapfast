@@ -651,7 +651,7 @@ impl Worker {
             return;
         };
         // Syncd timestamps are milliseconds; a missing one reads as the epoch.
-        let stamped = update.timestamp.timestamp_millis();
+        let stamped = update.timestamp.as_millis();
         if let Ok(Some(known)) = self.archive.favorite_sticker(&hash)
             && !known.pushed
             && known.updated_at > stamped
@@ -1121,7 +1121,7 @@ impl Worker {
             .action
             .last_sticker_sent_ts
             .map(seconds)
-            .unwrap_or_else(|| update.timestamp.timestamp());
+            .unwrap_or_else(|| update.timestamp.as_secs());
         if let Err(error) = self.archive.remove_recent_sticker(&hash, at) {
             log::warn!("could not remove a recent sticker: {error}");
         }

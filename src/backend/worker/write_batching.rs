@@ -205,7 +205,7 @@ fn deletion(worker: &Worker, chat: &str, id: &str) -> RuntimeEvent {
                 .chat_jid(chat.parse().unwrap())
                 .message_id(id.to_owned())
                 .from_me(false)
-                .timestamp(std::time::SystemTime::now().into())
+                .timestamp(whatsapp_rust::time::now_utc())
                 .action(Box::default())
                 .from_full_sync(true)
                 .build(),

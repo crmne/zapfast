@@ -94,7 +94,7 @@ impl Worker {
                 jid: jid.to_non_ad_string(),
             });
         }
-        let at = update.timestamp.timestamp_millis();
+        let at = update.timestamp.as_millis();
         match self.archive.apply_phone_favorites(&list, at) {
             Ok(Some(touched)) => {
                 if self.favorite_chats.sending {

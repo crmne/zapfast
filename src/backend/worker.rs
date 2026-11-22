@@ -2152,7 +2152,7 @@ impl Worker {
         let chat = self.canonical(&update.chat_jid);
         let id = update.message_id.clone();
         let starred = update.action.starred.unwrap_or(false);
-        let at = update.timestamp.timestamp();
+        let at = update.timestamp.as_secs();
         // An older event loses to the stored time and must not cancel a
         // request that is still in flight. Only a row that actually changed
         // retires that request.
@@ -2433,7 +2433,7 @@ impl Worker {
         let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
             return;
         };
-        match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
+        match self.archive.restamp_sent(&chat, &ack.id, at.as_secs()) {
             Ok(changed) => {
                 self.awaiting_ack.remove(&ack.id);
                 if changed {
@@ -4354,7 +4354,7 @@ impl Worker {
                 self.emit(Event::Presence {
                     id: self.canonical(&presence.from),
                     online: presence.status != PresenceStatus::Unavailable,
-                    last_seen: presence.last_seen.map(|when| when.timestamp()),
+                    last_seen: presence.last_seen.map(|when| when.as_secs()),
                 });
             }
             E::ContactUpdate(update) => self.on_contact_update(update),
@@ -4365,12 +4365,12 @@ impl Worker {
                 // message arrives; without a row the metadata has nowhere to land.
                 // The row is dated by the notice, or it would sort last.
                 if matches!(&*update.action, GroupNotificationAction::Create { .. })
-                    && !self.predates_removal(&chat, update.timestamp.timestamp())
+                    && !self.predates_removal(&chat, update.timestamp.as_secs())
                 {
                     self.ensure_chat(&chat, None);
                     let _ = self
                         .archive
-                        .touch_activity(&chat, update.timestamp.timestamp());
+                        .touch_activity(&chat, update.timestamp.as_secs());
                     self.emit_chat(&chat);
                 }
                 if let GroupNotificationAction::Description { description, .. } = &*update.action {
@@ -4385,7 +4385,7 @@ impl Worker {
                     }
                 }
                 if let GroupNotificationAction::Ephemeral { expiration, .. } = &*update.action {
-                    let timestamp = update.timestamp.timestamp();
+                    let timestamp = update.timestamp.as_secs();
                     // Message removal does not order a timer setting, so a
                     // newer setting that predates a clear still applies. Only
                     // a chat removed outright is not brought back by one.
@@ -4480,7 +4480,7 @@ impl Worker {
                 let _ = self.archive.set_archived_at(
                     &chat,
                     update.action.archived.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
+                    update.timestamp.as_millis(),
                 );
                 self.emit_chat(&chat);
             }
@@ -4490,7 +4490,7 @@ impl Worker {
                 let _ = self.archive.set_pinned_at(
                     &chat,
                     update.action.pinned.unwrap_or(false),
-                    update.timestamp.timestamp_millis(),
+                    update.timestamp.as_millis(),
                 );
                 self.emit_chat(&chat);
             }
@@ -4508,9 +4508,9 @@ impl Worker {
                 } else {
                     None
                 };
-                let _ =
-                    self.archive
-                        .set_muted_at(&chat, until, update.timestamp.timestamp_millis());
+                let _ = self
+                    .archive
+                    .set_muted_at(&chat, until, update.timestamp.as_millis());
                 self.emit_chat(&chat);
             }
             E::RemoveRecentStickerUpdate(update) => self.recent_sticker_removed(update),
@@ -4521,9 +4521,9 @@ impl Worker {
                 let chat = self.canonical(&update.jid);
                 self.ensure_chat(&chat, None);
                 let locked = update.action.locked.unwrap_or(false);
-                let _ =
-                    self.archive
-                        .set_locked_at(&chat, locked, update.timestamp.timestamp_millis());
+                let _ = self
+                    .archive
+                    .set_locked_at(&chat, locked, update.timestamp.as_millis());
                 self.emit_chat(&chat);
             }
             E::DeleteChatUpdate(update) => {
@@ -4535,7 +4535,7 @@ impl Worker {
                         .message_range
                         .as_option()
                         .and_then(|range| range.last_message_timestamp),
-                    update.timestamp.timestamp(),
+                    update.timestamp.as_secs(),
                 );
                 self.remove_chat(&chat, through, update.delete_media);
             }
@@ -4548,7 +4548,7 @@ impl Worker {
                         .message_range
                         .as_option()
                         .and_then(|range| range.last_message_timestamp),
-                    update.timestamp.timestamp(),
+                    update.timestamp.as_secs(),
                 );
                 let _ = self.empty_chat(&chat, through, update.delete_media);
             }
@@ -4594,7 +4594,7 @@ impl Worker {
                 // timer change in an existing chat. Per-chat changes arrive
                 // as EPHEMERAL_SETTING or a typed group Ephemeral action.
                 let id = self.canonical(&update.from);
-                let timestamp = update.setting_timestamp.timestamp();
+                let timestamp = update.setting_timestamp.as_secs();
                 if self.is_me(&id) {
                     let stored = self
                         .archive
@@ -4624,10 +4624,10 @@ impl Worker {
                 self.emit(self.me_event());
             }
             E::UnarchiveChatsSettingUpdate(update) => {
-                match self.archive.set_unarchive_chats_at(
-                    update.unarchive_chats,
-                    update.timestamp.timestamp_millis(),
-                ) {
+                match self
+                    .archive
+                    .set_unarchive_chats_at(update.unarchive_chats, update.timestamp.as_millis())
+                {
                     Ok(unarchive) => {
                         self.phone_unarchive_chats = Some(unarchive);
                         self.phone_unarchive_unread = false;
@@ -4643,7 +4643,7 @@ impl Worker {
                 self.link_previews_unknown = false;
                 match self.archive.set_link_previews_disabled_at(
                     update.previews_disabled,
-                    update.timestamp.timestamp_millis(),
+                    update.timestamp.as_millis(),
                 ) {
                     Ok(disabled) => {
                         self.link_previews_disabled = disabled;
@@ -4930,7 +4930,7 @@ impl Worker {
             ReceiptType::Sender if chat == self.me() => Delivery::Read,
             _ => return,
         };
-        let at = receipt.timestamp.timestamp();
+        let at = receipt.timestamp.as_secs();
         if ChatKind::from_id(&chat) == ChatKind::Group {
             let recipient = self.canonical(&receipt.source.sender);
             if self.is_me(&recipient) {
@@ -5233,7 +5233,7 @@ impl Worker {
                 if let Some(expiration) = protocol.ephemeral_expiration {
                     let timestamp = protocol
                         .ephemeral_setting_timestamp
-                        .unwrap_or_else(|| info.timestamp.timestamp());
+                        .unwrap_or_else(|| info.timestamp.as_secs());
                     let used_fallback = protocol.ephemeral_setting_timestamp.is_none();
                     // Message removal does not order a timer setting, so a
                     // newer setting that predates a clear still applies. Only
@@ -5326,18 +5326,12 @@ impl Worker {
                 &sender,
                 from_me,
                 reaction,
-                info.timestamp.timestamp_millis(),
+                info.timestamp.as_millis(),
             );
             return;
         }
         if base.enc_reaction_message.is_set() {
-            self.store_enc_reaction(
-                &chat,
-                &sender,
-                from_me,
-                base,
-                info.timestamp.timestamp_millis(),
-            );
+            self.store_enc_reaction(&chat, &sender, from_me, base, info.timestamp.as_millis());
             return;
         }
         if let Some(update) = base.poll_update_message.as_option() {
@@ -5346,20 +5340,13 @@ impl Worker {
                 &info.id,
                 &info.source.sender.to_non_ad_string(),
                 from_me,
-                info.timestamp.timestamp(),
+                info.timestamp.as_secs(),
                 update,
             );
             return;
         }
         if let Some(pin) = base.pin_in_chat_message.as_option() {
-            self.ingest_pin(
-                &chat,
-                pin,
-                base,
-                info.timestamp.timestamp(),
-                &sender,
-                from_me,
-            );
+            self.ingest_pin(&chat, pin, base, info.timestamp.as_secs(), &sender, from_me);
             return;
         }
         if self.update_live_location(&chat, &sender, base, info) {
@@ -5392,7 +5379,7 @@ impl Worker {
                 push_name.as_ref().map(ToString::to_string)
             },
             from_me,
-            timestamp: info.timestamp.timestamp(),
+            timestamp: info.timestamp.as_secs(),
             content,
             status: if from_me {
                 Delivery::Sent
@@ -5455,7 +5442,7 @@ impl Worker {
         let Some((mut content, reference)) = live_location_of(base) else {
             return false;
         };
-        let now = info.timestamp.timestamp();
+        let now = info.timestamp.as_secs();
         if let Content::LiveLocation { updated, .. } = &mut content {
             *updated = now;
         }
@@ -5496,7 +5483,7 @@ impl Worker {
         id: &str,
         info: &MessageInfo,
     ) -> bool {
-        let now = info.timestamp.timestamp();
+        let now = info.timestamp.as_secs();
         if self.mark_share_on_the_phone(chat, sender, now) {
             return true;
         }
@@ -5517,7 +5504,7 @@ impl Worker {
                         live_location: true,
                         ..
                     }
-                ) && info.timestamp.timestamp() - message.timestamp <= LIVE_LOCATION_LIMIT
+                ) && info.timestamp.as_secs() - message.timestamp <= LIVE_LOCATION_LIMIT
             })
     }
 
@@ -5955,7 +5942,7 @@ impl Worker {
                 push_name.as_ref().map(ToString::to_string)
             },
             from_me,
-            timestamp: info.timestamp.timestamp(),
+            timestamp: info.timestamp.as_secs(),
             content: match unavailable {
                 // A live location keeps moving on the phone only, so say
                 // where to follow it rather than that it is on its way.
@@ -23119,10 +23106,7 @@ mod receipt_tests {
                 .expect("sync creates the chat");
             assert_eq!(before.muted_until, enabled.then_some(0));
             assert_eq!(before.pinned, enabled);
-            assert_eq!(
-                before.pinned_at,
-                if enabled { time.timestamp_millis() } else { 0 }
-            );
+            assert_eq!(before.pinned_at, if enabled { time.as_millis() } else { 0 });
 
             let mut stale = history(0);
             stale.chats[0].pinned_at = Some(if enabled { 0 } else { 123_000 });
@@ -23205,7 +23189,7 @@ mod receipt_tests {
         let id = other.chats[0].id.clone();
         worker
             .archive
-            .set_archived_at(&id, false, time.timestamp_millis() + 1)
+            .set_archived_at(&id, false, time.as_millis() + 1)
             .unwrap();
         assert!(!worker.archive.chat(PEER).unwrap().unwrap().archived);
     }
@@ -25812,7 +25796,7 @@ mod chat_removal_tests {
                     .chat_jid(CHAT.parse().unwrap())
                     .message_id("m100".to_owned())
                     .from_me(true)
-                    .timestamp(std::time::SystemTime::now().into())
+                    .timestamp(whatsapp_rust::time::now_utc())
                     .action(Box::default())
                     .from_full_sync(false)
                     .build(),
@@ -25872,7 +25856,7 @@ mod chat_removal_tests {
                     .chat_jid(CHAT.parse().unwrap())
                     .message_id(id.to_owned())
                     .from_me(true)
-                    .timestamp(std::time::SystemTime::now().into())
+                    .timestamp(whatsapp_rust::time::now_utc())
                     .action(Box::default())
                     .from_full_sync(false)
                     .build(),
@@ -25927,7 +25911,7 @@ mod chat_removal_tests {
                     .chat_jid(CHAT.parse().unwrap())
                     .message_id("m100".to_owned())
                     .from_me(true)
-                    .timestamp(std::time::SystemTime::now().into())
+                    .timestamp(whatsapp_rust::time::now_utc())
                     .action(Box::default())
                     .from_full_sync(false)
                     .build(),
@@ -25986,7 +25970,7 @@ mod chat_removal_tests {
                         .chat_jid(source.parse().unwrap())
                         .message_id("m100".to_owned())
                         .from_me(true)
-                        .timestamp(std::time::SystemTime::now().into())
+                        .timestamp(whatsapp_rust::time::now_utc())
                         .action(Box::default())
                         .from_full_sync(false)
                         .build(),
@@ -26135,7 +26119,7 @@ mod chat_removal_tests {
                     wa_events::DeleteChatUpdate::builder()
                         .jid(CHAT.parse().unwrap())
                         .delete_media(false)
-                        .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(300)).into())
+                        .timestamp(whatsapp_rust::Timestamp::from_secs(300).expect("in range"))
                         .action(Box::new({
                             let mut proto = wa::sync_action_value::DeleteChatAction::default();
                             proto.message_range = Some({
@@ -26314,7 +26298,7 @@ mod chat_removal_tests {
                         .chat_jid(CHAT.parse().unwrap())
                         .message_id("m100".to_owned())
                         .from_me(false)
-                        .timestamp(std::time::SystemTime::now().into())
+                        .timestamp(whatsapp_rust::time::now_utc())
                         .action(Box::default())
                         .from_full_sync(true)
                         .build(),
@@ -26519,7 +26503,7 @@ mod chat_removal_tests {
                     .chat_jid(group.parse().unwrap())
                     .message_id("own".to_owned())
                     .from_me(true)
-                    .timestamp(std::time::SystemTime::now().into())
+                    .timestamp(whatsapp_rust::time::now_utc())
                     .action(Box::default())
                     .from_full_sync(false)
                     .build(),
@@ -26737,7 +26721,7 @@ mod chat_removal_tests {
         let now = whatsapp_rust::wacore::time::now_utc();
         worker
             .archive
-            .star(CHAT, "m1", now.timestamp() + 10_000)
+            .star(CHAT, "m1", now.as_secs() + 10_000)
             .unwrap();
         worker.star_generation.insert((CHAT.into(), "m1".into()), 3);
         let stale = wa_events::StarUpdate::builder()
