@@ -322,7 +322,7 @@ impl ReplyDrawer {
                     });
                     Some(ReplyContent::Quoted(Box::new(msg)))
                 }
-                None if reply_id.chat.is_some() => {
+                None => {
                     ui.ctx().data_mut(|d| {
                         d.remove::<(
                             crate::model::AccountId,
@@ -332,10 +332,6 @@ impl ReplyDrawer {
                         )>(cache_id);
                     });
                     Some(ReplyContent::Unavailable)
-                }
-                None => {
-                    app.reply_to = None;
-                    None
                 }
             }
         } else {
@@ -367,12 +363,24 @@ impl ReplyDrawer {
                 )>(cache_id)
             });
             match cached {
-                Some((cached_account, cached_chat, cached_target, msg))
-                    if cached_account == account_id
-                        && cached_chat == chat.id
-                        && app.reply_preview(&cached_target, &chat.id).is_some() =>
+                Some((cached_account, cached_chat, cached_target, _))
+                    if cached_account == account_id && cached_chat == chat.id =>
                 {
-                    Some(ReplyContent::Quoted(Box::new(msg)))
+                    if let Some(resolved) = app.reply_preview(&cached_target, &chat.id)
+                        && !matches!(resolved.content, Content::Revoked)
+                    {
+                        Some(ReplyContent::Quoted(Box::new(resolved.clone())))
+                    } else {
+                        ui.ctx().data_mut(|d| {
+                            d.remove::<(
+                                crate::model::AccountId,
+                                String,
+                                crate::model::ReplyTarget,
+                                Message,
+                            )>(cache_id);
+                        });
+                        None
+                    }
                 }
                 _ => {
                     ui.ctx().data_mut(|d| {
@@ -692,7 +700,7 @@ impl ComposerInputRow {
                 )
             })
             .tab_stop(Stop::Attach);
-            Self::tools_menu(app, chat, &tools);
+            Self::tools_menu(app, ui, chat, &tools);
 
             ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
             let smile = last_line(ui, line, |ui| {
@@ -1071,7 +1079,7 @@ impl ComposerInputRow {
         }
     }
 
-    pub fn tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
+    pub fn tools_menu(app: &mut App, ui: &egui::Ui, chat: &Chat, plus: &egui::Response) {
         let id = plus.id.with("composer-tools");
         let mut open = app.composer_tools_open;
         let picker_open = app.picker.is_some();
@@ -1084,20 +1092,29 @@ impl ComposerInputRow {
         let anim_id = id.with("open-time");
         let mut draw_open = open;
         if draw_open && !picker_open {
+            let locale = app.locale;
+            let send_files = crate::i18n::gettext(locale, "Send files");
+            let document = crate::i18n::gettext(locale, "Send as document");
+            let send_location = crate::i18n::gettext(locale, "Send location");
+            let create_poll = crate::i18n::gettext(locale, "Create poll");
+            let popup_width = (widgets::menu_width(
+                ui,
+                &[&send_files, &document, &send_location, &create_poll],
+                true,
+            ) + 16.0)
+                .max(205.0);
             egui::Popup::menu(plus)
                 .id(id)
                 .open_bool(&mut draw_open)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-                .width(205.0)
+                .width(popup_width)
                 .frame(widgets::menu_frame(&app.palette))
                 .show(|ui| {
                     widgets::show_animated_menu(ui, anim_id, false, |ui, stretch| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         let item_height = 38.0 * stretch;
-                        let locale = app.locale;
                         let palette = app.palette;
 
-                        let send_files = crate::i18n::gettext(locale, "Send files");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1111,7 +1128,6 @@ impl ComposerInputRow {
 
                         // Pictures picked here keep their own bytes instead of
                         // becoming compressed photos.
-                        let document = crate::i18n::gettext(locale, "Send as document");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1123,7 +1139,6 @@ impl ComposerInputRow {
                             app.actions.push(Action::Attach { documents: true });
                         }
 
-                        let send_location = crate::i18n::gettext(locale, "Send location");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,
@@ -1136,7 +1151,6 @@ impl ComposerInputRow {
                                 .push(Action::ShowDialog(Dialog::SendLocation(chat.id.clone())));
                         }
 
-                        let create_poll = crate::i18n::gettext(locale, "Create poll");
                         if widgets::menu_item_icon_colored(
                             ui,
                             &palette,

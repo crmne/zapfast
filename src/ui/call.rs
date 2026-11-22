@@ -192,7 +192,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
             }
 
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if !egui::Popup::is_any_open(ui.ctx()) && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            {
                 if app.call_fullscreen {
                     app.actions.push(Action::ToggleCallFullscreen);
                 } else if call.phase.is_live() {
@@ -405,7 +406,7 @@ fn live(
     let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
     if app.call_devices_open && call.phase.is_live() {
         let above = area.with_max_y(controls_row.top() - 20.0);
-        bottom_row(ui, above, PICKER_HEIGHT, |ui| {
+        bottom_row(ui, above, devices_height(above.width(), call.video), |ui| {
             devices(ui, app, call, palette)
         });
     }
@@ -797,6 +798,14 @@ fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palett
 const PICKER: f32 = 200.0;
 const PICKER_HEIGHT: f32 = 60.0;
 
+fn devices_height(available_width: f32, video: bool) -> f32 {
+    let count: usize = if video { 3 } else { 2 };
+    let gap = 16.0;
+    let per_row = (((available_width + gap) / (PICKER + gap)).floor() as usize).max(1);
+    let rows = count.div_ceil(per_row);
+    rows as f32 * PICKER_HEIGHT + rows.saturating_sub(1) as f32 * 8.0
+}
+
 /// One device picker: its title with an icon, and what the machine has.
 struct Picker<'a> {
     salt: &'a str,
@@ -1101,7 +1110,7 @@ fn group_live(
     let mut bottom = controls_row.top() - 20.0;
     if app.call_devices_open && call.phase.is_live() {
         let above = area.with_max_y(controls_row.top() - 20.0);
-        let pickers = bottom_row(ui, above, PICKER_HEIGHT, |ui| {
+        let pickers = bottom_row(ui, above, devices_height(above.width(), call.video), |ui| {
             devices(ui, app, call, palette)
         });
         bottom = pickers.top() - 16.0;
