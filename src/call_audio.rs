@@ -305,10 +305,14 @@ impl Playback {
 
     /// Turns the call's samples into the interleaved samples this device wants.
     fn convert(&mut self, mono: &[f32]) -> Vec<f32> {
-        let at_rate = match &mut self.resampler {
+        let mut at_rate = match &mut self.resampler {
             Some(resampler) => resampler.process(mono),
             None => mono.to_vec(),
         };
+        // The sinc's negative lobes can carry a peak the limiter held at full scale past it.
+        for sample in &mut at_rate {
+            *sample = sample.clamp(-1.0, 1.0);
+        }
         if self.channels <= 1 {
             return at_rate;
         }
@@ -1819,7 +1823,8 @@ mod tests {
         );
     }
 
-    /// Part of a chunk waits for the rest, and a full-scale voice stays inside full scale.
+    /// Part of a chunk waits for the rest, and a full-scale voice stays inside full scale all the
+    /// way to the device, including the peak the resampler builds between two full-scale samples.
     #[test]
     fn the_voice_level_carries_partial_chunks_and_never_clips() {
         let mut level = chain::VoiceLevel::new();
@@ -1827,6 +1832,61 @@ mod tests {
         let out = level.process(&[i16::MAX; 220]);
         assert_eq!(out.len(), 320);
         assert!(out.iter().all(|sample| sample.abs() <= 1.0));
+
+        let mut pulses = vec![0.0_f32; FRAME_SAMPLES];
+        for at in (0..FRAME_SAMPLES - 1).step_by(40) {
+            pulses[at] = 1.0;
+            pulses[at + 1] = 1.0;
+        }
+        for rate in [44_100_u32, 48_000] {
+            let mut resampler = SpeakerResampler::new(RATE, rate);
+            let raw = resampler.process(&pulses);
+            assert!(
+                raw.iter().any(|sample| sample.abs() > 1.0),
+                "{rate} Hz: no overshoot"
+            );
+            let mut playback = Playback::new(Layout { rate, channels: 2 });
+            for input in [&pulses[..], &out[..]] {
+                let played = playback.convert(input);
+                assert!(played.iter().all(|sample| sample.abs() <= 1.0), "{rate} Hz");
+            }
+        }
+    }
+
+    /// A quiet, speech-like voice comes out louder once the level has settled, without being
+    /// raised past the leveller's ceiling.
+    #[test]
+    fn the_voice_level_raises_quiet_speech() {
+        // Harmonics of 150 Hz at about -25 dBFS RMS, swelling in 4 Hz syllables.
+        let speech: Vec<i16> = (0..RATE as usize * 4)
+            .map(|at| {
+                let t = at as f32 / RATE as f32;
+                let syllable = 0.5 - 0.5 * (std::f32::consts::TAU * 4.0 * t).cos();
+                let voice: f32 = (1..=12)
+                    .map(|harmonic| {
+                        (std::f32::consts::TAU * 150.0 * harmonic as f32 * t).sin()
+                            / harmonic as f32
+                    })
+                    .sum();
+                (voice * syllable * 0.06 * f32::from(i16::MAX)) as i16
+            })
+            .collect();
+        let mut level = chain::VoiceLevel::new();
+        let out: Vec<f32> = speech
+            .chunks(FRAME_SAMPLES)
+            .flat_map(|frame| level.process(frame))
+            .collect();
+        let rms = |samples: &[f32]| {
+            (samples.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>() / samples.len() as f64)
+                .sqrt()
+        };
+        let half = out.len() / 2;
+        let input: Vec<f32> = speech[speech.len() - (out.len() - half)..]
+            .iter()
+            .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
+            .collect();
+        let gain_db = 20.0 * (rms(&out[half..]) / rms(&input)).log10();
+        assert!((6.0..=18.5).contains(&gain_db), "gain {gain_db} dB");
     }
 
     /// A 6 kHz tone crosses frame boundaries at nearly full level and without images, where linear
