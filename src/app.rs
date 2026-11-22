@@ -2733,6 +2733,8 @@ impl App {
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());
+        ctx.add_plugin(crate::ui::corners::Roundness);
+        crate::ui::corners::set(ctx, self.settings.corner_roundness);
         crate::theme::set_font(ctx, self.settings.font);
         crate::theme::install(ctx);
         // Zoom stays in the settings, so egui must not change it behind the
@@ -9960,6 +9962,11 @@ impl App {
             Action::ZoomBy(delta) => {
                 self.settings.zoom = (self.settings.zoom + delta).clamp(0.6, 2.0);
                 self.zoom_applied = false;
+                self.mark_settings_dirty();
+            }
+            Action::SetCornerRoundness(roundness) => {
+                self.settings.corner_roundness = roundness.clamp(0.0, 1.0);
+                crate::ui::corners::set(ctx, self.settings.corner_roundness);
                 self.mark_settings_dirty();
             }
             Action::ResetZoom => {

@@ -412,6 +412,11 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    appearance.row(
+        translated(locale, "Rounded corners"),
+        translated(locale, "How round bubbles, buttons and pictures are."),
+        corner_roundness_slider,
+    );
     appearance.row(translated(locale, "Language"), "", language_picker);
     // macOS keeps its own traffic lights over ZapFast's headers.
     if cfg!(any(windows, target_os = "linux")) {
@@ -1881,6 +1886,22 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
     if widgets::credit(ui, &palette, app.locale) {
         app.actions
             .push(Action::OpenUrl(widgets::AUTHOR_URL.to_owned()));
+    }
+}
+
+/// The Rounded corners slider: 0% squares every corner, avatars and round
+/// buttons included, and 100% draws them as each view does.
+fn corner_roundness_slider(ui: &mut egui::Ui, app: &mut App) {
+    let mut percent = (app.settings.corner_roundness * 100.0).round();
+    let response = ui.add(
+        egui::Slider::new(&mut percent, 0.0..=100.0)
+            .step_by(5.0)
+            .suffix("%"),
+    );
+    theme::reveal_focus(&response);
+    if response.changed() {
+        app.actions
+            .push(Action::SetCornerRoundness(percent / 100.0));
     }
 }
 

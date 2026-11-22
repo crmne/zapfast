@@ -8,6 +8,7 @@ pub mod calls;
 mod chat_export;
 pub mod chats;
 pub mod conversation;
+pub mod corners;
 pub mod dialogs;
 pub(crate) mod focus;
 mod glass;
