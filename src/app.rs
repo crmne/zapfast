@@ -565,6 +565,8 @@ pub struct App {
     pub info_invite: Option<(ChatId, crate::group_admin::LinkState)>,
     /// The panel control that takes the keyboard on the next frame.
     pub(crate) info_focus: Option<InfoFocus>,
+    /// Search query for filtering members in the group info panel.
+    pub info_member_search: String,
     /// Whether the locked-chats folder is open.
     pub locked_folder: bool,
     /// The verifier authenticated for this window session, never the code.
@@ -1615,6 +1617,7 @@ impl App {
             info_members: None,
             info_invite: None,
             info_focus: None,
+            info_member_search: String::new(),
             chat_search: String::new(),
             chat_search_hits: Vec::new(),
             chat_search_truncated: false,
@@ -5470,6 +5473,7 @@ impl App {
             self.reset_info_media();
             self.info_members = None;
             self.info_invite = None;
+            self.info_member_search.clear();
             self.info = Some(InfoPanel {
                 chat,
                 view: InfoView::Overview,
@@ -5501,6 +5505,7 @@ impl App {
         self.info_members = None;
         self.info_invite = None;
         self.info_focus = None;
+        self.info_member_search.clear();
         self.contact_edit = None;
         self.group_name_edit = None;
         self.group_description_edit = None;
