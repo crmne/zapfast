@@ -75,7 +75,8 @@ Several numbers can stay linked in one window. Click your own picture at the
 bottom of the rail beside the chat list to switch between them or to add
 another (**Settings >
 Account > Add account** works too); with several numbers it carries the sum
-of their badges, as the app icon does. In the switcher, each number's picture carries its own badge,
+of the other numbers' badges, so you see at a glance that another number has
+something unread (the Chats icon already shows the one on screen). In the switcher, each number's picture carries its own badge,
 counted as the app icon's is: a number for unread messages, or a dot when only
 muted or archived groups, or channels, are unread. `Ctrl+Shift+A` (Command+Shift+A on macOS) switches to the next
 number. Each number keeps its own keys, archive, media, and

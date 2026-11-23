@@ -41,11 +41,7 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
         .inner;
     #[cfg(any(test, feature = "demo"))]
     super::focus::name_button(ui.ctx(), &label, response.id);
-    let mark = if app.has_several_accounts() {
-        app.badge_mark_everywhere()
-    } else {
-        crate::notify::BadgeMark::default()
-    };
+    let mark = app.badge_mark_elsewhere();
     if mark.count > 0 || mark.dot {
         // Ringed in the panel colour so it reads on any picture.
         let at = response.rect.right_top() + vec2(-3.0, 3.0);

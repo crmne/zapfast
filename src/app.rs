@@ -1864,6 +1864,21 @@ impl App {
             )
     }
 
+    /// The badges of the accounts not on screen, summed for the switcher's
+    /// avatar, so it says the other numbers have something unread without
+    /// repeating the Chats icon's count. Muted accounts are left out.
+    pub fn badge_mark_elsewhere(&self) -> crate::notify::BadgeMark {
+        self.accounts
+            .iter()
+            .enumerate()
+            .filter(|(index, account)| *index != self.active && account.settings.notifications)
+            .map(|(_, account)| account.badge_mark())
+            .fold(
+                crate::notify::BadgeMark::default(),
+                crate::notify::BadgeMark::combine,
+            )
+    }
+
     fn save_roster(&mut self) {
         self.roster.active = self.account().id.0.clone();
         self.roster.order = self
@@ -15126,7 +15141,7 @@ mod tests {
     }
 
     #[test]
-    fn the_taskbar_counts_every_account_and_the_switcher_their_sum() {
+    fn the_taskbar_counts_every_account_and_the_switcher_the_others() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _commands) = two_accounts(directory.path());
         let mut mine = Chat::new("15550004444@s.whatsapp.net".into(), "Ada".into());
@@ -15139,13 +15154,19 @@ mod tests {
         }
         assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chat_count_everywhere(), 3);
-        // The switcher's avatar sums every account's badge: 1 + 3 + 3.
         assert_eq!(app.badge_mark_everywhere().count, 7);
+        // The switcher's avatar sums only the other accounts: 3 + 3, never
+        // the 1 the Chats icon already shows.
+        assert_eq!(app.badge_mark_elsewhere().count, 6);
 
         // A muted account counts toward neither, as a muted chat does not.
         app.accounts[1].settings.notifications = false;
         assert_eq!(app.unread_chat_count_everywhere(), 1);
         assert_eq!(app.badge_mark_everywhere().count, 1);
+        assert_eq!(
+            app.badge_mark_elsewhere(),
+            crate::notify::BadgeMark::default()
+        );
         app.accounts[0].settings.notifications = false;
         assert_eq!(app.unread_chat_count_everywhere(), 0);
     }

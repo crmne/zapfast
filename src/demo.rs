@@ -18054,6 +18054,8 @@ mod tests {
             here.count > 0 || here.dot,
             "the sample account has unread chats"
         );
+        // The avatar sums only the studio's 7, not the account on screen.
+        assert_eq!(app.badge_mark_elsewhere().count, 7);
     }
 
     #[test]
