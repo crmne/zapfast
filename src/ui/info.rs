@@ -25,7 +25,7 @@ const ROW_HEIGHT: f32 = 60.0;
 /// The panel's Tab stops after its close button, in reading order: the
 /// group photo, the rename pencil, the name editor's check, the action
 /// buttons, the media row, the group's permissions row, Add members, the
-/// invite link's buttons, the media view's tabs (or the permission
+/// invite link's buttons, member search, the media view's tabs (or the permission
 /// switches), Leave, and Try again; a person's groups in common come last, one
 /// stop per row.
 const PHOTO_STOP: u8 = 0;
@@ -38,6 +38,7 @@ const PERMISSIONS_STOP: u8 = 11;
 const ADD_MEMBERS_STOP: u8 = 12;
 const COPY_LINK_STOP: u8 = 13;
 const RESET_LINK_STOP: u8 = 14;
+const MEMBER_SEARCH_STOP: u8 = 15;
 const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
@@ -918,6 +919,29 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
     }
 }
 
+/// Returns the indices of the members matching `query`. An empty query matches
+/// every member.
+pub(crate) fn filter_members(members: &[(String, String)], query: &str) -> Vec<usize> {
+    let query = query.trim();
+    let needle = crate::util::search_key(query);
+    let digits = needle.strip_prefix('+').unwrap_or(needle.as_str());
+    if needle.is_empty() {
+        (0..members.len()).collect()
+    } else {
+        members
+            .iter()
+            .enumerate()
+            .filter(|(_, (member, name))| {
+                crate::util::search_key(name).contains(&needle)
+                    || crate::util::search_key(member).contains(&needle)
+                    || crate::model::phone_of(member)
+                        .is_some_and(|p| !digits.is_empty() && p.contains(digits))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
+
 /// The group's members, each opening their own panel. They are sorted once
 /// per change of the chat list or the contacts, not every frame.
 fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: f32) {
@@ -934,12 +958,14 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let Some((_, members)) = app.info_members.take() else {
         return;
     };
-    theme::text(
-        ui,
-        format!("Members ({})", members.len()),
-        theme::medium(12.5),
-        palette.secondary,
-    );
+    let query_empty = app.info_member_search.trim().is_empty();
+    let filtered_indices = filter_members(&members, &app.info_member_search);
+    let count_label = if query_empty {
+        format!("Members ({})", members.len())
+    } else {
+        format!("Members ({}/{})", filtered_indices.len(), members.len())
+    };
+    theme::text(ui, count_label, theme::medium(12.5), palette.secondary);
     ui.add_space(4.0);
     if shown.can_add {
         let label = crate::i18n::gettext(app.locale, "Add members");
@@ -955,6 +981,21 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
         invite_link(app, ui, id, shown.can_manage);
         ui.add_space(4.0);
     }
+    let hint = crate::i18n::gettext(app.locale, "Search members");
+    let search_width = ui.available_width();
+    let search_response = widgets::search_field(
+        ui,
+        &palette,
+        ui.id().with("info-member-search"),
+        &mut app.info_member_search,
+        &hint,
+        search_width,
+    )
+    .tab_stop(Stop::InfoControl(MEMBER_SEARCH_STOP));
+    if search_response.changed() {
+        ui.ctx().request_repaint();
+    }
+    ui.add_space(4.0);
     let roles = app
         .chat(id)
         .map(crate::group_admin::Roles::of)
@@ -971,141 +1012,154 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let mut open = None;
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("members", id))
-        .max_height(row_height * rows)
-        .auto_shrink([false, true])
-        .show_rows(ui, row_height, members.len(), |ui, range| {
-            for (member, name) in &members[range] {
-                let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), row_height),
-                    egui::Sense::click(),
-                );
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
-                });
-                let admin = roles.is_admin(member);
-                let changes = roles.changes(member, &ours);
-                // The menu's button sits at the row's end, over the row.
-                let more = (!changes.is_empty()).then(|| {
-                    let spot = Rect::from_center_size(
-                        pos2(rect.right() - 14.0, rect.center().y),
-                        Vec2::splat(24.0),
+    if filtered_indices.is_empty() && !query_empty {
+        ui.add_space(8.0);
+        let no_match = crate::i18n::gettext(app.locale, "No members found");
+        theme::text(ui, no_match, theme::regular(13.0), palette.dim);
+        ui.add_space(8.0);
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt(("members", id))
+            .max_height(row_height * rows)
+            .auto_shrink([false, true])
+            .show_rows(ui, row_height, filtered_indices.len(), |ui, range| {
+                for &index in &filtered_indices[range] {
+                    let (member, name) = &members[index];
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), row_height),
+                        egui::Sense::click(),
                     );
-                    let more = ui
-                        .interact(spot, ui.id().with(("member-menu", member)), Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                    let label =
-                        crate::i18n::gettext(locale, "Options for {name}").replace("{name}", name);
-                    more.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
                     });
-                    #[cfg(any(test, feature = "demo"))]
-                    {
-                        ui.ctx()
-                            .data_mut(|data| data.insert_temp(member_menu_id(member), spot));
-                        if app.open_member_menu.as_deref() == Some(member.as_str()) {
-                            egui::Popup::open_id(ui.ctx(), more.id.with("popup"));
+                    let admin = roles.is_admin(member);
+                    let changes = roles.changes(member, &ours);
+                    // The menu's button sits at the row's end, over the row.
+                    let more = (!changes.is_empty()).then(|| {
+                        let spot = Rect::from_center_size(
+                            pos2(rect.right() - 14.0, rect.center().y),
+                            Vec2::splat(24.0),
+                        );
+                        let more = ui
+                            .interact(spot, ui.id().with(("member-menu", member)), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let label = crate::i18n::gettext(locale, "Options for {name}")
+                            .replace("{name}", name);
+                        more.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
+                        });
+                        #[cfg(any(test, feature = "demo"))]
+                        {
+                            ui.ctx()
+                                .data_mut(|data| data.insert_temp(member_menu_id(member), spot));
+                            if app.open_member_menu.as_deref() == Some(member.as_str()) {
+                                egui::Popup::open_id(ui.ctx(), more.id.with("popup"));
+                            }
                         }
-                    }
-                    more
-                });
-                if ui.is_rect_visible(rect) {
-                    if response.hovered() {
-                        ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
-                    }
-                    let picture = app.avatar(member);
-                    let avatar = egui::Rect::from_center_size(
-                        egui::pos2(rect.left() + 16.0, rect.center().y),
-                        egui::Vec2::splat(24.0),
-                    );
-                    widgets::paint_avatar(
-                        ui,
-                        &palette,
-                        avatar,
-                        name.trim_start_matches('~'),
-                        member,
-                        picture.as_deref(),
-                    );
-                    // The end of the row: the admin tag and the menu button.
-                    let mut end = rect.right() - 4.0;
-                    if let Some(more) = &more {
-                        let color = if more.hovered() {
-                            palette.text
-                        } else {
-                            palette.secondary
-                        };
-                        if more.hovered() {
-                            ui.painter().circle_filled(
-                                more.rect.center(),
-                                12.0,
-                                palette.surface_active,
-                            );
+                        more
+                    });
+                    if ui.is_rect_visible(rect) {
+                        if response.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
                         }
-                        theme::paint_icon(ui, Icon::Ellipsis, more.rect, 16.0, color);
-                        end = more.rect.left() - 4.0;
-                    }
-                    if admin {
-                        let tag = widgets::line(
+                        let picture = app.avatar(member);
+                        let avatar = egui::Rect::from_center_size(
+                            egui::pos2(rect.left() + 16.0, rect.center().y),
+                            egui::Vec2::splat(24.0),
+                        );
+                        widgets::paint_avatar(
                             ui,
-                            &crate::i18n::gettext(locale, "Group admin"),
-                            theme::regular(11.5),
-                            palette.accent,
-                            90.0,
+                            &palette,
+                            avatar,
+                            name.trim_start_matches('~'),
+                            member,
+                            picture.as_deref(),
+                        );
+                        // The end of the row: the admin tag and the menu button.
+                        let mut end = rect.right() - 4.0;
+                        if let Some(more) = &more {
+                            let color = if more.hovered() {
+                                palette.text
+                            } else {
+                                palette.secondary
+                            };
+                            if more.hovered() {
+                                ui.painter().circle_filled(
+                                    more.rect.center(),
+                                    12.0,
+                                    palette.surface_active,
+                                );
+                            }
+                            theme::paint_icon(ui, Icon::Ellipsis, more.rect, 16.0, color);
+                            end = more.rect.left() - 4.0;
+                        }
+                        if admin {
+                            let tag = widgets::line(
+                                ui,
+                                &crate::i18n::gettext(locale, "Group admin"),
+                                theme::regular(11.5),
+                                palette.accent,
+                                90.0,
+                                1,
+                            );
+                            let pill = Rect::from_min_size(
+                                pos2(
+                                    end - tag.size().x - 12.0,
+                                    rect.center().y - tag.size().y / 2.0 - 2.0,
+                                ),
+                                tag.size() + vec2(12.0, 4.0),
+                            );
+                            ui.painter().rect_filled(
+                                pill,
+                                6.0,
+                                palette.accent.gamma_multiply(0.14),
+                            );
+                            tag.paint(ui, pill.min + vec2(6.0, 2.0), palette.accent);
+                            end = pill.left() - 6.0;
+                        }
+                        let line = widgets::line(
+                            ui,
+                            name,
+                            theme::regular(13.0),
+                            palette.text,
+                            (end - rect.left() - 34.0).max(20.0),
                             1,
                         );
-                        let pill = Rect::from_min_size(
-                            pos2(
-                                end - tag.size().x - 12.0,
-                                rect.center().y - tag.size().y / 2.0 - 2.0,
-                            ),
-                            tag.size() + vec2(12.0, 4.0),
+                        line.paint(
+                            ui,
+                            egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
+                            palette.text,
                         );
-                        ui.painter()
-                            .rect_filled(pill, 6.0, palette.accent.gamma_multiply(0.14));
-                        tag.paint(ui, pill.min + vec2(6.0, 2.0), palette.accent);
-                        end = pill.left() - 6.0;
                     }
-                    let line = widgets::line(
-                        ui,
-                        name,
-                        theme::regular(13.0),
-                        palette.text,
-                        (end - rect.left() - 34.0).max(20.0),
-                        1,
-                    );
-                    line.paint(
-                        ui,
-                        egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
-                        palette.text,
-                    );
-                }
-                // The menu opens from its button or a right-click on the row.
-                if let Some(more) = &more {
-                    let width = member_menu_width(ui, locale, &changes);
-                    for popup in [
-                        egui::Popup::menu(more),
-                        egui::Popup::context_menu(&response),
-                    ] {
-                        popup
-                            .width(width)
-                            .frame(widgets::menu_frame(&palette))
-                            .show(|ui| {
-                                if let Some(change) = member_menu(ui, &palette, locale, &changes) {
-                                    chosen = Some((member.clone(), change));
-                                    ui.close();
-                                }
-                            });
+                    // The menu opens from its button or a right-click on the row.
+                    if let Some(more) = &more {
+                        let width = member_menu_width(ui, locale, &changes);
+                        for popup in [
+                            egui::Popup::menu(more),
+                            egui::Popup::context_menu(&response),
+                        ] {
+                            popup
+                                .width(width)
+                                .frame(widgets::menu_frame(&palette))
+                                .show(|ui| {
+                                    if let Some(change) =
+                                        member_menu(ui, &palette, locale, &changes)
+                                    {
+                                        chosen = Some((member.clone(), change));
+                                        ui.close();
+                                    }
+                                });
+                        }
+                    }
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        open = Some(member.clone());
                     }
                 }
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    open = Some(member.clone());
-                }
-            }
-        });
+            });
+    }
     app.info_members = Some((id.to_owned(), members));
     if let Some((member, change)) = chosen {
         app.actions.push(match change {
@@ -2458,5 +2512,35 @@ mod tests {
             .collect();
         assert_eq!(names, ["alpha", "Zeta"]);
         assert!(super::groups_in_common(&app, "9@s.whatsapp.net").is_empty());
+    }
+
+    #[test]
+    fn group_members_filter_by_name_or_number() {
+        let members = [
+            (
+                "447867218801@s.whatsapp.net".to_string(),
+                "Sahil Shaw".to_string(),
+            ),
+            (
+                "919876543210@s.whatsapp.net".to_string(),
+                "Aashish".to_string(),
+            ),
+            (
+                "16508702892@s.whatsapp.net".to_string(),
+                "Abhishek".to_string(),
+            ),
+        ];
+        let filter = |query: &str| -> Vec<String> {
+            super::filter_members(&members, query)
+                .into_iter()
+                .map(|i| members[i].1.clone())
+                .collect()
+        };
+        assert_eq!(filter("sahil"), vec!["Sahil Shaw"]);
+        assert_eq!(filter("7867218801"), vec!["Sahil Shaw"]);
+        assert_eq!(filter("+447867218801"), vec!["Sahil Shaw"]);
+        assert_eq!(filter("a"), vec!["Sahil Shaw", "Aashish", "Abhishek"]);
+        assert_eq!(filter("unknown"), Vec::<String>::new());
+        assert_eq!(filter("+"), Vec::<String>::new());
     }
 }
