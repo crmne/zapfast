@@ -11474,7 +11474,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let shapes = (0..3)
-            .map(|_| frame_sized(&mut app, &ctx, 780.0, Vec::new()))
+            .map(|_| frame_sized(&mut app, &ctx, 860.0, Vec::new()))
             .last()
             .unwrap();
         let mut drawn = Vec::new();
