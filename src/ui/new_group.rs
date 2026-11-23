@@ -8,12 +8,14 @@ use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, pos2, vec2};
 
 use crate::app::App;
 use crate::model::Action;
-use crate::new_group::Stage;
+use crate::new_group::{Draft, Stage};
 use crate::theme::{self, Icon};
 
 /// The id the new group's photo is drawn under before it has a chat.
 const PREVIEW_ID: &str = "new-group@g.us";
 const ROW_HEIGHT: f32 = 52.0;
+// Leave room for the modal frame, the action row, and their spacing.
+const BODY_INSET: f32 = 104.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     match app.new_group.as_ref().map(|draft| draft.stage) {
@@ -72,61 +74,14 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
         .as_ref()
         .is_some_and(|draft| draft.adding.is_some());
     let busy = app.new_group.as_ref().is_some_and(|draft| draft.creating);
-    let heading = if adding {
-        crate::i18n::gettext(app.locale, "Add members")
-    } else {
-        crate::i18n::gettext(app.locale, "Add group members")
-    };
-    header(app, ui, &heading);
     let members = app
         .new_group
         .as_ref()
         .map(|draft| draft.members.clone())
         .unwrap_or_default();
-    if !members.is_empty() {
-        chips(app, ui, &members);
-        ui.add_space(2.0);
-    }
-    let width = ui.available_width();
-    let hint = crate::i18n::gettext(app.locale, "Search contacts");
-    let search = super::widgets::search_field(
-        ui,
-        &palette,
-        egui::Id::new("new-chat-search"),
-        &mut app.new_chat_search,
-        &hint,
-        width,
-    );
-    if ui.memory(|memory| memory.focused().is_none()) {
-        search.request_focus();
-    }
-    ui.add_space(4.0);
-    let needle = crate::util::search_key(app.new_chat_search.trim());
-    let mut contacts = super::dialogs::contact_choices(app, &needle);
-    if let Some(draft) = app.new_group.as_ref() {
-        // Adding offers only people outside the group.
-        contacts.retain(|contact| draft.offers(&contact.id));
-    }
-    let max_height = (ui.ctx().content_rect().height() - 300.0).clamp(ROW_HEIGHT * 3.0, 420.0);
-    egui::ScrollArea::vertical()
-        .id_salt("new-group-contacts")
-        .max_height(max_height)
-        .auto_shrink([false, true])
-        .show_rows(ui, ROW_HEIGHT, contacts.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for contact in &contacts[range] {
-                member_row(app, ui, &contact.id, members.contains(&contact.id));
-            }
-        });
-    if contacts.is_empty() {
-        ui.add_space(8.0);
-        theme::text(
-            ui,
-            crate::i18n::gettext(app.locale, "No matching contacts"),
-            theme::regular(13.0),
-            palette.secondary,
-        );
-    }
+    body(ui, "choose-group-members", |ui, height| {
+        member_picker(app, ui, &members, adding, height);
+    });
     ui.add_space(8.0);
     let ready = app.new_group.as_ref().is_some_and(|draft| {
         if adding {
@@ -173,6 +128,83 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
+}
+
+/// Bounds the scrolling content while keeping the action row in the dialog.
+fn body<R>(ui: &mut egui::Ui, id: &str, contents: impl FnOnce(&mut egui::Ui, f32) -> R) -> R {
+    let height = (ui.ctx().content_rect().height() - BODY_INSET).max(1.0);
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(height)
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| contents(ui, height))
+        .inner
+}
+
+fn member_picker(app: &mut App, ui: &mut egui::Ui, members: &[String], adding: bool, height: f32) {
+    let palette = app.palette;
+    let top = ui.cursor().top();
+    let heading = if adding {
+        crate::i18n::gettext(app.locale, "Add members")
+    } else {
+        crate::i18n::gettext(app.locale, "Add group members")
+    };
+    header(app, ui, &heading);
+    if !members.is_empty() {
+        egui::ScrollArea::vertical()
+            .id_salt("new-group-picked-members")
+            .max_height((height / 4.0).min(102.0))
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| chips(app, ui, members));
+        ui.add_space(2.0);
+    }
+    let width = ui.available_width();
+    let hint = crate::i18n::gettext(app.locale, "Search contacts");
+    let search = super::widgets::search_field(
+        ui,
+        &palette,
+        egui::Id::new("new-chat-search"),
+        &mut app.new_chat_search,
+        &hint,
+        width,
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        search.request_focus();
+        if !ui.clip_rect().contains_rect(search.rect) {
+            search.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+        }
+    }
+    theme::reveal_focus_in(ui, &search);
+    ui.add_space(4.0);
+    let needle = crate::util::search_key(app.new_chat_search.trim());
+    let mut contacts = super::dialogs::contact_choices(app, &needle);
+    if let Some(draft) = app.new_group.as_ref() {
+        // Adding offers only people outside the group.
+        contacts.retain(|contact| draft.offers(&contact.id));
+    }
+    let max_height = (height - (ui.cursor().top() - top)).clamp(ROW_HEIGHT, 420.0);
+    egui::ScrollArea::vertical()
+        .id_salt("new-group-contacts")
+        .max_height(max_height)
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, true])
+        .show_rows(ui, ROW_HEIGHT, contacts.len(), |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for contact in &contacts[range] {
+                member_row(app, ui, &contact.id, members.contains(&contact.id));
+            }
+        });
+    if contacts.is_empty() {
+        ui.add_space(8.0);
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "No matching contacts"),
+            theme::regular(13.0),
+            palette.secondary,
+        );
+    }
 }
 
 /// The people picked so far, each a chip that lets them go when clicked.
@@ -289,11 +321,54 @@ fn member_row(app: &mut App, ui: &mut egui::Ui, id: &str, picked: bool) {
 
 fn naming(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let heading = crate::i18n::gettext(app.locale, "New group");
-    header(app, ui, &heading);
     let Some(draft) = app.new_group.clone() else {
         return;
     };
+    let submitted = body(ui, "name-group", |ui, _| naming_details(app, ui, &draft));
+    ui.add_space(12.0);
+
+    let ready = app.new_group.as_ref().is_some_and(Draft::can_create);
+    ui.horizontal(|ui| {
+        if draft.creating {
+            theme::spinner(ui, 16.0, palette.accent);
+            theme::text(
+                ui,
+                crate::i18n::gettext(app.locale, "Creating the group…"),
+                theme::regular(12.5),
+                palette.secondary,
+            );
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let create = crate::i18n::gettext(app.locale, "Create");
+            let needs_name = crate::i18n::gettext(app.locale, "Enter a name for the group.");
+            let clicked = ui
+                .add_enabled_ui(ready, |ui| {
+                    theme::pill_button(ui, &palette, &create, true)
+                        .on_disabled_hover_text(needs_name)
+                })
+                .inner
+                .clicked();
+            if (clicked || submitted) && ready {
+                app.actions.push(Action::CreateGroup);
+            }
+            let back = crate::i18n::gettext(app.locale, "Back");
+            if ui
+                .add_enabled_ui(!draft.creating, |ui| {
+                    theme::pill_button(ui, &palette, &back, false)
+                })
+                .inner
+                .clicked()
+            {
+                app.actions.push(Action::NewGroupBack);
+            }
+        });
+    });
+}
+
+fn naming_details(app: &mut App, ui: &mut egui::Ui, draft: &Draft) -> bool {
+    let palette = app.palette;
+    let heading = crate::i18n::gettext(app.locale, "New group");
+    header(app, ui, &heading);
     ui.add_space(4.0);
     // The photo, optional: the group dialog's picking and cropping.
     ui.vertical_centered(|ui| {
@@ -394,9 +469,30 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
         field.response.rect,
         f32::from(theme::RADIUS),
     );
-    if !draft.creating && ui.memory(|memory| memory.focused().is_none()) {
+    let viewport_size = ui.ctx().content_rect().size();
+    let previous_size = ui.data_mut(|data| {
+        let id = field.inner.id.with("viewport-size");
+        let previous = data.get_temp::<egui::Vec2>(id);
+        data.insert_temp(id, viewport_size);
+        previous
+    });
+    let shrank = previous_size
+        .is_some_and(|previous| viewport_size.x < previous.x || viewport_size.y < previous.y);
+    let autofocus = !draft.creating && ui.memory(|memory| memory.focused().is_none());
+    if autofocus {
         field.inner.request_focus();
     }
+    // Reveal the focused field when the window shrinks, then leave scrolling to the user.
+    if (autofocus || (shrank && field.inner.has_focus()))
+        && !ui.clip_rect().contains_rect(field.response.rect)
+    {
+        ui.scroll_to_rect_animation(
+            field.response.rect,
+            None,
+            egui::style::ScrollAnimation::none(),
+        );
+    }
+    theme::reveal_focus_in(ui, &field.inner);
     let submitted =
         field.inner.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
     if let Some(edited) = app.new_group.as_mut() {
@@ -431,47 +527,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     );
     let (spot, _) = ui.allocate_exact_size(list.size(), Sense::hover());
     list.paint(ui, spot.min, palette.secondary);
-    ui.add_space(12.0);
-
-    let ready = app
-        .new_group
-        .as_ref()
-        .is_some_and(crate::new_group::Draft::can_create);
-    ui.horizontal(|ui| {
-        if draft.creating {
-            theme::spinner(ui, 16.0, palette.accent);
-            theme::text(
-                ui,
-                crate::i18n::gettext(app.locale, "Creating the group…"),
-                theme::regular(12.5),
-                palette.secondary,
-            );
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let create = crate::i18n::gettext(app.locale, "Create");
-            let needs_name = crate::i18n::gettext(app.locale, "Enter a name for the group.");
-            let clicked = ui
-                .add_enabled_ui(ready, |ui| {
-                    theme::pill_button(ui, &palette, &create, true)
-                        .on_disabled_hover_text(needs_name)
-                })
-                .inner
-                .clicked();
-            if (clicked || submitted) && ready {
-                app.actions.push(Action::CreateGroup);
-            }
-            let back = crate::i18n::gettext(app.locale, "Back");
-            if ui
-                .add_enabled_ui(!draft.creating, |ui| {
-                    theme::pill_button(ui, &palette, &back, false)
-                })
-                .inner
-                .clicked()
-            {
-                app.actions.push(Action::NewGroupBack);
-            }
-        });
-    });
+    submitted
 }
 
 /// The new group's name field.

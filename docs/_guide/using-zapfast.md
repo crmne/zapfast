@@ -725,9 +725,11 @@ a failed check can be retried. Add a name instead to save the contact.
 To make a group, open **New chat** and choose **New group**. Each contact gets a
 check box: search for a name, check the person, and search for the next; the
 people you pick appear above the list, and clicking one there takes them off
-again. Choose **Next**, type the group's name (WhatsApp allows up to 100
+again. Scroll the selected members if they take up several rows. Choose
+**Next**, type the group's name (WhatsApp allows up to 100
 characters), optionally choose **Add group photo** (cropped to a centred
-square, as the group details' photo is), and choose **Create**. You are the
+square, as the group details' photo is), and choose **Create**. In a short
+window, the form scrolls above the **Create** button. You are the
 group's admin, and the new group opens straight away. Some people's privacy
 settings only let certain contacts add them to groups: when WhatsApp does not
 add someone, ZapFast names them after the group is created, and you can send
