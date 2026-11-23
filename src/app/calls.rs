@@ -1542,36 +1542,26 @@ mod tests {
         app.handle_call_update(outgoing(generation, CallPhase::Placing).not_placed());
         assert_eq!(app.call.as_ref().unwrap().phase, CallPhase::Incoming);
 
-        // A user putting the ringing call in PiP is preserved across same-generation updates
         let ctx = egui::Context::default();
-        app.apply(Action::ToggleCallPip, &ctx);
-        assert!(app.call_pip);
-        assert!(app.call_surface_hidden);
-        app.handle_call_update(update(0, CallPhase::Incoming));
-        assert!(
-            app.call_pip,
-            "subsequent update for same call preserves PiP"
-        );
-        assert!(app.call_surface_hidden);
+        for (current, replacement) in [(0, 2), (2, 3)] {
+            // Same-generation updates preserve the user's choice to detach.
+            assert_eq!(app.call.as_ref().unwrap().generation, current);
+            app.apply(Action::ToggleCallPip, &ctx);
+            assert!(app.call_pip);
+            assert!(app.call_surface_hidden);
+            app.handle_call_update(update(current, CallPhase::Incoming));
+            assert!(
+                app.call_pip,
+                "subsequent update for same call preserves PiP"
+            );
+            assert!(app.call_surface_hidden);
 
-        // A newly ringing call under a different generation restores the main surface
-        app.handle_call_update(update(2, CallPhase::Incoming));
-        assert!(!app.call_pip, "different incoming call resets PiP");
-        assert!(!app.call_surface_hidden);
-
-        // A user putting the ringing call in PiP is preserved across same-generation updates
-        let ctx = egui::Context::default();
-        app.apply(Action::ToggleCallPip, &ctx);
-        assert!(app.call_pip);
-        assert!(app.call_surface_hidden);
-        app.handle_call_update(update(0, CallPhase::Incoming));
-        assert!(app.call_pip, "subsequent update for same call preserves PiP");
-        assert!(app.call_surface_hidden);
-
-        // A newly ringing call under a different generation restores the main surface
-        app.handle_call_update(update(2, CallPhase::Incoming));
-        assert!(!app.call_pip, "different incoming call resets PiP");
-        assert!(!app.call_surface_hidden);
+            // Each newly ringing call restores the main surface.
+            app.handle_call_update(update(replacement, CallPhase::Incoming));
+            assert_eq!(app.call.as_ref().unwrap().generation, replacement);
+            assert!(!app.call_pip, "different incoming call resets PiP");
+            assert!(!app.call_surface_hidden);
+        }
     }
 
     #[test]
