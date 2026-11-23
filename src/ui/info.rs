@@ -983,7 +983,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     }
     let hint = crate::i18n::gettext(app.locale, "Search members");
     let search_width = ui.available_width();
-    widgets::search_field(
+    let search_response = widgets::search_field(
         ui,
         &palette,
         ui.id().with("info-member-search"),
@@ -992,6 +992,9 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
         search_width,
     )
     .tab_stop(Stop::InfoControl(MEMBER_SEARCH_STOP));
+    if search_response.changed() {
+        ui.ctx().request_repaint();
+    }
     ui.add_space(4.0);
     let roles = app
         .chat(id)
