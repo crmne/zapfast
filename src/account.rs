@@ -326,6 +326,22 @@ impl Account {
         u32::try_from(chats).unwrap_or(u32::MAX)
     }
 
+    /// What this account adds to the app badge: every unread message in a
+    /// direct chat or an active group (one for a chat marked unread), and a
+    /// dot for a muted or archived group or an unread channel. Locked chats
+    /// stay out, and so do archived and muted direct chats.
+    pub fn badge_mark(&self) -> crate::notify::BadgeMark {
+        let now = crate::util::now();
+        self.chats
+            .iter()
+            .filter(|chat| !chat.locked && chat.looks_unread())
+            .map(|chat| badge_mark_of(chat, chat.muted(now)))
+            .fold(
+                crate::notify::BadgeMark::default(),
+                crate::notify::BadgeMark::combine,
+            )
+    }
+
     /// The name the switcher shows: the profile name, else the number,
     /// else "Account" and its number here.
     pub fn display_label(&self, locale: crate::i18n::Locale) -> String {
@@ -396,5 +412,25 @@ fn resolve_wallpaper_path(dirs: &AccountDirs, settings: &mut AccountSettings) {
         .is_some_and(|path| !path.exists())
     {
         settings.wallpaper_image = None;
+    }
+}
+
+/// One unread chat's share of the app badge; see [`Account::badge_mark`].
+fn badge_mark_of(chat: &crate::model::Chat, muted: bool) -> crate::notify::BadgeMark {
+    use crate::model::ChatKind;
+    use crate::notify::BadgeMark;
+    let counted = BadgeMark {
+        count: chat.unread.max(1),
+        dot: false,
+    };
+    let dot = BadgeMark {
+        count: 0,
+        dot: true,
+    };
+    match chat.kind {
+        ChatKind::Direct | ChatKind::Group if !muted && !chat.archived => counted,
+        ChatKind::Group => dot,
+        ChatKind::Broadcast if !muted && !chat.archived => dot,
+        ChatKind::Direct | ChatKind::Broadcast => BadgeMark::default(),
     }
 }

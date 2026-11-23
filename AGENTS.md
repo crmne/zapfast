@@ -97,9 +97,9 @@ protocol. These notes are for coding agents and new contributors.
   free; a narrow window hides the rail with the list. The Calls tab keeps
   the open chat beside its history (`App::chat_view`), and a picked call row
   opens its chat there. Our avatar opens the account switcher
-  (`src/ui/accounts.rs`): only the accounts (picture, name or number, unread
-  chats, a check on the one on screen) and Add account. A dot on the avatar
-  means another account has unread chats. Events from an account that is not on screen are
+  (`src/ui/accounts.rs`): only the accounts (picture with the account's
+  `badge_mark`, name or number, a check on the one on screen) and Add account. With several accounts the avatar
+  carries the sum of the other accounts' badges (`App::badge_mark_elsewhere`), never the one on screen, which the Chats icon shows. Events from an account that is not on screen are
   applied with `App::events_hidden` set: they update that account only, never
   the window's composer, dialogs, playback, or read state (a hidden account's
   remembered chat is not being read, so it sends no receipts). Process-wide
@@ -595,7 +595,11 @@ protocol. These notes are for coding agents and new contributors.
   exists), and `src/macos.rs` hands its menu events to `fastframe_tray::claim_menu_event` first.
   The process Dock icon and unread badge use fastframe-dock; a Cargo run
   gets the embedded icon, while a packaged app keeps its bundle icon. The
-  unread-chat count stays in ZapFast and survives window replacement.
+  badge (`Account::badge_mark`) counts unread messages in direct chats and
+  in groups that are neither muted nor archived, with a dot on macOS for
+  muted or archived groups and channels; it stays in ZapFast and survives window
+  replacement. `macos::request_badge_permission` adds the badge to the
+  notification permission, which fastframe-notifications asks without it.
   Clicking the macOS menu-bar icon opens its menu; **Show or hide ZapFast**
   toggles the window, and clicking the Dock icon shows it. On macOS closing
   always keeps ZapFast running, as other Mac apps do: `App::dock` (a

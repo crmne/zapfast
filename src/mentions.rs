@@ -41,6 +41,17 @@ pub fn names_us(mention: &MentionRef, ours: &[&str]) -> bool {
             .any(|id| id.split('@').next() == Some(mention.user.as_str()))
 }
 
+/// Whether `jid` (a message's sender, with or without a device) is us under
+/// any id we go by (`ours`).
+pub fn is_ours(jid: &str, ours: &[&str]) -> bool {
+    let user = |jid: &str| {
+        let user = jid.split('@').next().unwrap_or_default();
+        user.split(':').next().unwrap_or_default().to_owned()
+    };
+    let wanted = user(jid);
+    !wanted.is_empty() && ours.iter().any(|id| user(id) == wanted)
+}
+
 /// Appends the everyone mention once.
 pub fn push_everyone(mentions: &mut Vec<MentionRef>) {
     if !mentions.iter().any(is_everyone) {

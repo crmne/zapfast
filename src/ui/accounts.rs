@@ -25,8 +25,9 @@ pub fn button_id() -> egui::Id {
     egui::Id::new("account-switcher")
 }
 
-/// Our avatar as the switcher's button. A dot on it says another account has
-/// unread chats.
+/// Our avatar as the switcher's button. With several accounts it carries the
+/// sum of their badges, the app icon's own: a number for unread messages, else
+/// a dot.
 pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Response {
     let palette = app.palette;
     let me = app.me.clone().unwrap_or_default();
@@ -40,12 +41,12 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
         .inner;
     #[cfg(any(test, feature = "demo"))]
     super::focus::name_button(ui.ctx(), &label, response.id);
-    let elsewhere = app.unread_chat_count_elsewhere();
-    if elsewhere > 0 {
+    let mark = app.badge_mark_elsewhere();
+    if mark.count > 0 || mark.dot {
         // Ringed in the panel colour so it reads on any picture.
         let at = response.rect.right_top() + vec2(-3.0, 3.0);
-        ui.painter().circle_filled(at, 6.0, palette.panel);
-        ui.painter().circle_filled(at, 4.5, palette.accent);
+        ui.painter().circle_filled(at, 7.0, palette.panel);
+        widgets::unread_indicator(ui, &palette, at, mark.count, mark.dot, false);
     }
     let tooltip = match (&app.me_about, app.has_several_accounts()) {
         (_, true) => app.account().display_label(app.locale),
@@ -93,7 +94,8 @@ struct Entry {
     detail: String,
     me: String,
     picture: Option<std::path::PathBuf>,
-    unread: u32,
+    /// The account's share of the app badge, shown on its picture.
+    mark: crate::notify::BadgeMark,
     current: bool,
     /// Whether this account's desktop notifications are off.
     muted: bool,
@@ -122,7 +124,7 @@ fn entries(app: &mut App) -> Vec<Entry> {
                 detail,
                 me,
                 picture,
-                unread: account.unread_chat_count(),
+                mark: account.badge_mark(),
                 current: index == active,
                 muted: !account.settings.notifications,
             }
@@ -182,8 +184,9 @@ enum RowClick {
     Bell,
 }
 
-/// One account in the switcher: its picture, name and number, its unread
-/// chats, a check on the one on screen, and a bell that mutes its
+/// One account in the switcher: its picture with the account's badge (a
+/// number for unread messages, else a dot, as on the Dock), its name and
+/// number, a check on the one on screen, and a bell that mutes its
 /// notifications. The bell shows while the account is muted, or while the
 /// row is pointed at or the bell has the keyboard focus.
 fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> Option<RowClick> {
@@ -241,6 +244,19 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> Option<RowClick> 
             },
             entry.picture.as_deref(),
         );
+        // Ringed in the menu's colour so it reads on any picture.
+        let corner = avatar.right_top() + vec2(-2.0, 4.0);
+        if entry.mark.count > 0 || entry.mark.dot {
+            ui.painter().circle_filled(corner, 7.0, palette.panel);
+        }
+        widgets::unread_indicator(
+            ui,
+            &palette,
+            corner,
+            entry.mark.count,
+            entry.mark.dot,
+            entry.muted,
+        );
         if entry.muted || ui.rect_contains_pointer(rect) || bell.has_focus() {
             if bell.hovered() {
                 ui.painter()
@@ -256,7 +272,7 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> Option<RowClick> 
                 Rect::from_center_size(bell_rect.center(), Vec2::splat(16.0)),
             );
         }
-        // Room on the right for the bell, then the check or the unread count.
+        // Room on the right for the bell, then the check.
         let right = bell_rect.left() - 4.0;
         let mut text_right = right;
         if entry.current {
@@ -264,15 +280,6 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> Option<RowClick> 
                 Rect::from_center_size(pos2(right - 8.0, rect.center().y), Vec2::splat(16.0));
             Icon::Check.image(palette.accent, 16.0).paint_at(ui, check);
             text_right -= 24.0;
-        } else if entry.unread > 0 {
-            let width = widgets::badge(
-                ui,
-                &palette,
-                pos2(right - 12.0, rect.center().y),
-                entry.unread,
-                entry.muted,
-            );
-            text_right -= width.max(24.0) + 4.0;
         }
         let x = avatar.right() + 10.0;
         let max_width = (text_right - x).max(0.0);
@@ -333,12 +340,20 @@ fn row_label(app: &App, entry: &Entry) -> String {
         label.push_str(", ");
         label.push_str(&entry.detail);
     }
-    if entry.unread > 0 {
+    if entry.mark.count > 0 {
         label.push_str(", ");
         label.push_str(
-            &gettext(app.locale, "{count} unread chats")
-                .replace("{count}", &entry.unread.to_string()),
+            &crate::i18n::ngettext(
+                app.locale,
+                "{} unread message",
+                "{} unread messages",
+                entry.mark.count,
+            )
+            .replace("{}", &entry.mark.count.to_string()),
         );
+    } else if entry.mark.dot {
+        label.push_str(", ");
+        label.push_str(&gettext(app.locale, "Unread"));
     }
     if entry.muted {
         label.push_str(", ");

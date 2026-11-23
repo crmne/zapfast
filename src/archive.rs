@@ -373,6 +373,7 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         labels: Vec::new(),
         ephemeral_expiration: row.get::<_, Option<u32>>(16)?,
         unread_mention: None,
+        unread_mentions: 0,
         notification_sound: row
             .get::<_, Option<String>>(19)?
             .and_then(|sound| serde_json::from_str(&sound).ok()),
@@ -932,6 +933,7 @@ impl Archive {
             "UPDATE chats SET read_through = MAX(COALESCE(read_through, 0), ?2),
              unread = MIN(unread, (SELECT COUNT(*) FROM messages
                  WHERE chat = ?1 AND from_me = 0 AND id NOT LIKE 'zapfast-timer-%'
+                 AND id NOT LIKE 'zapfast-call-%'
                  AND timestamp > MAX(COALESCE(read_through, 0), ?2))) WHERE id = ?1",
             params![id, timestamp],
         )?;
@@ -948,6 +950,7 @@ impl Archive {
              unread = MIN(unread, (SELECT COUNT(*) FROM messages m
                  JOIN messages boundary ON boundary.chat = m.chat AND boundary.id = ?2
                  WHERE m.chat = ?1 AND m.from_me = 0 AND m.id NOT LIKE 'zapfast-timer-%'
+                 AND m.id NOT LIKE 'zapfast-call-%'
                  AND (m.timestamp > boundary.timestamp
                       OR (m.timestamp = boundary.timestamp AND
                           (COALESCE(m.history_order, 9223372036854775807), m.rowid) >
@@ -2537,32 +2540,58 @@ impl Archive {
     /// The oldest of a chat's `unread` newest incoming messages that mentions
     /// us (under any id in `ours`) or everyone.
     pub fn unread_mention(&self, chat: &str, unread: u32, ours: &[&str]) -> Result<Option<String>> {
+        Ok(self.unread_mentions(chat, unread, ours)?.0)
+    }
+
+    /// The oldest of a chat's `unread` newest incoming messages that mentions
+    /// us (under any id in `ours`) or everyone, and how many of them call for
+    /// us: those mentions plus replies to our own messages, which the app
+    /// badge counts as Slack counts thread replies.
+    pub fn unread_mentions(
+        &self,
+        chat: &str,
+        unread: u32,
+        ours: &[&str],
+    ) -> Result<(Option<String>, u32)> {
         if unread == 0 {
-            return Ok(None);
+            return Ok((None, 0));
         }
         let mut statement = self.connection.prepare(
-            "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
-             AND id NOT LIKE 'zapfast-timer-%'
+            "SELECT id, mentions, quoted FROM messages WHERE chat = ?1 AND from_me = 0
+             AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC,
                       rowid DESC
              LIMIT ?2",
         )?;
         let rows = statement.query_map(params![chat, unread], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         let mut oldest = None;
+        let mut count = 0u32;
         for row in rows {
-            let (id, mentions) = row?;
+            let (id, mentions, quoted) = row?;
             let mentions: Vec<crate::model::MentionRef> =
                 serde_json::from_str(&mentions).unwrap_or_default();
-            if mentions
+            let mentioned = mentions
                 .iter()
-                .any(|mention| crate::mentions::names_us(mention, ours))
-            {
+                .any(|mention| crate::mentions::names_us(mention, ours));
+            let replied = quoted
+                .and_then(|quoted| serde_json::from_str::<crate::model::Quoted>(&quoted).ok())
+                .is_some_and(|quoted| {
+                    quoted.chat.is_none() && crate::mentions::is_ours(&quoted.sender, ours)
+                });
+            if mentioned {
                 oldest = Some(id);
             }
+            if mentioned || replied {
+                count = count.saturating_add(1);
+            }
         }
-        Ok(oldest)
+        Ok((oldest, count))
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
@@ -4271,6 +4300,39 @@ pub(crate) mod tests {
         archive.bump_unread(chat).expect("bump");
         archive.mark_read_through(chat, 100).expect("read through");
         assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+    }
+
+    /// A call entry is never unread: a read on another device that covers an
+    /// older mention leaves only the newer message, and the mention is gone.
+    #[test]
+    fn a_call_entry_does_not_keep_a_read_mention_unread() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1-2@g.us";
+        archive.ensure_chat(chat, "Club").expect("chat");
+        let me = "15550001111@s.whatsapp.net";
+        let mut tagged = message(chat, "tagged", 100, false);
+        tagged.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: me.into(),
+        }];
+        archive.insert_message(&tagged, None).expect("insert");
+        archive
+            .insert_message(&message(chat, "later", 200, false), None)
+            .expect("insert");
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 300, false), None)
+            .expect("insert");
+        let unread = |archive: &Archive| archive.chat(chat).expect("chat").expect("exists").unread;
+
+        archive.bump_unread(chat).expect("bump");
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_to(chat, "tagged").expect("read");
+        assert_eq!(unread(&archive), 1);
+        assert_eq!(archive.unread_mentions(chat, 1, &[me]).unwrap(), (None, 0));
+
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_through(chat, 100).expect("read through");
+        assert_eq!(unread(&archive), 1);
     }
 
     /// An archive from before group editing learns who may edit a group's
@@ -6026,6 +6088,58 @@ pub(crate) mod tests {
             "the oldest unread one, not one already read"
         );
         assert_eq!(archive.unread_mention(chat, 4, &[]).unwrap(), None);
+        assert_eq!(
+            archive.unread_mentions(chat, 4, &ours).unwrap(),
+            (Some("first".to_owned()), 2),
+            "the badge counts each unread mention"
+        );
+        // A call entry is never unread, so it takes no place in the window.
+        archive
+            .insert_message(&message(chat, "zapfast-call-1", 700, false), None)
+            .expect("insert");
+        assert_eq!(
+            archive.unread_mentions(chat, 2, &ours).unwrap(),
+            (Some("lid".to_owned()), 1)
+        );
+    }
+
+    #[test]
+    fn unread_replies_to_us_count_for_the_badge() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1-3@g.us";
+        archive.ensure_chat(chat, "Club").expect("chat");
+        let me = "15550001111@s.whatsapp.net";
+        let quote = |sender: &str| crate::model::Quoted {
+            chat: None,
+            id: "q".into(),
+            sender: sender.into(),
+            sender_name: None,
+            summary: "hi".into(),
+            labelled: Some(false),
+            mentions: Vec::new(),
+        };
+        let mut to_us = message(chat, "to-us", 100, false);
+        to_us.quoted = Some(quote("15550001111:4@s.whatsapp.net"));
+        let mut to_lid = message(chat, "to-lid", 200, false);
+        to_lid.quoted = Some(quote("98765@lid"));
+        let mut to_other = message(chat, "to-other", 300, false);
+        to_other.quoted = Some(quote("15550002222@s.whatsapp.net"));
+        let mut both = message(chat, "both", 400, false);
+        both.quoted = Some(quote(me));
+        both.mentions = vec![crate::model::MentionRef {
+            user: "15550001111".into(),
+            id: me.into(),
+        }];
+        for row in [to_us, to_lid, to_other, both] {
+            archive.insert_message(&row, None).expect("insert");
+        }
+        let ours = [me, "98765@lid"];
+        assert_eq!(
+            archive.unread_mentions(chat, 4, &ours).unwrap(),
+            (Some("both".to_owned()), 3),
+            "replies count once each, beside mentions, without becoming the jump target"
+        );
+        assert_eq!(archive.unread_mentions(chat, 4, &[]).unwrap(), (None, 0));
     }
 
     #[test]

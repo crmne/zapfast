@@ -319,6 +319,9 @@ pub struct Chat {
     /// The oldest unread message that mentions us (or everyone), which the
     /// chat list marks with "@" and opening the chat shows.
     pub unread_mention: Option<String>,
+    /// How many of the unread messages mention us (or everyone); counted
+    /// for groups only, where the app badge counts mentions, not messages.
+    pub unread_mentions: u32,
     /// This chat's own voice message speed; `None` follows Settings.
     pub voice_speed: Option<f32>,
 }
@@ -412,6 +415,7 @@ impl Chat {
             labels: Vec::new(),
             notification_sound: None,
             unread_mention: None,
+            unread_mentions: 0,
             voice_speed: None,
         }
     }

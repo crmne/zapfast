@@ -289,17 +289,21 @@ fn destination_button(
     height: f32,
 ) {
     let lit = destination.lit(app);
-    let mut badge = 0;
+    let mut mark = crate::notify::BadgeMark::default();
     let (icon, stop, label) = match destination {
-        Destination::Chats => (
-            Icon::MessageCircle,
-            Stop::Chats,
-            format!(
-                "{} ({})",
-                gettext(app.locale, "Chats"),
-                super::keys::label("Ctrl+Shift+1")
-            ),
-        ),
+        Destination::Chats => {
+            // The app badge's count for the account on screen alone.
+            mark = app.badge_mark();
+            (
+                Icon::MessageCircle,
+                Stop::Chats,
+                format!(
+                    "{} ({})",
+                    gettext(app.locale, "Chats"),
+                    super::keys::label("Ctrl+Shift+1")
+                ),
+            )
+        }
         Destination::Calls => (
             Icon::Phone,
             Stop::Calls,
@@ -316,7 +320,7 @@ fn destination_button(
         ),
         Destination::Archived => {
             // The count the Archived chip carried: archived chats unread.
-            badge = app.archived_unread() as u32;
+            mark.count = u32::try_from(app.archived_unread()).unwrap_or(u32::MAX);
             (
                 Icon::Archive,
                 Stop::Archived,
@@ -345,8 +349,10 @@ fn destination_button(
         .interact(plate, destination_id(destination), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     theme::reveal_focus(&response);
-    let spoken = if badge > 0 {
-        format!("{label}, {badge}")
+    let spoken = if mark.count > 0 {
+        format!("{label}, {}", mark.count)
+    } else if mark.dot {
+        format!("{label}, {}", gettext(app.locale, "Unread"))
     } else {
         label.clone()
     };
@@ -376,16 +382,14 @@ fn destination_button(
             1.0
         };
         theme::paint_icon(ui, icon, plate, ICON * scale, tint);
-        if badge > 0 {
-            widgets::unread_indicator(
-                ui,
-                palette,
-                plate.right_top() + vec2(-3.0, 5.0),
-                badge,
-                false,
-                false,
-            );
-        }
+        widgets::unread_indicator(
+            ui,
+            palette,
+            plate.right_top() + vec2(-3.0, 5.0),
+            mark.count,
+            mark.dot,
+            false,
+        );
     }
     let response = response.on_hover_text(label).tab_stop(stop);
     if response.clicked() {

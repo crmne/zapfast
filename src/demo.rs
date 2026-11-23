@@ -18006,6 +18006,58 @@ mod tests {
         assert!(said[0].starts_with(&muted), "{said:?}");
     }
 
+    /// Each account in the switcher carries its own badge on its picture,
+    /// counted as the Dock counts, and says it to a screen reader.
+    #[test]
+    fn the_switcher_badges_each_account() {
+        let mut app = app();
+        apply_flags(&mut app, Some("accounts"));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            labels = output
+                .platform_output
+                .accesskit_update
+                .expect("accessibility tree")
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| node.label().map(str::to_owned))
+                .collect();
+        }
+        // Two from Grace and five in the studio's group, which is not muted.
+        let studio = app.accounts[1].display_label(app.locale);
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.starts_with(&studio) && label.contains(", 7 unread messages")),
+            "{labels:?}"
+        );
+        let here = app.accounts[0].badge_mark();
+        assert!(
+            here.count > 0 || here.dot,
+            "the sample account has unread chats"
+        );
+        // The avatar sums only the studio's 7, not the account on screen.
+        assert_eq!(app.badge_mark_elsewhere().count, 7);
+    }
+
     #[test]
     fn account_privacy_fetch_fills_the_rows() {
         let mut app = app();
