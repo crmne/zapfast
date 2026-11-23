@@ -269,7 +269,7 @@ winit = { git = "https://github.com/crmne/winit", rev = "dc09323e032a405a8a165ae
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 # Pauses MPRIS media players while recording or playing voice messages.
 # Already in the tree through fastframe-notifications and fastframe-tray.
-zbus = { version = "5.19", default-features = false, features = ["blocking-api", "tokio"] }
+zbus = { version = "6.0", default-features = false, features = ["blocking-api", "tokio"] }
 # Reads the time locale's clock format.
 libc = "0.2"
 # The camera for video calls, through Video4Linux, in Rust: no build-time
