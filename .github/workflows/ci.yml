@@ -169,7 +169,7 @@ jobs:
       # Frees disk space on Ubuntu runners; macOS runners have enough.
       - uses: wimpysworld/nothing-but-nix@v9
         if: runner.os == 'Linux'
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v32
       - uses: nix-community/cache-nix-action@v7
         with:
           save: ${{ github.ref == 'refs/heads/main' }}
