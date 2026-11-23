@@ -10822,8 +10822,8 @@ mod tests {
         assert!(app.new_group.as_ref().unwrap().creating);
     }
 
-    /// Next and Create stay reachable with a long member list. The focused
-    /// name field stays visible and accepts a click after the window shrinks.
+    /// A member below the visible selection can be scrolled to and removed.
+    /// Next and Create stay reachable, and the name field accepts a click after resize.
     #[test]
     fn large_group_controls_stay_clickable_in_a_small_window() {
         use crate::new_group::Stage;
@@ -10845,7 +10845,9 @@ mod tests {
             );
             app.new_group.as_mut().unwrap().members.push(id);
         }
-        let members = app.new_group.as_ref().unwrap().members.clone();
+        let mut members = app.new_group.as_ref().unwrap().members.clone();
+        let first_chip = format!("Remove {}", app.display_name(&members[0]));
+        let last_chip = format!("Remove {}", app.display_name(&members.pop().unwrap()));
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0));
         let click_at = |app: &mut App, pos| {
             accessible_nodes_in(app, &ctx, screen, vec![egui::Event::PointerMoved(pos)]);
@@ -10864,15 +10866,17 @@ mod tests {
                 );
             }
         };
+        let button_position = |app: &mut App, label: &str| {
+            accessible_nodes_in(app, &ctx, screen, Vec::new())
+                .into_iter()
+                .find_map(|(name, role, pos)| {
+                    (name == label && role == Role::Button).then_some(pos)
+                })
+        };
         let click = |app: &mut App, label: &str| {
             render_sized(app, &ctx, screen.size());
-            let nodes = accessible_nodes_in(app, &ctx, screen, Vec::new());
-            let pos = nodes
-                .iter()
-                .find_map(|(name, role, pos)| {
-                    (name == label && *role == Role::Button).then_some(*pos)
-                })
-                .unwrap_or_else(|| panic!("missing {label} button"));
+            let pos =
+                button_position(app, label).unwrap_or_else(|| panic!("missing {label} button"));
             assert!(
                 screen.contains(pos),
                 "{label} is outside the window: {pos:?}"
@@ -10880,6 +10884,30 @@ mod tests {
             click_at(app, pos);
             render_sized(app, &ctx, screen.size());
         };
+
+        render_sized(&mut app, &ctx, screen.size());
+        let first = button_position(&mut app, &first_chip).expect("first selected member");
+        assert!(screen.contains(first));
+        assert!(
+            button_position(&mut app, &last_chip).is_none_or(|pos| !screen.contains(pos)),
+            "the last selected member should start off-screen"
+        );
+        accessible_nodes_in(
+            &mut app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(first),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, -30.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        click(&mut app, &last_chip);
+        assert_eq!(app.new_group.as_ref().unwrap().members, members);
 
         click(&mut app, "Next");
         assert_eq!(app.new_group.as_ref().unwrap().stage, Stage::Naming);
