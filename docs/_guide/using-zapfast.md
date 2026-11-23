@@ -865,6 +865,8 @@ as WhatsApp's own apps do:
   admin**, **Dismiss as admin**, and **Remove from group**, which asks first.
   Admins are tagged **Group admin**. The group's creator cannot be dismissed
   or removed.
+- **Search members** filters the list of members by name, phone number,
+  or identifier, showing the matching count alongside the total.
 
 Members who are not admins see **Add members** and **Invite via link** only
 when the group lets every member add people or share its link. ZapFast keeps

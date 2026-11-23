@@ -25,7 +25,7 @@ const ROW_HEIGHT: f32 = 60.0;
 /// The panel's Tab stops after its close button, in reading order: the
 /// group photo, the rename pencil, the name editor's check, the action
 /// buttons, the media row, the group's permissions row, Add members, the
-/// invite link's buttons, the media view's tabs (or the permission
+/// invite link's buttons, member search, the media view's tabs (or the permission
 /// switches), Leave, and Try again; a person's groups in common come last, one
 /// stop per row.
 const PHOTO_STOP: u8 = 0;
@@ -38,6 +38,7 @@ const PERMISSIONS_STOP: u8 = 11;
 const ADD_MEMBERS_STOP: u8 = 12;
 const COPY_LINK_STOP: u8 = 13;
 const RESET_LINK_STOP: u8 = 14;
+const MEMBER_SEARCH_STOP: u8 = 15;
 const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
@@ -918,6 +919,29 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
     }
 }
 
+/// Returns the indices of the members matching `query`. An empty query matches
+/// every member.
+pub(crate) fn filter_members(members: &[(String, String)], query: &str) -> Vec<usize> {
+    let query = query.trim();
+    let needle = crate::util::search_key(query);
+    let digits = needle.strip_prefix('+').unwrap_or(needle.as_str());
+    if needle.is_empty() {
+        (0..members.len()).collect()
+    } else {
+        members
+            .iter()
+            .enumerate()
+            .filter(|(_, (member, name))| {
+                crate::util::search_key(name).contains(&needle)
+                    || crate::util::search_key(member).contains(&needle)
+                    || crate::model::phone_of(member)
+                        .is_some_and(|p| !digits.is_empty() && p.contains(digits))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
+
 /// The group's members, each opening their own panel. They are sorted once
 /// per change of the chat list or the contacts, not every frame.
 fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: f32) {
@@ -934,23 +958,9 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let Some((_, members)) = app.info_members.take() else {
         return;
     };
-    let query = app.info_member_search.trim();
-    let needle = crate::util::search_key(query);
-    let filtered_indices: Vec<usize> = if needle.is_empty() {
-        (0..members.len()).collect()
-    } else {
-        members
-            .iter()
-            .enumerate()
-            .filter(|(_, (member, name))| {
-                crate::util::search_key(name).contains(&needle)
-                    || crate::util::search_key(member).contains(&needle)
-                    || crate::model::phone_of(member).is_some_and(|p| p.contains(&needle))
-            })
-            .map(|(i, _)| i)
-            .collect()
-    };
-    let count_label = if needle.is_empty() {
+    let query_empty = app.info_member_search.trim().is_empty();
+    let filtered_indices = filter_members(&members, &app.info_member_search);
+    let count_label = if query_empty {
         format!("Members ({})", members.len())
     } else {
         format!("Members ({}/{})", filtered_indices.len(), members.len())
@@ -980,7 +990,8 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
         &mut app.info_member_search,
         &hint,
         search_width,
-    );
+    )
+    .tab_stop(Stop::InfoControl(MEMBER_SEARCH_STOP));
     ui.add_space(4.0);
     let roles = app
         .chat(id)
@@ -998,7 +1009,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let mut open = None;
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
-    if filtered_indices.is_empty() && !needle.is_empty() {
+    if filtered_indices.is_empty() && !query_empty {
         ui.add_space(8.0);
         let no_match = crate::i18n::gettext(app.locale, "No members found");
         theme::text(ui, no_match, theme::regular(13.0), palette.dim);
@@ -2517,20 +2528,16 @@ mod tests {
             ),
         ];
         let filter = |query: &str| -> Vec<String> {
-            let needle = crate::util::search_key(query.trim());
-            members
-                .iter()
-                .filter(|(m, n)| {
-                    crate::util::search_key(n).contains(&needle)
-                        || crate::util::search_key(m).contains(&needle)
-                        || crate::model::phone_of(m).is_some_and(|p| p.contains(&needle))
-                })
-                .map(|(_, n)| n.clone())
+            super::filter_members(&members, query)
+                .into_iter()
+                .map(|i| members[i].1.clone())
                 .collect()
         };
         assert_eq!(filter("sahil"), vec!["Sahil Shaw"]);
         assert_eq!(filter("7867218801"), vec!["Sahil Shaw"]);
+        assert_eq!(filter("+447867218801"), vec!["Sahil Shaw"]);
         assert_eq!(filter("a"), vec!["Sahil Shaw", "Aashish", "Abhishek"]);
         assert_eq!(filter("unknown"), Vec::<String>::new());
+        assert_eq!(filter("+"), Vec::<String>::new());
     }
 }
