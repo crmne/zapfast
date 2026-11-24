@@ -209,6 +209,18 @@ name or description, in the interface language or in English.
   chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
+- **Message notification style** (macOS): **System** uses Notification Center.
+  **Floating** shows message banners when macOS permits notification alerts
+  and shares a clear Focus status with ZapFast. Calls use their existing
+  notification path.
+- In **Floating**, choose a screen corner, preferred display and edge margin.
+  When the display is disconnected, banners move to the available display.
+  Choose a duration or **Until dismissed**, the stack size, and whether to
+  combine banners from the same conversation. Hovering pauses dismissal.
+- **Preview a floating notification** shows a synthetic message. It uses
+  the same layout and content visibility preference as real messages.
+
+
 **Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account
@@ -229,13 +241,17 @@ name or description, in the interface language or in English.
 - **Keep running when the window closes** (Linux and Windows): keep ZapFast
   linked in the tray. With this off ZapFast has no tray icon; an icon already
   there leaves at the next start.
-- **Show in the menu bar** (macOS): the menu bar icon. Closing the window
-  always keeps ZapFast running in the Dock, which reopens it; **Quit**
-  (Command+Q) quits. With this off ZapFast has no menu bar icon; an icon
-  already there leaves at the next start, and **Start at login** opens the
-  window, since the Dock cannot bring back a window that was never made.
+- **Keep running when the window closes** (macOS): keep linked accounts
+  connected after closing the window. Command+W closes and Command+Q quits.
+- **Show in the menu bar** (macOS): show an item with commands to reopen
+  or quit ZapFast.
+- **Show in Dock** (macOS): show the app in the Dock and Command+Tab.
+  ZapFast keeps its Dock icon available if there is no menu-bar item.
+- **Show unread count** (macOS): put the exact number of unread messages
+  beside the menu-bar icon.
 - **Start at login**: start in the tray without a window, where the platform
-  supports it. If the desktop's tray is not up yet, ZapFast waits up to 30
+  supports it. On macOS, a hidden start requires the menu-bar item and
+  background mode. If the desktop's tray is not up yet, ZapFast waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a

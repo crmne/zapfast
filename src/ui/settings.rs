@@ -148,6 +148,33 @@ impl Section {
         self.entries.push((row, Control::Toggle(field)));
     }
 
+    #[cfg(target_os = "macos")]
+    fn action_toggle(
+        &mut self,
+        title: Text,
+        description: Text,
+        field: fn(&Settings) -> bool,
+        action: fn(bool) -> Action,
+    ) {
+        let label = title.shown.clone();
+        self.row(title, description, move |ui, app| {
+            let mut value = field(&app.settings);
+            let response = widgets::switch(ui, &app.palette, &mut value);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    value,
+                    &label,
+                )
+            });
+            if response.changed() {
+                app.actions.push(action(value));
+            }
+        });
+    }
+
     fn account_toggle(
         &mut self,
         title: impl Into<Text>,
@@ -572,6 +599,9 @@ fn sections(app: &App) -> Vec<Section> {
         notifications.row(title, description, |ui, app| sound_control(ui, app, true));
     }
 
+    #[cfg(target_os = "macos")]
+    floating_notifications(app, &mut notifications);
+
     let mut privacy = Section::new(translated(locale, "Privacy"));
     let receipts_note = if app.account_receipts_off {
         translated(locale, "Off for your account, so only groups get them.")
@@ -666,28 +696,56 @@ fn sections(app: &App) -> Vec<Section> {
     }
 
     let mut system = Section::new(translated(locale, "System"));
-    // A closed Mac app stays in the Dock, which brings its window back, so
-    // on macOS the same setting decides only the menu-bar item.
-    if cfg!(target_os = "macos") {
-        system.toggle(
-            translated(locale, "Show in the menu bar"),
-            keyed(translated(
-                locale,
-                "Closing the window keeps ZapFast in the Dock. Quit with Ctrl+Q.",
-            )),
-            |settings| &mut settings.keep_running_in_background,
-        );
-    } else {
-        system.toggle(
+    #[cfg(target_os = "macos")]
+    {
+        system.action_toggle(
             translated(locale, "Keep running when the window closes"),
-            keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
-            |settings| &mut settings.keep_running_in_background,
+            keyed(translated(locale, "Quit with Ctrl+Q.")),
+            |settings| settings.mac_keep_running_on_close,
+            Action::SetMacKeepRunningOnClose,
+        );
+        system.action_toggle(
+            translated(locale, "Show in the menu bar"),
+            translated(locale, "Open ZapFast from the menu bar."),
+            |settings| settings.keep_running_in_background,
+            Action::SetMacMenuBarVisible,
+        );
+        system.action_toggle(
+            translated(locale, "Show in Dock"),
+            translated(
+                locale,
+                "The Dock icon stays available when the menu bar item is off.",
+            ),
+            |settings| settings.mac_show_in_dock,
+            Action::SetMacDockVisible,
+        );
+        system.action_toggle(
+            translated(locale, "Show unread count"),
+            translated(
+                locale,
+                "Show the number of unread messages beside the menu bar icon.",
+            ),
+            |settings| settings.mac_show_unread_count,
+            Action::SetMacUnreadCountVisible,
         );
     }
+    #[cfg(not(target_os = "macos"))]
+    system.toggle(
+        translated(locale, "Keep running when the window closes"),
+        keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+        |settings| &mut settings.keep_running_in_background,
+    );
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
-            translated(locale, "Starts in the tray, without a window."),
+            if cfg!(target_os = "macos") {
+                translated(
+                    locale,
+                    "Starts without a window when background mode and the menu bar item are on.",
+                )
+            } else {
+                translated(locale, "Starts in the tray, without a window.")
+            },
             move |ui, app| {
                 let Some(mut enabled) = app.start_with_system else {
                     return;
@@ -914,6 +972,218 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+#[cfg(target_os = "macos")]
+fn floating_notifications(app: &App, section: &mut Section) {
+    use crate::i18n::gettext;
+    use crate::macos::floating::{Corner, displays};
+    use crate::model::FloatingNotificationPreference as Preference;
+    let change = Action::SetFloatingNotificationPreference;
+    let locale = app.locale;
+    section.row(
+        translated(locale, "Message notification style"),
+        translated(
+            locale,
+            "System notifications are used when the app cannot read Focus status.",
+        ),
+        move |ui, app| {
+            let enabled = app.settings.floating_notifications.enabled;
+            let label = |value| {
+                if value {
+                    gettext(app.locale, "Floating")
+                } else {
+                    gettext(app.locale, "System")
+                }
+            };
+            let response = egui::ComboBox::from_id_salt("notification_style")
+                .selected_text(label(enabled))
+                .show_ui(ui, |ui| {
+                    for mode in [false, true] {
+                        if theme_option(ui, &app.palette, &label(mode), enabled == mode)
+                            && enabled != mode
+                        {
+                            app.actions.push(change(Preference::Enabled(mode)));
+                        }
+                    }
+                });
+            theme::reveal_focus(&response.response);
+        },
+    );
+    if !app.settings.floating_notifications.enabled {
+        return;
+    }
+    section.row(
+        translated(locale, "Screen corner"),
+        translated(locale, "Choose where floating banners stack."),
+        move |ui, app| {
+            ui.vertical(|ui| {
+                for row in Corner::ALL.as_chunks::<2>().0 {
+                    ui.horizontal(|ui| {
+                        for corner in row {
+                            let selected = app.settings.floating_notifications.corner == *corner;
+                            let glyph = match corner {
+                                Corner::TopLeft => "↖",
+                                Corner::TopRight => "↗",
+                                Corner::BottomLeft => "↙",
+                                Corner::BottomRight => "↘",
+                            };
+                            let label = corner.label(app.locale);
+                            let response = ui
+                                .selectable_label(selected, glyph)
+                                .on_hover_text(label.as_ref());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::SelectableLabel,
+                                    true,
+                                    selected,
+                                    label.as_ref(),
+                                )
+                            });
+                            theme::reveal_focus(&response);
+                            if response.clicked() && !selected {
+                                app.actions.push(change(Preference::Corner(*corner)));
+                            }
+                        }
+                    });
+                }
+            });
+        },
+    );
+    section.row(
+        translated(locale, "Preferred display"),
+        translated(
+            locale,
+            "If it is disconnected, banners use the active display.",
+        ),
+        move |ui, app| {
+            let screens = displays();
+            let selected = app.settings.floating_notifications.display.as_ref();
+            let automatic = gettext(app.locale, "Active display");
+            let current = screens
+                .iter()
+                .find(|(id, _)| Some(id) == selected)
+                .map_or_else(
+                    || {
+                        if selected.is_some() {
+                            gettext(app.locale, "Disconnected display")
+                        } else {
+                            automatic.clone()
+                        }
+                    },
+                    |(_, name)| name.as_str().into(),
+                );
+            let response = egui::ComboBox::from_id_salt("notification_display")
+                .selected_text(current)
+                .width(145.0_f32.min(ui.available_width()))
+                .show_ui(ui, |ui| {
+                    if theme_option(ui, &app.palette, &automatic, selected.is_none())
+                        && selected.is_some()
+                    {
+                        app.actions.push(change(Preference::Display(None)));
+                    }
+                    for (id, name) in &screens {
+                        if theme_option(ui, &app.palette, name, selected == Some(id))
+                            && selected != Some(id)
+                        {
+                            app.actions
+                                .push(change(Preference::Display(Some(id.clone()))));
+                        }
+                    }
+                });
+            theme::reveal_focus(&response.response);
+        },
+    );
+    section.row(
+        translated(locale, "Screen-edge margin"),
+        translated(locale, "Distance from the usable screen edge in points."),
+        move |ui, app| {
+            let mut margin = app.settings.floating_notifications.margin;
+            let response = ui.add(
+                egui::DragValue::new(&mut margin)
+                    .range(0..=80)
+                    .suffix(" pt"),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::DragValue,
+                    true,
+                    gettext(app.locale, "Screen-edge margin"),
+                )
+            });
+            if response.changed() {
+                app.actions.push(change(Preference::Margin(margin)));
+            }
+        },
+    );
+    section.row(
+        translated(locale, "Display duration"),
+        translated(locale, "Hovering pauses the countdown."),
+        move |ui, app| {
+            let mut seconds = app.settings.floating_notifications.seconds;
+            let mut persistent = seconds == 0;
+            let label = gettext(app.locale, "Until dismissed");
+            let mut changed = ui.checkbox(&mut persistent, label).changed();
+            if changed {
+                seconds = if persistent { 0 } else { 6 };
+            }
+            if !persistent {
+                let response = ui.add(
+                    egui::DragValue::new(&mut seconds)
+                        .range(3..=60)
+                        .suffix(" s"),
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::DragValue,
+                        true,
+                        gettext(app.locale, "Display duration"),
+                    )
+                });
+                changed |= response.changed();
+            }
+            if changed {
+                app.actions.push(change(Preference::Seconds(seconds)));
+            }
+        },
+    );
+    section.row(
+        translated(locale, "Maximum visible banners"),
+        translated(locale, "The oldest banner leaves when the stack is full."),
+        move |ui, app| {
+            let mut maximum = app.settings.floating_notifications.maximum;
+            let response = ui.add(egui::DragValue::new(&mut maximum).range(1..=8));
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::DragValue,
+                    true,
+                    gettext(app.locale, "Maximum visible banners"),
+                )
+            });
+            if response.changed() {
+                app.actions.push(change(Preference::Maximum(maximum)));
+            }
+        },
+    );
+    section.action_toggle(
+        translated(locale, "Group floating notifications"),
+        translated(
+            locale,
+            "Update an existing banner for the same conversation.",
+        ),
+        |settings| settings.floating_notifications.group,
+        |enabled| Action::SetFloatingNotificationPreference(Preference::Group(enabled)),
+    );
+    section.row(
+        translated(locale, "Preview a floating notification"),
+        translated(locale, "Show a sample message in the selected corner."),
+        move |ui, app| {
+            let label = gettext(app.locale, "Preview");
+            if theme::soft_button(ui, &app.palette, None, &label, false).clicked() {
+                app.actions.push(Action::PreviewFloatingNotification);
+            }
+        },
+    );
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form

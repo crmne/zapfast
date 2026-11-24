@@ -14,7 +14,7 @@ pub use fastframe_dock::Badge;
 pub use fastframe_dock::Taskbar;
 
 /// The localized accessible text for the Windows unread overlay.
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub fn badge_description(count: u32, locale: crate::i18n::Locale) -> String {
     crate::i18n::ngettext(locale, "{} unread message", "{} unread messages", count)
         .replace("{}", &count.to_string())
@@ -57,7 +57,7 @@ type PendingByAccountChat =
 
 /// How a notification stops waiting for a click.
 #[derive(Debug, PartialEq, Eq)]
-enum Stop {
+pub(crate) enum Stop {
     /// The chat was read: take the notification off the desktop.
     Close,
     /// Newer notifications took its place: leave it on the desktop, but stop
@@ -89,6 +89,8 @@ pub struct Notifications {
     /// What unit tests would have shown, recorded instead of shown on the
     /// desktop. Always empty outside tests.
     pub shown: Vec<Shown>,
+    #[cfg(target_os = "macos")]
+    pub(crate) floating: crate::macos::floating::Floating,
 }
 
 /// A notification a unit test asked for.
@@ -240,6 +242,8 @@ impl Notifications {
 
     pub fn clear_all(&mut self) {
         self.pending.clear();
+        #[cfg(target_os = "macos")]
+        self.floating.clear();
     }
 
     /// Shows a notification; platform delivery runs outside the interface thread.
@@ -252,7 +256,7 @@ impl Notifications {
         sound: NotificationSound,
         target: NotificationTarget,
         opened: Arc<Mutex<Vec<NotificationTarget>>>,
-        wake: impl Fn() + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
         limited: bool,
     ) {
         let key = match target.message {
@@ -266,15 +270,91 @@ impl Notifications {
         } else {
             Box::new(|| {})
         };
+        let notice = Shown {
+            title,
+            body,
+            picture,
+            sound,
+        };
         if cfg!(test) {
-            self.shown.push(Shown {
-                title,
-                body,
-                picture,
-                sound,
-            });
+            self.shown.push(notice);
             return;
         }
+        let delivery = Delivery {
+            notice,
+            target,
+            opened,
+            wake: Arc::new(wake),
+            cancelled,
+            failed,
+        };
+        #[cfg(target_os = "macos")]
+        if delivery.target.message.is_some() && self.floating.enabled() {
+            if let Err(delivery) = self.floating.offer(Box::new(delivery)) {
+                delivery.system_fallback();
+            }
+            return;
+        }
+        delivery.system();
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn update_floating(
+        &mut self,
+        ctx: &egui::Context,
+        locale: crate::i18n::Locale,
+        settings: &crate::macos::floating::Settings,
+        allowed: bool,
+        content: bool,
+        eligible: impl Fn(&NotificationTarget) -> bool,
+    ) {
+        self.floating.configure(settings, allowed, content);
+        for delivery in self.floating.tick(ctx, locale, eligible) {
+            delivery.system_fallback();
+        }
+    }
+}
+
+pub(crate) struct Delivery {
+    pub(crate) notice: Shown,
+    pub(crate) target: NotificationTarget,
+    opened: Arc<Mutex<Vec<NotificationTarget>>>,
+    pub(crate) wake: Arc<dyn Fn() + Send + Sync>,
+    pub(crate) cancelled: tokio::sync::oneshot::Receiver<Stop>,
+    pub(crate) failed: Box<dyn FnOnce() + Send>,
+}
+
+impl Delivery {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn open(&self) {
+        self.opened
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(self.target.clone());
+        (self.wake)();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn system_fallback(mut self) {
+        // The native backend must control sound when Focus or the OS
+        // prevents the floating option. Local sound playback would bypass it.
+        if self.notice.sound != NotificationSound::None
+            && !played_by_notification(&self.notice.sound)
+        {
+            self.notice.sound = NotificationSound::System;
+        }
+        self.system();
+    }
+
+    fn system(self) {
+        let Self {
+            notice,
+            target,
+            opened,
+            wake,
+            cancelled,
+            failed,
+        } = self;
         let undo = Arc::new(Mutex::new(Some(failed)));
         let undo_spawn = Arc::clone(&undo);
         let spawned = std::thread::Builder::new()
@@ -286,17 +366,17 @@ impl Notifications {
                         undo();
                     }
                 };
-                if !played_by_notification(&sound) {
-                    play_sound(sound.clone());
+                if !played_by_notification(&notice.sound) {
+                    play_sound(notice.sound.clone());
                 }
                 deliver(
-                    &title,
-                    &body,
-                    picture.as_deref(),
-                    &sound,
+                    &notice.title,
+                    &notice.body,
+                    notice.picture.as_deref(),
+                    &notice.sound,
                     target,
                     opened,
-                    wake,
+                    move || wake(),
                     cancelled,
                     failed,
                 )

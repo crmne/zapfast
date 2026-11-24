@@ -2705,6 +2705,18 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FloatingNotificationPreference {
+    Enabled(bool),
+    Corner(crate::macos::NotificationCorner),
+    Display(Option<String>),
+    Margin(u16),
+    Seconds(u16),
+    Maximum(u8),
+    Group(bool),
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -3312,6 +3324,14 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    #[cfg(target_os = "macos")]
+    SetMacKeepRunningOnClose(bool),
+    #[cfg(target_os = "macos")]
+    SetMacMenuBarVisible(bool),
+    #[cfg(target_os = "macos")]
+    SetMacDockVisible(bool),
+    #[cfg(target_os = "macos")]
+    SetMacUnreadCountVisible(bool),
     /// Writes one WhatsApp account privacy category on the phone.
     SetAccountPrivacy {
         kind: crate::privacy::PrivacyKind,
@@ -3319,6 +3339,10 @@ pub enum Action {
     },
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
+    #[cfg(target_os = "macos")]
+    SetFloatingNotificationPreference(FloatingNotificationPreference),
+    #[cfg(target_os = "macos")]
+    PreviewFloatingNotification,
     /// Sets the sound for mentions and replies to us (`true`) or for
     /// other new messages.
     SetNotificationSound {

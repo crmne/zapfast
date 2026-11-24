@@ -354,6 +354,8 @@ fn run() -> eframe::Result<()> {
     {
         log::warn!("could not set the Dock icon: {error}");
     }
+    #[cfg(target_os = "macos")]
+    zapfast::macos::install_menu_handler(&waker);
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
 
     #[allow(unused_mut)]
@@ -392,10 +394,30 @@ fn run() -> eframe::Result<()> {
             "https://chat.whatsapp.com/{code}"
         )));
     }
+    #[cfg(all(target_os = "macos", feature = "demo"))]
+    let demo_status = demo
+        && cli
+            .demo_page
+            .as_deref()
+            .is_some_and(|page| page.split(',').any(|flag| flag.trim() == "mac-status"));
+    #[cfg(not(all(target_os = "macos", feature = "demo")))]
+    let demo_status = false;
+    #[cfg(all(target_os = "macos", feature = "demo"))]
+    if demo_status {
+        app.enable_demo_status(&waker);
+    }
     #[cfg(feature = "demo")]
     if demo {
         zapfast::demo::populate(&mut app);
         zapfast::demo::apply_flags(&mut app, cli.demo_page.as_deref());
+        #[cfg(target_os = "macos")]
+        if cli.demo_page.as_deref().is_some_and(|page| {
+            page.split(',')
+                .any(|flag| flag.trim() == "floating-preview")
+        }) {
+            app.actions
+                .push(zapfast::model::Action::PreviewFloatingNotification);
+        }
         if cli.demo_tour {
             tour_script(&cli.demo_tour_script).prepare(&mut app);
         }
@@ -425,7 +447,7 @@ fn run() -> eframe::Result<()> {
     let start_hidden = start_hidden(
         cli.start_hidden,
         target.is_some() || invite.is_some(),
-        demo,
+        demo && !demo_status,
         update_receipt.is_some(),
     );
     fastframe_shell::Shell::new(app, &waker)
