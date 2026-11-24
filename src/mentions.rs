@@ -132,8 +132,10 @@ pub fn rewrite_alias(text: &mut String, alias: &str) -> bool {
 ///
 /// An empty query matches, and so does a prefix of `all` or of `alias`.
 pub fn everyone_query_matches(query: &str, alias: &str) -> bool {
-    let query = query.trim().trim_start_matches('@').to_lowercase();
-    query.is_empty() || ALL_USER.starts_with(&query) || alias.to_lowercase().starts_with(&query)
+    let query = crate::util::search_key(query.trim().trim_start_matches('@'));
+    query.is_empty()
+        || ALL_USER.starts_with(&query)
+        || crate::util::search_key(alias).starts_with(&query)
 }
 
 /// Writes each `@<user>` token that names one of `names` (`user`, name) as
@@ -289,6 +291,8 @@ mod tests {
         assert!(everyone_query_matches("@to", "todos"));
         assert!(!everyone_query_matches("tom", "todos"));
         assert!(!everyone_query_matches("todosa", "todos"));
+        assert!(everyone_query_matches("tó", "todos"));
+        assert!(everyone_query_matches("ev", "Évery"));
         assert!(everyone_query_matches("所", "所有人"));
         assert!(!everyone_query_matches("人", "所有人"));
     }
