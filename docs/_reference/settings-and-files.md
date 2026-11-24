@@ -247,7 +247,7 @@ name or description, in the interface language or in English.
   or quit ZapFast.
 - **Show in Dock** (macOS): show the app in the Dock and Command+Tab.
   ZapFast keeps its Dock icon available if there is no menu-bar item.
-- **Show unread count** (macOS): put the exact number of unread chats
+- **Show unread count** (macOS): put the exact number of unread messages
   beside the menu-bar icon.
 - **Start at login**: start in the tray without a window, where the platform
   supports it. On macOS, a hidden start requires the menu-bar item and

@@ -983,7 +983,7 @@ closes** is enabled. On macOS, reopen it from the Dock or choose **Show
 ZapFast** from the menu-bar item. In **Settings > System**, turn off **Show in
 Dock** for menu-bar-only use. ZapFast falls back to the Dock when the menu-bar
 item is unavailable. The optional **Show unread count** puts the exact number
-of unread chats beside the icon. On Linux and Windows, click the tray icon to
+of unread messages beside the icon. On Linux and Windows, click the tray icon to
 reopen ZapFast, and click it
 again to hide a window that is in front. Launching the
 app again reopens the window on every platform. To quit, use **Quit** in the

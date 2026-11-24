@@ -2418,7 +2418,7 @@ impl App {
     #[cfg(target_os = "macos")]
     fn sync_mac_status(&mut self) {
         if self.tray_allowed {
-            let count = self.unread_chat_count_everywhere();
+            let count = crate::macos_status::unread_messages(&self.accounts);
             self.mac_status
                 .sync(&self.settings, self.locale, count, self.window_hidden);
         }
@@ -24896,8 +24896,17 @@ mod tests {
         muted.muted_until = Some(i64::MAX);
         muted.unread = 9;
         let read = Chat::new("5@s.whatsapp.net".into(), "Done".into());
-        app.chats = vec![busy, quiet, archived, muted, read];
+        let mut locked = Chat::new("6@s.whatsapp.net".into(), "Locked".into());
+        locked.locked = true;
+        locked.unread = 16;
+        app.chats = vec![busy, quiet, archived, muted, read, locked];
         assert_eq!(app.unread_chat_count(), 2);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(crate::macos_status::unread_messages(&app.accounts), 8);
+            app.account_mut().settings.notifications = false;
+            assert_eq!(crate::macos_status::unread_messages(&app.accounts), 0);
+        }
     }
 
     #[test]
