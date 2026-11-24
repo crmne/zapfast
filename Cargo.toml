@@ -103,7 +103,7 @@ qrcode = { version = "0.14", default-features = false }
 # Downloads profile pictures. The protocol library already includes this crate
 # and TLS stack.
 ureq = { version = "3", default-features = false, features = ["rustls", "socks-proxy"] }
-jiff = "0.2"
+jiff = "1.0"
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
 # Unicode bidi properties; already included through URL/IDNA handling.
