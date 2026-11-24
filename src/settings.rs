@@ -470,6 +470,8 @@ pub struct Settings {
     /// The hint bar under the composer, hidden with its × and shown again
     /// from the Keyboard shortcuts dialog.
     pub show_shortcut_hints: bool,
+    /// Show coloured mini pill badges for each chat's labels in the chat list.
+    pub show_label_pills: bool,
     /// Recently used emoji, newest first.
     pub recent_emoji: Vec<String>,
     /// Emoji reaction usage on this device, most-used first (recent breaks ties).
@@ -576,6 +578,7 @@ impl Default for Settings {
             wallpaper_image: None,
             last_chat: None,
             show_shortcut_hints: true,
+            show_label_pills: true,
             recent_emoji: Vec::new(),
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),

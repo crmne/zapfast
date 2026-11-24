@@ -427,6 +427,14 @@ fn sections(app: &App) -> Vec<Section> {
 
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
+        translated(locale, "Show label badges in chat list"),
+        translated(
+            locale,
+            "Show coloured mini pills for each chat's labels under its message preview.",
+        ),
+        |settings| &mut settings.show_label_pills,
+    );
+    chats.toggle(
         translated(locale, "Enter sends"),
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,

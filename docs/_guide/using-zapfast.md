@@ -964,6 +964,11 @@ wearing it, channels included. A label is one more chip: picking it lets go of
 the other chips, it does not narrow search or the archive. Click the active
 label chip again, or **All**, to see every chat.
 
+Chats wearing one or more labels also display compact coloured label pills under
+their message preview in the chat list, with a **+N** badge when more labels
+overflow the row width. You can turn these card badges off in **Settings >
+Chats > Show label badges in chat list** to keep every chat row compact.
+
 A thin rail runs down the left of the chat list: **Chats** and **Calls**
 (`Ctrl+Shift+1` and `Ctrl+Shift+2`, Command on macOS) at the top;
 **Starred**, **Archived** and **Locked** (while you have archived or locked
