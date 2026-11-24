@@ -74,7 +74,9 @@ cancels the replacement. Another process can still change the destination
 between the final check and the rename. On Windows, new copies can be saved
 from exFAT volumes without named streams even when the source has no reliable
 file ID. Replacing an existing file still requires enough information to
-verify both files. That check can fail on some exFAT volumes or network shares.
+verify both files. Locally mounted exFAT volumes can supply that information
+through valid legacy file IDs and a Windows volume GUID. The check can fail
+on volumes or network shares that do not provide a usable identity.
 ZapFast still saves the file if the filesystem lacks support or adding the
 mark fails. Unexpected marking errors are recorded in the log. Linux adds
 no mark. The mark helps the system and other apps check the file's origin,

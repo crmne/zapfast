@@ -43,8 +43,9 @@ use windows_sys::Win32::{
     Foundation::{ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED},
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_ID_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo, GetFileInformationByHandle,
-        GetFileInformationByHandleEx, GetVolumeInformationByHandleW, MoveFileExW,
+        FILE_ID_INFO, FILE_NAME_OPENED, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+        GetVolumeInformationByHandleW, MoveFileExW, VOLUME_NAME_GUID,
     },
     System::SystemServices::FILE_NAMED_STREAMS,
 };
@@ -430,7 +431,14 @@ pub(super) fn same_file(left: &std::fs::File, right: &std::fs::File) -> io::Resu
             if legacy_volumes_differ(&left_info, &right_info) {
                 return Ok(false);
             }
-            Ok(legacy_file_id(left, left_info)? == legacy_file_id(right, right_info)?)
+            let left = legacy_file_id(left, left_info)?;
+            let right = legacy_file_id(right, right_info)?;
+            if left.2 != right.2 {
+                // A volume can have multiple GUID paths. With equal serials,
+                // missing or different GUIDs cannot establish inequality.
+                return Err(io::ErrorKind::Unsupported.into());
+            }
+            Ok(left == right)
         }
     }
 }
@@ -506,14 +514,54 @@ fn legacy_volumes_differ(
 fn legacy_file_id(
     file: &std::fs::File,
     info: BY_HANDLE_FILE_INFORMATION,
-) -> io::Result<(u32, u64)> {
+) -> io::Result<(u32, u64, Option<String>)> {
     let (fs, _) = volume_file_system(file)?;
-    usable_legacy_file_id(&fs, info).ok_or_else(|| {
+    let local_volume = if fs.eq_ignore_ascii_case("exFAT") {
+        local_volume_guid(file)
+    } else {
+        None
+    };
+    usable_legacy_file_id(&fs, info, local_volume).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             "Cannot verify attachment file identity",
         )
     })
+}
+
+#[cfg(windows)]
+fn local_volume_guid(file: &std::fs::File) -> Option<String> {
+    use std::os::windows::io::AsRawHandle as _;
+    let mut path = vec![0u16; 260];
+    loop {
+        // SAFETY: the open handle and writable buffer are valid for this call.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                path.as_mut_ptr(),
+                path.len() as u32,
+                VOLUME_NAME_GUID | FILE_NAME_OPENED,
+            )
+        } as usize;
+        if length == 0 || length > 32_768 + 50 {
+            return None;
+        }
+        if length < path.len() {
+            // Windows does not assign these volume GUID paths to network
+            // shares. Use only the volume component, never the file name.
+            let volume = path[..length]
+                .split(|unit| *unit == u16::from(b'\\'))
+                .nth(3)?;
+            let volume = String::from_utf16(volume).ok()?.to_ascii_lowercase();
+            return Some(
+                volume
+                    .strip_prefix("volume{")?
+                    .strip_suffix('}')?
+                    .to_owned(),
+            );
+        }
+        path.resize(length + 1, 0);
+    }
 }
 
 #[cfg(windows)]
@@ -551,15 +599,21 @@ fn exfat_without_streams(fs: &str, flags: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn usable_legacy_file_id(filesystem: &str, info: BY_HANDLE_FILE_INFORMATION) -> Option<(u32, u64)> {
+fn usable_legacy_file_id(
+    filesystem: &str,
+    info: BY_HANDLE_FILE_INFORMATION,
+    local_volume: Option<String>,
+) -> Option<(u32, u64, Option<String>)> {
     let id = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-    // Microsoft documents the 64-bit IDs on NTFS and FAT. FAT IDs can
-    // change after a rename. ReFS can alias unrelated files.
-    (matches!(filesystem, "NTFS" | "FAT" | "FAT32")
-        && info.dwVolumeSerialNumber != 0
-        && id != 0
-        && id != u64::MAX)
-        .then_some((info.dwVolumeSerialNumber, id))
+    // Compare live handles only. Legacy IDs can change or be reused, and
+    // ReFS can report legacy IDs that do not distinguish concurrent files.
+    let supported = matches!(filesystem, "NTFS" | "FAT" | "FAT32")
+        || (filesystem.eq_ignore_ascii_case("exFAT") && local_volume.is_some());
+    (supported && info.dwVolumeSerialNumber != 0 && id != 0 && id != u64::MAX).then_some((
+        info.dwVolumeSerialNumber,
+        id,
+        local_volume,
+    ))
 }
 
 #[cfg(unix)]
@@ -643,18 +697,50 @@ pub(super) mod tests {
             dwVolumeSerialNumber: 7,
             ..Default::default()
         };
-        assert_eq!(usable_legacy_file_id("NTFS", legacy), None);
+        assert_eq!(usable_legacy_file_id("NTFS", legacy, None), None);
         legacy.nFileIndexHigh = u32::MAX;
         legacy.nFileIndexLow = u32::MAX;
-        assert_eq!(usable_legacy_file_id("FAT32", legacy), None);
+        assert_eq!(usable_legacy_file_id("FAT32", legacy, None), None);
         legacy.nFileIndexLow = 7;
-        assert!(usable_legacy_file_id("FAT32", legacy).is_some());
-        assert!(usable_legacy_file_id("NTFS", legacy).is_some());
-        assert_eq!(usable_legacy_file_id("ReFS", legacy), None);
-        assert_eq!(usable_legacy_file_id("exFAT", legacy), None);
-        assert_eq!(usable_legacy_file_id("unknown", legacy), None);
+        assert!(usable_legacy_file_id("FAT32", legacy, None).is_some());
+        assert!(usable_legacy_file_id("NTFS", legacy, None).is_some());
+        assert_eq!(usable_legacy_file_id("ReFS", legacy, None), None);
+        assert_eq!(usable_legacy_file_id("unknown", legacy, None), None);
         legacy.dwVolumeSerialNumber = 0;
-        assert_eq!(usable_legacy_file_id("NTFS", legacy), None);
+        assert_eq!(usable_legacy_file_id("NTFS", legacy, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_legacy_exfat_identity_requires_local_volume_and_valid_ids() {
+        let mut info = BY_HANDLE_FILE_INFORMATION {
+            dwVolumeSerialNumber: 7,
+            nFileIndexLow: 42,
+            ..Default::default()
+        };
+        let local = "b0000000-0000-0000-0000-000000000001";
+        let other = "b0000000-0000-0000-0000-000000000002";
+        let exfat = |info, volume: &str| usable_legacy_file_id("exFAT", info, Some(volume.into()));
+        let first = exfat(info, local).unwrap();
+        assert_eq!(exfat(info, local), Some(first.clone()));
+        assert_ne!(exfat(info, other), Some(first.clone()));
+        info.nFileIndexLow += 1;
+        assert_ne!(exfat(info, local), Some(first));
+
+        assert_eq!(usable_legacy_file_id("exFAT", info, None), None);
+        assert_eq!(
+            usable_legacy_file_id("ReFS", info, Some(local.into())),
+            None
+        );
+        info.nFileIndexLow = 0;
+        assert_eq!(exfat(info, local), None);
+        info.nFileIndexLow = u32::MAX;
+        info.nFileIndexHigh = u32::MAX;
+        assert_eq!(exfat(info, local), None);
+        info.nFileIndexLow = 42;
+        info.nFileIndexHigh = 0;
+        info.dwVolumeSerialNumber = 0;
+        assert_eq!(exfat(info, local), None);
     }
 
     #[cfg(windows)]
@@ -671,7 +757,7 @@ pub(super) mod tests {
             nFileIndexLow: 42,
             ..Default::default()
         };
-        assert_eq!(usable_legacy_file_id("ReFS", refs), None);
+        assert_eq!(usable_legacy_file_id("ReFS", refs, None), None);
         assert!(legacy_volumes_differ(&refs, &fat));
         assert!(legacy_volumes_differ(&fat, &refs));
         fat.dwVolumeSerialNumber = 7;
