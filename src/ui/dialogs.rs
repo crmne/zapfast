@@ -910,9 +910,6 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Uses the model's send permissions to reject unavailable forwarding
-/// destinations. Locked chats stay out of the picker, which would otherwise
-/// list them outside the locked folder.
 /// Whether the forward search `needle` (a `search_key`) finds a chat by
 /// its title, ignoring case and accents, or by its number.
 fn forward_matches(title: &str, phone: Option<&str>, needle: &str) -> bool {
@@ -921,6 +918,9 @@ fn forward_matches(title: &str, phone: Option<&str>, needle: &str) -> bool {
         || phone.is_some_and(|phone| phone.contains(needle))
 }
 
+/// Uses the model's send permissions to reject unavailable forwarding
+/// destinations. Locked chats stay out of the picker, which would otherwise
+/// list them outside the locked folder.
 pub(crate) fn forwardable(chat: &crate::model::Chat) -> bool {
     chat.can_send() && !chat.locked
 }
