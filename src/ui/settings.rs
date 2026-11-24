@@ -148,6 +148,33 @@ impl Section {
         self.entries.push((row, Control::Toggle(field)));
     }
 
+    #[cfg(target_os = "macos")]
+    fn action_toggle(
+        &mut self,
+        title: Text,
+        description: Text,
+        field: fn(&Settings) -> bool,
+        action: fn(bool) -> Action,
+    ) {
+        let label = title.shown.clone();
+        self.row(title, description, move |ui, app| {
+            let mut value = field(&app.settings);
+            let response = widgets::switch(ui, &app.palette, &mut value);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    value,
+                    &label,
+                )
+            });
+            if response.changed() {
+                app.actions.push(action(value));
+            }
+        });
+    }
+
     fn account_toggle(
         &mut self,
         title: impl Into<Text>,
@@ -666,28 +693,56 @@ fn sections(app: &App) -> Vec<Section> {
     }
 
     let mut system = Section::new(translated(locale, "System"));
-    // A closed Mac app stays in the Dock, which brings its window back, so
-    // on macOS the same setting decides only the menu-bar item.
-    if cfg!(target_os = "macos") {
-        system.toggle(
-            translated(locale, "Show in the menu bar"),
-            keyed(translated(
-                locale,
-                "Closing the window keeps ZapFast in the Dock. Quit with Ctrl+Q.",
-            )),
-            |settings| &mut settings.keep_running_in_background,
-        );
-    } else {
-        system.toggle(
+    #[cfg(target_os = "macos")]
+    {
+        system.action_toggle(
             translated(locale, "Keep running when the window closes"),
-            keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
-            |settings| &mut settings.keep_running_in_background,
+            keyed(translated(locale, "Quit with Ctrl+Q.")),
+            |settings| settings.mac_keep_running_on_close,
+            Action::SetMacKeepRunningOnClose,
+        );
+        system.action_toggle(
+            translated(locale, "Show in the menu bar"),
+            translated(locale, "Open ZapFast from the menu bar."),
+            |settings| settings.keep_running_in_background,
+            Action::SetMacMenuBarVisible,
+        );
+        system.action_toggle(
+            translated(locale, "Show in Dock"),
+            translated(
+                locale,
+                "The Dock icon stays available when the menu bar item is off.",
+            ),
+            |settings| settings.mac_show_in_dock,
+            Action::SetMacDockVisible,
+        );
+        system.action_toggle(
+            translated(locale, "Show unread count"),
+            translated(
+                locale,
+                "Show the number of unread messages beside the menu bar icon.",
+            ),
+            |settings| settings.mac_show_unread_count,
+            Action::SetMacUnreadCountVisible,
         );
     }
+    #[cfg(not(target_os = "macos"))]
+    system.toggle(
+        translated(locale, "Keep running when the window closes"),
+        keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+        |settings| &mut settings.keep_running_in_background,
+    );
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
-            translated(locale, "Starts in the tray, without a window."),
+            if cfg!(target_os = "macos") {
+                translated(
+                    locale,
+                    "Starts without a window when background mode and the menu bar item are on.",
+                )
+            } else {
+                translated(locale, "Starts in the tray, without a window.")
+            },
             move |ui, app| {
                 let Some(mut enabled) = app.start_with_system else {
                     return;

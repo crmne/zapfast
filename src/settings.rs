@@ -477,9 +477,14 @@ pub struct Settings {
     /// User GIPHY API key. Empty uses the optional built-in key.
     pub giphy_key: String,
     /// Keep the app linked in the tray when the window closes. On macOS,
-    /// where a closed ZapFast always stays in the Dock, whether it has a
-    /// menu-bar item.
+    /// this existing key controls whether the menu-bar item is shown.
     pub keep_running_in_background: bool,
+    #[cfg(target_os = "macos")]
+    pub mac_keep_running_on_close: bool,
+    #[cfg(target_os = "macos")]
+    pub mac_show_in_dock: bool,
+    #[cfg(target_os = "macos")]
+    pub mac_show_unread_count: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
     /// Notifications name the chat and sender and show the message. Off,
@@ -580,6 +585,12 @@ impl Default for Settings {
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
+            #[cfg(target_os = "macos")]
+            mac_keep_running_on_close: true,
+            #[cfg(target_os = "macos")]
+            mac_show_in_dock: true,
+            #[cfg(target_os = "macos")]
+            mac_show_unread_count: true,
             notifications: true,
             notification_content: true,
             message_sound: NotificationSound::Receive,
@@ -1511,4 +1522,24 @@ mod giphy_tests {
             assert_eq!(limit.applies(true), group, "{limit:?} for groups");
         }
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn mac_status_preferences_preserve_existing_menu_bar_choice() {
+    let mut settings: Settings =
+        serde_json::from_str(r#"{"keep_running_in_background":false}"#).unwrap();
+    assert!(!settings.keep_running_in_background);
+    assert!(settings.mac_keep_running_on_close);
+    assert!(settings.mac_show_in_dock);
+    assert!(settings.mac_show_unread_count);
+
+    settings.mac_show_in_dock = false;
+    settings.mac_keep_running_on_close = false;
+    settings.mac_show_unread_count = false;
+    let decoded: Settings =
+        serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+    assert!(!decoded.mac_show_in_dock);
+    assert!(!decoded.mac_keep_running_on_close);
+    assert!(!decoded.mac_show_unread_count);
 }

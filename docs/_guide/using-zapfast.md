@@ -978,12 +978,13 @@ Shift+Tab bring the focused button into view, too.
 
 ## Notifications and the tray
 
-Closing the window keeps ZapFast linked in the tray, unless **Keep running when
-the window closes** is off, which also leaves out the tray icon. On macOS,
-closing the window always keeps ZapFast running in the Dock, as other Mac apps
-do: click the Dock icon to reopen the window, and turn off **Show in the menu
-bar** if you do not want the menu bar icon. With the icon, click it to open its
-menu, then choose **Show or hide ZapFast**. On Linux and Windows, click the tray icon to reopen it, and click it
+Closing the window keeps ZapFast linked if **Keep running when the window
+closes** is enabled. On macOS, reopen it from the Dock or choose **Show
+ZapFast** from the menu-bar item. In **Settings > System**, turn off **Show in
+Dock** for menu-bar-only use. ZapFast falls back to the Dock when the menu-bar
+item is unavailable. The optional **Show unread count** puts the exact number
+of unread messages beside the icon. On Linux and Windows, click the tray icon to
+reopen ZapFast, and click it
 again to hide a window that is in front. Launching the
 app again reopens the window on every platform. To quit, use **Quit** in the
 tray menu, or **Quit** in the Dock icon's menu on macOS, or on Linux **Quit ZapFast** in the
@@ -992,7 +993,7 @@ GNOME's Dash). On every platform, `zapfast quit` in a terminal or a script quits
 the running copy the same way, and does nothing when none runs. A copy from
 before this command is left running, and the command says so and fails.
 With several numbers linked, a notification's title also names the number it
-came to. The tray icon shows how many chats are unread, up to 9+. It is white on a dark
+came to. On Linux and Windows, the tray icon shows how many chats are unread, up to 9+. It is white on a dark
 panel and black on a light one: on Windows it follows the taskbar, and on Linux
 the desktop's colour scheme (GNOME's top bar counts as dark). A Linux desktop
 that does not say keeps the green icon. Launchers that support
