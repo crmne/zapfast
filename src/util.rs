@@ -469,9 +469,41 @@ pub fn weekday_headings(locale: Locale) -> [String; 7] {
     .map(|weekday| weekday_name(locale, weekday).chars().take(2).collect())
 }
 
+/// A month's name in a date, after the day's number: "23 September". A
+/// language that declines its names keeps another form there, Polish
+/// "23 września" for "wrzesień", so the form is a message of its own. A
+/// catalog without it, or with one form for both uses, keeps [`month_name`].
+fn month_in_date(locale: Locale, month: i8) -> String {
+    use crate::i18n::pgettext;
+    let dated = match month {
+        1 => pgettext(locale, "month in a date", "January"),
+        2 => pgettext(locale, "month in a date", "February"),
+        3 => pgettext(locale, "month in a date", "March"),
+        4 => pgettext(locale, "month in a date", "April"),
+        5 => pgettext(locale, "month in a date", "May"),
+        6 => pgettext(locale, "month in a date", "June"),
+        7 => pgettext(locale, "month in a date", "July"),
+        8 => pgettext(locale, "month in a date", "August"),
+        9 => pgettext(locale, "month in a date", "September"),
+        10 => pgettext(locale, "month in a date", "October"),
+        11 => pgettext(locale, "month in a date", "November"),
+        _ => pgettext(locale, "month in a date", "December"),
+    };
+    // An entry a catalog lacks or leaves empty is the English name, and
+    // English has no catalog to name it by.
+    if dated.as_ref() == month_name(Locale::English, month) {
+        month_name(locale, month)
+    } else {
+        dated.into_owned()
+    }
+}
+
 /// A date as "23 Sep 2026".
 pub fn short_date(locale: Locale, date: Date) -> String {
-    let month: String = month_name(locale, date.month()).chars().take(3).collect();
+    let month: String = month_in_date(locale, date.month())
+        .chars()
+        .take(3)
+        .collect();
     format!("{} {month} {}", date.day(), date.year())
 }
 
@@ -481,7 +513,7 @@ pub fn long_date(locale: Locale, date: Date) -> String {
         "{}, {} {} {}",
         weekday_name(locale, date.weekday()),
         date.day(),
-        month_name(locale, date.month()),
+        month_in_date(locale, date.month()),
         date.year()
     )
 }
@@ -1330,6 +1362,31 @@ mod tests {
             short_date(Locale::German, jiff::civil::date(2024, 3, 5)),
             "5 Mär 2024"
         );
+    }
+
+    /// A catalog with no month form for dates, every one until a language
+    /// declines its names, keeps its translated name: asking for the form
+    /// must not turn the date English (#1162).
+    #[test]
+    fn a_date_keeps_its_translated_month_without_the_form_for_dates() {
+        let date = jiff::civil::date(2026, 11, 26);
+        for locale in Locale::ALL {
+            let plain = month_name(locale, 11);
+            if plain == "November" {
+                continue;
+            }
+            let long = long_date(locale, date);
+            assert!(long.ends_with(" 2026") && long.contains(" 26 "), "{long}");
+            assert!(!long.contains("November"), "{long}");
+            let short = short_date(locale, date);
+            assert!(
+                short.starts_with("26 ") && short.ends_with(" 2026"),
+                "{short}"
+            );
+            if !plain.starts_with("Nov") {
+                assert!(!short.contains("Nov"), "{short}");
+            }
+        }
     }
 
     #[test]

@@ -20785,6 +20785,76 @@ mod tests {
         assert!(!button_disabled(&mut app, &ctx, "Save contact"));
     }
 
+    /// The chat list's menu is as wide as its longest label in the reader's
+    /// language, so a label that runs longer than its English is drawn whole
+    /// (#1162).
+    #[test]
+    fn the_chat_menu_cuts_no_label_in_any_language() {
+        for locale in crate::i18n::Locale::ALL {
+            let mut app = app();
+            app.locale = locale;
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let chat = sample_ids()[0].to_owned();
+            app.open_chat_menu = Some(chat.clone());
+            let mut shapes = Vec::new();
+            for _ in 0..3 {
+                shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+            }
+            let menu = ctx
+                .memory(|memory| memory.area_rect(crate::ui::chats::chat_menu_id(&chat)))
+                .expect("the menu is open");
+            // A galley keeps its whole text when its end is cut off: the
+            // ellipsis is its last glyph.
+            fn texts<'a>(shape: &'a egui::Shape, out: &mut Vec<(&'a str, egui::Pos2, bool)>) {
+                match shape {
+                    egui::Shape::Text(text) => {
+                        let cut = text
+                            .galley
+                            .rows
+                            .last()
+                            .and_then(|row| row.glyphs.last())
+                            .is_some_and(|glyph| glyph.chr == '…');
+                        out.push((text.galley.text(), text.pos, cut));
+                    }
+                    egui::Shape::Vec(shapes) => {
+                        shapes.iter().for_each(|shape| texts(shape, out));
+                    }
+                    _ => {}
+                }
+            }
+            let drawn: Vec<(&str, egui::Pos2, bool)> =
+                shapes.iter().fold(Vec::new(), |mut out, clipped| {
+                    texts(&clipped.shape, &mut out);
+                    out
+                });
+            let inside = |pos: egui::Pos2| menu.contains(pos);
+            let delete = crate::i18n::gettext(locale, "Delete chat");
+            let (_, edge, _) = drawn
+                .iter()
+                .copied()
+                .find(|(text, pos, _)| *text == delete.as_ref() && inside(*pos))
+                .expect("the menu lists Delete chat");
+            // The rows share one left edge, which the list under the menu does not.
+            let rows: Vec<(&str, bool)> = drawn
+                .iter()
+                .filter(|(_, pos, _)| pos.x == edge.x && inside(*pos))
+                .map(|(text, _, cut)| (*text, *cut))
+                .collect();
+            assert!(
+                rows.len() >= 8,
+                "{locale:?}: the menu's rows are read, not the list under them: {rows:?}"
+            );
+            let cut: Vec<&str> = rows
+                .iter()
+                .filter(|(_, cut)| *cut)
+                .map(|(text, _)| *text)
+                .collect();
+            assert!(cut.is_empty(), "{locale:?}: {cut:?}");
+        }
+    }
+
     /// The chat list's menu offers Mute as one submenu, with WhatsApp's
     /// choices of how long; a muted chat offers Unmute alone.
     #[test]
