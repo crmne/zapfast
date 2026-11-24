@@ -558,7 +558,7 @@ msgstr "Wybierz czat po lewej stronie."
 
 #: src/ui/conversation.rs:320
 msgid "Ctrl+K to search · ? for keyboard shortcuts"
-msgstr "Ctrl+K — szukanie · ? — skróty klawiaturowe"
+msgstr "Szukanie: Ctrl+K · Skróty klawiaturowe: ?"
 
 #: src/ui/conversation.rs:650
 msgid "Select messages"
@@ -642,7 +642,7 @@ msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
-"Enter wysyła · Shift+Enter — nowy wiersz · *pogrubienie* _kursywa_ "
+"Enter wysyła · Shift+Enter: nowy wiersz · *pogrubienie* _kursywa_ "
 "~przekreślenie~ · Ctrl+V wkleja obraz"
 
 #: src/ui/conversation.rs:2114
@@ -3722,7 +3722,8 @@ msgstr ""
 #: src/group_admin.rs:295
 #, rust-format
 msgid "{names} left the group recently and cannot be added back yet."
-msgstr "Nie można jeszcze ponownie dodać: {names} — niedawno opuścił(a) grupę."
+msgstr ""
+"Nie można jeszcze ponownie dodać: {names}, bo niedawno opuścił(a) grupę."
 
 #: src/group_admin.rs:297
 #, rust-format
