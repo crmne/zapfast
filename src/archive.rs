@@ -2836,7 +2836,7 @@ impl Archive {
                 |row| {
                     Ok(Contact {
                         id: row.get(0)?,
-                        full_name: row.get(1)?,
+                        full_name: saved_name(row.get(1)?),
                         first_name: row.get(2)?,
                         push_name: row.get(3)?,
                     })
@@ -2852,7 +2852,7 @@ impl Archive {
         let rows = statement.query_map([], |row| {
             Ok(Contact {
                 id: row.get(0)?,
-                full_name: row.get(1)?,
+                full_name: saved_name(row.get(1)?),
                 first_name: row.get(2)?,
                 push_name: row.get(3)?,
             })
@@ -2961,6 +2961,12 @@ impl Archive {
             "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
+}
+
+/// A stored saved name, unless it is only a phone number: history once filed
+/// WhatsApp's masked number (`+55∙∙∙∙∙∙∙∙12`) as one, hiding the profile name.
+fn saved_name(name: Option<String>) -> Option<String> {
+    name.filter(|name| !crate::model::is_number_only(name))
 }
 
 #[cfg(test)]
@@ -5080,6 +5086,27 @@ pub(crate) mod tests {
                 .expect("reads")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_masked_number_is_no_saved_name() {
+        let archive = Archive::in_memory().expect("opens");
+        let id = "554100000046@s.whatsapp.net";
+        archive
+            .upsert_contact(&Contact {
+                id: id.into(),
+                full_name: Some(
+                    "+55\u{2219}\u{2219}\u{2219}\u{2219}\u{2219}\u{2219}\u{2219}\u{2219}46".into(),
+                ),
+                first_name: None,
+                push_name: Some("Janderson".into()),
+            })
+            .expect("stores");
+        let stored = archive.contact(id).expect("reads").expect("exists");
+        assert_eq!(stored.full_name, None);
+        assert_eq!(stored.display_name(), Some("Janderson"));
+        let listed = archive.contacts().expect("lists");
+        assert_eq!(listed[0].full_name, None);
     }
 
     #[test]

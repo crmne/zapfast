@@ -6451,11 +6451,7 @@ impl Worker {
                             first_name: None,
                             push_name: None,
                         });
-                        if contact.full_name.is_none()
-                            && !name
-                                .chars()
-                                .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
-                        {
+                        if contact.full_name.is_none() && !crate::model::is_number_only(&name) {
                             contact.full_name = Some(name.clone());
                             let contact = contact.clone();
                             let _ = self.archive.upsert_contact(&contact);

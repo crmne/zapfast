@@ -3162,13 +3162,13 @@ impl App {
         // nor as WhatsApp masks it (`+233∙∙∙∙∙∙42`) for someone not in the
         // contacts: that is formatted afresh from the id.
         let phone = crate::model::phone_of(id);
-        let number = |c: char| {
-            c.is_ascii_digit()
-                || (phone.is_some() && matches!(c, '+' | ' ' | '(' | ')' | '-' | '\u{2219}'))
+        let number_only = |name: &str| match phone {
+            Some(_) => crate::model::is_number_only(name),
+            None => name.chars().all(|c| c.is_ascii_digit()),
         };
         if let Some(chat) = chat.or_else(|| self.chat(id))
             && !chat.name.is_empty()
-            && !chat.name.chars().all(number)
+            && !number_only(&chat.name)
         {
             return chat.name.clone();
         }
