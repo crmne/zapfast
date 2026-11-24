@@ -209,6 +209,18 @@ name or description, in the interface language or in English.
   chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
+- **Message notification style** (macOS): **System** uses Notification Center.
+  **Floating** shows message banners when macOS permits notification alerts
+  and shares a clear Focus status with ZapFast. Calls use their existing
+  notification path.
+- In **Floating**, choose a screen corner, preferred display and edge margin.
+  When the display is disconnected, banners move to the available display.
+  Choose a duration or **Until dismissed**, the stack size, and whether to
+  combine banners from the same conversation. Hovering pauses dismissal.
+- **Preview a floating notification** shows a synthetic message. It uses
+  the same layout and content visibility preference as real messages.
+
+
 **Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account

@@ -1011,6 +1011,21 @@ lets you open the first window from the menu-bar menu. On Linux and
 Windows, notifications show the chat picture. On Linux, Windows, and macOS, a
 click on a notification opens the chat at the message it announced. This holds for the 32 most recent tracked notifications on all three platforms;
 older notifications remain in system history without a message click listener.
+On macOS, **Settings > Notifications > Message notification style** can show
+floating message banners. Choose a corner and display, or let AppKit choose
+the display. Click the banner to open the announced message, or use its
+dismiss button. Reading a chat also clears its live banners. A grouped
+banner opens the newest message it shows. ZapFast uses the existing message
+content and sound controls, and follows Reduce Motion.
+
+Allow ZapFast to read Focus status to receive floating banners. When the
+operating system reports Focus or cannot share its status, ZapFast sends
+notifications through Notification Center, with sound controlled by macOS.
+An unavailable or disabled banner permission also uses that route. The
+Settings preview is available independently of live delivery. Floating
+banners live on the desktop for their configured duration and have no
+Notification Center history.
+
 Reading a chat removes its tracked notifications, including Windows toasts.
 On Windows, while every display is off, ZapFast leaves new-message notifications
 to the phone instead of queuing desktop banners to appear when the display turns on.

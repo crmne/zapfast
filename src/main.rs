@@ -410,6 +410,14 @@ fn run() -> eframe::Result<()> {
     if demo {
         zapfast::demo::populate(&mut app);
         zapfast::demo::apply_flags(&mut app, cli.demo_page.as_deref());
+        #[cfg(target_os = "macos")]
+        if cli.demo_page.as_deref().is_some_and(|page| {
+            page.split(',')
+                .any(|flag| flag.trim() == "floating-preview")
+        }) {
+            app.actions
+                .push(zapfast::model::Action::PreviewFloatingNotification);
+        }
         if cli.demo_tour {
             tour_script(&cli.demo_tour_script).prepare(&mut app);
         }

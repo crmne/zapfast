@@ -2018,6 +2018,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     };
     for part in page.split(',').map(str::trim) {
         match part {
+            #[cfg(target_os = "macos")]
+            "mac-status" => {} // The entry point starts the native status item.
+            #[cfg(target_os = "macos")]
+            "floating-preview" => {
+                app.settings.floating_notifications.enabled = true;
+                app.settings.floating_notifications.seconds = 20;
+            }
+
             "history-date" => history_date_sample(app),
             "chat" | "" => {}
             "blocked" | "blocked-contacts" | "block-confirm" => {

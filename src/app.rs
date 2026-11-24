@@ -2540,6 +2540,13 @@ impl App {
                 .unwrap_or_else(|p| p.into_inner()),
         );
         for target in opened {
+            if !self
+                .accounts
+                .iter()
+                .any(|account| account.id == target.account)
+            {
+                continue;
+            }
             // Behind the app lock nothing changes yet: the message, with its
             // account, opens once unlocked.
             if self.app_lock.is_locked() {
@@ -2630,14 +2637,19 @@ impl App {
             &self.message_text(message),
             account.as_deref(),
         );
-        // Prefer the chat picture, then the sender picture. Cached files work
-        // before the chat list loads; new requests help later notifications.
+        // A floating card names the conversation separately from its avatar.
         let sender = message.sender.clone();
-        let picture = self
-            .avatar(chat_id)
-            .or_else(|| self.cached_avatar(chat_id))
-            .or_else(|| self.avatar(&sender))
-            .or_else(|| self.cached_avatar(&sender));
+        #[cfg(target_os = "macos")]
+        let sender_first = self.settings.floating_notifications.enabled;
+        #[cfg(not(target_os = "macos"))]
+        let sender_first = false;
+        let picture = if sender_first {
+            [&sender, chat_id]
+        } else {
+            [chat_id, &sender]
+        }
+        .into_iter()
+        .find_map(|id| self.avatar(id).or_else(|| self.cached_avatar(id)));
         let waker = self.waker.clone();
         let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
         self.notifications.show(
@@ -9787,6 +9799,17 @@ impl App {
                         .send(Command::SetAccountPrivacy { kind, choice });
                 }
             }
+            #[cfg(target_os = "macos")]
+            Action::AuthorizeFloatingNotifications => crate::macos::floating::authorize_focus(),
+            #[cfg(target_os = "macos")]
+            Action::PreviewFloatingNotification => {
+                self.notifications.floating.preview(
+                    ctx,
+                    self.locale,
+                    self.palette.dark,
+                    &self.settings.floating_notifications,
+                );
+            }
             Action::SetNotificationSound { mention, sound } => {
                 if mention {
                     self.settings.mention_sound = sound;
@@ -10511,6 +10534,8 @@ impl App {
         self.poll_custom_themes();
         let wallpaper = self.account().settings.wallpaper_image.clone();
         self.wallpaper_image.sync(wallpaper.as_deref(), &self.waker);
+        #[cfg(target_os = "macos")]
+        self.update_floating(ctx);
         self.handle_notification_opens();
         // Before this frame's pages: a reader who moved on ends the wait.
         self.end_pending_follow(ctx);
@@ -10522,6 +10547,8 @@ impl App {
         self.tick_audio(ctx);
         self.tick_video(ctx);
         self.apply_actions(ctx);
+        #[cfg(target_os = "macos")]
+        self.update_floating(ctx);
         self.sync_chat_export_permission();
         self.sync_prefetch();
         self.hold_media();
@@ -10530,6 +10557,39 @@ impl App {
         #[cfg(target_os = "macos")]
         self.sync_mac_status();
         self.request_attention(ctx);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn update_floating(&mut self, ctx: &egui::Context) {
+        let allowed = !self.display_off();
+        let content = self.settings.notification_content && !self.app_lock.is_locked();
+        let accounts = &self.accounts;
+        let now = crate::util::now();
+        self.notifications.update_floating(
+            ctx,
+            self.locale,
+            &self.settings.floating_notifications,
+            allowed,
+            content,
+            |target| {
+                accounts
+                    .iter()
+                    .find(|account| account.id == target.account)
+                    .is_some_and(|account| {
+                        account.settings.notifications
+                            && account
+                                .chats
+                                .iter()
+                                .find(|chat| chat.id == target.chat)
+                                .is_some_and(|chat| {
+                                    !chat.locked
+                                        && !chat.archived
+                                        && !chat.muted(now)
+                                        && chat.unread != 0
+                                })
+                    })
+            },
+        );
     }
 
     fn display_off(&self) -> bool {
@@ -10550,6 +10610,8 @@ impl App {
                     Event::Sleep => self.save_state(),
                     Event::Wake => self.reconnect_after_wake(),
                     Event::ScreenUnavailable(unavailable) => self.mac_display_off = unavailable,
+                    // The observer already woke this frame, which reflows any panels.
+                    Event::DisplayChanged => {}
                 }
             }
         }

@@ -11,6 +11,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, S
 
 use crate::model::{Action, Dialog, Page};
 
+pub(crate) mod floating;
 pub(crate) mod workspace;
 
 thread_local! {

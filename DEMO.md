@@ -36,6 +36,13 @@ to exercise a login-style launch. For example:
 cargo run --features demo -- --demo --demo-page mac-status,settings
 ```
 
+Add `floating-preview` to open a synthetic AppKit banner. Use `light`
+with the flag for a light preview. The fixture does not ask for Focus access.
+
+```sh
+cargo run --features demo -- --demo --demo-page settings,settings-search=Notifications,floating-preview,light
+```
+
 ## Recording a demo
 
 The `demo` feature uses offline sample chats in a fresh temporary directory.

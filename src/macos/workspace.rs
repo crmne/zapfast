@@ -5,7 +5,8 @@ use std::sync::Mutex;
 use objc2::rc::Retained;
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
+    NSApplicationDidChangeScreenParametersNotification, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
     NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
@@ -15,6 +16,7 @@ pub(crate) enum Event {
     Sleep,
     Wake,
     ScreenUnavailable(bool),
+    DisplayChanged,
 }
 
 struct ObserverState {
@@ -51,6 +53,11 @@ define_class!(
                 } else if *name == *NSWorkspaceDidWakeNotification {
                     pending.sleeping = false;
                     pending.events.push(Event::Wake);
+                } else if *name == *NSApplicationDidChangeScreenParametersNotification {
+                    pending.events.push(Event::DisplayChanged);
+                    drop(pending);
+                    state.waker.wake();
+                    return;
                 } else if *name == *NSWorkspaceScreensDidSleepNotification {
                     pending.screen_asleep = true;
                 } else if *name == *NSWorkspaceScreensDidWakeNotification {
@@ -69,6 +76,7 @@ define_class!(
 
 pub(crate) struct Workspace {
     center: Retained<NSNotificationCenter>,
+    display_center: Retained<NSNotificationCenter>,
     observer: Retained<Observer>,
 }
 
@@ -77,6 +85,7 @@ impl Workspace {
         MainThreadMarker::new()?;
         let workspace = NSWorkspace::sharedWorkspace();
         let center = workspace.notificationCenter();
+        let display_center = NSNotificationCenter::defaultCenter();
         let observer = Observer::alloc().set_ivars(ObserverState {
             pending: Mutex::default(),
             waker: waker.clone(),
@@ -100,8 +109,18 @@ impl Workspace {
                     None,
                 );
             }
+            display_center.addObserver_selector_name_object(
+                observer.as_ref(),
+                sel!(workspaceChanged:),
+                Some(NSApplicationDidChangeScreenParametersNotification),
+                None,
+            );
         }
-        Some(Self { center, observer })
+        Some(Self {
+            center,
+            display_center,
+            observer,
+        })
     }
 
     pub(crate) fn events(&self) -> Vec<Event> {
@@ -120,6 +139,9 @@ impl Workspace {
 impl Drop for Workspace {
     fn drop(&mut self) {
         // SAFETY: this observer was registered above and is still retained.
-        unsafe { self.center.removeObserver(self.observer.as_ref()) };
+        unsafe {
+            self.center.removeObserver(self.observer.as_ref());
+            self.display_center.removeObserver(self.observer.as_ref());
+        }
     }
 }

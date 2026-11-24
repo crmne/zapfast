@@ -20,5 +20,7 @@
     <key>NSMicrophoneUsageDescription</key><string>ZapFast uses the microphone for calls and for the voice messages you choose to send.</string>
     <key>NSCameraUsageDescription</key><string>ZapFast uses the camera for the video calls you make and answer.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Carmine Paolino. Not affiliated with WhatsApp or Meta.</string>
+  <key>NSFocusStatusUsageDescription</key>
+  <string>ZapFast uses Focus status to keep floating message notifications quiet when you are in Focus.</string>
 </dict>
 </plist>

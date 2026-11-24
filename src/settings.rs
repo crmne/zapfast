@@ -490,6 +490,8 @@ pub struct Settings {
     /// Notifications name the chat and sender and show the message. Off,
     /// every one says only "New message", as behind the app lock.
     pub notification_content: bool,
+    #[cfg(target_os = "macos")]
+    pub(crate) floating_notifications: crate::macos::floating::Settings,
     /// Sound for new messages, in one-to-one chats and groups alike.
     pub message_sound: NotificationSound,
     /// Sound for group messages that mention us or reply to one of ours, as
@@ -593,6 +595,8 @@ impl Default for Settings {
             mac_show_unread_count: true,
             notifications: true,
             notification_content: true,
+            #[cfg(target_os = "macos")]
+            floating_notifications: Default::default(),
             message_sound: NotificationSound::Receive,
             mention_sound: NotificationSound::Alert,
             group_sounds: true,

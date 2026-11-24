@@ -3321,6 +3321,10 @@ pub enum Action {
     SetStartWithSystem(bool),
     /// Sets the sound for mentions and replies to us (`true`) or for
     /// other new messages.
+    #[cfg(target_os = "macos")]
+    AuthorizeFloatingNotifications,
+    #[cfg(target_os = "macos")]
+    PreviewFloatingNotification,
     SetNotificationSound {
         mention: bool,
         sound: crate::settings::NotificationSound,
