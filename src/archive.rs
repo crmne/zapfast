@@ -1433,12 +1433,13 @@ impl Archive {
                     ELSE MAX(pending_unread, (SELECT pending_unread FROM chats WHERE id = ?1)) END,
                 ephemeral_expiration = CASE
                     WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NOT NULL
-                        AND (ephemeral_setting_timestamp IS NULL OR (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) >= ephemeral_setting_timestamp)
+                        AND (ephemeral_setting_timestamp IS NULL OR (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)
+                            >= CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END)
                     THEN (SELECT ephemeral_expiration FROM chats WHERE id = ?1)
                     ELSE ephemeral_expiration END,
-                ephemeral_setting_timestamp = CASE WHEN ephemeral_setting_timestamp IS NULL THEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)
-                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN ephemeral_setting_timestamp
-                    ELSE MAX(ephemeral_setting_timestamp, (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)) END,
+                ephemeral_setting_timestamp = CASE WHEN ephemeral_setting_timestamp IS NULL THEN (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)
+                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END
+                    ELSE MAX(CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END, (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)) END,
                 notification_sound = COALESCE(notification_sound, (SELECT notification_sound FROM chats WHERE id = ?1)),
                 voice_speed = COALESCE(voice_speed, (SELECT voice_speed FROM chats WHERE id = ?1)),
                 history_start = MAX(history_start, COALESCE((SELECT history_start FROM chats WHERE id = ?1), 0))
@@ -4093,6 +4094,41 @@ pub(crate) mod tests {
             archive.ephemeral_expiration(chat).expect("expiration"),
             Some(0)
         );
+    }
+
+    #[test]
+    fn merging_a_privacy_id_keeps_its_newer_timer_over_a_millisecond_one() {
+        let archive = Archive::in_memory().expect("opens");
+        let phone = "1@s.whatsapp.net";
+        let lid = "9@lid";
+        archive.ensure_chat(phone, "Ada").expect("phone chat");
+        archive.ensure_chat(lid, "Ada").expect("lid chat");
+        // The phone-number row holds an older time in milliseconds.
+        archive
+            .connection
+            .execute(
+                "UPDATE chats SET ephemeral_expiration = 604800,
+                 ephemeral_setting_timestamp = 1795455896000 WHERE id = ?1",
+                params![phone],
+            )
+            .expect("seed");
+        assert!(archive.set_ephemeral(lid, 0, 1_795_466_124).expect("newer"));
+
+        archive.put_lid("9", "1").expect("merge");
+
+        assert_eq!(
+            archive.ephemeral_expiration(phone).expect("expiration"),
+            Some(0)
+        );
+        let stored: Option<i64> = archive
+            .connection
+            .query_row(
+                "SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1",
+                params![phone],
+                |row| row.get(0),
+            )
+            .expect("timestamp");
+        assert_eq!(stored, Some(1_795_466_124));
     }
 
     #[test]
