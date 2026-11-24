@@ -14,7 +14,7 @@ pub use fastframe_dock::Badge;
 pub use fastframe_dock::Taskbar;
 
 /// The localized accessible text for the Windows unread overlay.
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub fn badge_description(count: u32, locale: crate::i18n::Locale) -> String {
     crate::i18n::ngettext(locale, "{} unread message", "{} unread messages", count)
         .replace("{}", &count.to_string())

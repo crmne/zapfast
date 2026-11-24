@@ -34,6 +34,8 @@ pub mod image_preview;
 pub mod lottie;
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "macos")]
+mod macos_status;
 pub mod markup;
 pub mod media_pause;
 pub mod mentions;

@@ -589,25 +589,16 @@ protocol. These notes are for coding agents and new contributors.
   where `fastframe_file::write` panics in debug: settings and the roster go
   through `App::files` (a `fastframe_file::Writer`) with `save_to`, flushed
   in `App::shutdown` and before a suspend is acknowledged, and `StallWatch`
-  in `main` logs any update of 250 ms or more. The tray item is
-  fastframe-tray (ksni on Linux, tray-icon on Windows and macOS; on macOS
-  made with the first window and pumped by `fastframe_tray::idle` while none
-  exists), and `src/macos.rs` hands its menu events to `fastframe_tray::claim_menu_event` first.
-  The process Dock icon and unread badge use fastframe-dock; a Cargo run
-  gets the embedded icon, while a packaged app keeps its bundle icon. The
-  unread-chat count stays in ZapFast and survives window replacement.
-  Clicking the macOS menu-bar icon opens its menu; **Show or hide ZapFast**
-  toggles the window, and clicking the Dock icon shows it. On macOS closing
-  always keeps ZapFast running, as other Mac apps do: `App::dock` (a
-  `fastframe_tray::Dock`) hears Dock clicks with or without a menu-bar item,
-  and the setting, shown there as **Show in the menu bar**, decides only the
-  item. Elsewhere closing keeps ZapFast running only while `Tray::is_shown`: on Linux the
-  item exists before a panel shows it (a start at login beats the panel, and
-  GNOME's tray watcher) and registers once one appears. A hidden start with
-  an item no panel shows yet waits `TRAY_WAIT` (30 s) for one in
-  `App::check_tray_wait`, then shows the window (#429). A
-  hidden start makes the macOS item with `Tray::create_item`, which does not
-  bring ZapFast forward; a window's `attach` makes it otherwise.
+  in `main` logs any update of 250 ms or more. On Linux and Windows the
+  tray uses fastframe-tray. On macOS `src/macos_status.rs` uses the same
+  tray-icon crate directly for live status item removal and its text count.
+  The macOS menu event handler is installed before the status item, even
+  on a hidden start. Fastframe still handles Dock reopen clicks, activation
+  policy, the Dock badge and the AppKit pump. The Dock stays available if
+  the menu-bar item is unavailable. A hidden macOS start requires that
+  item; elsewhere a start at login waits up to `TRAY_WAIT` for the host
+  to appear (#429). AppKit's workspace events feed the existing account
+  reconnect path and track whether the display is available.
   `src/single_instance.rs` claims fastframe-instance's slot in the runtime
   directory (`Slot::at(runtime, "fastsapp")`, so requests and replies stay
   `fastsapp:show` and `fastsapp:ok` for older copies), and a second launch

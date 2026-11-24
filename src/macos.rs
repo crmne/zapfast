@@ -11,13 +11,14 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, S
 
 use crate::model::{Action, Dialog, Page};
 
+pub(crate) mod workspace;
+
 thread_local! {
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
 }
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
-static REPAINT: Mutex<Option<egui::Context>> = Mutex::new(None);
 
 /// Menu edits must reach the input before egui processes focus and selection.
 struct MenuInput(Arc<Mutex<Vec<egui::Event>>>);
@@ -107,18 +108,10 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
     Ok(menu)
 }
 
-pub fn attach(ctx: &egui::Context) {
-    ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
-    // Layout tests use headless contexts on test threads, without an NSApp.
-    if objc2::MainThreadMarker::new().is_none() {
-        return;
-    }
-    *REPAINT.lock().unwrap_or_else(|p| p.into_inner()) = Some(ctx.clone());
+/// Install before creating a status item, including on a hidden launch.
+pub fn install_menu_handler(waker: &fastframe_shell::Waker) {
+    let waker = waker.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        // The tray's menu shares muda's one handler; its ids are its own.
-        if fastframe_tray::claim_menu_event(&event.id.0) {
-            return;
-        }
         if native_edit(&event.id.0) {
             return;
         }
@@ -133,10 +126,16 @@ pub fn attach(ctx: &egui::Context) {
                 .unwrap_or_else(|p| p.into_inner())
                 .push(event.id.0);
         }
-        if let Some(ctx) = &*REPAINT.lock().unwrap_or_else(|p| p.into_inner()) {
-            ctx.request_repaint();
-        }
+        waker.wake();
     }));
+}
+
+pub fn attach(ctx: &egui::Context) {
+    ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
+    // Layout tests use headless contexts on test threads, without an NSApp.
+    if objc2::MainThreadMarker::new().is_none() {
+        return;
+    }
     MENU.with_borrow_mut(|menu| {
         if menu.is_none() {
             match build_menu() {
@@ -232,7 +231,10 @@ fn action(id: &str) -> Option<Action> {
         "zoom-reset" => Action::ResetZoom,
         "shortcuts" => Action::ShowDialog(Dialog::Shortcuts),
         "help" => Action::OpenUrl("https://zapfast.rocks/using-zapfast/".into()),
-        "show-window" => Action::ShowWindow,
+        "show-window" | "status-show" => Action::ShowWindow,
+        "status-hide" => Action::HideWindow,
+        "status-lock" => Action::LockApp,
+        "status-quit" => Action::Quit,
         _ => return None,
     })
 }

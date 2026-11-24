@@ -28,6 +28,14 @@ The earlier `FASTSAPP_GIPHY_KEY` build variable remains supported as a fallback.
 CI checks the complete lockfile against RustSec advisories with `cargo audit`.
 Candidate-specific manual checks and results are tracked in the release PR.
 
+On macOS, add `mac-status` to `--demo-page` to use the real menu-bar item
+and Dock reopen handler with the offline fixture. Add `--start-hidden`
+to exercise a login-style launch. For example:
+
+```sh
+cargo run --features demo -- --demo --demo-page mac-status,settings
+```
+
 ## Recording a demo
 
 The `demo` feature uses offline sample chats in a fresh temporary directory.

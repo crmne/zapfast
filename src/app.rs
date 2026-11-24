@@ -912,6 +912,12 @@ pub struct App {
     /// Cross-thread window repaint handle.
     waker: Waker,
     tray: Option<fastframe_tray::Tray>,
+    #[cfg(target_os = "macos")]
+    mac_status: crate::macos_status::Status,
+    #[cfg(target_os = "macos")]
+    mac_workspace: Option<crate::macos::workspace::Workspace>,
+    #[cfg(target_os = "macos")]
+    mac_display_off: bool,
     /// Whether this run may have a tray item at all (`AppOptions::tray`).
     tray_allowed: bool,
     /// The tray item could not be made while the setting wants one.
@@ -1256,6 +1262,20 @@ impl fastframe_shell::Resident for App {
     /// loads after the session's autostart apps), so the window waits
     /// `TRAY_WAIT` for a panel before it shows.
     fn start_hidden(&mut self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.tray_allowed {
+            if !self.settings.mac_keep_running_on_close || !self.settings.keep_running_in_background
+            {
+                return false;
+            }
+            self.sync_mac_status();
+            if !self.mac_status.is_shown() {
+                return false;
+            }
+        } else if !self.has_tray() || !self.settings.keep_running_in_background {
+            return false;
+        }
+        #[cfg(not(target_os = "macos"))]
         if !self.has_tray() || !self.settings.keep_running_in_background {
             return false;
         }
@@ -1351,14 +1371,6 @@ fn wants_tray_item(allowed: bool, keep_running: bool, exists: bool) -> bool {
     allowed && keep_running && !exists
 }
 
-/// Whether closing the window keeps ZapFast running. On macOS the Dock
-/// brings the window back, so closing it keeps ZapFast running as other Mac
-/// apps do, and the setting decides only the menu-bar item. Elsewhere only a
-/// tray item a panel shows can bring it back.
-fn closing_keeps_running(dock: bool, tray_shown: bool, keep_running: bool) -> bool {
-    dock || (tray_shown && keep_running)
-}
-
 /// How often the panel's light or dark style is read again.
 const TRAY_COLOUR_EVERY: Duration = Duration::from_secs(3);
 
@@ -1448,6 +1460,10 @@ impl App {
             .ok();
         let power_waker = waker.clone();
         app.power = fastframe_power::Power::spawn(move || power_waker.wake());
+        #[cfg(target_os = "macos")]
+        {
+            app.mac_workspace = crate::macos::workspace::Workspace::watch(waker);
+        }
         #[cfg(target_os = "linux")]
         {
             let appearance_waker = waker.clone();
@@ -1505,16 +1521,22 @@ impl App {
         (app, events)
     }
 
+    /// Gives an explicitly requested offline demo the real macOS desktop
+    /// entry points, with its synthetic accounts and throwaway settings.
+    #[cfg(all(target_os = "macos", feature = "demo"))]
+    pub fn enable_demo_status(&mut self, waker: &Waker) {
+        self.tray_allowed = true;
+        self.waker = waker.clone();
+        let wake = waker.clone();
+        self.dock = Some(fastframe_tray::Dock::spawn(move || wake.wake()));
+        self.mac_workspace = crate::macos::workspace::Workspace::watch(waker);
+    }
+
     /// Starts without a window (`--start-hidden`). The link and the archive
     /// start now: they otherwise wait for a first frame, which a hidden start
     /// only draws once the tray or another launch shows the window.
     pub fn start_hidden(&mut self) {
         self.hide_intent = true;
-        // No window will attach the tray, which makes the macOS item; make
-        // it now without bringing ZapFast forward.
-        if let Some(tray) = &mut self.tray {
-            tray.create_item();
-        }
         for account in &mut self.accounts {
             if let Some(startup) = account.backend.take_startup() {
                 let _ = startup.send(());
@@ -1781,6 +1803,12 @@ impl App {
             login_item: Default::default(),
             waker,
             tray: None,
+            #[cfg(target_os = "macos")]
+            mac_status: Default::default(),
+            #[cfg(target_os = "macos")]
+            mac_workspace: None,
+            #[cfg(target_os = "macos")]
+            mac_display_off: false,
             tray_allowed: false,
             tray_failed: false,
             dock: None,
@@ -2238,11 +2266,11 @@ impl App {
 
     /// Whether closing the window keeps ZapFast running, hidden.
     pub fn keeps_running_on_close(&self) -> bool {
-        closing_keeps_running(
-            self.dock.is_some(),
-            self.tray_shown(),
-            self.settings.keep_running_in_background,
-        )
+        #[cfg(target_os = "macos")]
+        if self.dock.is_some() {
+            return self.settings.mac_keep_running_on_close;
+        }
+        self.tray_shown() && self.settings.keep_running_in_background
     }
 
     /// Asks the compositor to bring the existing window forward, which niri
@@ -2262,6 +2290,10 @@ impl App {
         #[cfg(test)]
         if let Some(shown) = self.test_tray_shown {
             return shown;
+        }
+        #[cfg(target_os = "macos")]
+        if self.mac_status.is_shown() {
+            return true;
         }
         self.tray
             .as_ref()
@@ -2355,6 +2387,9 @@ impl App {
     /// Makes the tray item once "Keep running when the window closes" asks
     /// for it: only then does it have a window to bring back (#457).
     fn spawn_tray_if_wanted(&mut self) {
+        if cfg!(target_os = "macos") {
+            return;
+        }
         if !self.settings.keep_running_in_background {
             self.tray_failed = false;
         }
@@ -2380,15 +2415,18 @@ impl App {
     /// Offers "Lock ZapFast" in the tray exactly while an app lock password
     /// is set, so setting or removing one changes the menu at once, and
     /// makes the item when the setting that wants it is turned on.
+    #[cfg(target_os = "macos")]
+    fn sync_mac_status(&mut self) {
+        if self.tray_allowed {
+            let count = self.unread_chat_count_everywhere();
+            self.mac_status
+                .sync(&self.settings, self.locale, count, self.window_hidden);
+        }
+    }
+
     fn sync_tray(&mut self) {
         if self.tray.is_none() {
             self.spawn_tray_if_wanted();
-            if !self.window_hidden
-                && let Some(tray) = &mut self.tray
-            {
-                // Makes the macOS item, which needs a running window.
-                tray.attach();
-            }
         }
         let lockable = self.settings.app_lock_hash.is_some();
         if lockable != self.tray_lockable {
@@ -2396,6 +2434,9 @@ impl App {
             if let Some(tray) = &mut self.tray {
                 tray.set_visible(TRAY_LOCK, lockable);
             }
+        }
+        if self.tray.is_none() {
+            return;
         }
         self.sync_tray_colour(Instant::now());
         // The same count as the taskbar's; a new icon only when it shows.
@@ -2534,7 +2575,7 @@ impl App {
 
     /// Sends a desktop notification for an unseen incoming message.
     fn maybe_notify(&mut self, chat_id: &str, message: &Message) {
-        if !self.account().settings.notifications || self.power.conditions().display_off {
+        if !self.account().settings.notifications || self.display_off() {
             return;
         }
         let Some(chat) = self.chat(chat_id) else {
@@ -2759,19 +2800,16 @@ impl App {
         // focus in the last one does not hold it back from the composer.
         self.messages_focused = false;
         self.refocus_composer(ctx);
-        // Before the tray: muda keeps the first menu handler it is given, and
-        // the tray installs one when it makes its item on the first window.
-        // Ours hands the tray its own events (#215).
         #[cfg(target_os = "macos")]
         crate::macos::attach(ctx);
-        // The Dock first: on the first window the tray's item takes the
-        // Dock's clicks over, and both are read.
         if let Some(dock) = &mut self.dock {
             dock.attach();
         }
         if let Some(tray) = &mut self.tray {
             tray.attach();
         }
+        #[cfg(target_os = "macos")]
+        self.sync_mac_status();
     }
 
     pub fn is_connected(&self) -> bool {
@@ -10073,7 +10111,7 @@ impl App {
                 }
             }
             Action::HideWindow => {
-                if self.tray_shown() {
+                if self.tray_shown() && self.keeps_running_on_close() {
                     self.hide_intent = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -10438,8 +10476,7 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        let looking =
-            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
+        let looking = self.window_focused && !self.window_hidden && !self.display_off();
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
             let online = looking && index == active;
@@ -10464,8 +10501,8 @@ impl App {
         if self.app_lock.is_locked() {
             self.window_focused = false;
         }
-        self.report_presence();
         self.handle_power();
+        self.report_presence();
         self.track_focus(ctx, Instant::now());
         self.handle_tray();
         #[cfg(target_os = "macos")]
@@ -10490,15 +10527,32 @@ impl App {
         self.hold_media();
         self.follow_receipts();
         self.sync_badge();
+        #[cfg(target_os = "macos")]
+        self.sync_mac_status();
         self.request_attention(ctx);
     }
 
-    /// Answers the system's sleep and wake. Every account reconnects its link
-    /// after a wake (Linux and Windows report it; macOS does not yet, so
-    /// there the worker's link watch notices the sleep on its own). Settings
-    /// waiting for their debounced save are saved before the machine sleeps
-    /// or the session ends.
+    fn display_off(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.mac_display_off {
+            return true;
+        }
+        self.power.conditions().display_off
+    }
+
+    /// Answers sleep and wake in both windowed and headless modes.
     fn handle_power(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(workspace) = &self.mac_workspace {
+            use crate::macos::workspace::Event;
+            for event in workspace.events() {
+                match event {
+                    Event::Sleep => self.save_state(),
+                    Event::Wake => self.reconnect_after_wake(),
+                    Event::ScreenUnavailable(unavailable) => self.mac_display_off = unavailable,
+                }
+            }
+        }
         for event in self.power.events() {
             match event {
                 fastframe_power::Event::Suspending(ack)
@@ -10508,12 +10562,14 @@ impl App {
                     self.files.flush(Duration::from_millis(1500));
                     ack.done();
                 }
-                fastframe_power::Event::Resumed => {
-                    for account in &self.accounts {
-                        account.backend.send(Command::Resumed);
-                    }
-                }
+                fastframe_power::Event::Resumed => self.reconnect_after_wake(),
             }
+        }
+    }
+
+    fn reconnect_after_wake(&self) {
+        for account in &self.accounts {
+            account.backend.send(Command::Resumed);
         }
     }
 
@@ -18063,6 +18119,7 @@ mod tests {
     /// ZapFast running with or without a menu-bar item, and the setting
     /// decides only the item. A hidden start still needs the item: the
     /// Dock's reopen handler needs a window made first.
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_dock_keeps_a_closed_app_running_without_a_menu_bar_item() {
         use fastframe_shell::{Closed, Resident};
@@ -18086,6 +18143,8 @@ mod tests {
         app.settings.keep_running_in_background = true;
         assert!(app.keeps_running_on_close());
         assert!(Resident::start_hidden(&mut app));
+        app.settings.mac_keep_running_on_close = false;
+        assert!(!app.keeps_running_on_close());
     }
 
     /// At login on GNOME the tray watcher comes up after ZapFast (#429): a

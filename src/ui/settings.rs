@@ -666,28 +666,52 @@ fn sections(app: &App) -> Vec<Section> {
     }
 
     let mut system = Section::new(translated(locale, "System"));
-    // A closed Mac app stays in the Dock, which brings its window back, so
-    // on macOS the same setting decides only the menu-bar item.
-    if cfg!(target_os = "macos") {
-        system.toggle(
-            translated(locale, "Show in the menu bar"),
-            keyed(translated(
-                locale,
-                "Closing the window keeps ZapFast in the Dock. Quit with Ctrl+Q.",
-            )),
-            |settings| &mut settings.keep_running_in_background,
-        );
-    } else {
+    #[cfg(target_os = "macos")]
+    {
         system.toggle(
             translated(locale, "Keep running when the window closes"),
-            keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+            keyed(translated(locale, "Quit with Ctrl+Q.")),
+            |settings| &mut settings.mac_keep_running_on_close,
+        );
+        system.toggle(
+            translated(locale, "Show in the menu bar"),
+            translated(locale, "Open ZapFast from the menu bar."),
             |settings| &mut settings.keep_running_in_background,
         );
+        system.toggle(
+            translated(locale, "Show in Dock"),
+            translated(
+                locale,
+                "The Dock icon stays available when the menu bar item is off.",
+            ),
+            |settings| &mut settings.mac_show_in_dock,
+        );
+        system.toggle(
+            translated(locale, "Show unread count"),
+            translated(
+                locale,
+                "Show the number of unread chats beside the menu bar icon.",
+            ),
+            |settings| &mut settings.mac_show_unread_count,
+        );
     }
+    #[cfg(not(target_os = "macos"))]
+    system.toggle(
+        translated(locale, "Keep running when the window closes"),
+        keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+        |settings| &mut settings.keep_running_in_background,
+    );
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
-            translated(locale, "Starts in the tray, without a window."),
+            if cfg!(target_os = "macos") {
+                translated(
+                    locale,
+                    "Starts without a window when background mode and the menu bar item are on.",
+                )
+            } else {
+                translated(locale, "Starts in the tray, without a window.")
+            },
             move |ui, app| {
                 let Some(mut enabled) = app.start_with_system else {
                     return;
