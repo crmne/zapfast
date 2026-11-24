@@ -38,11 +38,13 @@ pub enum Locale {
     Indonesian,
     #[serde(rename = "nl")]
     Dutch,
+    #[serde(rename = "pl")]
+    Polish,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -55,6 +57,7 @@ impl Locale {
         Self::Turkish,
         Self::Indonesian,
         Self::Dutch,
+        Self::Polish,
     ];
 
     /// The language's own name, for the picker.
@@ -72,6 +75,7 @@ impl Locale {
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
             Self::Dutch => "Nederlands",
+            Self::Polish => "Polski",
         }
     }
 
@@ -98,6 +102,7 @@ impl Locale {
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
             "nl" => Self::Dutch,
+            "pl" => Self::Polish,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
                 // Simplified and names a region where Traditional is the
@@ -131,6 +136,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
             Self::Dutch => Some(&nl::Translator),
+            Self::Polish => Some(&pl::Translator),
             Self::English => None,
         }
     }
@@ -191,6 +197,63 @@ mod tests {
         ] {
             assert_eq!(
                 ngettext(Locale::Dutch, "{} member", "{} members", count),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn polish_is_detected_and_preserved_as_a_language_choice() {
+        for identifier in ["pl", "pl-PL", "pl_PL.UTF-8"] {
+            assert_eq!(Locale::from_system(identifier), Some(Locale::Polish));
+        }
+        assert!(Locale::ALL.contains(&Locale::Polish));
+        assert_eq!(Locale::Polish.label(), "Polski");
+        assert_eq!(serde_json::to_string(&Locale::Polish).unwrap(), "\"pl\"");
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"pl\"").unwrap(),
+            Locale::Polish
+        );
+        assert_eq!(resolve(Some(Locale::Polish)), Locale::Polish);
+    }
+
+    /// Polish has three plural forms: one, a few (2 to 4, but not 12 to 14),
+    /// and many.
+    #[test]
+    fn polish_catalog_translates_plain_contextual_and_plural_messages() {
+        assert_eq!(gettext(Locale::Polish, "Search"), "Szukaj");
+        assert_eq!(gettext(Locale::Polish, "Settings"), "Ustawienia");
+        assert_eq!(gettext(Locale::Polish, "About"), "O programie");
+        assert_eq!(pgettext(Locale::Polish, "profile", "About"), "Info");
+        assert_eq!(pgettext(Locale::Polish, "mention", "all"), "wszyscy");
+        let missing = "A string nobody has translated";
+        assert_eq!(gettext(Locale::Polish, missing), missing);
+        for (count, expected) in [
+            (0, "{} członków"),
+            (1, "{} członek"),
+            (2, "{} członków"),
+            (5, "{} członków"),
+        ] {
+            assert_eq!(
+                ngettext(Locale::Polish, "{} member", "{} members", count),
+                expected
+            );
+        }
+        // The few and the many form of "czat" differ, so the edges of the
+        // rule show.
+        for (count, expected) in [
+            (0, "{} czatów"),
+            (1, "{} czat"),
+            (2, "{} czaty"),
+            (4, "{} czaty"),
+            (5, "{} czatów"),
+            (12, "{} czatów"),
+            (14, "{} czatów"),
+            (22, "{} czaty"),
+            (112, "{} czatów"),
+        ] {
+            assert_eq!(
+                ngettext(Locale::Polish, "{} chat", "{} chats", count),
                 expected
             );
         }
@@ -357,6 +420,11 @@ mod tests {
                 Locale::Dutch,
                 "Privé beantwoorden",
                 "Oorspronkelijk groepsbericht niet beschikbaar",
+            ),
+            (
+                Locale::Polish,
+                "Odpowiedz prywatnie",
+                "Oryginalna wiadomość z grupy jest niedostępna",
             ),
         ] {
             assert_eq!(gettext(locale, "Reply privately"), reply, "{locale:?}");
