@@ -559,8 +559,12 @@ fn temporary_attachment_path(path: &Path) -> PathBuf {
 /// Creates an exclusive temporary file, retrying a vanishingly unlikely name
 /// collision without ever opening another download's staging file.
 fn temporary_attachment_file(path: &Path) -> io::Result<(PathBuf, std::fs::File)> {
+    create_attachment_staging(|| temporary_attachment_path(path))
+}
+
+fn create_attachment_staging(path: impl Fn() -> PathBuf) -> io::Result<(PathBuf, std::fs::File)> {
     for _ in 0..8 {
-        let temporary = temporary_attachment_path(path);
+        let temporary = path();
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -631,7 +635,7 @@ fn walk_media(
             let path = entry.path();
             if metadata.is_dir() {
                 folders.push(path);
-            } else if metadata.is_file() && !is_staging(&path) {
+            } else if metadata.is_file() && !is_staging(&path) && !is_save_staging(&path) {
                 visit(&path, &metadata)?;
             }
         }
@@ -648,6 +652,19 @@ fn is_staging(path: &Path) -> bool {
     name.starts_with('.') && name.ends_with(".part")
 }
 
+const SAVE_STAGING_PREFIX: &str = ".attachment-save.";
+const SAVE_STAGING_SUFFIX: &str = ".tmp";
+
+fn is_save_staging(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(SAVE_STAGING_PREFIX))
+        .and_then(|name| name.strip_suffix(SAVE_STAGING_SUFFIX))
+        .is_some_and(|nonce| {
+            nonce.len() == 16 && nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
 /// Removes incomplete, unreferenced downloads left by an interrupted process.
 fn discard_attachment_staging(dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
@@ -659,13 +676,8 @@ fn discard_attachment_staging(dir: &Path) {
         }
     };
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.')
-            && name.ends_with(".part")
-            && entry.path().is_file()
-            && let Err(_) = std::fs::remove_file(entry.path())
-        {
+        let path = entry.path();
+        if is_staging(&path) && path.is_file() && std::fs::remove_file(path).is_err() {
             log::warn!("could not remove incomplete attachment");
         }
     }
@@ -12654,12 +12666,11 @@ fn save_attachment_as(source: &Path, target: &Path) -> io::Result<()> {
     if source == target {
         return Ok(());
     }
-    let replace = match open_save_destination(target, false) {
-        Ok(existing) => {
-            if attachment_provenance::same_file(&input, &existing)? {
+    let replace = match inspect_save_destination(target) {
+        Ok((inspected, metadata)) => {
+            if same_save_destination(&inspected, &input)? {
                 return Ok(());
             }
-            let metadata = existing.metadata()?;
             if metadata.permissions().readonly() {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
@@ -12673,8 +12684,8 @@ fn save_attachment_as(source: &Path, target: &Path) -> io::Result<()> {
                 }
             }
             // Check write access without truncating the file selected in the dialog.
-            if !attachment_provenance::same_file(&existing, &open_save_destination(target, true)?)?
-            {
+            let existing = open_save_destination(target, true)?;
+            if !same_save_destination(&inspected, &existing)? {
                 return Err(io::Error::other(
                     "The save destination changed while copying",
                 ));
@@ -12698,9 +12709,8 @@ fn replace_save_destination(
     existing: std::fs::File,
     before: std::fs::Metadata,
 ) -> io::Result<()> {
-    let current = open_save_destination(target, false)?;
-    let after = current.metadata()?;
-    if !attachment_provenance::same_file(&existing, &current)?
+    let (current, after) = inspect_save_destination(target)?;
+    if !same_save_destination(&current, &existing)?
         || before.len() != after.len()
         || before.modified()? != after.modified()?
         || before.permissions() != after.permissions()
@@ -12713,23 +12723,66 @@ fn replace_save_destination(
     std::fs::rename(staging, target)
 }
 
+#[cfg(windows)]
+type SaveDestination = std::fs::File;
+#[cfg(unix)]
+type SaveDestination = std::fs::Metadata;
+
+fn inspect_save_destination(target: &Path) -> io::Result<(SaveDestination, std::fs::Metadata)> {
+    #[cfg(windows)]
+    {
+        let file = open_save_destination(target, false)?;
+        let metadata = file.metadata()?;
+        Ok((file, metadata))
+    }
+    #[cfg(unix)]
+    {
+        // lstat works on both Linux and Darwin without permission to read
+        // file data. Compare it with the open writer before trusting the name.
+        let metadata = std::fs::symlink_metadata(target)?;
+        check_regular_save_destination(&metadata)?;
+        Ok((metadata.clone(), metadata))
+    }
+}
+
+fn same_save_destination(inspected: &SaveDestination, file: &std::fs::File) -> io::Result<bool> {
+    #[cfg(windows)]
+    return attachment_provenance::same_file(inspected, file);
+    #[cfg(unix)]
+    Ok(attachment_provenance::same_file(
+        inspected,
+        &file.metadata()?,
+    ))
+}
+
 fn open_save_destination(target: &Path, write: bool) -> io::Result<std::fs::File> {
     // Replacing a symlink would detach it from its target, while following
     // it would write to a path the reader did not confirm in the dialog.
     let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(write);
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        options
+            .write(write)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
-        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
+        };
+        let access = if write { FILE_GENERIC_WRITE } else { 0 };
+        options
+            .access_mode(access | FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     let file = options.open(target)?;
-    let metadata = file.metadata()?;
+    check_regular_save_destination(&file.metadata()?)?;
+    Ok(file)
+}
+
+fn check_regular_save_destination(metadata: &std::fs::Metadata) -> io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt as _;
@@ -12738,10 +12791,10 @@ fn open_save_destination(target: &Path, write: bool) -> io::Result<std::fs::File
             return Err(io::ErrorKind::InvalidInput.into());
         }
     }
-    if !metadata.is_file() || !std::fs::symlink_metadata(target)?.is_file() {
+    if !metadata.is_file() {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    Ok(file)
+    Ok(())
 }
 
 /// Album copies use the first free name, including when another save is racing us.
@@ -12785,7 +12838,12 @@ fn stage_saved_attachment(
         ));
     }
     let folder = target.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    let (path, file) = temporary_attachment_file(&folder.join("attachment"))?;
+    let (path, file) = create_attachment_staging(|| {
+        folder.join(format!(
+            "{SAVE_STAGING_PREFIX}{:016x}{SAVE_STAGING_SUFFIX}",
+            rand::random::<u64>()
+        ))
+    })?;
     let staging = Staged(path);
     let output = file;
     #[cfg(windows)]
@@ -12811,7 +12869,6 @@ fn stage_saved_attachment(
         let _ = (source, save_as);
         attachment_provenance::copy_saved_file(input, &output)?;
         drop(output);
-        attachment_provenance::mark(&staging.0);
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
@@ -17950,6 +18007,7 @@ mod tests {
         attachment_provenance::tests::assert_download_mark(&published);
         attachment_provenance::tests::assert_unmarked(&path);
         assert!(!temporary.exists());
+        assert!(!cache.exists());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         assert!(!worker.dirs.media_cache_dir().join("report.pdf").exists());
         assert!(
@@ -18321,6 +18379,87 @@ mod tests {
             io::ErrorKind::PermissionDenied
         );
         assert_eq!(std::fs::read(&alias).unwrap(), b"existing");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_replaces_a_write_only_destination_without_reading_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        // SAFETY: geteuid has no arguments or preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("Write-only save test requires an unprivileged user");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, b"attachment").unwrap();
+        std::fs::write(&target, b"existing").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o200)).unwrap();
+        assert_eq!(
+            std::fs::File::open(&target).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied,
+        );
+        save_attachment_as(&source, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"attachment");
+        attachment_provenance::tests::assert_download_mark(&target);
+
+        // Other users have write bits, but the owner can only read this file.
+        // This exercises the write-only open, beyond the read-only mode check.
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o422)).unwrap();
+        std::fs::write(&source, b"retry").unwrap();
+        assert_eq!(
+            save_attachment_as(&source, &target).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied,
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"attachment");
+    }
+
+    #[test]
+    fn download_sweep_keeps_active_saves_and_each_save_cleans_its_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, b"attachment").unwrap();
+        std::fs::write(&target, b"third party").unwrap();
+        let (download, file) = temporary_attachment_file(&target).unwrap();
+        drop(file);
+        let input = open_saved_source(&source).unwrap();
+        let first = stage_saved_attachment(&input, &source, &target, true).unwrap();
+        let second_input = open_saved_source(&source).unwrap();
+        let second = stage_saved_attachment(&second_input, &source, &target, false).unwrap();
+        let first_path = first.0.clone();
+        let second_path = second.0.clone();
+        assert_ne!(first_path, second_path);
+        discard_attachment_staging(dir.path());
+        assert!(!download.exists());
+        assert!(first_path.exists());
+        assert!(second_path.exists());
+        let mut visible = Vec::new();
+        walk_media(dir.path(), &mut |path, _| {
+            visible.push(path.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(visible.as_slice(), std::slice::from_ref(&target));
+
+        let published = publish_numbered(&first.0, &target, 2..=3, None).unwrap();
+        drop(first);
+        assert!(!first_path.exists());
+        assert_eq!(std::fs::read(&published).unwrap(), b"attachment");
+        attachment_provenance::tests::assert_download_mark(&published);
+        assert_eq!(std::fs::read(&target).unwrap(), b"third party");
+        assert_eq!(
+            publish_new(&second.0, &published, None).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists,
+        );
+        drop(second);
+        assert!(!second_path.exists());
+        assert_eq!(std::fs::read(&published).unwrap(), b"attachment");
+        attachment_provenance::tests::assert_download_mark(&published);
+        assert_eq!(std::fs::read(&source).unwrap(), b"attachment");
     }
 
     #[test]

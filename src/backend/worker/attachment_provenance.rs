@@ -40,10 +40,11 @@ pub(super) fn mark_saved_copy(path: &Path, writable: std::fs::Permissions) -> io
 
 #[cfg(windows)]
 use windows_sys::Win32::{
+    Foundation::{ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED},
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
-        GetVolumeInformationByHandleW, MoveFileExW,
+        FILE_ID_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx, GetVolumeInformationByHandleW, MoveFileExW,
     },
     System::SystemServices::FILE_NAMED_STREAMS,
 };
@@ -273,15 +274,18 @@ fn set_quarantine_value(file: &std::fs::File, value: &[u8], options: i32) -> io:
 
 #[cfg(target_os = "macos")]
 fn mark_file(path: &Path) -> io::Result<()> {
-    use std::{
-        os::unix::fs::OpenOptionsExt as _,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::os::unix::fs::OpenOptionsExt as _;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
-    let existing = quarantine_value(&file)?;
+    mark_quarantine(&file)
+}
+
+#[cfg(target_os = "macos")]
+fn mark_quarantine(file: &std::fs::File) -> io::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let existing = quarantine_value(file)?;
     if let Some(value) = &existing
         && let Some(flags) = quarantine_flags(value)
     {
@@ -293,7 +297,7 @@ fn mark_file(path: &Path) -> io::Result<()> {
         }
         let mut updated = value.clone();
         updated[..4].copy_from_slice(format!("{flags_for_copy:04x}").as_bytes());
-        return set_quarantine_value(&file, &updated, libc::XATTR_REPLACE);
+        return set_quarantine_value(file, &updated, libc::XATTR_REPLACE);
     }
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -308,7 +312,7 @@ fn mark_file(path: &Path) -> io::Result<()> {
     } else {
         libc::XATTR_CREATE
     };
-    set_quarantine_value(&file, value.as_bytes(), options)
+    set_quarantine_value(file, value.as_bytes(), options)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -319,20 +323,37 @@ fn mark_file(_path: &Path) -> io::Result<()> {
 #[cfg(target_os = "macos")]
 pub(super) fn copy_saved_file(source: &std::fs::File, target: &std::fs::File) -> io::Result<()> {
     use std::os::fd::AsRawFd as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let metadata = source.metadata()?;
+    // COPYFILE_STAT would also copy BSD flags such as Finder's UF_IMMUTABLE.
+    // XATTR includes the resource fork and quarantine. Keep the ACL as well.
     // SAFETY: both file descriptors are live, and fcopyfile accepts a null state.
     if unsafe {
         libc::fcopyfile(
             source.as_raw_fd(),
             target.as_raw_fd(),
             std::ptr::null_mut(),
-            libc::COPYFILE_DATA | libc::COPYFILE_METADATA,
+            libc::COPYFILE_DATA | libc::COPYFILE_XATTR | libc::COPYFILE_ACL,
         )
-    } == 0
+    } != 0
     {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+        return Err(io::Error::last_os_error());
     }
+    report(mark_quarantine(target));
+    // Keep ordinary permissions without copying ownership or special mode bits.
+    target.set_permissions(std::fs::Permissions::from_mode(
+        metadata.permissions().mode() & 0o777,
+    ))?;
+    let mut times = std::fs::FileTimes::new();
+    if let Ok(accessed) = metadata.accessed() {
+        times = times.set_accessed(accessed);
+    }
+    if let Ok(modified) = metadata.modified() {
+        times = times.set_modified(modified);
+    }
+    // Timestamp restoration is best effort on filesystems that lack it.
+    let _ = target.set_times(times);
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -401,35 +422,237 @@ pub(super) fn rename_new(staging: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 pub(super) fn same_file(left: &std::fs::File, right: &std::fs::File) -> io::Result<bool> {
-    use std::os::windows::io::AsRawHandle as _;
-
-    fn identity(file: &std::fs::File) -> io::Result<(u32, u64)> {
-        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-        // SAFETY: the live handle and writable output are valid for this call.
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
-            return Err(io::Error::last_os_error());
+    match (full_file_id(left)?, full_file_id(right)?) {
+        (Some(left), Some(right)) => Ok(left == right),
+        _ => {
+            let left_info = legacy_file_info(left)?;
+            let right_info = legacy_file_info(right)?;
+            if legacy_volumes_differ(&left_info, &right_info) {
+                return Ok(false);
+            }
+            Ok(legacy_file_id(left, left_info)? == legacy_file_id(right, right_info)?)
         }
-        // SAFETY: a successful call initialized the structure.
-        let info = unsafe { info.assume_init() };
-        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-        Ok((info.dwVolumeSerialNumber, index))
     }
+}
 
-    let left = identity(left)?;
-    Ok(left.1 != 0 && left == identity(right)?)
+#[cfg(windows)]
+fn full_file_id(file: &std::fs::File) -> io::Result<Option<(u64, [u8; 16])>> {
+    use std::os::windows::io::AsRawHandle as _;
+    let mut info = std::mem::MaybeUninit::<FILE_ID_INFO>::uninit();
+    // SAFETY: the buffer has the type and size required for FileIdInfo.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            info.as_mut_ptr().cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    } == 0
+    {
+        let error = io::Error::last_os_error();
+        return if file_id_info_unsupported(&error) {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    // SAFETY: a successful call initialized FILE_ID_INFO.
+    Ok(usable_file_id(unsafe { info.assume_init() }))
+}
+
+#[cfg(windows)]
+fn file_id_info_unsupported(error: &io::Error) -> bool {
+    error.raw_os_error().is_some_and(|code| {
+        [
+            ERROR_INVALID_FUNCTION,
+            ERROR_INVALID_PARAMETER,
+            ERROR_NOT_SUPPORTED,
+        ]
+        .contains(&(code as u32))
+    })
+}
+
+#[cfg(windows)]
+fn usable_file_id(info: FILE_ID_INFO) -> Option<(u64, [u8; 16])> {
+    let id = info.FileId.Identifier;
+    (id != [0; 16] && id != [0xff; 16]).then_some((info.VolumeSerialNumber, id))
+}
+
+#[cfg(windows)]
+fn legacy_file_info(file: &std::fs::File) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
+    use std::os::windows::io::AsRawHandle as _;
+    // A network provider can return partial information. Start with zeros.
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is live and the output buffer is writable.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(info)
+}
+
+#[cfg(windows)]
+fn legacy_volumes_differ(
+    left: &BY_HANDLE_FILE_INFORMATION,
+    right: &BY_HANDLE_FILE_INFORMATION,
+) -> bool {
+    // Compare the serials returned by the same API. Distinct known volumes
+    // rule out equality even when one driver cannot supply a usable file ID.
+    left.dwVolumeSerialNumber != 0
+        && right.dwVolumeSerialNumber != 0
+        && left.dwVolumeSerialNumber != right.dwVolumeSerialNumber
+}
+
+#[cfg(windows)]
+fn legacy_file_id(
+    file: &std::fs::File,
+    info: BY_HANDLE_FILE_INFORMATION,
+) -> io::Result<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle as _;
+    let mut fs = [0u16; 32];
+    // SAFETY: the handle is live and the output buffer is writable.
+    if unsafe {
+        GetVolumeInformationByHandleW(
+            file.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs.as_mut_ptr(),
+            fs.len() as u32,
+        ) == 0
+    } {
+        return Err(io::Error::last_os_error());
+    }
+    let fs = String::from_utf16_lossy(fs.split(|unit| *unit == 0).next().unwrap_or_default());
+    usable_legacy_file_id(&fs, info).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Cannot verify attachment file identity",
+        )
+    })
+}
+
+#[cfg(windows)]
+fn usable_legacy_file_id(filesystem: &str, info: BY_HANDLE_FILE_INFORMATION) -> Option<(u32, u64)> {
+    let id = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    // Microsoft documents the 64-bit IDs on NTFS and FAT. FAT IDs can
+    // change after a rename. ReFS can alias unrelated files.
+    (matches!(filesystem, "NTFS" | "FAT" | "FAT32")
+        && info.dwVolumeSerialNumber != 0
+        && id != 0
+        && id != u64::MAX)
+        .then_some((info.dwVolumeSerialNumber, id))
 }
 
 #[cfg(unix)]
-pub(super) fn same_file(left: &std::fs::File, right: &std::fs::File) -> io::Result<bool> {
+pub(super) fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt as _;
 
-    let (left, right) = (left.metadata()?, right.metadata()?);
-    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+    left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_identity_matches_independent_handles_and_hard_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, alias, other) = (
+            dir.path().join("source"),
+            dir.path().join("alias"),
+            dir.path().join("other"),
+        );
+        std::fs::write(&file, b"fixture").unwrap();
+        std::fs::write(&other, b"fixture").unwrap();
+        std::fs::hard_link(&file, &alias).unwrap();
+        let first = std::fs::File::open(&file).unwrap();
+        let second = std::fs::File::open(&file).unwrap();
+        let alias = std::fs::File::open(&alias).unwrap();
+        let other = std::fs::File::open(&other).unwrap();
+        assert!(same_file(&first, &second).unwrap());
+        assert!(same_file(&first, &alias).unwrap());
+        assert!(!same_file(&first, &other).unwrap());
+        // Exercise the fallback query directly when the test volume supports it.
+        if let Ok(first_id) = legacy_file_id(&first, legacy_file_info(&first).unwrap()) {
+            assert_eq!(
+                first_id,
+                legacy_file_id(&alias, legacy_file_info(&alias).unwrap()).unwrap()
+            );
+            assert_ne!(
+                first_id,
+                legacy_file_id(&other, legacy_file_info(&other).unwrap()).unwrap()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_identity_keeps_upper_bits_and_rejects_sentinels() {
+        let mut id = FILE_ID_INFO::default();
+        assert_eq!(usable_file_id(id), None);
+        id.FileId.Identifier = [0xff; 16];
+        assert_eq!(usable_file_id(id), None);
+        id.FileId.Identifier = [1; 16];
+        let baseline = usable_file_id(id).unwrap();
+        id.FileId.Identifier[15] = 2;
+        assert_ne!(baseline, usable_file_id(id).unwrap());
+        id.FileId.Identifier[15] = 1;
+        id.VolumeSerialNumber = 1 << 40;
+        assert_ne!(baseline, usable_file_id(id).unwrap());
+
+        for code in [
+            ERROR_INVALID_FUNCTION,
+            ERROR_INVALID_PARAMETER,
+            ERROR_NOT_SUPPORTED,
+        ] {
+            assert!(file_id_info_unsupported(&io::Error::from_raw_os_error(
+                code as i32
+            )));
+        }
+        assert!(!file_id_info_unsupported(&io::Error::from_raw_os_error(5)));
+        let mut legacy = BY_HANDLE_FILE_INFORMATION {
+            dwVolumeSerialNumber: 7,
+            ..Default::default()
+        };
+        assert_eq!(usable_legacy_file_id("NTFS", legacy), None);
+        legacy.nFileIndexHigh = u32::MAX;
+        legacy.nFileIndexLow = u32::MAX;
+        assert_eq!(usable_legacy_file_id("FAT32", legacy), None);
+        legacy.nFileIndexLow = 7;
+        assert!(usable_legacy_file_id("FAT32", legacy).is_some());
+        assert!(usable_legacy_file_id("NTFS", legacy).is_some());
+        assert_eq!(usable_legacy_file_id("ReFS", legacy), None);
+        assert_eq!(usable_legacy_file_id("exFAT", legacy), None);
+        assert_eq!(usable_legacy_file_id("unknown", legacy), None);
+        legacy.dwVolumeSerialNumber = 0;
+        assert_eq!(usable_legacy_file_id("NTFS", legacy), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_legacy_volume_comparison_can_rule_out_equality_without_file_ids() {
+        let refs = BY_HANDLE_FILE_INFORMATION {
+            dwVolumeSerialNumber: 7,
+            nFileIndexHigh: u32::MAX,
+            nFileIndexLow: u32::MAX,
+            ..Default::default()
+        };
+        let mut fat = BY_HANDLE_FILE_INFORMATION {
+            dwVolumeSerialNumber: 8,
+            nFileIndexLow: 42,
+            ..Default::default()
+        };
+        assert_eq!(usable_legacy_file_id("ReFS", refs), None);
+        assert!(legacy_volumes_differ(&refs, &fat));
+        assert!(legacy_volumes_differ(&fat, &refs));
+        fat.dwVolumeSerialNumber = 7;
+        assert!(!legacy_volumes_differ(&refs, &fat));
+        fat.dwVolumeSerialNumber = 0;
+        assert!(!legacy_volumes_differ(&refs, &fat));
+    }
 
     #[cfg(windows)]
     fn read(path: &Path) -> io::Result<Vec<u8>> {
@@ -627,6 +850,59 @@ pub(super) mod tests {
                 assert_eq!(read(&copy).unwrap(), expected);
             }
             assert_eq!(std::fs::read(&copy).unwrap(), b"fixture");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_lock_stays_on_the_source_across_save_as_and_save_all() {
+        use std::os::{
+            fd::AsRawFd as _, macos::fs::MetadataExt as _, unix::fs::PermissionsExt as _,
+        };
+
+        struct FinderLock<'a>(&'a std::fs::File);
+        impl Drop for FinderLock<'_> {
+            fn drop(&mut self) {
+                // SAFETY: the descriptor remains open through the guard's drop.
+                unsafe { libc::fchflags(self.0.as_raw_fd(), 0) };
+            }
+        }
+
+        for locked in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let source = dir.path().join("source.txt");
+            let existing = dir.path().join("replace.txt");
+            let new = dir.path().join("new.txt");
+            std::fs::write(&source, b"fixture").unwrap();
+            std::fs::write(&existing, b"previous").unwrap();
+            let input = std::fs::File::open(&source).unwrap();
+            let approved = b"00c7;650912b5;Fixture;";
+            set_quarantine_value(&input, approved, 0).unwrap();
+            input
+                .set_permissions(std::fs::Permissions::from_mode(0o444))
+                .unwrap();
+            let flag = if locked { libc::UF_IMMUTABLE } else { 0 };
+            let _unlock = FinderLock(&input);
+            // SAFETY: input is the live handle of our synthetic fixture.
+            assert_eq!(unsafe { libc::fchflags(input.as_raw_fd(), flag) }, 0);
+
+            super::super::save_attachment_as(&source, &existing).unwrap();
+            super::super::save_attachment_as(&source, &new).unwrap();
+            let album = super::super::save_album_copy(&source, dir.path(), "album.txt").unwrap();
+            for target in [&existing, &new, &album] {
+                assert_eq!(std::fs::read(target).unwrap(), b"fixture");
+                assert_eq!(read(target).unwrap(), b"0087;650912b5;Fixture;");
+                let metadata = std::fs::metadata(target).unwrap();
+                assert_eq!(metadata.st_flags() & libc::UF_IMMUTABLE, 0);
+                assert_eq!(metadata.permissions().mode() & 0o777, 0o444);
+                assert_eq!(std::fs::read(&source).unwrap(), b"fixture");
+                assert_eq!(read(&source).unwrap(), approved);
+                assert_eq!(
+                    input.metadata().unwrap().st_flags() & libc::UF_IMMUTABLE,
+                    flag
+                );
+            }
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 4);
         }
     }
 
