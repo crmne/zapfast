@@ -148,6 +148,33 @@ impl Section {
         self.entries.push((row, Control::Toggle(field)));
     }
 
+    #[cfg(target_os = "macos")]
+    fn action_toggle(
+        &mut self,
+        title: Text,
+        description: Text,
+        field: fn(&Settings) -> bool,
+        action: fn(bool) -> Action,
+    ) {
+        let label = title.shown.clone();
+        self.row(title, description, move |ui, app| {
+            let mut value = field(&app.settings);
+            let response = widgets::switch(ui, &app.palette, &mut value);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    value,
+                    &label,
+                )
+            });
+            if response.changed() {
+                app.actions.push(action(value));
+            }
+        });
+    }
+
     fn account_toggle(
         &mut self,
         title: impl Into<Text>,
@@ -668,31 +695,35 @@ fn sections(app: &App) -> Vec<Section> {
     let mut system = Section::new(translated(locale, "System"));
     #[cfg(target_os = "macos")]
     {
-        system.toggle(
+        system.action_toggle(
             translated(locale, "Keep running when the window closes"),
             keyed(translated(locale, "Quit with Ctrl+Q.")),
-            |settings| &mut settings.mac_keep_running_on_close,
+            |settings| settings.mac_keep_running_on_close,
+            Action::SetMacKeepRunningOnClose,
         );
-        system.toggle(
+        system.action_toggle(
             translated(locale, "Show in the menu bar"),
             translated(locale, "Open ZapFast from the menu bar."),
-            |settings| &mut settings.keep_running_in_background,
+            |settings| settings.keep_running_in_background,
+            Action::SetMacMenuBarVisible,
         );
-        system.toggle(
+        system.action_toggle(
             translated(locale, "Show in Dock"),
             translated(
                 locale,
                 "The Dock icon stays available when the menu bar item is off.",
             ),
-            |settings| &mut settings.mac_show_in_dock,
+            |settings| settings.mac_show_in_dock,
+            Action::SetMacDockVisible,
         );
-        system.toggle(
+        system.action_toggle(
             translated(locale, "Show unread count"),
             translated(
                 locale,
                 "Show the number of unread messages beside the menu bar icon.",
             ),
-            |settings| &mut settings.mac_show_unread_count,
+            |settings| settings.mac_show_unread_count,
+            Action::SetMacUnreadCountVisible,
         );
     }
     #[cfg(not(target_os = "macos"))]

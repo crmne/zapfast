@@ -9776,6 +9776,26 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
+            #[cfg(target_os = "macos")]
+            Action::SetMacKeepRunningOnClose(value) => {
+                self.settings.mac_keep_running_on_close = value;
+                self.mark_settings_dirty();
+            }
+            #[cfg(target_os = "macos")]
+            Action::SetMacMenuBarVisible(value) => {
+                self.settings.keep_running_in_background = value;
+                self.mark_settings_dirty();
+            }
+            #[cfg(target_os = "macos")]
+            Action::SetMacDockVisible(value) => {
+                self.settings.mac_show_in_dock = value;
+                self.mark_settings_dirty();
+            }
+            #[cfg(target_os = "macos")]
+            Action::SetMacUnreadCountVisible(value) => {
+                self.settings.mac_show_unread_count = value;
+                self.mark_settings_dirty();
+            }
             Action::SetAccountPrivacy { kind, choice } => {
                 // The value lives on the phone: nothing is written without a
                 // connection and a snapshot to write against.

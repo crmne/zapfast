@@ -3312,6 +3312,14 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    #[cfg(target_os = "macos")]
+    SetMacKeepRunningOnClose(bool),
+    #[cfg(target_os = "macos")]
+    SetMacMenuBarVisible(bool),
+    #[cfg(target_os = "macos")]
+    SetMacDockVisible(bool),
+    #[cfg(target_os = "macos")]
+    SetMacUnreadCountVisible(bool),
     /// Writes one WhatsApp account privacy category on the phone.
     SetAccountPrivacy {
         kind: crate::privacy::PrivacyKind,
