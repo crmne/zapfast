@@ -36,7 +36,8 @@ Linux applications.
 Use Ctrl+Shift+V (Option+Shift+Command+V on macOS) to paste only text, even when
 the clipboard also offers a picture or copied files. If there is no text,
 this shortcut inserts nothing.
-Mentions in a group are written with `@`. Choose **all** to mention
+Mentions in a group are written with `@`; the names offered as you type ignore
+case and accents, so `@ang` offers Ángel. Choose **all** to mention
 everyone when the group's member list is available: the message shows `@all`,
 highlighted like any other mention.
 Portuguese also accepts `@todos`, and each other language accepts its own
@@ -87,7 +88,8 @@ edit, the message keeps its earlier text.
 **Development builds** also show when your message was delivered and read when
 you click its time or ticks, as on WhatsApp.
 
-Forwarding opens a recipient picker. Select up to five writable chats, as on
+Forwarding opens a recipient picker. Its search finds chats by name or number,
+ignoring case and accents. Select up to five writable chats, as on
 WhatsApp; a message labelled as forwarded many times goes to one chat at a
 time. With one chat selected, **Forward** sends it straight away. With
 several, **Review recipients** lists them for you to confirm, and **Back**
@@ -230,7 +232,8 @@ if it is animated, with **Add to favorites** or **Remove from favorites** below
 it. Click the sticker or outside it, or press Escape, to close it.
 
 Type in the search field to find stickers by emoji (😂), by a word that names
-an emoji ("laugh", "duck"), or by pack name. Stickers carry the emojis they
+an emoji ("laugh", "duck"), or by pack name, ignoring case and accents (`cafe`
+finds Café). Stickers carry the emojis they
 express in their metadata, as WhatsApp's own stickers do.
 
 Under **+**, paste a `signal.art` link from
@@ -737,7 +740,8 @@ contact list, and Escape closes the dialog.
 The search bar finds chats by name, number, or latest message; searches all
 messages stored on this computer; and finds contacts without an existing chat.
 Names match as they do in **New chat**: each word you type can start a word of
-the name, in order, so `will shak` finds William Shakespeare. Use `↑`/`↓` to select a matching chat and Enter to open it ready for typing.
+the name, in order, so `will shak` finds William Shakespeare. Case and accents in
+names do not matter: `angela` finds Ângela. Use `↑`/`↓` to select a matching chat and Enter to open it ready for typing.
 Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓`, or `Ctrl+Shift+[` and `Ctrl+Shift+]` as in WhatsApp, to switch chats
 without leaving the composer (Command instead of Ctrl on macOS), and
