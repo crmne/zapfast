@@ -1,9 +1,9 @@
 //! NSWorkspace sleep, display, and session events while the shell has no window.
 
-use std::cell::{Cell, RefCell};
+use std::sync::Mutex;
 
 use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadMarker, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
     NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
@@ -18,42 +18,51 @@ pub(crate) enum Event {
 }
 
 struct ObserverState {
-    events: RefCell<Vec<Event>>,
+    pending: Mutex<Pending>,
     waker: fastframe_shell::Waker,
-    asleep: Cell<bool>,
-    inactive: Cell<bool>,
+}
+
+#[derive(Default)]
+struct Pending {
+    events: Vec<Event>,
+    screen_asleep: bool,
+    sleeping: bool,
+    inactive: bool,
 }
 
 define_class!(
     // SAFETY: the observer has no superclass requirements beyond NSObject.
     #[unsafe(super(NSObject))]
-    #[thread_kind = objc2::MainThreadOnly]
+    #[name = "ZapFastWorkspaceObserver"]
     #[ivars = ObserverState]
     struct Observer;
 
     impl Observer {
         #[unsafe(method(workspaceChanged:))]
         fn workspace_changed(&self, notice: &NSNotification) {
+            let state = self.ivars();
             let name = notice.name();
+            let mut pending = state.pending.lock().unwrap_or_else(|p| p.into_inner());
             // SAFETY: AppKit's exported notification names are immutable.
             unsafe {
-                let event = if *name == *NSWorkspaceWillSleepNotification {
-                    Event::Sleep
+                if *name == *NSWorkspaceWillSleepNotification {
+                    pending.sleeping = true;
+                    pending.events.push(Event::Sleep);
                 } else if *name == *NSWorkspaceDidWakeNotification {
-                    Event::Wake
+                    pending.sleeping = false;
+                    pending.events.push(Event::Wake);
+                } else if *name == *NSWorkspaceScreensDidSleepNotification {
+                    pending.screen_asleep = true;
+                } else if *name == *NSWorkspaceScreensDidWakeNotification {
+                    pending.screen_asleep = false;
                 } else {
-                    if *name == *NSWorkspaceScreensDidSleepNotification {
-                        self.ivars().asleep.set(true);
-                    } else if *name == *NSWorkspaceScreensDidWakeNotification {
-                        self.ivars().asleep.set(false);
-                    } else {
-                        self.ivars().inactive.set(*name == *NSWorkspaceSessionDidResignActiveNotification);
-                    }
-                    Event::ScreenUnavailable(self.ivars().inactive.get() || self.ivars().asleep.get())
-                };
-                self.ivars().events.borrow_mut().push(event);
-                self.ivars().waker.wake();
+                    pending.inactive = *name == *NSWorkspaceSessionDidResignActiveNotification;
+                }
             }
+            let unavailable = pending.inactive || pending.screen_asleep || pending.sleeping;
+            pending.events.push(Event::ScreenUnavailable(unavailable));
+            drop(pending);
+            state.waker.wake();
         }
     }
 );
@@ -65,14 +74,12 @@ pub(crate) struct Workspace {
 
 impl Workspace {
     pub(crate) fn watch(waker: &fastframe_shell::Waker) -> Option<Self> {
-        let main = MainThreadMarker::new()?;
+        MainThreadMarker::new()?;
         let workspace = NSWorkspace::sharedWorkspace();
         let center = workspace.notificationCenter();
-        let observer = main.alloc::<Observer>().set_ivars(ObserverState {
-            events: Default::default(),
+        let observer = Observer::alloc().set_ivars(ObserverState {
+            pending: Mutex::default(),
             waker: waker.clone(),
-            asleep: Cell::new(false),
-            inactive: Cell::new(false),
         });
         // SAFETY: initialize the NSObject superclass and register only the
         // selector above, whose argument is an NSNotification.
@@ -98,7 +105,15 @@ impl Workspace {
     }
 
     pub(crate) fn events(&self) -> Vec<Event> {
-        std::mem::take(&mut *self.observer.ivars().events.borrow_mut())
+        std::mem::take(
+            &mut self
+                .observer
+                .ivars()
+                .pending
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .events,
+        )
     }
 }
 

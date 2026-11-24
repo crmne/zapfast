@@ -4,7 +4,7 @@
 //! translucent sidebar is AppKit's own sidebar material, behind the window.
 
 use std::cell::RefCell;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use objc2_app_kit::{NSApplication, NSText};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, Submenu};
@@ -16,6 +16,8 @@ pub(crate) mod workspace;
 thread_local! {
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
 }
+static SHELL_WAKER: OnceLock<fastframe_shell::Waker> = OnceLock::new();
+static WINDOW_REPAINT: Mutex<Option<egui::Context>> = Mutex::new(None);
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
@@ -110,7 +112,11 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
 
 /// Install before creating a status item, including on a hidden launch.
 pub fn install_menu_handler(waker: &fastframe_shell::Waker) {
-    let waker = waker.clone();
+    let _ = SHELL_WAKER.set(waker.clone());
+    install_menu_dispatch();
+}
+
+fn install_menu_dispatch() {
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if native_edit(&event.id.0) {
             return;
@@ -126,7 +132,11 @@ pub fn install_menu_handler(waker: &fastframe_shell::Waker) {
                 .unwrap_or_else(|p| p.into_inner())
                 .push(event.id.0);
         }
-        waker.wake();
+        if let Some(waker) = SHELL_WAKER.get() {
+            waker.wake();
+        } else if let Some(ctx) = &*WINDOW_REPAINT.lock().unwrap_or_else(|p| p.into_inner()) {
+            ctx.request_repaint();
+        }
     }));
 }
 
@@ -135,6 +145,11 @@ pub fn attach(ctx: &egui::Context) {
     // Layout tests use headless contexts on test threads, without an NSApp.
     if objc2::MainThreadMarker::new().is_none() {
         return;
+    }
+    // Embedders can attach the menu without using the desktop entry point.
+    if SHELL_WAKER.get().is_none() {
+        *WINDOW_REPAINT.lock().unwrap_or_else(|p| p.into_inner()) = Some(ctx.clone());
+        install_menu_dispatch();
     }
     MENU.with_borrow_mut(|menu| {
         if menu.is_none() {
