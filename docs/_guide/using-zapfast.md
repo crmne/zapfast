@@ -1018,9 +1018,12 @@ dismiss button. Reading a chat also clears its live banners. A grouped
 banner opens the newest message it shows. ZapFast uses the existing message
 content and sound controls, and follows Reduce Motion.
 
-Allow ZapFast to read Focus status to receive floating banners. When the
-operating system reports Focus or cannot share its status, ZapFast sends
-notifications through Notification Center, with sound controlled by macOS.
+Live floating banners require a macOS build signed with the Communication
+Notifications capability and permission to read Focus status. When macOS
+reports Focus or cannot share its status, ZapFast sends notifications
+through Notification Center, with sound controlled by macOS. With the app
+locked or notification content disabled, message alerts say only
+"New message" from ZapFast.
 An unavailable or disabled banner permission also uses that route. The
 Settings preview is available independently of live delivery. Floating
 banners live on the desktop for their configured duration and have no

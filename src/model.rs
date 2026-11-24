@@ -2705,6 +2705,18 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FloatingNotificationPreference {
+    Enabled(bool),
+    Corner(crate::macos::NotificationCorner),
+    Display(Option<String>),
+    Margin(u16),
+    Seconds(u16),
+    Maximum(u8),
+    Group(bool),
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -3327,12 +3339,12 @@ pub enum Action {
     },
     /// Registers or removes the login entry that starts ZapFast in the tray.
     SetStartWithSystem(bool),
-    /// Sets the sound for mentions and replies to us (`true`) or for
-    /// other new messages.
     #[cfg(target_os = "macos")]
-    AuthorizeFloatingNotifications,
+    SetFloatingNotificationPreference(FloatingNotificationPreference),
     #[cfg(target_os = "macos")]
     PreviewFloatingNotification,
+    /// Sets the sound for mentions and replies to us (`true`) or for
+    /// other new messages.
     SetNotificationSound {
         mention: bool,
         sound: crate::settings::NotificationSound,

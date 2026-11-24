@@ -9820,7 +9820,25 @@ impl App {
                 }
             }
             #[cfg(target_os = "macos")]
-            Action::AuthorizeFloatingNotifications => crate::macos::floating::authorize_focus(),
+            Action::SetFloatingNotificationPreference(preference) => {
+                use crate::model::FloatingNotificationPreference as Preference;
+                let settings = &mut self.settings.floating_notifications;
+                match preference {
+                    Preference::Enabled(value) => {
+                        settings.enabled = value;
+                        if value {
+                            crate::macos::floating::authorize_focus();
+                        }
+                    }
+                    Preference::Corner(value) => settings.corner = value,
+                    Preference::Display(value) => settings.display = value,
+                    Preference::Margin(value) => settings.margin = value,
+                    Preference::Seconds(value) => settings.seconds = value,
+                    Preference::Maximum(value) => settings.maximum = value,
+                    Preference::Group(value) => settings.group = value,
+                }
+                self.mark_settings_dirty();
+            }
             #[cfg(target_os = "macos")]
             Action::PreviewFloatingNotification => {
                 self.notifications.floating.preview(

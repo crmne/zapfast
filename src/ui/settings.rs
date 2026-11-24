@@ -978,15 +978,17 @@ fn sections(app: &App) -> Vec<Section> {
 fn floating_notifications(app: &App, section: &mut Section) {
     use crate::i18n::gettext;
     use crate::macos::floating::{Corner, displays};
+    use crate::model::FloatingNotificationPreference as Preference;
+    let change = Action::SetFloatingNotificationPreference;
     let locale = app.locale;
     section.row(
         translated(locale, "Message notification style"),
         translated(
             locale,
-            "Floating banners use your macOS notification and Focus permissions.",
+            "System notifications are used when the app cannot read Focus status.",
         ),
-        |ui, app| {
-            let enabled = &mut app.settings.floating_notifications.enabled;
+        move |ui, app| {
+            let enabled = app.settings.floating_notifications.enabled;
             let label = |value| {
                 if value {
                     gettext(app.locale, "Floating")
@@ -994,23 +996,18 @@ fn floating_notifications(app: &App, section: &mut Section) {
                     gettext(app.locale, "System")
                 }
             };
-            let previous = *enabled;
             let response = egui::ComboBox::from_id_salt("notification_style")
-                .selected_text(label(previous))
+                .selected_text(label(enabled))
                 .show_ui(ui, |ui| {
                     for mode in [false, true] {
-                        if theme_option(ui, &app.palette, &label(mode), previous == mode) {
-                            *enabled = mode;
+                        if theme_option(ui, &app.palette, &label(mode), enabled == mode)
+                            && enabled != mode
+                        {
+                            app.actions.push(change(Preference::Enabled(mode)));
                         }
                     }
                 });
             theme::reveal_focus(&response.response);
-            if *enabled != previous {
-                app.actions.push(Action::SettingsChanged);
-                if *enabled {
-                    app.actions.push(Action::AuthorizeFloatingNotifications);
-                }
-            }
         },
     );
     if !app.settings.floating_notifications.enabled {
@@ -1019,8 +1016,7 @@ fn floating_notifications(app: &App, section: &mut Section) {
     section.row(
         translated(locale, "Screen corner"),
         translated(locale, "Choose where floating banners stack."),
-        |ui, app| {
-            let mut changed = false;
+        move |ui, app| {
             ui.vertical(|ui| {
                 for row in Corner::ALL.as_chunks::<2>().0 {
                     ui.horizontal(|ui| {
@@ -1046,16 +1042,12 @@ fn floating_notifications(app: &App, section: &mut Section) {
                             });
                             theme::reveal_focus(&response);
                             if response.clicked() && !selected {
-                                app.settings.floating_notifications.corner = *corner;
-                                changed = true;
+                                app.actions.push(change(Preference::Corner(*corner)));
                             }
                         }
                     });
                 }
             });
-            if changed {
-                app.actions.push(Action::SettingsChanged);
-            }
         },
     );
     section.row(
@@ -1064,13 +1056,13 @@ fn floating_notifications(app: &App, section: &mut Section) {
             locale,
             "If it is disconnected, banners use the active display.",
         ),
-        |ui, app| {
+        move |ui, app| {
             let screens = displays();
-            let selected = &mut app.settings.floating_notifications.display;
+            let selected = app.settings.floating_notifications.display.as_ref();
             let automatic = gettext(app.locale, "Active display");
             let current = screens
                 .iter()
-                .find(|(id, _)| Some(id) == selected.as_ref())
+                .find(|(id, _)| Some(id) == selected)
                 .map_or_else(
                     || {
                         if selected.is_some() {
@@ -1085,14 +1077,17 @@ fn floating_notifications(app: &App, section: &mut Section) {
                 .selected_text(current)
                 .width(145.0_f32.min(ui.available_width()))
                 .show_ui(ui, |ui| {
-                    if theme_option(ui, &app.palette, &automatic, selected.is_none()) {
-                        *selected = None;
-                        app.actions.push(Action::SettingsChanged);
+                    if theme_option(ui, &app.palette, &automatic, selected.is_none())
+                        && selected.is_some()
+                    {
+                        app.actions.push(change(Preference::Display(None)));
                     }
                     for (id, name) in &screens {
-                        if theme_option(ui, &app.palette, name, selected.as_ref() == Some(id)) {
-                            *selected = Some(id.clone());
-                            app.actions.push(Action::SettingsChanged);
+                        if theme_option(ui, &app.palette, name, selected == Some(id))
+                            && selected != Some(id)
+                        {
+                            app.actions
+                                .push(change(Preference::Display(Some(id.clone()))));
                         }
                     }
                 });
@@ -1102,9 +1097,10 @@ fn floating_notifications(app: &App, section: &mut Section) {
     section.row(
         translated(locale, "Screen-edge margin"),
         translated(locale, "Distance from the usable screen edge in points."),
-        |ui, app| {
+        move |ui, app| {
+            let mut margin = app.settings.floating_notifications.margin;
             let response = ui.add(
-                egui::DragValue::new(&mut app.settings.floating_notifications.margin)
+                egui::DragValue::new(&mut margin)
                     .range(0..=80)
                     .suffix(" pt"),
             );
@@ -1116,23 +1112,27 @@ fn floating_notifications(app: &App, section: &mut Section) {
                 )
             });
             if response.changed() {
-                app.actions.push(Action::SettingsChanged);
+                app.actions.push(change(Preference::Margin(margin)));
             }
         },
     );
     section.row(
         translated(locale, "Display duration"),
         translated(locale, "Hovering pauses the countdown."),
-        |ui, app| {
-            let seconds = &mut app.settings.floating_notifications.seconds;
-            let mut persistent = *seconds == 0;
+        move |ui, app| {
+            let mut seconds = app.settings.floating_notifications.seconds;
+            let mut persistent = seconds == 0;
             let label = gettext(app.locale, "Until dismissed");
-            if ui.checkbox(&mut persistent, label).changed() {
-                *seconds = if persistent { 0 } else { 6 };
-                app.actions.push(Action::SettingsChanged);
+            let mut changed = ui.checkbox(&mut persistent, label).changed();
+            if changed {
+                seconds = if persistent { 0 } else { 6 };
             }
             if !persistent {
-                let response = ui.add(egui::DragValue::new(seconds).range(3..=60).suffix(" s"));
+                let response = ui.add(
+                    egui::DragValue::new(&mut seconds)
+                        .range(3..=60)
+                        .suffix(" s"),
+                );
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
                         egui::WidgetType::DragValue,
@@ -1140,19 +1140,19 @@ fn floating_notifications(app: &App, section: &mut Section) {
                         gettext(app.locale, "Display duration"),
                     )
                 });
-                if response.changed() {
-                    app.actions.push(Action::SettingsChanged);
-                }
+                changed |= response.changed();
+            }
+            if changed {
+                app.actions.push(change(Preference::Seconds(seconds)));
             }
         },
     );
     section.row(
         translated(locale, "Maximum visible banners"),
         translated(locale, "The oldest banner leaves when the stack is full."),
-        |ui, app| {
-            let response = ui.add(
-                egui::DragValue::new(&mut app.settings.floating_notifications.maximum).range(1..=8),
-            );
+        move |ui, app| {
+            let mut maximum = app.settings.floating_notifications.maximum;
+            let response = ui.add(egui::DragValue::new(&mut maximum).range(1..=8));
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
                     egui::WidgetType::DragValue,
@@ -1161,22 +1161,23 @@ fn floating_notifications(app: &App, section: &mut Section) {
                 )
             });
             if response.changed() {
-                app.actions.push(Action::SettingsChanged);
+                app.actions.push(change(Preference::Maximum(maximum)));
             }
         },
     );
-    section.toggle(
+    section.action_toggle(
         translated(locale, "Group floating notifications"),
         translated(
             locale,
             "Update an existing banner for the same conversation.",
         ),
-        |settings| &mut settings.floating_notifications.group,
+        |settings| settings.floating_notifications.group,
+        |enabled| Action::SetFloatingNotificationPreference(Preference::Group(enabled)),
     );
     section.row(
         translated(locale, "Preview a floating notification"),
         translated(locale, "Show a sample message in the selected corner."),
-        |ui, app| {
+        move |ui, app| {
             let label = gettext(app.locale, "Preview");
             if theme::soft_button(ui, &app.palette, None, &label, false).clicked() {
                 app.actions.push(Action::PreviewFloatingNotification);

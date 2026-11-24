@@ -29,7 +29,7 @@ unsafe extern "C" {}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Corner {
+pub enum Corner {
     TopLeft,
     #[default]
     TopRight,
@@ -246,6 +246,7 @@ fn focus_clear() -> bool {
 }
 
 struct Pending {
+    sequence: u64,
     delivery: Box<Delivery>,
     answer: std::sync::mpsc::Receiver<(Permissions, Option<Vec<u8>>)>,
     until: Instant,
@@ -258,6 +259,7 @@ struct Permissions {
 }
 
 struct Card {
+    sequence: u64,
     panel: Retained<panel::Panel>,
     delivery: Option<Box<Delivery>>,
     remaining: Option<Duration>,
@@ -269,6 +271,8 @@ pub(crate) struct Floating {
     settings: Settings,
     pending: Vec<Pending>,
     cards: Vec<Card>,
+    next_sequence: u64,
+    dismissing: Vec<Retained<panel::Panel>>,
     last_focus_check: Option<(Instant, bool)>,
     preview_appearance: Option<bool>,
     enabled: bool,
@@ -315,7 +319,9 @@ impl Floating {
         });
         UNUserNotificationCenter::currentNotificationCenter()
             .getNotificationSettingsWithCompletionHandler(&reply);
+        self.next_sequence += 1;
         self.pending.push(Pending {
+            sequence: self.next_sequence,
             delivery,
             answer,
             until: Instant::now() + Duration::from_secs(1),
@@ -333,6 +339,7 @@ impl Floating {
         let Some(main) = MainThreadMarker::new() else {
             return system;
         };
+        self.dismissing.retain(|panel| panel.isVisible());
         if self.pending.is_empty() && self.cards.is_empty() {
             return system;
         }
@@ -342,7 +349,7 @@ impl Floating {
         if live_cards {
             // Refresh while a card is visible so a new Focus can withdraw a
             // persistent card. A repainting window shares that same snapshot.
-            let check = Duration::from_secs(1);
+            let check = FOCUS_CHECK_INTERVAL;
             let (checked, clear) = self
                 .last_focus_check
                 .filter(|(checked, _)| now.saturating_duration_since(*checked) < check)
@@ -379,6 +386,10 @@ impl Floating {
             }
             if event.is_some() || card.remaining == Some(Duration::ZERO) {
                 card.panel.dismiss();
+                if card.panel.isVisible() {
+                    self.dismissing.push(card.panel.clone());
+                    ctx.request_repaint_after(Duration::from_millis(150));
+                }
                 return false;
             }
             if !hovering && let Some(wait) = card.remaining {
@@ -397,6 +408,8 @@ impl Floating {
                 {
                     let wake = pending.delivery.wake.clone();
                     self.present(
+                        ctx,
+                        pending.sequence,
                         main,
                         &slots,
                         locale,
@@ -439,6 +452,8 @@ impl Floating {
                 .visible_content
                 .then_some(include_bytes!("../../assets/demo/avatars/ada.jpg").as_slice());
             self.present(
+                ctx,
+                0,
                 main,
                 &slots,
                 locale,
@@ -447,13 +462,14 @@ impl Floating {
                 picture,
                 std::sync::Arc::new(move || wake.request_repaint()),
             );
-            ctx.request_repaint();
         }
     }
 
     #[expect(clippy::too_many_arguments)]
     fn present(
         &mut self,
+        ctx: &egui::Context,
+        sequence: u64,
         main: MainThreadMarker,
         slots: &[NSRect],
         locale: Locale,
@@ -472,6 +488,20 @@ impl Floating {
                 })
             })
             .flatten();
+        if grouped.is_some_and(|index| stale_group_delivery(sequence, self.cards[index].sequence)) {
+            return;
+        }
+        if self.settings.group
+            && self.visible_content
+            && let Some(delivery) = &delivery
+        {
+            // Earlier offers that still await an answer must not resurface
+            // after this card expires, closes, or is pushed out of the stack.
+            self.pending.retain(|pending| {
+                !stale_group_delivery(pending.sequence, sequence)
+                    || !same_group(Some(&pending.delivery.target), Some(&delivery.target))
+            });
+        }
         let count = grouped.map_or(1, |index| {
             let old = self.cards.remove(index);
             old.panel.orderOut(None);
@@ -479,27 +509,7 @@ impl Floating {
         });
         let panel = panel::Panel::new(main, slots[0], wake);
         let spec = delivery.as_ref().map(|delivery| &delivery.notice);
-        let preview_content = spec.is_none() && self.visible_content;
-        let title: std::borrow::Cow<'_, str> = spec.map_or_else(
-            || {
-                if preview_content {
-                    "Ada Lovelace".into()
-                } else {
-                    "ZapFast".into()
-                }
-            },
-            |notice| notice.title.as_str().into(),
-        );
-        let body = spec.map_or_else(
-            || {
-                if preview_content {
-                    gettext(locale, "I saved you a seat by the window.")
-                } else {
-                    gettext(locale, "New message")
-                }
-            },
-            |notice| notice.body.as_str().into(),
-        );
+        let (title, body, avatar) = banner_content(locale, self.visible_content, spec, avatar);
         if spec.is_none()
             && let Some(dark) = self.preview_appearance
         {
@@ -536,6 +546,7 @@ impl Floating {
         self.cards.insert(
             0,
             Card {
+                sequence,
                 panel,
                 delivery,
                 remaining,
@@ -544,6 +555,9 @@ impl Floating {
         );
         self.reflow(slots);
         self.cards[0].panel.appear(self.settings.corner.left());
+        if let Some(delay) = first_update(remaining, sequence != 0) {
+            ctx.request_repaint_after(delay);
+        }
     }
 
     fn reflow(&mut self, slots: &[NSRect]) {
@@ -556,6 +570,9 @@ impl Floating {
     }
 
     pub(crate) fn clear(&mut self) {
+        for panel in self.dismissing.drain(..) {
+            panel.orderOut(None);
+        }
         for card in self.cards.drain(..) {
             card.panel.orderOut(None);
         }
@@ -568,6 +585,48 @@ impl Floating {
 impl Drop for Floating {
     fn drop(&mut self) {
         self.clear();
+    }
+}
+
+const FOCUS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+fn first_update(duration: Option<Duration>, live: bool) -> Option<Duration> {
+    match (duration, live) {
+        (Some(duration), true) => Some(duration.min(FOCUS_CHECK_INTERVAL)),
+        (None, true) => Some(FOCUS_CHECK_INTERVAL),
+        (duration, false) => duration,
+    }
+}
+
+fn stale_group_delivery(incoming: u64, displayed: u64) -> bool {
+    incoming < displayed
+}
+
+fn banner_content<'a>(
+    locale: Locale,
+    visible_content: bool,
+    notice: Option<&'a crate::notify::Shown>,
+    avatar: Option<&'a [u8]>,
+) -> (
+    std::borrow::Cow<'a, str>,
+    std::borrow::Cow<'a, str>,
+    Option<&'a [u8]>,
+) {
+    if !visible_content {
+        let (title, body) = crate::notify::locked_lines(locale);
+        return (title.into(), body.into(), None);
+    }
+    match notice {
+        Some(notice) => (
+            notice.title.as_str().into(),
+            notice.body.as_str().into(),
+            avatar,
+        ),
+        None => (
+            "Ada Lovelace".into(),
+            gettext(locale, "I saved you a seat by the window."),
+            avatar,
+        ),
     }
 }
 
@@ -599,6 +658,41 @@ fn read_avatar(path: &std::path::Path) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locked_banners_redact_even_an_already_prepared_payload() {
+        let notice = crate::notify::Shown {
+            title: "Alice".into(),
+            body: "Private message".into(),
+            picture: None,
+            sound: NotificationSound::None,
+        };
+        let (title, body, avatar) =
+            banner_content(Locale::English, false, Some(&notice), Some(b"avatar"));
+        assert_eq!(
+            (title.as_ref(), body.as_ref(), avatar),
+            ("ZapFast", "New message", None)
+        );
+    }
+
+    #[test]
+    fn the_first_live_banner_schedules_a_focus_check_even_without_expiry() {
+        assert_eq!(first_update(None, true), Some(Duration::from_secs(1)));
+        assert_eq!(
+            first_update(Some(Duration::from_secs(6)), true),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            first_update(Some(Duration::from_secs(6)), false),
+            Some(Duration::from_secs(6))
+        );
+    }
+
+    #[test]
+    fn late_answers_cannot_replace_newer_grouped_content() {
+        assert!(stale_group_delivery(1, 2));
+        assert!(!stale_group_delivery(3, 2));
+    }
 
     #[test]
     fn old_settings_default_to_system_and_floating_choices_round_trip() {
