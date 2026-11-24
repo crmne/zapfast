@@ -507,8 +507,20 @@ fn legacy_file_id(
     file: &std::fs::File,
     info: BY_HANDLE_FILE_INFORMATION,
 ) -> io::Result<(u32, u64)> {
+    let (fs, _) = volume_file_system(file)?;
+    usable_legacy_file_id(&fs, info).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Cannot verify attachment file identity",
+        )
+    })
+}
+
+#[cfg(windows)]
+fn volume_file_system(file: &std::fs::File) -> io::Result<(String, u32)> {
     use std::os::windows::io::AsRawHandle as _;
     let mut fs = [0u16; 32];
+    let mut flags = 0;
     // SAFETY: the handle is live and the output buffer is writable.
     if unsafe {
         GetVolumeInformationByHandleW(
@@ -517,7 +529,7 @@ fn legacy_file_id(
             0,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            &mut flags,
             fs.as_mut_ptr(),
             fs.len() as u32,
         ) == 0
@@ -525,12 +537,17 @@ fn legacy_file_id(
         return Err(io::Error::last_os_error());
     }
     let fs = String::from_utf16_lossy(fs.split(|unit| *unit == 0).next().unwrap_or_default());
-    usable_legacy_file_id(&fs, info).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Cannot verify attachment file identity",
-        )
-    })
+    Ok((fs, flags))
+}
+
+#[cfg(windows)]
+pub(super) fn is_exfat_source_without_streams(file: &std::fs::File) -> bool {
+    volume_file_system(file).is_ok_and(|(fs, flags)| exfat_without_streams(&fs, flags))
+}
+
+#[cfg(windows)]
+fn exfat_without_streams(fs: &str, flags: u32) -> bool {
+    fs.eq_ignore_ascii_case("exFAT") && flags & FILE_NAMED_STREAMS == 0
 }
 
 #[cfg(windows)]
@@ -555,6 +572,15 @@ pub(super) fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> 
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn exfat_handle_copy_requires_a_volume_without_named_streams() {
+        assert!(exfat_without_streams("exFAT", 0));
+        assert!(!exfat_without_streams("exFAT", FILE_NAMED_STREAMS));
+        assert!(!exfat_without_streams("NTFS", 0));
+        assert!(!exfat_without_streams("", 0));
+    }
 
     #[cfg(windows)]
     #[test]

@@ -12849,6 +12849,10 @@ fn stage_saved_attachment(
     #[cfg(windows)]
     {
         let _ = save_as;
+        if attachment_provenance::is_exfat_source_without_streams(input) {
+            copy_exfat_saved_file(input, output, &staging.0)?;
+            return Ok(staging);
+        }
         let writable = output.metadata()?.permissions();
         if !attachment_provenance::same_file(input, &open_saved_source(source)?)? {
             return Err(io::Error::other(
@@ -12882,6 +12886,22 @@ fn stage_saved_attachment(
         drop(output);
     }
     Ok(staging)
+}
+
+#[cfg(windows)]
+fn copy_exfat_saved_file(
+    input: &std::fs::File,
+    mut output: std::fs::File,
+    staging: &Path,
+) -> io::Result<()> {
+    // The source has no named streams. Reading its open handle keeps the
+    // identity of the bytes even when the volume cannot supply a file ID.
+    let metadata = input.metadata()?;
+    io::copy(&mut &*input, &mut output)?;
+    output.set_modified(metadata.modified()?)?;
+    // Apply MOTW while the staging file is still writable.
+    attachment_provenance::mark(staging);
+    output.set_permissions(metadata.permissions())
 }
 
 /// Converts optional protocol dimensions and file size into local attachment metadata.
@@ -18356,6 +18376,77 @@ mod tests {
         assert!(stage_saved_attachment(&input, &other, &target, false).is_err());
         let staged = stage_saved_attachment(&input, &source, &target, false).unwrap();
         assert_eq!(std::fs::read(&staged.0).unwrap(), b"original");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exfat_saved_copy_uses_the_open_handle_and_publishes_with_motw() {
+        use attachment_provenance::tests::{assert_download_mark, assert_unmarked};
+        use std::io::{Seek as _, SeekFrom};
+
+        // Exercise the exFAT copy path with synthetic files on the test volume.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let moved = dir.path().join("moved.txt");
+        let new = dir.path().join("new.txt");
+        let album = dir.path().join("album.txt");
+        std::fs::write(&source, b"original").unwrap();
+        let mut input = std::fs::File::open(&source).unwrap();
+        std::fs::rename(&source, &moved).unwrap();
+        std::fs::write(&source, b"replacement").unwrap();
+        std::fs::write(&album, b"third party").unwrap();
+        let mut permissions = input.metadata().unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&moved, permissions).unwrap();
+
+        for numbered in [false, true] {
+            input.seek(SeekFrom::Start(0)).unwrap();
+            let (path, output) = temporary_attachment_file(&new).unwrap();
+            let staging = Staged(path.clone());
+            copy_exfat_saved_file(&input, output, &staging.0).unwrap();
+            let published = if numbered {
+                publish_numbered(&staging.0, &album, 2..=2, None).unwrap()
+            } else {
+                publish_new(&staging.0, &new, None).unwrap();
+                new.clone()
+            };
+            drop(staging);
+            assert!(!path.exists());
+            assert_eq!(std::fs::read(&published).unwrap(), b"original");
+            assert!(
+                std::fs::metadata(&published)
+                    .unwrap()
+                    .permissions()
+                    .readonly()
+            );
+            assert_download_mark(&published);
+        }
+        assert_eq!(std::fs::read(&moved).unwrap(), b"original");
+        assert!(input.metadata().unwrap().permissions().readonly());
+        assert_unmarked(&moved);
+        assert_eq!(std::fs::read(&source).unwrap(), b"replacement");
+        assert_eq!(std::fs::read(&album).unwrap(), b"third party");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exfat_saved_copy_propagates_read_errors_and_cleans_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, b"original").unwrap();
+        let input = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&source)
+            .unwrap();
+        let (path, output) = temporary_attachment_file(&target).unwrap();
+        let staging = Staged(path.clone());
+        let error = copy_exfat_saved_file(&input, output, &staging.0).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        drop(staging);
+        assert!(!path.exists());
+        assert!(!target.exists());
+        assert_eq!(std::fs::read(&source).unwrap(), b"original");
     }
 
     #[test]

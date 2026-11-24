@@ -71,8 +71,10 @@ approval stays with the original file. Finder Lock stays on the original, too.
 **Save as…** replaces the selected entry after confirmation. Symbolic links and
 read-only destinations are refused. A change detected while preparing the copy
 cancels the replacement. Another process can still change the destination
-between the final check and the rename. On Windows, a save that requires a file
-identity check can fail if the volume provides no reliable file ID.
+between the final check and the rename. On Windows, new copies can be saved
+from exFAT volumes without named streams even when the source has no reliable
+file ID. Replacing an existing file still requires enough information to
+verify both files. That check can fail on some exFAT volumes or network shares.
 ZapFast still saves the file if the filesystem lacks support or adding the
 mark fails. Unexpected marking errors are recorded in the log. Linux adds
 no mark. The mark helps the system and other apps check the file's origin,
