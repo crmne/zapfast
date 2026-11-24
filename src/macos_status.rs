@@ -6,8 +6,21 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
+use crate::account::Account;
 use crate::i18n::{Locale, gettext};
 use crate::settings::Settings;
+
+/// Sum the unread messages that can contribute to desktop badges.
+pub(crate) fn unread_messages(accounts: &[Account]) -> u32 {
+    let now = crate::util::now();
+    accounts
+        .iter()
+        .filter(|account| account.settings.notifications)
+        .flat_map(|account| &account.chats)
+        .filter(|chat| !chat.archived && !chat.locked && !chat.muted(now))
+        .map(|chat| chat.unread)
+        .fold(0, u32::saturating_add)
+}
 
 #[derive(Default)]
 pub(crate) struct Status {

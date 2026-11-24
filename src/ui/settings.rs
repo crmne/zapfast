@@ -690,7 +690,7 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "Show unread count"),
             translated(
                 locale,
-                "Show the number of unread chats beside the menu bar icon.",
+                "Show the number of unread messages beside the menu bar icon.",
             ),
             |settings| &mut settings.mac_show_unread_count,
         );
