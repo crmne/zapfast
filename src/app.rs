@@ -3282,7 +3282,7 @@ impl App {
         if !chat.is_group() {
             return Vec::new();
         }
-        let needle = query.trim().to_lowercase();
+        let needle = crate::util::search_key(query.trim());
         let digits: String = query.chars().filter(char::is_ascii_digit).collect();
         let mut found: Vec<(String, String)> = self
             .participant_list(chat)
@@ -3294,9 +3294,7 @@ impl App {
                 if needle.is_empty() {
                     return true;
                 }
-                name.trim_start_matches('~')
-                    .to_lowercase()
-                    .contains(&needle)
+                crate::util::search_key(name.trim_start_matches('~')).contains(&needle)
                     || (!digits.is_empty()
                         && id
                             .split('@')
@@ -25791,6 +25789,38 @@ mod tests {
         let (text, _) = app.encode_composer_mentions("123@g.us", "oi @todos @all".into());
 
         assert_eq!(text, "oi @todos @all");
+    }
+
+    #[test]
+    fn mention_suggestions_ignore_case_and_accents() {
+        let mut app = app();
+        for (id, name) in [
+            ("1@s.whatsapp.net", "Ángel"),
+            ("2@s.whatsapp.net", "A\u{301}lvaro"),
+        ] {
+            app.contacts.insert(
+                id.into(),
+                Contact {
+                    id: id.into(),
+                    full_name: Some(name.into()),
+                    first_name: None,
+                    push_name: None,
+                },
+            );
+        }
+        let chat = group_chat(3);
+        for (query, id) in [
+            ("ang", "1@s.whatsapp.net"),
+            ("ÁNG", "1@s.whatsapp.net"),
+            ("alv", "2@s.whatsapp.net"),
+        ] {
+            assert!(
+                app.mention_candidates(&chat, query)
+                    .iter()
+                    .any(|(found, _)| found == id),
+                "{query}"
+            );
+        }
     }
 
     #[test]

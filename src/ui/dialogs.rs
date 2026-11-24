@@ -688,16 +688,12 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     }
     ui.add_space(4.0);
 
-    let needle = app.forward_search.trim().to_lowercase();
+    let needle = crate::util::search_key(app.forward_search.trim());
     let mut chats: Vec<_> = app
         .chats
         .iter()
         .filter(|chat| forwardable(chat) && !app.blocklist.contains(&chat.id))
-        .filter(|chat| {
-            needle.is_empty()
-                || app.chat_title(chat).to_lowercase().contains(&needle)
-                || chat.phone().is_some_and(|phone| phone.contains(&needle))
-        })
+        .filter(|chat| forward_matches(&app.chat_title(chat), chat.phone(), &needle))
         .cloned()
         .collect();
     chats.sort_by_key(|chat| std::cmp::Reverse(chat.last_activity));
@@ -912,6 +908,14 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
             .wrap(),
         );
     }
+}
+
+/// Whether the forward search `needle` (a `search_key`) finds a chat by
+/// its title, ignoring case and accents, or by its number.
+fn forward_matches(title: &str, phone: Option<&str>, needle: &str) -> bool {
+    needle.is_empty()
+        || crate::util::search_key(title).contains(needle)
+        || phone.is_some_and(|phone| phone.contains(needle))
 }
 
 /// Uses the model's send permissions to reject unavailable forwarding
@@ -2214,6 +2218,29 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> eg
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn forward_search_ignores_case_and_accents() {
+        for query in ["debora", "DÉB", "De\u{301}bora"] {
+            let needle = crate::util::search_key(query);
+            assert!(super::forward_matches("Débora", None, &needle), "{query}");
+            assert!(
+                super::forward_matches("De\u{301}bora", None, &needle),
+                "{query}"
+            );
+        }
+        let needle = crate::util::search_key("5511");
+        assert!(super::forward_matches(
+            "Ada",
+            Some("5511999990000"),
+            &needle
+        ));
+        assert!(!super::forward_matches(
+            "Ada",
+            None,
+            &crate::util::search_key("bob")
+        ));
+    }
+
     #[test]
     fn chinese_delete_body_is_neutral_for_one_or_multiple_selected_messages() {
         for count in [1, 2] {

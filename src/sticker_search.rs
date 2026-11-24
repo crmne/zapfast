@@ -78,7 +78,7 @@ pub fn search(library: &Library<'_>, query: &str) -> Vec<PathBuf> {
                 .iter()
                 .all(|term| term.iter().any(|emoji| emojis.contains(emoji)))
     };
-    let needle = query.to_lowercase();
+    let needle = crate::util::search_key(query);
     let mut seen = HashSet::new();
     let mut found = Vec::new();
     let everything = library
@@ -93,7 +93,7 @@ pub fn search(library: &Library<'_>, query: &str) -> Vec<PathBuf> {
         }
     }
     for pack in library.packs {
-        if pack.name.to_lowercase().contains(&needle) {
+        if crate::util::search_key(&pack.name).contains(&needle) {
             for path in &pack.stickers {
                 if seen.insert(path.clone()) {
                     found.push(path.clone());
@@ -144,6 +144,7 @@ mod tests {
         let packs = [
             pack("Ducks", &["/packs/Ducks/1.webp", "/packs/Ducks/2.webp"]),
             pack("Bom dia", &["/packs/Bom dia/1.webp"]),
+            pack("Café", &["/packs/Café/1.webp"]),
         ];
         let received = [PathBuf::from("/received/cat.webp")];
         search(
@@ -185,6 +186,12 @@ mod tests {
         assert_eq!(library_search("bom"), vec!["/packs/Bom dia/1.webp"]);
         assert!(library_search("   ").is_empty());
         assert!(library_search("zzzz").is_empty());
+    }
+
+    #[test]
+    fn a_pack_name_ignores_accents() {
+        assert_eq!(library_search("cafe"), vec!["/packs/Café/1.webp"]);
+        assert_eq!(library_search("CAFÉ"), vec!["/packs/Café/1.webp"]);
     }
 
     #[test]
