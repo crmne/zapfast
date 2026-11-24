@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot};
@@ -39,6 +40,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod archive_chats;
+mod attachment_provenance;
 mod blocking;
 mod bot_replies;
 mod calls;
@@ -281,31 +283,32 @@ async fn download_attachment(
     dir: &Path,
     path: &Path,
     limit: u64,
+    mark: bool,
 ) -> Result<PathBuf, String> {
-    fetch_attachment(client, downloadable, dir, path, limit, false, None, None).await
+    with_attachment_deadline(attachment_deadline(downloadable.file_length()), async {
+        let (staging, target) =
+            fetch_attachment(client, downloadable, dir, path, limit, None, None).await?;
+        publish_download(staging, &target, false, None, mark).await
+    })
+    .await
 }
 
-/// [`download_attachment`], and with `keep_others` a file already at `path`
-/// stays: the download takes the first free `name (n).ext` instead, as in
-/// the reader's own download folder. `progress` hears how much of a known
-/// length has arrived. Returns where the file landed.
-#[allow(clippy::too_many_arguments)]
+/// Fetches and verifies the bytes before handing the staging guard to publication.
 async fn fetch_attachment(
     client: &Client,
     downloadable: &dyn Downloadable,
     dir: &Path,
     path: &Path,
     limit: u64,
-    keep_others: bool,
     cache: Option<&Path>,
     progress: Option<Progress>,
-) -> Result<PathBuf, String> {
+) -> Result<(Staged, PathBuf), String> {
     if downloadable.file_length().is_some_and(|size| size > limit) {
         return Err(ATTACHMENT_LIMIT_ERROR.to_owned());
     }
     debug_assert_eq!(path.parent(), Some(dir));
     let (target, temporary, file) = stage_attachment(path, cache).await?;
-    let _staged = Staged(temporary.clone());
+    let staging = Staged(temporary);
     let result = client
         .download_to_writer(
             downloadable,
@@ -315,11 +318,8 @@ async fn fetch_attachment(
         .await;
     match result {
         Ok(writer) => {
-            // Close the verified file before publishing it, including on Windows.
             drop(writer);
-            // The staging file is removed on the way out if it was not
-            // published.
-            publish_download(&temporary, &target, keep_others && target == path, cache).await
+            Ok((staging, target))
         }
         Err(error) => {
             let error = error.to_string();
@@ -344,7 +344,7 @@ async fn stage_attachment(
             tokio::fs::create_dir_all(dir)
                 .await
                 .map_err(|error| error.to_string())?;
-            temporary_attachment_file(target)
+            temporary_attachment_file(target).map_err(|error| error.to_string())
         }
         .await;
         match staged {
@@ -357,97 +357,177 @@ async fn stage_attachment(
 
 /// A publication failure saves the verified bytes in the cache without another transfer.
 async fn publish_download(
-    temporary: &Path,
+    staging: Staged,
     path: &Path,
     keep_others: bool,
     cache: Option<&Path>,
+    mark: bool,
 ) -> Result<PathBuf, String> {
-    let published = if keep_others {
-        publish_beside(temporary, path)
-            .await
-            .map_err(|error| error.to_string())
-    } else {
-        publish_attachment(temporary, path)
-            .await
-            .map(|()| path.to_owned())
-    };
-    match published {
-        Ok(path) => Ok(path),
-        Err(error) => {
-            let Some(cache) = cache.filter(|cache| *cache != path) else {
-                return Err(error);
-            };
-            let (_, staging, file) = stage_attachment(cache, None).await?;
-            let _staged = Staged(staging.clone());
-            drop(file);
-            tokio::fs::copy(temporary, &staging)
-                .await
-                .map_err(|error| error.to_string())?;
-            publish_attachment(&staging, cache).await?;
-            Ok(cache.to_owned())
+    // Chat media can be opened in another app or shown in its folder even
+    // when it lands in the cache.
+    let mark = mark && cfg!(any(windows, target_os = "macos"));
+    let path = path.to_owned();
+    let cache = cache.filter(|cache| *cache != path).map(Path::to_owned);
+    // The blocking task owns both temporary files. A deadline stops the
+    // caller's wait and prevents further publication operations.
+    run_publication(move |cancelled| {
+        check_publication(Some(cancelled))?;
+        if mark {
+            attachment_provenance::mark(&staging.0);
         }
+        check_publication(Some(cancelled))?;
+        let published = if keep_others {
+            publish_beside(&staging.0, &path, cancelled)
+        } else {
+            publish_attachment(&staging.0, &path).map(|()| path)
+        };
+        match published {
+            Ok(path) => Ok(path),
+            Err(error) => {
+                check_publication(Some(cancelled))?;
+                let Some(cache) = cache else {
+                    return Err(error);
+                };
+                std::fs::create_dir_all(cache.parent().ok_or(io::ErrorKind::InvalidInput)?)?;
+                check_publication(Some(cancelled))?;
+                let (cache_staging, file) = temporary_attachment_file(&cache)?;
+                let cache_staging = Staged(cache_staging);
+                drop(file);
+                check_publication(Some(cancelled))?;
+                std::fs::copy(&staging.0, &cache_staging.0)?;
+                check_publication(Some(cancelled))?;
+                if mark {
+                    attachment_provenance::mark(&cache_staging.0);
+                }
+                check_publication(Some(cancelled))?;
+                publish_attachment(&cache_staging.0, &cache)?;
+                Ok(cache)
+            }
+        }
+    })
+    .await
+}
+
+struct CancelPublication(Arc<AtomicBool>);
+
+impl Drop for CancelPublication {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
     }
 }
 
-/// Publishes a complete attachment only after its download has been verified.
-async fn publish_attachment(temporary: &Path, path: &Path) -> Result<(), String> {
-    // Windows does not replace an existing destination during rename. A stale
-    // cache file has no archive reference, and active downloads are deduplicated.
-    #[cfg(windows)]
-    if path.exists() {
-        tokio::fs::remove_file(path)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    tokio::fs::rename(temporary, path)
+async fn run_publication(
+    publish: impl FnOnce(&AtomicBool) -> io::Result<PathBuf> + Send + 'static,
+) -> Result<PathBuf, String> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelPublication(cancelled.clone());
+    tokio::task::spawn_blocking(move || publish(&cancelled))
         .await
+        .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
 }
 
-/// Publishes a complete attachment at `path`, or at the first free
-/// `name (n).ext` beside it, never replacing a file already there: the
-/// reader's download folder holds their own files too. A hard link claims
-/// the name atomically; on a file system without them (FAT, some network
-/// shares) an empty file reserves it first.
-async fn publish_beside(temporary: &Path, path: &Path) -> io::Result<PathBuf> {
-    let (temporary, path) = (temporary.to_path_buf(), path.to_path_buf());
-    tokio::task::spawn_blocking(move || {
-        for candidate in (0..1000).map(|n| numbered_path(&path, n)) {
-            match std::fs::hard_link(&temporary, &candidate) {
-                Ok(()) => {
-                    let _ = std::fs::remove_file(&temporary);
-                    return Ok(candidate);
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(_) => {}
-            }
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&candidate)
-            {
-                Ok(reserved) => {
-                    drop(reserved);
-                    // Windows renames only onto a free name; the reserved
-                    // file is ours to remove.
-                    #[cfg(windows)]
-                    std::fs::remove_file(&candidate)?;
-                    return match std::fs::rename(&temporary, &candidate) {
-                        Ok(()) => Ok(candidate),
-                        Err(error) => {
-                            let _ = std::fs::remove_file(&candidate);
-                            Err(error)
-                        }
-                    };
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-            }
+fn check_publication(cancelled: Option<&AtomicBool>) -> io::Result<()> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
+    Ok(())
+}
+
+/// Publishes a complete attachment only after its download has been verified.
+fn publish_attachment(temporary: &Path, path: &Path) -> io::Result<()> {
+    std::fs::rename(temporary, path)
+}
+
+/// Publishes at the first free numbered name without replacing another file.
+/// Downloads require atomic publication. Only explicit saves allow a direct copy.
+fn publish_beside(temporary: &Path, path: &Path, cancelled: &AtomicBool) -> io::Result<PathBuf> {
+    publish_numbered(temporary, path, 1..1000, Some(cancelled))
+}
+
+fn publish_numbered(
+    staging: &Path,
+    path: &Path,
+    suffixes: impl Iterator<Item = u32>,
+    cancelled: Option<&AtomicBool>,
+) -> io::Result<PathBuf> {
+    for candidate in std::iter::once(0)
+        .chain(suffixes)
+        .map(|n| numbered_path(path, n))
+    {
+        match publish_new(staging, &candidate, cancelled) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
         }
-        Err(io::Error::other("no free file name for the download"))
+    }
+    Err(io::Error::other("no free file name for the download"))
+}
+
+fn publish_new(staging: &Path, target: &Path, cancelled: Option<&AtomicBool>) -> io::Result<()> {
+    check_publication(cancelled)?;
+    match std::fs::hard_link(staging, target) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(staging);
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
+        Err(_) => publish_without_link(
+            staging,
+            target,
+            cancelled,
+            attachment_provenance::rename_new,
+        ),
+    }
+}
+
+fn publish_without_link(
+    staging: &Path,
+    target: &Path,
+    cancelled: Option<&AtomicBool>,
+    rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    check_publication(cancelled)?;
+    let result = rename(staging, target);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if cancelled.is_none()
+        && result
+            .as_ref()
+            .is_err_and(attachment_provenance::no_exclusive_rename)
+    {
+        return copy_to_exclusive_name(staging, target, |source, output| {
+            io::copy(source, output).map(|_| ())
+        });
+    }
+    result
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn copy_to_exclusive_name(
+    staging: &Path,
+    target: &Path,
+    copy: impl FnOnce(&mut std::fs::File, &mut std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    let mut source = std::fs::File::open(staging)?;
+    let mode = source.metadata()?.permissions().mode() & 0o777;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(target)?;
+    #[cfg(target_os = "macos")]
+    attachment_provenance::copy_publication_mark(&source, &output);
+    copy(&mut source, &mut output).inspect_err(|_| {
+        // The name may now identify another file. Only clear our open inode.
+        if let Err(error) = output.set_len(0) {
+            log::warn!(
+                "could not clear an incomplete attachment save ({:?}, OS code {:?})",
+                error.kind(),
+                error.raw_os_error()
+            );
+        }
     })
-    .await
-    .map_err(io::Error::other)?
 }
 
 /// `path` itself for 0, then `name (n).ext`, as file managers number copies.
@@ -478,7 +558,7 @@ fn temporary_attachment_path(path: &Path) -> PathBuf {
 
 /// Creates an exclusive temporary file, retrying a vanishingly unlikely name
 /// collision without ever opening another download's staging file.
-fn temporary_attachment_file(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
+fn temporary_attachment_file(path: &Path) -> io::Result<(PathBuf, std::fs::File)> {
     for _ in 0..8 {
         let temporary = temporary_attachment_path(path);
         match std::fs::OpenOptions::new()
@@ -488,10 +568,12 @@ fn temporary_attachment_file(path: &Path) -> Result<(PathBuf, std::fs::File), St
         {
             Ok(file) => return Ok((temporary, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error),
         }
     }
-    Err("Could not create a unique attachment staging file".to_owned())
+    Err(io::Error::other(
+        "Could not create a unique attachment staging file",
+    ))
 }
 
 /// Removes a download's staging file when it ends, whichever way that is:
@@ -8011,8 +8093,8 @@ impl Worker {
                     let Some(target) = dialog.save_file() else {
                         return;
                     };
-                    let event = match std::fs::copy(&source, &target) {
-                        Ok(_) => Event::Info(format!(
+                    let event = match save_attachment_as(&source, &target) {
+                        Ok(()) => Event::Info(format!(
                             "Saved {}",
                             target.file_name().map_or_else(
                                 || name.clone(),
@@ -10501,13 +10583,12 @@ impl Worker {
             let path = named
                 .unwrap_or_else(|| media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref()));
             let result = with_attachment_deadline(deadline, async {
-                match fetch_attachment(
+                let (staging, target) = match fetch_attachment(
                     &client,
                     &*downloadable,
                     &dir,
                     &path,
                     limit,
-                    keep_others,
                     Some(&cache_path),
                     progress.clone(),
                 )
@@ -10544,7 +10625,6 @@ impl Worker {
                                                     &dir,
                                                     &path,
                                                     limit,
-                                                    keep_others,
                                                     Some(&cache_path),
                                                     progress,
                                                 )
@@ -10565,7 +10645,15 @@ impl Worker {
                             _ => Err(text),
                         }
                     }
-                }
+                }?;
+                publish_download(
+                    staging,
+                    &target,
+                    keep_others && target == path,
+                    Some(&cache_path),
+                    true,
+                )
+                .await
             })
             .await;
             let _ = commands.send(Command::Downloaded {
@@ -10615,9 +10703,14 @@ impl Worker {
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &format!("{id}-motion"), "video/mp4", None);
-            let result = with_attachment_deadline(
-                attachment_deadline(video.file_length),
-                download_attachment(&client, &video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
+            // The full-window player can fall back to the system player.
+            let result = download_attachment(
+                &client,
+                &video,
+                &dir,
+                &path,
+                ATTACHMENT_DOWNLOAD_LIMIT,
+                true,
             )
             .await;
             let _ = commands.send(Command::MotionDownloaded { chat, id, result });
@@ -10755,14 +10848,17 @@ impl Worker {
             let dir = dir.clone();
             let hash = sticker.hash;
             tokio::spawn(async move {
-                // The shelf waits for the whole batch, so none may hang.
-                let deadline = attachment_deadline(meta.file_length);
-                let result = with_attachment_deadline(deadline, async {
-                    let path = dir.join(format!("{hash}.webp"));
-                    let sticker = PhoneSticker(meta);
-                    download_attachment(&client, &sticker, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT)
-                        .await
-                })
+                // The shelf waits for the whole batch, so each fetch has a deadline.
+                let path = dir.join(format!("{hash}.webp"));
+                let sticker = PhoneSticker(meta);
+                let result = download_attachment(
+                    &client,
+                    &sticker,
+                    &dir,
+                    &path,
+                    ATTACHMENT_DOWNLOAD_LIMIT,
+                    false,
+                )
                 .await;
                 let _ = commands.send(Command::StickerFetched { hash, result });
             });
@@ -12551,44 +12647,184 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
     dir.join(format!("{stem}.{extension}"))
 }
 
-/// Reserve each destination atomically, including when another save is racing
-/// us. Checking existence before fs::copy could still overwrite a user's file.
-fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<PathBuf> {
-    use std::io::ErrorKind;
-    let name = Path::new(name)
-        .file_name()
-        .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
-    let path = Path::new(name);
-    let stem = path.file_stem().unwrap_or(name).to_string_lossy();
-    let extension = path
-        .extension()
-        .map(|value| format!(".{}", value.to_string_lossy()))
-        .unwrap_or_default();
-    let mut input = std::fs::File::open(source)?;
-    let mut number = 1usize;
-    loop {
-        let target = if number == 1 {
-            folder.join(name)
-        } else {
-            folder.join(format!("{stem} ({number}){extension}"))
-        };
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&target)
-        {
-            Ok(mut output) => {
-                if let Err(error) = std::io::copy(&mut input, &mut output) {
-                    drop(output);
-                    let _ = std::fs::remove_file(&target);
-                    return Err(error);
-                }
-                return Ok(target);
+/// Save As can replace a file selected in the native dialog. Complete and
+/// mark the copy first, and leave the source alone if it was chosen again.
+fn save_attachment_as(source: &Path, target: &Path) -> io::Result<()> {
+    let input = open_saved_source(source)?;
+    if source == target {
+        return Ok(());
+    }
+    let replace = match open_save_destination(target, false) {
+        Ok(existing) => {
+            if attachment_provenance::same_file(&input, &existing)? {
+                return Ok(());
             }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => number += 1,
-            Err(error) => return Err(error),
+            let metadata = existing.metadata()?;
+            if metadata.permissions().readonly() {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt as _;
+                use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
+                // CopyFileEx also refused hidden destinations on Windows.
+                if metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0 {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+            }
+            // Check write access without truncating the file selected in the dialog.
+            if !attachment_provenance::same_file(&existing, &open_save_destination(target, true)?)?
+            {
+                return Err(io::Error::other(
+                    "The save destination changed while copying",
+                ));
+            }
+            Some((existing, metadata))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    let staging = stage_saved_attachment(&input, source, target, true)?;
+    if let Some((existing, before)) = replace {
+        replace_save_destination(&staging.0, target, existing, before)
+    } else {
+        publish_new(&staging.0, target, None)
+    }
+}
+
+fn replace_save_destination(
+    staging: &Path,
+    target: &Path,
+    existing: std::fs::File,
+    before: std::fs::Metadata,
+) -> io::Result<()> {
+    let current = open_save_destination(target, false)?;
+    let after = current.metadata()?;
+    if !attachment_provenance::same_file(&existing, &current)?
+        || before.len() != after.len()
+        || before.modified()? != after.modified()?
+        || before.permissions() != after.permissions()
+    {
+        return Err(io::Error::other(
+            "The save destination changed while copying",
+        ));
+    }
+    drop((existing, current));
+    std::fs::rename(staging, target)
+}
+
+fn open_save_destination(target: &Path, write: bool) -> io::Result<std::fs::File> {
+    // Replacing a symlink would detach it from its target, while following
+    // it would write to a path the reader did not confirm in the dialog.
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(write);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(target)?;
+    let metadata = file.metadata()?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::ErrorKind::InvalidInput.into());
         }
     }
+    if !metadata.is_file() || !std::fs::symlink_metadata(target)?.is_file() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    Ok(file)
+}
+
+/// Album copies use the first free name, including when another save is racing us.
+fn save_album_copy(source: &Path, folder: &Path, name: &str) -> io::Result<PathBuf> {
+    let name = Path::new(name)
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid attachment name"))?;
+    let target = folder.join(name);
+    let input = open_saved_source(source)?;
+    let staging = stage_saved_attachment(&input, source, &target, false)?;
+    publish_numbered(&staging.0, &target, 2..=u32::MAX, None)
+}
+
+fn open_saved_source(source: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        // CopyFileEx opens by name. Hold this source against renames or removal.
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    options.open(source)
+}
+
+fn stage_saved_attachment(
+    input: &std::fs::File,
+    source: &Path,
+    target: &Path,
+    save_as: bool,
+) -> io::Result<Staged> {
+    #[cfg(windows)]
+    if target
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().contains(':'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid attachment name",
+        ));
+    }
+    let folder = target.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let (path, file) = temporary_attachment_file(&folder.join("attachment"))?;
+    let staging = Staged(path);
+    let output = file;
+    #[cfg(windows)]
+    {
+        let _ = save_as;
+        let writable = output.metadata()?.permissions();
+        if !attachment_provenance::same_file(input, &open_saved_source(source)?)? {
+            return Err(io::Error::other(
+                "The attachment source changed while copying",
+            ));
+        }
+        drop(output);
+        std::fs::copy(source, &staging.0)?;
+        if !attachment_provenance::same_file(input, &open_saved_source(source)?)? {
+            return Err(io::Error::other(
+                "The attachment source changed while copying",
+            ));
+        }
+        attachment_provenance::mark_saved_copy(&staging.0, writable)?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (source, save_as);
+        attachment_provenance::copy_saved_file(input, &output)?;
+        drop(output);
+        attachment_provenance::mark(&staging.0);
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = source;
+        let mut output = output;
+        if save_as {
+            output.set_permissions(input.metadata()?.permissions())?;
+        }
+        let mut input = input;
+        io::copy(&mut input, &mut output)?;
+        drop(output);
+    }
+    Ok(staging)
 }
 
 /// Converts optional protocol dimensions and file size into local attachment metadata.
@@ -15410,7 +15646,7 @@ mod tests {
         let path = dir.path().join("photo.jpg");
         let (staging, file) = temporary_attachment_file(&path).unwrap();
         drop(file);
-        publish_attachment(&staging, &path).await.unwrap();
+        publish_attachment(&staging, &path).unwrap();
         drop(Staged(staging));
         assert!(path.is_file());
     }
@@ -15945,7 +16181,7 @@ mod tests {
         for body in [b"first".as_slice(), b"second"] {
             let (temporary, _) = temporary_attachment_file(&path).unwrap();
             std::fs::write(&temporary, body).unwrap();
-            landed.push(publish_beside(&temporary, &path).await.unwrap());
+            landed.push(publish_beside(&temporary, &path, &AtomicBool::new(false)).unwrap());
             assert!(!temporary.exists());
         }
         assert_eq!(std::fs::read(&path).unwrap(), b"mine");
@@ -17703,10 +17939,16 @@ mod tests {
         let (temporary, file) = temporary_attachment_file(&path).unwrap();
         drop(file);
         std::fs::write(&temporary, b"download").unwrap();
-        let published = publish_beside(&temporary, &path).await.unwrap();
+        let cache = worker.dirs.media_cache_dir().join("message.pdf");
+        let published =
+            publish_download(Staged(temporary.clone()), &path, true, Some(&cache), true)
+                .await
+                .unwrap();
         assert_eq!(published, dir.join("report (1).pdf"));
         assert_eq!(std::fs::read(&path).unwrap(), b"existing");
         assert_eq!(std::fs::read(&published).unwrap(), b"download");
+        attachment_provenance::tests::assert_download_mark(&published);
+        attachment_provenance::tests::assert_unmarked(&path);
         assert!(!temporary.exists());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         assert!(!worker.dirs.media_cache_dir().join("report.pdf").exists());
@@ -17800,29 +18042,351 @@ mod tests {
     async fn failed_publication_uses_verified_bytes_in_the_cache() {
         let root = tempfile::tempdir().unwrap();
         let temporary = root.path().join(".verified.0123456789abcdef.part");
-        let staged = Staged(temporary.clone());
-        std::fs::write(&temporary, b"verified fixture").unwrap();
+        let stage = || {
+            std::fs::write(&temporary, b"verified fixture").unwrap();
+            Staged(temporary.clone())
+        };
         let blocked = root.path().join("blocked");
         std::fs::write(&blocked, b"keep").unwrap();
         let path = blocked.join("report.pdf");
         let cache = root.path().join("cache/message.pdf");
         assert!(
-            publish_download(&temporary, &path, true, None)
+            publish_download(stage(), &path, true, None, true)
                 .await
                 .is_err()
         );
-        let saved = publish_download(&temporary, &path, true, Some(&cache))
+        assert!(!temporary.exists());
+        let saved = publish_download(stage(), &path, true, Some(&cache), true)
             .await
             .unwrap();
         assert_eq!(saved, cache);
         assert_eq!(std::fs::read(&saved).unwrap(), b"verified fixture");
+        attachment_provenance::tests::assert_download_mark(&saved);
         assert_eq!(std::fs::read(&blocked).unwrap(), b"keep");
-        drop(staged);
         assert!(!temporary.exists());
         assert_eq!(
             std::fs::read_dir(cache.parent().unwrap()).unwrap().count(),
             1
         );
+    }
+
+    #[test]
+    fn cancelling_queued_publication_still_removes_the_staging_file() {
+        let root = tempfile::tempdir().unwrap();
+        let temporary = root.path().join(".attachment.part");
+        std::fs::write(&temporary, b"verified fixture").unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (release, wait) = std::sync::mpsc::channel();
+            let busy = tokio::task::spawn_blocking(move || wait.recv());
+            let target = root.path().join("attachment.txt");
+            let mut publishing = Box::pin(publish_download(
+                Staged(temporary.clone()),
+                &target,
+                false,
+                None,
+                true,
+            ));
+            std::future::poll_fn(|cx| {
+                assert!(publishing.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            drop(publishing);
+            assert!(temporary.exists());
+            release.send(()).unwrap();
+            busy.await.unwrap().unwrap();
+        });
+        // Dropping the runtime waits for the cancelled blocking task as well.
+        drop(runtime);
+        assert!(!temporary.exists());
+        assert!(!root.path().join("attachment.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn only_chat_attachments_are_marked_in_the_cache() {
+        use attachment_provenance::tests::{assert_download_mark, assert_unmarked};
+
+        let root = tempfile::tempdir().unwrap();
+        for (name, chat_attachment) in [("report.pdf", true), ("picker.webp", false)] {
+            let target = root.path().join(name);
+            let (temporary, mut file) = temporary_attachment_file(&target).unwrap();
+            file.write_all(b"verified fixture").unwrap();
+            drop(file);
+            let result = publish_download(Staged(temporary), &target, false, None, chat_attachment)
+                .await
+                .unwrap();
+            assert_eq!(result, target);
+            if chat_attachment {
+                assert_download_mark(&result);
+            } else {
+                assert_unmarked(&result);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_downloads_keep_their_own_bytes_and_marks() {
+        use attachment_provenance::tests::assert_download_mark;
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("report.pdf");
+        let cache = root.path().join("cache.pdf");
+        let stage = |bytes: &[u8]| {
+            let (temporary, mut file) = temporary_attachment_file(&path).unwrap();
+            file.write_all(bytes).unwrap();
+            Staged(temporary)
+        };
+        let first = stage(b"first");
+        let second = stage(b"second");
+        let (a, b) = tokio::join!(
+            publish_download(first, &path, true, Some(&cache), true),
+            publish_download(second, &path, true, Some(&cache), true),
+        );
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read(&a).unwrap(), b"first");
+        assert_eq!(std::fs::read(&b).unwrap(), b"second");
+        assert_download_mark(&a);
+        assert_download_mark(&b);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn volumes_without_links_or_exclusive_rename_can_publish_without_replacing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let temporary = dir.path().join(".verified.part");
+        let existing = dir.path().join("existing.txt");
+        std::fs::write(&temporary, b"verified").unwrap();
+        std::fs::write(&existing, b"third party").unwrap();
+        attachment_provenance::mark(&temporary);
+        for code in [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::EPERM] {
+            let unsupported = |_: &Path, _: &Path| Err(io::Error::from_raw_os_error(code));
+            let target = dir.path().join(format!("copy-{code}.txt"));
+            let deadline = AtomicBool::new(false);
+            assert!(
+                publish_without_link(&temporary, &target, Some(&deadline), unsupported).is_err()
+            );
+            assert!(!target.exists());
+            publish_without_link(&temporary, &target, None, unsupported).unwrap();
+            attachment_provenance::tests::assert_download_mark(&target);
+            assert_eq!(std::fs::read(&target).unwrap(), b"verified");
+            assert_eq!(
+                publish_without_link(&temporary, &existing, None, unsupported)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::AlreadyExists
+            );
+        }
+        assert_eq!(std::fs::read(&temporary).unwrap(), b"verified");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"third party");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_failed_exclusive_copy_clears_only_the_open_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join(".verified.part");
+        let target = dir.path().join("target.txt");
+        let moved = dir.path().join("moved.txt");
+        std::fs::write(&staging, b"verified").unwrap();
+        for replaced in [false, true] {
+            let target = if replaced {
+                &target
+            } else {
+                &dir.path().join("empty.txt")
+            };
+            let error = copy_to_exclusive_name(&staging, target, |_, output| {
+                output.write_all(b"partial")?;
+                if replaced {
+                    std::fs::rename(target, &moved)?;
+                    std::fs::write(target, b"third party")?;
+                }
+                Err(io::Error::from_raw_os_error(libc::ENOSPC))
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::ENOSPC));
+        }
+        assert_eq!(std::fs::read(&staging).unwrap(), b"verified");
+        assert!(
+            std::fs::read(dir.path().join("empty.txt"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(std::fs::read(&moved).unwrap().is_empty());
+        assert_eq!(std::fs::read(&target).unwrap(), b"third party");
+    }
+
+    #[test]
+    fn a_blocked_publication_times_out_and_does_not_overwrite_a_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let temporary = dir.path().join(".staged.part");
+        let destination = dir.path().join("attachment.txt");
+        std::fs::write(&temporary, b"first attempt").unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let staging = Staged(temporary.clone());
+            let target = destination.clone();
+            let (started, running) = tokio::sync::oneshot::channel();
+            let (release, wait) = std::sync::mpsc::channel();
+            let mut publish = Box::pin(run_publication(move |cancelled| {
+                let staging = staging;
+                started.send(()).unwrap();
+                wait.recv().unwrap();
+                check_publication(Some(cancelled))?;
+                publish_attachment(&staging.0, &target).map(|()| target)
+            }));
+            tokio::select! {
+                result = &mut publish => panic!("published before release: {result:?}"),
+                result = running => result.unwrap(),
+            }
+            let result = with_attachment_deadline(Duration::from_millis(5), publish).await;
+            assert_eq!(result.unwrap_err(), "Download timed out");
+            assert!(
+                temporary.exists(),
+                "blocked task still owns its staging file"
+            );
+            assert!(!destination.exists());
+            let retry = dir.path().join(".retry.part");
+            std::fs::write(&retry, b"retry").unwrap();
+            assert_eq!(
+                publish_download(Staged(retry), &destination, false, None, false)
+                    .await
+                    .unwrap(),
+                destination
+            );
+            release.send(()).unwrap();
+        });
+        drop(runtime);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"retry");
+        assert!(!temporary.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_copy_reads_from_the_original_open_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, b"original").unwrap();
+        let input = open_saved_source(&source).unwrap();
+        std::fs::rename(&source, dir.path().join("moved.txt")).unwrap();
+        std::fs::write(&source, b"replacement").unwrap();
+        let staged = stage_saved_attachment(&input, &source, &target, false).unwrap();
+        assert_eq!(std::fs::read(&staged.0).unwrap(), b"original");
+        assert_eq!(std::fs::read(&source).unwrap(), b"replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_saved_copy_holds_the_source_against_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        let other = dir.path().join("replacement.txt");
+        std::fs::write(&source, b"original").unwrap();
+        std::fs::write(&other, b"replacement").unwrap();
+        let input = open_saved_source(&source).unwrap();
+        assert!(std::fs::rename(&source, dir.path().join("moved.txt")).is_err());
+        assert!(stage_saved_attachment(&input, &other, &target, false).is_err());
+        let staged = stage_saved_attachment(&input, &source, &target, false).unwrap();
+        assert_eq!(std::fs::read(&staged.0).unwrap(), b"original");
+    }
+
+    #[test]
+    fn save_as_replaces_only_the_selected_entry_and_respects_read_only_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        let alias = dir.path().join("alias.txt");
+        std::fs::write(&source, b"attachment").unwrap();
+        std::fs::write(&target, b"existing").unwrap();
+        std::fs::hard_link(&target, &alias).unwrap();
+        save_attachment_as(&source, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"attachment");
+        attachment_provenance::tests::assert_download_mark(&target);
+        assert_eq!(std::fs::read(&alias).unwrap(), b"existing");
+        let mut permissions = std::fs::metadata(&alias).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&alias, permissions).unwrap();
+        assert_eq!(
+            save_attachment_as(&source, &alias).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(std::fs::read(&alias).unwrap(), b"existing");
+    }
+
+    #[test]
+    fn save_as_does_not_replace_a_destination_changed_during_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.txt");
+        let staging = dir.path().join(".saved.part");
+        std::fs::write(&target, b"existing").unwrap();
+        std::fs::write(&staging, b"attachment").unwrap();
+        let before = std::fs::File::open(&target).unwrap();
+        let metadata = before.metadata().unwrap();
+        std::fs::rename(&target, dir.path().join("moved.txt")).unwrap();
+        std::fs::write(&target, b"third party").unwrap();
+        assert!(replace_save_destination(&staging, &target, before, metadata).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"third party");
+        assert_eq!(std::fs::read(&staging).unwrap(), b"attachment");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_keeps_a_destination_symlink_and_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        let original = dir.path().join("original.txt");
+        let link = dir.path().join("link.txt");
+        std::fs::write(&source, b"attachment").unwrap();
+        std::fs::write(&original, b"unrelated").unwrap();
+        std::os::unix::fs::symlink(&original, &link).unwrap();
+        assert!(save_attachment_as(&source, &link).is_err());
+        assert_eq!(std::fs::read_link(&link).unwrap(), original);
+        assert_eq!(std::fs::read(&original).unwrap(), b"unrelated");
+    }
+
+    #[test]
+    fn saving_cached_attachments_marks_each_copy_and_preserves_other_files() {
+        use attachment_provenance::tests::{assert_download_mark, assert_unmarked};
+
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("cache.txt");
+        let target = root.path().join("relatório 日本語.txt");
+        std::fs::write(&cache, b"chat attachment").unwrap();
+        save_attachment_as(&cache, &target).unwrap();
+        assert_download_mark(&target);
+        assert_unmarked(&cache);
+
+        // Choosing the file itself or a second name for it is a no-op.
+        let alias = root.path().join("alias.txt");
+        std::fs::hard_link(&cache, &alias).unwrap();
+        save_attachment_as(&cache, &cache).unwrap();
+        save_attachment_as(&cache, &alias).unwrap();
+        assert_unmarked(&alias);
+        assert_eq!(std::fs::read(&cache).unwrap(), b"chat attachment");
+        assert_eq!(std::fs::read(&alias).unwrap(), b"chat attachment");
+
+        let original = root.path().join("album.txt");
+        std::fs::write(&original, b"unrelated").unwrap();
+        for n in [2, 3] {
+            let saved = save_album_copy(&cache, root.path(), "album.txt").unwrap();
+            assert_eq!(saved, root.path().join(format!("album ({n}).txt")));
+            assert_download_mark(&saved);
+            assert_eq!(std::fs::read(&saved).unwrap(), b"chat attachment");
+        }
+        assert_unmarked(&original);
+        assert_eq!(std::fs::read(&original).unwrap(), b"unrelated");
+        assert_eq!(std::fs::read(&target).unwrap(), b"chat attachment");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 6);
     }
 
     #[test]

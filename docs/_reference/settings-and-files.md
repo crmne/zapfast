@@ -58,6 +58,30 @@ file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
 become `_`.
 
+New chat attachment downloads and copies made with **Save as…** or
+**Save all…** carry the system's download mark where the filesystem supports
+it. Windows uses Mark of the Web and macOS uses file quarantine. This includes
+chat attachments downloaded to the cache that can be opened in other apps or
+shown in their folder. Older files are marked when you save a new copy.
+Choosing the original file or another hard link to it in **Save as…** leaves
+that file alone. A new Windows copy keeps a valid Internet or Untrusted zone
+and repairs empty, invalid, or less restrictive zone records. A new macOS copy
+keeps valid quarantine details and needs its own approval. The original's
+approval stays with the original file. **Save as…** replaces the selected entry
+after confirmation. Symbolic links and read-only destinations are refused.
+ZapFast still saves the file if the filesystem lacks support or adding the
+mark fails. Unexpected marking errors are recorded in the log. Linux adds
+no mark. The mark helps the system and other apps check the file's origin,
+and you should still take care when opening files from chats.
+
+Downloads fall back to the cache if a folder cannot publish the complete
+file in one operation. On macOS and Linux, **Save as…** and **Save all…**
+can still copy to a new name on a volume that supports neither hard links
+nor exclusive rename. The destination is visible while the copy is finishing.
+If copying fails, ZapFast tries to clear the open file. An empty file can
+remain because removing its name could delete a file another process put
+there. A disconnected volume can leave an incomplete file.
+
 On macOS, settings, state, and the logs are in
 `~/Library/Application Support/me.paolino.zapfast` and the caches in
 `~/Library/Caches/me.paolino.zapfast`. On Windows, settings are in

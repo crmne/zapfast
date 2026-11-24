@@ -270,8 +270,6 @@ zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-c
 # Pauses MPRIS media players while recording or playing voice messages.
 # Already in the tree through fastframe-notifications and fastframe-tray.
 zbus = { version = "5.19", default-features = false, features = ["blocking-api", "tokio"] }
-# Reads the time locale's clock format.
-libc = "0.2"
 # The camera for video calls, through Video4Linux, in Rust: no build-time
 # bindings, so building on Linux needs nothing new.
 linuxvideo = "0.3.5"
@@ -290,6 +288,10 @@ wl-clipboard-rs = "0.9"
 # winit, the fork in [patch.crates-io].
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+# Linux clock format and macOS attachment quarantine.
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menu bar, built with tray-icon's muda at the version
@@ -307,8 +309,8 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-avf
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
-# Locale calls, and the taskbar's light or dark style.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry"] }
+# Locale calls, the taskbar's light or dark style, and attachment filesystem operations.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_SystemServices"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.
 raw-window-handle = "0.6"
 # The camera for video calls, through Media Foundation.
