@@ -32,7 +32,6 @@ const PHOTO_STOP: u8 = 0;
 const PENCIL_STOP: u8 = 1;
 const NAME_CHECK_STOP: u8 = 2;
 const ACTION_STOP: u8 = 3;
-const BLOCK_STOP: u8 = 9;
 pub const MEDIA_ROW_STOP: u8 = 10;
 const PERMISSIONS_STOP: u8 = 11;
 const ADD_MEMBERS_STOP: u8 = 12;
@@ -697,7 +696,6 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     ui.add_space(4.0);
     actions(app, ui, shown, mine, editable);
-    ui.vertical_centered(|ui| super::blocking::button(app, ui, id, Stop::InfoControl(BLOCK_STOP)));
     let describing = app.group_description_edit.take().filter(|_| group_editable);
     if let Some(mut draft) = describing {
         ui.add_space(8.0);
@@ -879,16 +877,24 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             ],
         ));
     }
+    let block_label = crate::blocking::eligible(id, app.me.as_deref(), app.me_lid.as_deref())
+        .then(|| super::blocking::label(app, id));
+    let widths: Vec<_> = buttons
+        .iter()
+        .map(|(_, label, _)| *label)
+        .chain(block_label.as_deref())
+        .map(|label| theme::soft_button_width(ui, label, true))
+        .collect();
     let spacing = ui.spacing().item_spacing.x;
     let available = ui.available_width();
     let mut fired: Option<Vec<Action>> = None;
     let mut start = 0;
-    while start < buttons.len() {
+    while start < widths.len() {
         // Fit and center as many buttons as each row allows.
         let mut end = start;
         let mut total = 0.0;
-        while end < buttons.len() {
-            let width = theme::soft_button_width(ui, buttons[end].1, true);
+        while end < widths.len() {
+            let width = widths[end];
             let grown = if end == start {
                 width
             } else {
@@ -902,9 +908,14 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         }
         ui.horizontal(|ui| {
             ui.add_space((available - total).max(0.0) / 2.0);
-            for (index, (icon, label, actions)) in buttons[start..end].iter().enumerate() {
+            for index in start..end {
+                let stop = Stop::InfoControl(ACTION_STOP + index as u8);
+                let Some((icon, label, actions)) = buttons.get(index) else {
+                    super::blocking::button(app, ui, id, stop);
+                    continue;
+                };
                 if theme::soft_button(ui, &palette, Some(*icon), label, false)
-                    .tab_stop(Stop::InfoControl(ACTION_STOP + (start + index) as u8))
+                    .tab_stop(stop)
                     .clicked()
                 {
                     fired = Some(actions.clone());
@@ -2379,6 +2390,129 @@ pub fn group_name_field_id() -> egui::Id {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blocking_action_joins_the_centered_rows_and_follows_archive_in_tab_order() {
+        use super::{ACTION_STOP, Shown, actions};
+        use crate::app::App;
+        use crate::model::{Action, Chat, Dialog};
+        use crate::paths::AppDirs;
+        use crate::settings::Settings;
+        use crate::ui::focus::{Stop, control, stops};
+
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(directory.path()), Settings::default());
+        let id = "15550002222@s.whatsapp.net";
+        app.chats.push(Chat::new(id.into(), "Contact".into()));
+        app.link = crate::backend::LinkStatus::Connected;
+        app.locale = crate::i18n::Locale::English;
+        let shown = Shown::of(&app, id);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let frame = |app: &mut App, width, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 240.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::ui::focus::begin(ui.ctx(), true);
+                    actions(app, ui, &shown, false, true);
+                    crate::ui::focus::finish(ui.ctx(), true);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+
+        for (blocked, label) in [(false, "Block contact"), (true, "Unblock contact")] {
+            app.blocklist.ids = Some(blocked.then(|| id.to_owned()).into_iter().collect());
+
+            for (width, wraps) in [(900.0, false), (165.0, true)] {
+                let mut output = frame(&mut app, width, Vec::new());
+
+                assert!(output.shapes.iter().any(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == label)
+                }), "expected {label}");
+                output.textures_delta.clear();
+
+                let response = |index| {
+                    let stop = Stop::InfoControl(ACTION_STOP + index);
+                    let widget = control(&ctx, stop).expect("action Tab stop");
+                    ctx.read_response(widget).expect("action response")
+                };
+                let archive = response(5).rect;
+                let block = response(6).rect;
+                if wraps {
+                    assert!(block.top() >= archive.bottom());
+                    assert!((block.center().x - width / 2.0).abs() < 1.0);
+                } else {
+                    assert!((block.center().y - archive.center().y).abs() < 1.0);
+                    assert!(block.left() >= archive.right());
+
+                    let pos = block.center();
+                    let pointer = |pressed| egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    };
+                    app.actions.clear();
+                    frame(&mut app, width, vec![egui::Event::PointerMoved(pos)]);
+                    frame(&mut app, width, vec![pointer(true)]);
+                    frame(&mut app, width, vec![pointer(false)]);
+                    assert!(
+                        app.actions
+                            .contains(&Action::ShowDialog(Dialog::ConfirmBlock {
+                                chat: id.to_owned(),
+                                blocked: !blocked,
+                                from_list: false,
+                            }))
+                    );
+                }
+
+                if !blocked && !wraps {
+                    let action_stops: Vec<_> = stops(&ctx)
+                        .into_iter()
+                        .filter_map(|(stop, _)| match stop {
+                            Stop::InfoControl(index)
+                                if (ACTION_STOP..ACTION_STOP + 7).contains(&index) =>
+                            {
+                                Some(index)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(
+                        action_stops,
+                        (ACTION_STOP..ACTION_STOP + 7).collect::<Vec<_>>()
+                    );
+
+                    let archive_id = control(&ctx, Stop::InfoControl(ACTION_STOP + 5))
+                        .expect("Archive Tab stop");
+                    let block_id = control(&ctx, Stop::InfoControl(ACTION_STOP + 6))
+                        .expect("Block contact Tab stop");
+                    ctx.memory_mut(|memory| memory.request_focus(archive_id));
+                    frame(
+                        &mut app,
+                        width,
+                        vec![egui::Event::Key {
+                            key: egui::Key::Tab,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                    );
+                    assert!(ctx.memory(|memory| memory.has_focus(block_id)));
+                }
+            }
+        }
+    }
+
     /// The picture opens the viewer on its own, not a chat's album (#640).
     #[test]
     fn a_profile_picture_opens_alone_in_the_viewer() {
