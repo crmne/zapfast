@@ -876,9 +876,20 @@ impl Archive {
 
     /// Applies disappearing-message metadata unless a newer setting is stored.
     pub fn set_ephemeral(&self, id: &str, expiration: u32, setting_timestamp: i64) -> Result<bool> {
+        // The phone can report the setting time in milliseconds. Compare in
+        // seconds, including a millisecond time an older build stored, or that
+        // value outranks every later change.
+        let setting_timestamp = if setting_timestamp > 100_000_000_000 {
+            setting_timestamp / 1000
+        } else {
+            setting_timestamp
+        };
         Ok(self.connection.execute(
             "UPDATE chats SET ephemeral_expiration = ?2, ephemeral_setting_timestamp = ?3
-             WHERE id = ?1 AND (ephemeral_setting_timestamp IS NULL OR ephemeral_setting_timestamp <= ?3)",
+             WHERE id = ?1 AND (ephemeral_setting_timestamp IS NULL
+                 OR CASE WHEN ephemeral_setting_timestamp > 100000000000
+                     THEN ephemeral_setting_timestamp / 1000
+                     ELSE ephemeral_setting_timestamp END <= ?3)",
             params![id, expiration, setting_timestamp],
         )? > 0)
     }
@@ -1422,12 +1433,13 @@ impl Archive {
                     ELSE MAX(pending_unread, (SELECT pending_unread FROM chats WHERE id = ?1)) END,
                 ephemeral_expiration = CASE
                     WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NOT NULL
-                        AND (ephemeral_setting_timestamp IS NULL OR (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) >= ephemeral_setting_timestamp)
+                        AND (ephemeral_setting_timestamp IS NULL OR (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)
+                            >= CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END)
                     THEN (SELECT ephemeral_expiration FROM chats WHERE id = ?1)
                     ELSE ephemeral_expiration END,
-                ephemeral_setting_timestamp = CASE WHEN ephemeral_setting_timestamp IS NULL THEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)
-                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN ephemeral_setting_timestamp
-                    ELSE MAX(ephemeral_setting_timestamp, (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1)) END,
+                ephemeral_setting_timestamp = CASE WHEN ephemeral_setting_timestamp IS NULL THEN (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)
+                    WHEN (SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1) IS NULL THEN CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END
+                    ELSE MAX(CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END, (SELECT CASE WHEN ephemeral_setting_timestamp > 100000000000 THEN ephemeral_setting_timestamp / 1000 ELSE ephemeral_setting_timestamp END FROM chats WHERE id = ?1)) END,
                 notification_sound = COALESCE(notification_sound, (SELECT notification_sound FROM chats WHERE id = ?1)),
                 voice_speed = COALESCE(voice_speed, (SELECT voice_speed FROM chats WHERE id = ?1)),
                 history_start = MAX(history_start, COALESCE((SELECT history_start FROM chats WHERE id = ?1), 0))
@@ -4049,6 +4061,104 @@ pub(crate) mod tests {
         assert_eq!(
             archive.ephemeral_expiration(chat).expect("expiration"),
             Some(604_800)
+        );
+    }
+
+    #[test]
+    fn ephemeral_setting_in_milliseconds_does_not_block_later_changes() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+
+        // The phone can report the setting time in milliseconds.
+        assert!(
+            archive
+                .set_ephemeral(chat, 604_800, 1_795_455_896_000)
+                .expect("ms")
+        );
+        assert!(
+            archive
+                .set_ephemeral(chat, 0, 1_795_466_124)
+                .expect("newer")
+        );
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(0)
+        );
+        assert!(
+            !archive
+                .set_ephemeral(chat, 86_400, 1_795_455_000_000)
+                .expect("older ms")
+        );
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn merging_a_privacy_id_keeps_its_newer_timer_over_a_millisecond_one() {
+        let archive = Archive::in_memory().expect("opens");
+        let phone = "1@s.whatsapp.net";
+        let lid = "9@lid";
+        archive.ensure_chat(phone, "Ada").expect("phone chat");
+        archive.ensure_chat(lid, "Ada").expect("lid chat");
+        // The phone-number row holds an older time in milliseconds.
+        archive
+            .connection
+            .execute(
+                "UPDATE chats SET ephemeral_expiration = 604800,
+                 ephemeral_setting_timestamp = 1795455896000 WHERE id = ?1",
+                params![phone],
+            )
+            .expect("seed");
+        assert!(archive.set_ephemeral(lid, 0, 1_795_466_124).expect("newer"));
+
+        archive.put_lid("9", "1").expect("merge");
+
+        assert_eq!(
+            archive.ephemeral_expiration(phone).expect("expiration"),
+            Some(0)
+        );
+        let stored: Option<i64> = archive
+            .connection
+            .query_row(
+                "SELECT ephemeral_setting_timestamp FROM chats WHERE id = ?1",
+                params![phone],
+                |row| row.get(0),
+            )
+            .expect("timestamp");
+        assert_eq!(stored, Some(1_795_466_124));
+    }
+
+    #[test]
+    fn a_stored_millisecond_setting_does_not_block_later_changes() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        // Archives written before the fix may hold a millisecond time.
+        archive
+            .connection
+            .execute(
+                "UPDATE chats SET ephemeral_expiration = 604800,
+                 ephemeral_setting_timestamp = 1795455896000 WHERE id = ?1",
+                params![chat],
+            )
+            .expect("seed");
+
+        assert!(
+            !archive
+                .set_ephemeral(chat, 86_400, 1_795_455_000)
+                .expect("older")
+        );
+        assert!(
+            archive
+                .set_ephemeral(chat, 0, 1_795_466_124)
+                .expect("newer")
+        );
+        assert_eq!(
+            archive.ephemeral_expiration(chat).expect("expiration"),
+            Some(0)
         );
     }
 
