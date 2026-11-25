@@ -778,22 +778,33 @@ fn find_ignoring_case(text: &str, needle: &str) -> Option<Range<usize>> {
     if needle.is_empty() {
         return None;
     }
-    for (start, _) in text.char_indices() {
-        let mut lowered = String::new();
-        for (offset, letter) in text[start..].char_indices() {
-            for lower in letter.to_lowercase() {
-                if lower == 'ß' {
-                    lowered.push_str("ss");
-                } else {
-                    lowered.push(lower);
+    for (start, first) in text.char_indices() {
+        // A match can also begin on the second s of a ß: "se" in "Straße".
+        let skips = if first.to_lowercase().any(|lower| lower == 'ß') {
+            2
+        } else {
+            1
+        };
+        for skip in 0..skips {
+            let mut lowered = String::new();
+            for (offset, letter) in text[start..].char_indices() {
+                for lower in letter.to_lowercase() {
+                    if lower == 'ß' {
+                        lowered.push_str("ss");
+                    } else {
+                        lowered.push(lower);
+                    }
                 }
-            }
-            // One letter can fold to two, so "weis" ends inside the ß of "Weiß".
-            if lowered.starts_with(&needle) {
-                return Some(start..start + offset + letter.len_utf8());
-            }
-            if !needle.starts_with(&lowered) {
-                break;
+                if offset == 0 {
+                    lowered.drain(..skip);
+                }
+                // One letter can fold to two, so "weis" ends inside the ß of "Weiß".
+                if lowered.starts_with(&needle) {
+                    return Some(start..start + offset + letter.len_utf8());
+                }
+                if !needle.starts_with(&lowered) {
+                    break;
+                }
             }
         }
     }
@@ -859,6 +870,7 @@ mod tests {
         assert_eq!(find_ignoring_case("ÜBER alles", "über"), Some(0..5));
         assert_eq!(find_ignoring_case("Herr Weiß", "WEISS"), Some(5..10));
         assert_eq!(find_ignoring_case("Weiß", "weis"), Some(0..5));
+        assert_eq!(find_ignoring_case("Straße", "se"), Some(4..7));
         assert_eq!(find_ignoring_case("STRASSE", "straße"), Some(0..7));
         // "İ" lowercases to two characters; the range still covers the
         // original letter.
