@@ -554,9 +554,14 @@ impl Archive {
         Ok(())
     }
 
+    /// Whether writes made now may still roll back with an open batch.
+    pub fn in_batch(&self) -> bool {
+        !self.connection.is_autocommit()
+    }
+
     #[cfg(test)]
     pub(crate) fn in_batch_for_test(&self) -> bool {
-        !self.connection.is_autocommit()
+        self.in_batch()
     }
 
     #[cfg(test)]
@@ -2478,7 +2483,9 @@ impl Archive {
                  WHERE NOT (id = ?2 AND chat IN (SELECT value FROM json_each(?1)))
                    AND (json_extract(content, '$.media.path') = ?3
                         OR json_extract(content, '$.card.image.path') = ?3
-                        OR json_extract(content, '$.motion.path') = ?3))",
+                        OR json_extract(content, '$.motion.path') = ?3
+                        OR EXISTS (SELECT 1 FROM json_each(content, '$.card.carousel') c
+                                   WHERE json_extract(c.value, '$.image.path') = ?3)))",
         )?;
         let mut only = Vec::new();
         for file in files {
@@ -4696,6 +4703,20 @@ pub(crate) mod tests {
             archive.files_only_in(&here, "original").unwrap(),
             vec![PathBuf::from("shared.jpg")]
         );
+        // A carousel card's picture counts as a use too.
+        archive
+            .insert_message(&message(chat, "carousel", 300, false), None)
+            .expect("insert");
+        archive
+            .connection
+            .execute(
+                "UPDATE messages SET content = json_set(content, '$.card',
+                     json('{\"carousel\": [{\"image\": {\"path\": \"shared.jpg\"}}]}'))
+                 WHERE chat = ?1 AND id = 'carousel'",
+                params![chat],
+            )
+            .expect("carousel card");
+        assert!(archive.files_only_in(&here, "original").unwrap().is_empty());
     }
 
     /// Every table keyed by chat besides `chats` itself.
