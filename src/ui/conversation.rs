@@ -8985,7 +8985,10 @@ fn album_content(
         )
         .clicked()
     {
-        actions.push(Action::SaveAttachments { files });
+        actions.push(Action::SaveAttachments {
+            files,
+            text_files: Vec::new(),
+        });
     }
     if !missing.is_empty() {
         let downloading = missing.iter().all(|message| {
@@ -11763,20 +11766,283 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                     );
                 });
             app.actions.extend(actions);
+
+            let save = app
+                .conversations
+                .get(chat)
+                .map(|conversation| selection_save_items(&conversation.messages, selected))
+                .unwrap_or_default();
+            if (!save.files.is_empty() || !save.text_files.is_empty())
+                && theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(locale, "Save all…"),
+                    false,
+                )
+                .clicked()
+            {
+                app.actions.push(Action::SaveAttachments {
+                    files: save.files,
+                    text_files: save.text_files,
+                });
+            }
+            if !save.missing.is_empty() {
+                let downloading = save.missing.iter().all(|item| item.downloading);
+                if theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(
+                        locale,
+                        if downloading {
+                            "Downloading…"
+                        } else {
+                            "Download all"
+                        },
+                    ),
+                    false,
+                )
+                .clicked()
+                {
+                    for item in save.missing {
+                        if !item.downloading {
+                            app.actions.push(Action::Download {
+                                manual: true,
+                                card: item.card,
+                                chat: item.chat,
+                                message: item.message,
+                            });
+                        }
+                    }
+                }
+            }
         });
     });
 }
 
+#[derive(Default)]
+struct SelectionSaveItems {
+    files: Vec<(PathBuf, String)>,
+    text_files: Vec<(String, String)>,
+    missing: Vec<MissingAttachment>,
+}
+
+struct MissingAttachment {
+    chat: ChatId,
+    message: String,
+    card: Option<usize>,
+    downloading: bool,
+}
+
+/// Collects downloaded attachments, location text exports, combined text
+/// messages, and undownloaded media from the currently selected messages in
+/// chat order.
+fn selection_save_items(messages: &[Message], selected: &[String]) -> SelectionSaveItems {
+    let selected_ids: std::collections::HashSet<&str> =
+        selected.iter().map(String::as_str).collect();
+    let mut items = SelectionSaveItems::default();
+    let mut text_entries = Vec::new();
+    for message in messages {
+        if !selected_ids.contains(message.id.as_str()) {
+            continue;
+        }
+        if let Some(media) = message.content.media() {
+            if let Some(path) = media.path.as_ref() {
+                items
+                    .files
+                    .push((path.clone(), attachment_name(&message.content, path)));
+            } else {
+                items.missing.push(MissingAttachment {
+                    chat: message.chat.clone(),
+                    message: message.id.clone(),
+                    card: None,
+                    downloading: matches!(media.state, MediaState::Downloading),
+                });
+            }
+        }
+        if let Content::Interactive {
+            card: Some(card), ..
+        } = &message.content
+        {
+            for (index, child) in card.carousel.iter().enumerate() {
+                if let Some(media) = child.image.as_ref() {
+                    if let Some(path) = media.path.as_ref() {
+                        items
+                            .files
+                            .push((path.clone(), attachment_name(&message.content, path)));
+                    } else {
+                        items.missing.push(MissingAttachment {
+                            chat: message.chat.clone(),
+                            message: message.id.clone(),
+                            card: Some(index),
+                            downloading: matches!(media.state, MediaState::Downloading),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(location_file) = location_text_file(message) {
+            items.text_files.push(location_file);
+        }
+        if let Some(entry) = text_message_entry(message) {
+            text_entries.push(entry);
+        }
+    }
+    if !text_entries.is_empty() {
+        items.text_files.push((
+            "messages.txt".to_owned(),
+            format!("{}\n", text_entries.join("\n")),
+        ));
+    }
+    items
+}
+
+/// Formats a text message line for the combined `messages.txt` export.
+fn text_message_entry(message: &Message) -> Option<String> {
+    let text = match &message.content {
+        Content::Text { text, .. } | Content::Interactive { text, .. } => text.trim(),
+        _ => return None,
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let sender = message_sender_label(message);
+    let stamp = crate::util::copy_stamp(message.timestamp);
+    Some(match (stamp.is_empty(), sender.is_empty()) {
+        (false, false) => format!("[{stamp}] {sender}: {text}"),
+        (false, true) => format!("[{stamp}] {text}"),
+        (true, false) => format!("{sender}: {text}"),
+        (true, true) => text.to_owned(),
+    })
+}
+
+fn message_sender_label(message: &Message) -> String {
+    message
+        .sender_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if message.from_me {
+                "You".to_owned()
+            } else {
+                message.sender.clone()
+            }
+        })
+}
+
+/// Formats a location or live-location message as a `.txt` file (`(name, body)`).
+fn location_text_file(message: &Message) -> Option<(String, String)> {
+    let (latitude, longitude, name, address) = match &message.content {
+        Content::Location {
+            latitude,
+            longitude,
+            name,
+            address,
+        } => (*latitude, *longitude, name.as_deref(), address.as_deref()),
+        Content::LiveLocation {
+            latitude,
+            longitude,
+            ..
+        } => (*latitude, *longitude, None, None),
+        _ => return None,
+    };
+
+    let clean_name = name
+        .map(|raw| {
+            let cleaned: String = raw
+                .trim()
+                .chars()
+                .map(|c| {
+                    if c.is_control()
+                        || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                    {
+                        '_'
+                    } else {
+                        c
+                    }
+                })
+                .take(80)
+                .collect();
+            let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+            let device = trimmed
+                .split('.')
+                .next()
+                .unwrap_or(trimmed)
+                .to_ascii_uppercase();
+            let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || ((device.starts_with("COM") || device.starts_with("LPT"))
+                    && device.len() == 4
+                    && device[3..].chars().all(|c| c.is_ascii_digit()));
+            if reserved {
+                format!("_{trimmed}")
+            } else {
+                trimmed.to_owned()
+            }
+        })
+        .filter(|s| !s.is_empty());
+
+    let file_name = match &clean_name {
+        Some(stem) => format!("{stem}.txt"),
+        None => "location.txt".to_owned(),
+    };
+
+    let mut lines = Vec::new();
+    if let Some(name) = name.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("Name: {name}"));
+    }
+    if let Some(address) = address.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("Address: {address}"));
+    }
+    lines.push(format!("Coordinates: {latitude:.6}, {longitude:.6}"));
+    lines.push(format!(
+        "Google Maps: https://www.google.com/maps/search/?api=1&query={latitude:.6},{longitude:.6}"
+    ));
+    let stamp = crate::util::copy_stamp(message.timestamp);
+    if !stamp.is_empty() {
+        lines.push(format!("Date: {stamp}"));
+    }
+    let sender = message_sender_label(message);
+    if !sender.is_empty() {
+        lines.push(format!("Sender: {sender}"));
+    }
+    lines.push(String::new());
+    Some((file_name, lines.join("\n")))
+}
+
 /// The file name to suggest when saving an attachment: the sender's name for
-/// documents, the cached file's name otherwise. Path separators are dropped so
-/// a crafted name cannot point the dialog somewhere else.
+/// documents, the cached file's name otherwise (stripping legacy JID prefixes).
+/// Path separators are dropped so a crafted name cannot point the dialog
+/// somewhere else.
 fn attachment_name(content: &Content, path: &Path) -> String {
     let name = match content {
         Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
-        _ => path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "attachment".to_owned()),
+        _ => {
+            let raw = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "attachment".to_owned());
+            let legacy_jid_prefix = raw.contains("_s_whatsapp_net-")
+                || raw.contains("_g_us-")
+                || raw.contains("_lid-")
+                || raw.contains("_broadcast-");
+            if legacy_jid_prefix {
+                let ext = path
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default();
+                let stem = match content {
+                    Content::Image { .. } => "image",
+                    Content::Video { .. } => "video",
+                    Content::Audio { .. } => "audio",
+                    Content::Sticker { .. } => "sticker",
+                    _ => "file",
+                };
+                format!("{stem}{ext}")
+            } else {
+                raw
+            }
+        }
     };
     name.replace(['/', '\\'], "_")
 }
@@ -11807,6 +12073,109 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn location_text_file_includes_coordinates_maps_link_and_metadata() {
+        let message = super::Message {
+            id: "loc-1".into(),
+            chat: "5511999999999@s.whatsapp.net".into(),
+            sender: "5511999999999@s.whatsapp.net".into(),
+            sender_name: Some("Maria".into()),
+            from_me: false,
+            timestamp: 1_700_000_000,
+            content: super::Content::Location {
+                latitude: -23.55052,
+                longitude: -46.63331,
+                name: Some("Praça da Sé".into()),
+                address: Some("Centro, São Paulo - SP".into()),
+            },
+            status: super::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            history_order: None,
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let (file_name, body) = super::location_text_file(&message).expect("location txt");
+        assert_eq!(file_name, "Praça da Sé.txt");
+        assert!(body.contains("Name: Praça da Sé"));
+        assert!(body.contains("Address: Centro, São Paulo - SP"));
+        assert!(body.contains("Coordinates: -23.550520, -46.633310"));
+        assert!(
+            body.contains("https://www.google.com/maps/search/?api=1&query=-23.550520,-46.633310")
+        );
+        assert!(body.contains("Sender: Maria"));
+    }
+
+    #[test]
+    fn attachment_name_strips_legacy_jid_prefix_for_media() {
+        let photo = super::Content::Image {
+            caption: None,
+            media: crate::model::Media {
+                album: None,
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+            motion: None,
+        };
+        assert_eq!(
+            super::attachment_name(
+                &photo,
+                super::Path::new("/cache/5511999999999_s_whatsapp_net-ABC123.jpg")
+            ),
+            "image.jpg"
+        );
+        assert_eq!(
+            super::attachment_name(&photo, super::Path::new("/downloads/image (2).jpg")),
+            "image (2).jpg"
+        );
+    }
+
+    #[test]
+    fn selection_save_items_combines_text_messages_into_one_txt() {
+        let make =
+            |id: &str, from_me: bool, sender_name: Option<&str>, text: &str| super::Message {
+                id: id.into(),
+                chat: "5511999999999@s.whatsapp.net".into(),
+                sender: "5511999999999@s.whatsapp.net".into(),
+                sender_name: sender_name.map(Into::into),
+                from_me,
+                timestamp: 1_700_000_000,
+                content: super::Content::text(text),
+                status: super::Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                history_order: None,
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            };
+        let messages = vec![
+            make("m1", false, Some("Maria"), "Primeira mensagem"),
+            make("m2", true, None, "Segunda mensagem"),
+            make("m3", false, Some("Maria"), "Nao selecionada"),
+        ];
+        let selected = vec!["m1".to_owned(), "m2".to_owned()];
+        let save = super::selection_save_items(&messages, &selected);
+        assert!(save.files.is_empty());
+        assert!(save.missing.is_empty());
+        assert_eq!(save.text_files.len(), 1);
+        assert_eq!(save.text_files[0].0, "messages.txt");
+        assert!(save.text_files[0].1.contains("Maria: Primeira mensagem"));
+        assert!(save.text_files[0].1.contains("You: Segunda mensagem"));
+        assert!(!save.text_files[0].1.contains("Nao selecionada"));
+    }
+
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]
     fn a_vibrant_header_folds_its_buttons_rather_than_cover_the_name() {

@@ -2972,9 +2972,10 @@ pub enum Action {
         path: PathBuf,
         name: String,
     },
-    /// Saves a group of downloaded album attachments into one chosen folder.
+    /// Saves a group of downloaded attachments and generated text files into one chosen folder.
     SaveAttachments {
         files: Vec<(PathBuf, String)>,
+        text_files: Vec<(String, String)>,
     },
     OpenUrl(String),
     CopyText(String),
