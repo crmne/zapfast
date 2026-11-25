@@ -2626,6 +2626,25 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes.
             "call" => call_sample(app, true, false),
+            // A call rings while a proxy is set: the prompt says the call
+            // goes around it.
+            "call-proxy" | "call-proxy-asked" => {
+                app.proxy_for_calls = Some(true);
+                call_sample(app, true, false);
+                if part == "call-proxy-asked" {
+                    app.call_proxy_asked = app.call.as_ref().map(|call| call.generation);
+                }
+            }
+            // Placing a call while a proxy is set asks first.
+            "call-without-proxy" => {
+                app.proxy_for_calls = Some(true);
+                app.dialog = Some(Dialog::ConfirmCallWithoutProxy(
+                    crate::model::UnproxiedCall::Place {
+                        chat: JONAS.to_owned(),
+                        video: false,
+                    },
+                ));
+            }
             "call-active" => call_sample(app, false, false),
             // The other states of a call: dialing, muted with the device
             // pickers open and a headset gone, its farewell, and the strip a
@@ -9849,6 +9868,9 @@ mod tests {
             "call-bubbles",
             "call-bubbles,light",
             "call",
+            "call-proxy",
+            "call-proxy-asked",
+            "call-without-proxy",
             "call-active",
             "call-outgoing",
             "call-connecting",

@@ -252,7 +252,9 @@ name or description, in the interface language or in English.
   at once. Empty uses `ALL_PROXY` or `HTTPS_PROXY` from the environment and
   honors `NO_PROXY`. A call's signaling goes through the proxy, but its audio
   and video do not: they travel over UDP straight to WhatsApp's call relays,
-  which see this computer's address.
+  which see this computer's address. While a proxy is set, placing a call or
+  joining a call link asks first; a ringing call says so, and its first
+  **Accept** asks before the next one answers.
 - **GIPHY API key**: for GIF search, unless the build includes one. Set
   `ZAPFAST_GIPHY_KEY` at compile time to include a default key. The earlier
   `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.

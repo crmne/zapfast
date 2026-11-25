@@ -20,7 +20,7 @@ use super::{App, CALL_FAREWELL, notification_sound};
 use crate::backend::{Backend, Command};
 use crate::call_tones::Tone;
 use crate::calls::{CallPhase, CallUpdate};
-use crate::model::{AccountId, Action, CallDirection, Chat, ChatId};
+use crate::model::{AccountId, Action, CallDirection, Chat, ChatId, Dialog, UnproxiedCall};
 use crate::settings::NotificationSound;
 
 /// One person on a group call, as the call screen draws them.
@@ -195,6 +195,14 @@ impl App {
 
     /// Whether the call on screen is being answered: Accept was clicked and
     /// the call is not up yet.
+    /// Whether Accept was clicked once on the ringing call while a proxy is
+    /// set, so the prompt now asks and the next Accept answers.
+    pub fn call_proxy_asked(&self) -> bool {
+        self.call
+            .as_ref()
+            .is_some_and(|call| self.call_proxy_asked == Some(call.generation))
+    }
+
     pub fn call_being_answered(&self) -> bool {
         self.call
             .as_ref()
@@ -378,6 +386,21 @@ impl App {
     /// it as placing in this same frame, with the peer's name and picture,
     /// and the worker's updates move it on once its offer is out. A group's
     /// chat starts a call in the group, drawn as a group call from the start.
+    /// Whether a proxy is set, in Settings or the environment, that a call
+    /// would go around: its audio and video travel over UDP straight to
+    /// WhatsApp's call relays, which see this computer's address. Tests see
+    /// no proxy unless they set one, whatever the environment running them has.
+    pub(crate) fn calls_skip_proxy(&self) -> bool {
+        #[cfg(any(test, feature = "demo"))]
+        if let Some(set) = self.proxy_for_calls {
+            return set;
+        }
+        if cfg!(test) {
+            return false;
+        }
+        crate::proxy::for_whatsapp().is_some()
+    }
+
     fn place_call(&mut self, chat: ChatId, video: bool) {
         if self.blocklist.contains(&chat) {
             self.toast_error(crate::i18n::gettext(
@@ -386,6 +409,17 @@ impl App {
             ));
             return;
         }
+        if self.calls_skip_proxy() {
+            self.dialog = Some(Dialog::ConfirmCallWithoutProxy(UnproxiedCall::Place {
+                chat,
+                video,
+            }));
+            return;
+        }
+        self.start_call(chat, video);
+    }
+
+    fn start_call(&mut self, chat: ChatId, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         let group = crate::model::ChatKind::from_id(&chat) == crate::model::ChatKind::Group;
@@ -414,6 +448,17 @@ impl App {
             ));
             return;
         }
+        if self.calls_skip_proxy() {
+            self.dialog = Some(Dialog::ConfirmCallWithoutProxy(UnproxiedCall::Link {
+                token,
+                video,
+            }));
+            return;
+        }
+        self.start_call_link(token, video);
+    }
+
+    fn start_call_link(&mut self, token: String, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         self.backend.send(Command::JoinCallLink {
@@ -696,6 +741,30 @@ impl App {
             }
             Action::StartCall(chat) => self.place_call(chat, false),
             Action::StartVideoCall(chat) => self.place_call(chat, true),
+            Action::CallWithoutProxy(call) => {
+                if self.dialog == Some(Dialog::ConfirmCallWithoutProxy(call.clone())) {
+                    self.dialog = None;
+                }
+                if self.call_live() {
+                    self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "Hang up the current call first",
+                    ));
+                } else {
+                    match call {
+                        // Blocked while the question was open: same answer
+                        // as before it was asked.
+                        UnproxiedCall::Place { chat, .. } if self.blocklist.contains(&chat) => {
+                            self.toast_error(crate::i18n::gettext(
+                                self.locale,
+                                "Unblock this contact to call them.",
+                            ));
+                        }
+                        UnproxiedCall::Place { chat, video } => self.start_call(chat, video),
+                        UnproxiedCall::Link { token, video } => self.start_call_link(token, video),
+                    }
+                }
+            }
             Action::SetCallCamera(on) => self.send_call_command(Command::SetCallCamera(on)),
             Action::SetCallCameraDevice(device) => {
                 self.send_call_command(Command::SetCallCameraDevice(device));
@@ -704,8 +773,15 @@ impl App {
                 if let Some(call) = &self.call
                     && self.call_answering != Some(call.generation)
                 {
-                    self.call_answering = Some(call.generation);
-                    self.send_call_command(Command::AnswerCall);
+                    let generation = call.generation;
+                    // While a proxy is set the first Accept only asks, on
+                    // the ringing screen itself, which covers any dialog.
+                    if self.calls_skip_proxy() && self.call_proxy_asked != Some(generation) {
+                        self.call_proxy_asked = Some(generation);
+                    } else {
+                        self.call_answering = Some(generation);
+                        self.send_call_command(Command::AnswerCall);
+                    }
                 }
             }
             Action::DeclineCall => {
@@ -1082,6 +1158,70 @@ mod tests {
         );
     }
 
+    /// With a proxy set, placing a call or joining a call link asks first,
+    /// since the call's media goes around the proxy; agreeing goes ahead.
+    #[test]
+    fn with_a_proxy_a_call_asks_before_it_starts() {
+        let _on = crate::calls::override_group_calls(true);
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        app.proxy_for_calls = Some(true);
+        let ctx = egui::Context::default();
+
+        app.apply(Action::StartVideoCall(ADA.into()), &ctx);
+        assert!(self::sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        let placed = UnproxiedCall::Place {
+            chat: ADA.into(),
+            video: true,
+        };
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::ConfirmCallWithoutProxy(placed.clone()))
+        );
+        app.apply(Action::CallWithoutProxy(placed), &ctx);
+        assert!(app.dialog.is_none());
+        assert!(matches!(
+            self::sent(&mut commands).as_slice(),
+            [Command::StartCall { chat, video: true, .. }] if chat == ADA
+        ));
+        app.apply(Action::HangupCall, &ctx);
+        let _ = self::sent(&mut commands);
+
+        // A contact blocked while the question was open is not called.
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        app.blocklist.ids = Some([ADA.to_owned()].into());
+        app.apply(
+            Action::CallWithoutProxy(UnproxiedCall::Place {
+                chat: ADA.into(),
+                video: false,
+            }),
+            &ctx,
+        );
+        assert!(self::sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        app.blocklist.ids = None;
+
+        app.apply(
+            Action::OpenUrl("https://call.whatsapp.com/voice/AbCdEf1234567890".to_owned()),
+            &ctx,
+        );
+        assert!(self::sent(&mut commands).is_empty());
+        let joined = UnproxiedCall::Link {
+            token: "AbCdEf1234567890".to_owned(),
+            video: false,
+        };
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::ConfirmCallWithoutProxy(joined.clone()))
+        );
+        app.apply(Action::CallWithoutProxy(joined), &ctx);
+        assert!(matches!(
+            self::sent(&mut commands).as_slice(),
+            [Command::JoinCallLink { video: false, .. }]
+        ));
+    }
+
     #[test]
     fn a_call_link_is_joined_here() {
         let _on = crate::calls::override_group_calls(true);
@@ -1125,6 +1265,38 @@ mod tests {
         chat.archived = false;
         chat.locked = true;
         assert!(!call_notification_eligible(&chat, now));
+    }
+
+    /// With a proxy set, the first Accept only asks on the ringing screen;
+    /// the second answers, around the proxy.
+    #[test]
+    fn with_a_proxy_accept_asks_before_it_answers() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        app.proxy_for_calls = Some(true);
+        let ctx = egui::Context::default();
+        app.handle_call_update(update(1, CallPhase::Incoming));
+        let _ = sent(&mut commands);
+        app.apply(Action::AnswerCall, &ctx);
+        assert!(app.call_proxy_asked());
+        assert!(!app.call_being_answered());
+        assert!(
+            !sent(&mut commands)
+                .iter()
+                .any(|command| matches!(command, Command::AnswerCall))
+        );
+        app.apply(Action::AnswerCall, &ctx);
+        assert!(app.call_being_answered());
+        assert!(
+            sent(&mut commands)
+                .iter()
+                .any(|command| matches!(command, Command::AnswerCall))
+        );
+        // The next call asks afresh.
+        app.handle_call_update(update(1, CallPhase::Ended));
+        app.dismiss_call();
+        app.handle_call_update(update(2, CallPhase::Incoming));
+        assert!(!app.call_proxy_asked());
     }
 
     /// Answering takes seconds while the call keeps ringing on screen: Accept is disabled and a

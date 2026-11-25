@@ -73,7 +73,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
                 Dialog::Labels => 460.0,
                 Dialog::AddGroupMembers(_) => 420.0,
-                Dialog::ConfirmResetInviteLink(_) | Dialog::ConfirmRemoveMember { .. } => 380.0,
+                Dialog::ConfirmResetInviteLink(_)
+                | Dialog::ConfirmRemoveMember { .. }
+                | Dialog::ConfirmCallWithoutProxy(_) => 380.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
@@ -143,6 +145,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmRemoveMember { chat, member } => {
                     confirm_remove_member(app, ui, &chat, &member)
                 }
+                Dialog::ConfirmCallWithoutProxy(call) => confirm_call_without_proxy(app, ui, call),
             }
         });
     #[cfg(any(test, feature = "demo"))]
@@ -1709,6 +1712,41 @@ fn confirm_reset_invite_link(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         ui,
         crate::i18n::gettext(locale, "Reset link").as_ref(),
         Action::ResetInviteLink(chat.to_owned()),
+    );
+}
+
+/// What a call says while a proxy is set, before it is placed and while it
+/// rings. The literal stays inside `gettext` so the catalogs pick it up.
+pub(crate) fn proxy_skipped_by_calls(locale: crate::i18n::Locale) -> String {
+    crate::i18n::gettext(
+        locale,
+        "Calls don't use your proxy. WhatsApp's call servers will see this computer's address.",
+    )
+    .into_owned()
+}
+
+/// Asks before a call while a proxy is set: the call's audio and video go
+/// around it, straight to WhatsApp's call servers.
+fn confirm_call_without_proxy(app: &mut App, ui: &mut egui::Ui, call: crate::model::UnproxiedCall) {
+    let palette = app.palette;
+    let locale = app.locale;
+    title(
+        ui,
+        app,
+        crate::i18n::gettext(locale, "Call without the proxy?").as_ref(),
+    );
+    theme::paragraph(
+        ui,
+        proxy_skipped_by_calls(locale),
+        theme::regular(13.5),
+        palette.text,
+    );
+    ui.add_space(10.0);
+    confirm_buttons(
+        app,
+        ui,
+        crate::i18n::gettext(locale, "Call anyway").as_ref(),
+        Action::CallWithoutProxy(call),
     );
 }
 

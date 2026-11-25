@@ -757,25 +757,90 @@ fn ringing(
     area: Rect,
 ) {
     let locale = app.locale;
-    ui.vertical_centered(|ui| {
-        ui.add_space(area.height() * 0.18);
-        let size = (area.height() * 0.24).clamp(96.0, 160.0);
-        widgets::avatar(ui, palette, who.peer, &call.chat, size, who.picture);
-        ui.add_space(18.0);
-        theme::text(ui, who.peer, theme::bold(26.0), palette.text);
-        ui.add_space(6.0);
-        theme::text(
-            ui,
-            incoming_text(locale, call, who.caller),
-            theme::medium(15.0),
-            palette.secondary,
-        );
-        // Who is on the group call already, by their pictures.
-        let joined: Vec<&CallPerson> = who.people.iter().filter(|person| person.joined).collect();
-        if !joined.is_empty() {
-            ui.add_space(16.0);
-            faces(ui, palette, &joined);
-        }
+    let proxy_note = app
+        .calls_skip_proxy()
+        .then(|| super::dialogs::proxy_skipped_by_calls(locale));
+    let asked = proxy_note.is_some() && app.call_proxy_asked();
+    // Everything above the answers stays above them: in a short window it
+    // scrolls rather than running into Accept and Decline.
+    let above = Rect::from_min_max(
+        area.min,
+        egui::pos2(area.right(), area.bottom() - CONTROL - 26.0 - CONTROL_GAP),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(above), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("ringing")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    // In a short window the picture and the space above it
+                    // give way first, so the name and the note stay in view.
+                    let note = proxy_note.as_ref().map_or(0.0, |note| {
+                        let width = ui.available_width();
+                        10.0 + ui.fonts_mut(|fonts| {
+                            fonts
+                                .layout(
+                                    note.clone(),
+                                    theme::regular(13.5),
+                                    palette.secondary,
+                                    width,
+                                )
+                                .size()
+                                .y
+                        })
+                    });
+                    let pictures = if who.people.iter().any(|person| person.joined) {
+                        16.0 + FACE
+                    } else {
+                        0.0
+                    };
+                    // The name, the call line, and the gaps egui keeps between them.
+                    let question = if asked { 30.0 } else { 0.0 };
+                    let words = 120.0 + note + question + pictures;
+                    let room = (above.height() - words).max(0.0);
+                    let size = (area.height() * 0.24).clamp(96.0, 160.0).min(room);
+                    ui.add_space((area.height() * 0.18).min(room - size));
+                    // Too short even for a small picture: the words matter more.
+                    if size >= 40.0 {
+                        widgets::avatar(ui, palette, who.peer, &call.chat, size, who.picture);
+                        ui.add_space(18.0);
+                    }
+                    theme::text(ui, who.peer, theme::bold(26.0), palette.text);
+                    ui.add_space(6.0);
+                    theme::text(
+                        ui,
+                        incoming_text(locale, call, who.caller),
+                        theme::medium(15.0),
+                        palette.secondary,
+                    );
+                    // Answering would go around the proxy, so the prompt
+                    // says so first.
+                    if let Some(note) = proxy_note {
+                        ui.add_space(10.0);
+                        theme::paragraph(ui, note, theme::regular(13.5), palette.secondary);
+                        // After the first Accept the prompt asks outright.
+                        if asked {
+                            ui.add_space(6.0);
+                            theme::paragraph(
+                                ui,
+                                gettext(
+                                    locale,
+                                    "Answer without the proxy? Accept again to answer.",
+                                ),
+                                theme::medium(13.5),
+                                palette.text,
+                            );
+                        }
+                    }
+                    // Who is on the group call already, by their pictures.
+                    let joined: Vec<&CallPerson> =
+                        who.people.iter().filter(|person| person.joined).collect();
+                    if !joined.is_empty() {
+                        ui.add_space(16.0);
+                        faces(ui, palette, &joined);
+                    }
+                });
+            });
     });
     bottom_row(ui, area, CONTROL + 26.0, |ui| {
         let gap = 72.0;
