@@ -297,7 +297,9 @@ async fn request_reupload(
     media_key: &[u8],
     error: String,
 ) -> Result<String, String> {
-    let expired = ["403", "404", "410"].iter().any(|code| error.contains(code));
+    let expired = ["403", "404", "410"]
+        .iter()
+        .any(|code| error.contains(code));
     let target = whatsapp_rust::MessageId::new(id)
         .and_then(|id| whatsapp_rust::MessageRef::new(chat, id, participant, is_from_me));
     let (true, Ok(target), Ok(media_key)) = (expired, target, <&[u8; 32]>::try_from(media_key))
