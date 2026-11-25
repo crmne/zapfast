@@ -509,10 +509,16 @@ pub enum Command {
     },
     /// Deletes a label and takes it off every chat.
     DeleteLabel(String),
-    /// Replaces the labels of one chat.
+    /// Replaces the local labels of one chat.
     SetChatLabels {
         chat: ChatId,
         labels: Vec<String>,
+    },
+    /// Adds or removes a synced WhatsApp label/list on one chat.
+    SetSyncedChatLabel {
+        chat: ChatId,
+        label_id: String,
+        labeled: bool,
     },
     /// Normalizes, encodes, and sends mono 48 kHz push-to-talk audio.
     SendVoice {

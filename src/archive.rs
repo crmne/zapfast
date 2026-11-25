@@ -22,7 +22,7 @@ pub use encryption::{archive_key_identity, copy_archive_key, forget_archive_key}
 mod favorites;
 pub use favorites::Favorite;
 mod labels;
-pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT};
+pub use labels::{DEFAULT_COLOR, LABEL_LIMIT, NAME_LIMIT, PhoneLabel, synced_label_raw_id};
 mod pins;
 pub use pins::{Pinned, Pinner};
 mod polls;
@@ -1373,6 +1373,14 @@ impl Archive {
             params![lid_chat, phone_chat],
         )?;
         transaction.execute(
+            "INSERT INTO synced_chat_labels (chat, label, labeled, updated_at)
+             SELECT ?2, label, labeled, updated_at FROM synced_chat_labels WHERE chat = ?1
+             ON CONFLICT(chat, label) DO UPDATE SET
+                labeled = excluded.labeled, updated_at = excluded.updated_at
+             WHERE excluded.updated_at >= synced_chat_labels.updated_at",
+            params![lid_chat, phone_chat],
+        )?;
+        transaction.execute(
             "INSERT INTO drafts (chat, text, updated_at) SELECT ?2, text, updated_at FROM drafts WHERE chat = ?1
              ON CONFLICT(chat) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at
              WHERE excluded.updated_at > drafts.updated_at",
@@ -2314,6 +2322,7 @@ impl Archive {
             "polls",
             "poll_history",
             "local_chat_labels",
+            "synced_chat_labels",
             "drafts",
             "stars",
         ] {

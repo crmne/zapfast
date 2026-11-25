@@ -116,7 +116,7 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
 fn label_chips(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let active = active_label(app);
-    let rows: Vec<(String, String, usize, Color32)> = app
+    let rows: Vec<(String, String, usize, Option<Color32>)> = app
         .labels
         .iter()
         .map(|label| {
@@ -124,14 +124,14 @@ fn label_chips(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 label.id.clone(),
                 label.name.clone(),
                 app.label_unread(&label.id),
-                color_of(palette, &label.color_hex),
+                (!label.color_hex.is_empty()).then(|| color_of(palette, &label.color_hex)),
             )
         })
         .collect();
     let mut pick: Option<Option<String>> = None;
     for (index, (id, name, count, color)) in rows.into_iter().enumerate() {
         let selected = active.as_deref() == Some(id.as_str());
-        let chip = widgets::dotted_chip(ui, palette, Some(color), &name, count, selected)
+        let chip = widgets::dotted_chip(ui, palette, color, &name, count, selected)
             .tab_stop(Stop::Label(u8::try_from(index).unwrap_or(u8::MAX)));
         ui.ctx()
             .data_mut(|data| data.insert_temp(chip_id(&id), chip.rect));
@@ -178,30 +178,39 @@ pub fn chat_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palett
         &gettext(locale, "Labels"),
         &items,
         |ui| {
-            let labels: Vec<(String, String, bool)> = app
+            let labels: Vec<(String, String, bool, bool)> = app
                 .labels
                 .iter()
                 .map(|label| {
                     (
                         label.id.clone(),
                         label.name.clone(),
+                        label.synced,
                         app.chat_wears(chat, &label.id),
                     )
                 })
                 .collect();
-            for (id, name, worn) in labels {
+            for (id, name, synced, worn) in labels {
                 let icon = if worn { Some(Icon::Check) } else { None };
                 if widgets::menu_item(ui, palette, icon, &name) {
-                    let mut next: Vec<String> = chat.labels.clone();
-                    if worn {
-                        next.retain(|label| label != &id);
+                    if synced {
+                        app.actions.push(Action::SetSyncedChatLabel {
+                            chat: chat.id.clone(),
+                            label_id: id,
+                            labeled: !worn,
+                        });
                     } else {
-                        next.push(id);
+                        let mut next: Vec<String> = chat.labels.clone();
+                        if worn {
+                            next.retain(|label| label != &id);
+                        } else {
+                            next.push(id);
+                        }
+                        app.actions.push(Action::SetChatLabels {
+                            chat: chat.id.clone(),
+                            labels: next,
+                        });
                     }
-                    app.actions.push(Action::SetChatLabels {
-                        chat: chat.id.clone(),
-                        labels: next,
-                    });
                 }
             }
             if !app.labels.is_empty() {
@@ -250,7 +259,8 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     );
     ui.add_space(14.0);
 
-    let full = app.labels.len() >= crate::archive::LABEL_LIMIT;
+    let local_count = app.labels.iter().filter(|label| !label.synced).count();
+    let full = local_count >= crate::archive::LABEL_LIMIT;
     if full {
         theme::paragraph(
             ui,
@@ -291,9 +301,10 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(6.0);
-    let wearing: Vec<(Label, usize)> = app
+    let synced_wearing: Vec<(Label, usize)> = app
         .labels
         .iter()
+        .filter(|label| label.synced)
         .map(|label| {
             let count = app
                 .chats
@@ -303,7 +314,20 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             (label.clone(), count)
         })
         .collect();
-    if wearing.is_empty() {
+    let wearing: Vec<(Label, usize)> = app
+        .labels
+        .iter()
+        .filter(|label| !label.synced)
+        .map(|label| {
+            let count = app
+                .chats
+                .iter()
+                .filter(|chat| app.chat_wears(chat, &label.id))
+                .count();
+            (label.clone(), count)
+        })
+        .collect();
+    if wearing.is_empty() && synced_wearing.is_empty() {
         theme::paragraph(
             ui,
             gettext(
@@ -315,6 +339,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         );
         return;
     }
+    let has_local = !wearing.is_empty();
     let mut save: Option<(String, String, String)> = None;
     let mut delete: Option<String> = None;
     for (label, count) in wearing {
@@ -468,6 +493,61 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if let Some(id) = delete {
         app.actions.push(Action::DeleteLabel(id));
     }
+    if !synced_wearing.is_empty() {
+        if has_local {
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+        }
+        theme::text(ui, "Synced from WhatsApp", theme::medium(12.5), palette.dim);
+        ui.add_space(4.0);
+        for (label, count) in synced_wearing {
+            let rect = ui
+                .allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::hover())
+                .0;
+            if !label.color_hex.is_empty() {
+                let swatch_rect =
+                    Rect::from_min_size(rect.left_center() + vec2(0.0, -7.0), vec2(14.0, 14.0));
+                ui.painter().rect_filled(
+                    swatch_rect,
+                    CornerRadius::same(4),
+                    color_of(palette, &label.color_hex),
+                );
+            }
+            let text_left = if label.color_hex.is_empty() {
+                0.0
+            } else {
+                24.0
+            };
+            let name = widgets::line(
+                ui,
+                &label.name,
+                theme::medium(13.5),
+                palette.text,
+                (rect.width() - text_left - 80.0).max(40.0),
+                1,
+            );
+            name.paint(
+                ui,
+                pos2(rect.left() + text_left, rect.center().y - 8.0),
+                palette.text,
+            );
+            let worn = ngettext(locale, "{} chat", "{} chats", count as u32)
+                .replace("{}", &count.to_string());
+            let worn_width = ui
+                .painter()
+                .layout_no_wrap(worn.clone(), theme::regular(12.0), palette.dim)
+                .size()
+                .x;
+            let worn_line =
+                widgets::line(ui, &worn, theme::regular(12.0), palette.dim, worn_width, 1);
+            worn_line.paint(
+                ui,
+                pos2(rect.right() - worn_width, rect.center().y - 7.0),
+                palette.dim,
+            );
+        }
+    }
 }
 
 /// Stable id for the field that renames one label.
@@ -545,6 +625,7 @@ mod tests {
             name: name.to_owned(),
             color_hex: "#22c55e".to_owned(),
             created_at: 1,
+            synced: false,
         }
     }
 
