@@ -9,6 +9,9 @@ pub enum Stop {
     Composer,
     ViewOnce,
     Send,
+    /// The composer's camera, after Record so Tab from the field still
+    /// reaches Record first.
+    Camera,
     Attach,
     Emoji,
     /// Staged-file review: the file strip and its controls.

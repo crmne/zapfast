@@ -440,6 +440,127 @@ fn rgb_to_i420(data: &[u8], width: usize, height: usize, bgr: bool) -> Option<I4
     })
 }
 
+/// The largest photo the viewfinder takes, either way round.
+const PHOTO_BUDGET: (usize, usize) = (1920, 1080);
+
+/// A camera opened to take a photo. A thread of its own reads it (the
+/// platforms' capture objects are not all `Send`) and keeps only the newest
+/// frame as RGBA, for the window to show and to take. Dropping it lets the
+/// camera go once the frame being read arrives.
+pub struct Viewfinder {
+    shared: std::sync::Arc<Shared>,
+}
+
+#[derive(Default)]
+struct Shared {
+    stop: std::sync::atomic::AtomicBool,
+    frame: std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>>,
+    error: std::sync::Mutex<Option<String>>,
+}
+
+impl Shared {
+    fn fail(&self, error: String, repaint: &egui::Context) {
+        log::warn!("[CAMERA] the viewfinder stopped: {error}");
+        *self
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+        repaint.request_repaint();
+    }
+}
+
+impl Viewfinder {
+    /// Opens the first camera; every frame it delivers repaints `repaint`.
+    pub fn open(repaint: egui::Context) -> Self {
+        let shared = std::sync::Arc::new(Shared::default());
+        let reader = shared.clone();
+        let painter = repaint.clone();
+        let spawned = std::thread::Builder::new()
+            .name("viewfinder".to_owned())
+            .spawn(move || view(&reader, &painter));
+        if let Err(error) = spawned {
+            shared.fail(error.to_string(), &repaint);
+        }
+        Self { shared }
+    }
+
+    /// A viewfinder showing `frame`, with no camera behind it.
+    #[cfg(any(test, feature = "demo"))]
+    pub fn showing(frame: egui::ColorImage) -> Self {
+        let shared = Shared::default();
+        *shared
+            .frame
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::sync::Arc::new(frame));
+        Self {
+            shared: std::sync::Arc::new(shared),
+        }
+    }
+
+    /// The newest frame, once the camera has delivered one.
+    pub fn frame(&self) -> Option<std::sync::Arc<egui::ColorImage>> {
+        self.shared
+            .frame
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Why the camera could not open or stopped delivering.
+    pub fn error(&self) -> Option<String> {
+        self.shared
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl Drop for Viewfinder {
+    fn drop(&mut self) {
+        self.shared
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The viewfinder's thread: reads frames until it is dropped.
+fn view(shared: &Shared, repaint: &egui::Context) {
+    let mut source = match Source::open(None, PHOTO_BUDGET, 30) {
+        Ok(source) => source,
+        Err(error) => return shared.fail(error, repaint),
+    };
+    let size = source.size();
+    let (width, height) = size;
+    let (luma, chroma) = (width * height, (width / 2) * (height / 2));
+    let mut bytes = vec![0u8; luma + 2 * chroma];
+    while !shared.stop.load(std::sync::atomic::Ordering::Relaxed) {
+        match source.read(&mut bytes, size) {
+            Read::Frame(_) => {}
+            Read::Idle => continue,
+            Read::Ended => {
+                shared.fail("the camera stopped delivering frames".to_owned(), repaint);
+                break;
+            }
+        }
+        let image = crate::video::rgb_image(
+            &bytes[..luma],
+            &bytes[luma..luma + chroma],
+            &bytes[luma + chroma..],
+            (width, width / 2, width / 2),
+            size,
+            size,
+            0,
+        );
+        *shared
+            .frame
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::sync::Arc::new(image));
+        repaint.request_repaint();
+    }
+    source.stop();
+}
+
 /// Video4Linux, read in Rust through linuxvideo.
 #[cfg(target_os = "linux")]
 mod backend {

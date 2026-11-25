@@ -712,6 +712,10 @@ pub struct App {
     pub sticker_pack_name: String,
     /// The picture being made into a sticker.
     pub sticker_draft: Option<crate::model::StickerDraft>,
+    /// The camera, while it is open to take a photo.
+    pub camera: Option<crate::camera::Viewfinder>,
+    /// The viewfinder's picture on the GPU.
+    pub camera_texture: Option<CallTexture>,
     /// The staged picture being cropped, while the cropper is open.
     pub picture_edit: Option<crate::model::PictureEdit>,
     /// The staged picture whose size was asked for, and whose cropper that
@@ -1699,6 +1703,8 @@ impl App {
             sticker_preview: None,
             sticker_preview_pending: false,
             sticker_draft: None,
+            camera: None,
+            camera_texture: None,
             picture_edit: None,
             picture_inspecting: None,
             picture_edit_followed: None,
@@ -1911,6 +1917,7 @@ impl App {
         self.reply_to = None;
         self.editing = None;
         self.recording = None;
+        self.camera = None;
         self.emoji_start = None;
         self.mention_start = None;
     }
@@ -2046,6 +2053,7 @@ impl App {
         self.voice_clip_chat = None;
         self.voice_wanted = None;
         self.recording = None;
+        self.camera = None;
         self.image_preview = None;
         self.viewer_media.clear();
         self.viewer_media_chat = None;
@@ -2900,6 +2908,7 @@ impl App {
             self.emoji_jump = None;
             self.dialog = None;
             self.recording = None;
+            self.camera = None;
             self.player.stop();
         }
     }
@@ -8472,6 +8481,49 @@ impl App {
                     self.backend.send(Command::PickFiles { chat, documents });
                 }
             }
+            Action::OpenCamera => {
+                if self.open_chat.is_none() {
+                    self.toast_error("Open a chat first");
+                } else if self.camera.is_none() {
+                    self.composer_tools_open = false;
+                    self.picker = None;
+                    // The composer would keep Enter from taking the photo.
+                    ctx.memory_mut(|memory| memory.stop_text_input());
+                    self.camera = Some(crate::camera::Viewfinder::open(ctx.clone()));
+                }
+            }
+            Action::CloseCamera => {
+                self.camera = None;
+                self.refocus_composer(ctx);
+            }
+            Action::TakePhoto => {
+                // A camera that stopped keeps its last frame: not one to take.
+                let frame = self
+                    .camera
+                    .as_ref()
+                    .filter(|camera| camera.error().is_none())
+                    .and_then(crate::camera::Viewfinder::frame);
+                if let Some(frame) = frame
+                    && self.open_chat.is_some()
+                {
+                    self.camera = None;
+                    let [width, height] = frame.size;
+                    // Camera frames are opaque, so premultiplied is straight.
+                    let rgba = frame
+                        .pixels
+                        .iter()
+                        .flat_map(|pixel| pixel.to_array())
+                        .collect();
+                    let id = self.stage(Pending::Picture {
+                        width,
+                        height,
+                        rgba: std::sync::Arc::new(rgba),
+                        texture: None,
+                    });
+                    self.focus_composer = true;
+                    self.apply(Action::EditPicture(id), ctx);
+                }
+            }
             Action::SetComposerTools(open) => {
                 self.composer_tools_open = open;
                 if open {
@@ -10458,6 +10510,10 @@ impl App {
             self.window_focused = false;
         }
         self.tick_app_lock(ctx);
+        // Nobody sees a viewfinder without a window: the camera goes too.
+        if self.window_hidden {
+            self.camera = None;
+        }
         self.tick_login_item();
         // Nobody reads behind the lock screen: messages stay unread, the
         // phone keeps notifying, and notifications here say nothing.
@@ -10616,6 +10672,7 @@ impl App {
         self.window_focused = false;
         self.flush_open_draft();
         self.recording = None;
+        self.camera = None;
         self.player.stop();
         self.video.stop();
         self.voice_chat = None;
@@ -11866,6 +11923,7 @@ impl App {
         self.save_state();
         self.flush_open_draft();
         self.recording = None;
+        self.camera = None;
         // A background resume would die with the process.
         if self.media_hold.take().is_some() {
             crate::media_pause::settle(Duration::from_secs(2));
@@ -23003,6 +23061,46 @@ mod tests {
             assert_eq!(app.open_chat, previous, "{case}");
             assert!(app.reply_to.is_none(), "{case}");
         }
+    }
+
+    /// The camera's frame is staged as a photo and the cropper opens on it.
+    #[test]
+    fn a_photo_from_the_camera_is_staged_and_opens_the_cropper() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let chat = "15550002222@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(chat.into(), "Camera fixture".into()));
+        app.open_chat = Some(chat.into());
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        app.apply(Action::TakePhoto, &ctx);
+        assert!(app.camera.is_none(), "the camera closes");
+        assert_eq!(app.pending.len(), 1);
+        assert!(matches!(
+            &app.pending[0].item,
+            Pending::Picture { width: 4, height: 2, rgba, .. } if rgba[..4] == [255, 0, 0, 255]
+        ));
+        assert!(app.picture_edit.is_some(), "the cropper opens on the photo");
+    }
+
+    /// Closing the camera stages nothing.
+    #[test]
+    fn closing_the_camera_stages_nothing() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let chat = "15550002222@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(chat.into(), "Camera fixture".into()));
+        app.open_chat = Some(chat.into());
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        app.apply(Action::CloseCamera, &ctx);
+        assert!(app.camera.is_none());
+        assert!(app.pending.is_empty());
+        assert!(app.picture_edit.is_none());
     }
 
     /// Cached source content stays hidden after switching out of an authenticated folder.

@@ -29,6 +29,7 @@ pub mod polls;
 pub mod rail;
 pub mod settings;
 pub mod update;
+mod viewfinder;
 mod voice_bar;
 pub mod widgets;
 
@@ -122,6 +123,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);
+    viewfinder::show(app, ctx);
     overlay::finish(ctx);
     drop_target(app, ctx);
     toasts(app, ctx);

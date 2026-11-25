@@ -3494,6 +3494,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer_tools_open = true;
                 app.focus_composer = true;
             }
+            "camera" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                // A stock picture stands in for the camera, as in calls.
+                app.camera = Some(crate::camera::Viewfinder::showing(stock_frame(
+                    stock::DUSK,
+                    720,
+                )));
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -9794,6 +9802,7 @@ mod tests {
             "sticker-pack-view",
             "typing",
             "composer-tools",
+            "camera",
             "link-preview",
             "link-preview,light",
             "link-preview-loading",
@@ -21792,7 +21801,7 @@ mod tests {
         render(&mut app, &ctx);
         let bubble = crate::ui::conversation::bubble_id(&group, "plain-group-message");
         assert!(!ctx.read_response(bubble).unwrap().sense.is_focusable());
-        for _ in 0..2 {
+        for _ in 0..3 {
             frame_sized(&mut app, &ctx, 780.0, tab());
             render(&mut app, &ctx);
         }
@@ -22812,7 +22821,7 @@ mod tests {
             }
             // The same on macOS: the rail carries Settings there too, beside
             // the app menu.
-            let expected = vec![
+            let mut expected = vec![
                 Stop::Composer,
                 Stop::Send,
                 Stop::Attach,
@@ -22836,6 +22845,10 @@ mod tests {
                 Stop::Groups,
                 Stop::Channels,
             ];
+            // An empty composer has the camera beside Record.
+            if !ready {
+                expected.insert(2, Stop::Camera);
+            }
             assert_eq!(
                 crate::ui::focus::stops(&ctx)
                     .iter()
@@ -22932,6 +22945,7 @@ mod tests {
                     [
                         Stop::Composer,
                         Stop::Send,
+                        Stop::Camera,
                         Stop::Attach,
                         Stop::Emoji,
                         Stop::ChatSearch,

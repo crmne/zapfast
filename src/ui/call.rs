@@ -1264,7 +1264,7 @@ fn image_size(image: &egui::ColorImage) -> Vec2 {
 }
 
 /// The largest rect with `size`'s shape that fits inside `area`, centred.
-fn fit_inside(area: Rect, size: Vec2) -> Rect {
+pub(crate) fn fit_inside(area: Rect, size: Vec2) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return area;
     }
@@ -1275,7 +1275,7 @@ fn fit_inside(area: Rect, size: Vec2) -> Rect {
 /// Draws `image` through the kept texture, uploaded only when a new frame
 /// arrived and then in place: the surface also repaints for its timer, and a
 /// texture per repaint would churn GPU memory.
-fn call_texture(
+pub(crate) fn call_texture(
     ui: &egui::Ui,
     kept: &mut Option<crate::app::CallTexture>,
     name: &str,
@@ -1284,17 +1284,15 @@ fn call_texture(
     match kept {
         Some(kept) if std::sync::Arc::ptr_eq(&kept.frame, image) => kept.texture.id(),
         Some(kept) => {
-            kept.texture.set(
-                egui::ImageData::from((**image).clone()),
-                TextureOptions::LINEAR,
-            );
+            kept.texture
+                .set(std::sync::Arc::clone(image), TextureOptions::LINEAR);
             kept.frame = std::sync::Arc::clone(image);
             kept.texture.id()
         }
         None => {
-            let texture = ui
-                .ctx()
-                .load_texture(name, (**image).clone(), TextureOptions::LINEAR);
+            let texture =
+                ui.ctx()
+                    .load_texture(name, std::sync::Arc::clone(image), TextureOptions::LINEAR);
             let id = texture.id();
             *kept = Some(crate::app::CallTexture {
                 texture,

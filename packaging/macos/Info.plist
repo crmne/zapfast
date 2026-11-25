@@ -18,7 +18,7 @@
          forced switch to the integrated GPU leaves windows blank until a relaunch. -->
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>ZapFast uses the microphone for calls and for the voice messages you choose to send.</string>
-    <key>NSCameraUsageDescription</key><string>ZapFast uses the camera for the video calls you make and answer.</string>
+    <key>NSCameraUsageDescription</key><string>ZapFast uses the camera for the video calls you make and answer, and for the photos you take to send.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Carmine Paolino. Not affiliated with WhatsApp or Meta.</string>
 </dict>
 </plist>
