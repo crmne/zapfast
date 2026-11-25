@@ -309,6 +309,7 @@ fn inline(line: &str) -> Vec<Span> {
             });
         }
     };
+    let last_closer = last_closers(&chars);
     let mut i = 0;
     let triple = |at: usize| {
         at + 2 < chars.len() && chars[at] == '`' && chars[at + 1] == '`' && chars[at + 2] == '`'
@@ -357,7 +358,7 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(&chars, i + 1, c) {
+            } else if is_opener(&chars, i) && last_closer[index].is_some_and(|close| close > i) {
                 flush(&mut run, &mut spans, flags);
                 flags[index] = true;
                 i += 1;
@@ -369,6 +370,15 @@ fn inline(line: &str) -> Vec<Span> {
     }
     flush(&mut run, &mut spans, flags);
     spans
+}
+
+/// Where `*`, `_` and `~` last close in the line, in that order. An opener
+/// has a closer after it exactly when that one lies past it; searching ahead
+/// from every opener took quadratic time on a long line of openers that never
+/// close (#1177).
+fn last_closers(chars: &[char]) -> [Option<usize>; 3] {
+    ['*', '_', '~']
+        .map(|marker| (0..chars.len()).rfind(|&j| chars[j] == marker && is_closer(chars, j)))
 }
 
 fn is_opener(chars: &[char], i: usize) -> bool {
@@ -383,10 +393,6 @@ fn is_closer(chars: &[char], i: usize) -> bool {
     let before_ok = i > 0 && !chars[i - 1].is_whitespace() && chars[i - 1] != chars[i];
     let after_ok = chars.get(i + 1).is_none_or(|next| !next.is_alphanumeric());
     before_ok && after_ok
-}
-
-fn has_closer(chars: &[char], from: usize, marker: char) -> bool {
-    (from..chars.len()).any(|j| chars[j] == marker && is_closer(chars, j))
 }
 
 /// Splits a plain span around web addresses and mentions.
@@ -799,6 +805,50 @@ mod tests {
                 (" and ".into(), false, false, false, false),
                 ("code".into(), false, false, false, true),
             ]
+        );
+    }
+
+    #[test]
+    fn the_last_closer_answers_what_a_search_ahead_did() {
+        // The search each opener used to run, to check the shortcut against.
+        fn closer_after(chars: &[char], from: usize, marker: char) -> bool {
+            (from..chars.len()).any(|j| chars[j] == marker && is_closer(chars, j))
+        }
+        let alphabet = ['*', '_', '~', 'a', ' ', '1', '.'];
+        let mut seed = 12_345_u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as usize
+        };
+        for _ in 0..3000 {
+            let len = next() % 14;
+            let line: Vec<char> = (0..len)
+                .map(|_| alphabet[next() % alphabet.len()])
+                .collect();
+            let last = last_closers(&line);
+            for (index, marker) in ['*', '_', '~'].into_iter().enumerate() {
+                for i in 0..line.len() {
+                    assert_eq!(
+                        last[index].is_some_and(|close| close > i),
+                        closer_after(&line, i + 1, marker),
+                        "{line:?} at {i}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_line_of_openers_that_never_close_parses_quickly() {
+        // 270,000 characters: searching ahead from each opener checked about
+        // 10^10 of them, so this took minutes; it now takes milliseconds.
+        let line = "*a _a ~a ".repeat(30_000);
+        let started = std::time::Instant::now();
+        assert_eq!(plain(&line, &[]), line);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
         );
     }
 
