@@ -27,6 +27,10 @@ On Linux:
 Back up the archive if you need its history. WhatsApp sends only recent
 history to a new device, although ZapFast can request some older messages from
 the phone. Clearing the media cache makes ZapFast download attachments again.
+A message deleted for everyone, or deleted for you, takes its downloaded file
+out of the media cache, unless another message uses the same file; a deleted
+for everyone message also keeps no copy of its original in the archive. Files
+in a download folder you chose stay.
 Expired attachments may still be available through the phone.
 If a downloaded file has gone when you try to open it, ZapFast says so and its
 message offers the download again, without a restart.

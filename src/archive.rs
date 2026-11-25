@@ -2462,6 +2462,34 @@ impl Archive {
         self.cached_media("m.chat = ?1", params![chat])
     }
 
+    /// Attachment paths of message `id` in any of `chats` (one chat, or its
+    /// phone-number and privacy-id aliases) that no other message uses. Read
+    /// before the message is deleted or revoked, so its files can go too.
+    pub fn files_only_in(&self, chats: &[String], id: &str) -> Result<Vec<PathBuf>> {
+        let chats = serde_json::to_string(chats).unwrap_or_default();
+        let mut files = self.cached_media(
+            "m.id = ?2 AND m.chat IN (SELECT value FROM json_each(?1))",
+            params![chats, id],
+        )?;
+        files.sort();
+        files.dedup();
+        let mut elsewhere = self.connection.prepare(
+            "SELECT EXISTS (SELECT 1 FROM messages
+                 WHERE NOT (id = ?2 AND chat IN (SELECT value FROM json_each(?1)))
+                   AND (json_extract(content, '$.media.path') = ?3
+                        OR json_extract(content, '$.card.image.path') = ?3
+                        OR json_extract(content, '$.motion.path') = ?3))",
+        )?;
+        let mut only = Vec::new();
+        for file in files {
+            let path = file.to_string_lossy();
+            if !elsewhere.query_row(params![chats, id, path], |row| row.get::<_, bool>(0))? {
+                only.push(file);
+            }
+        }
+        Ok(only)
+    }
+
     /// Attachment paths of the messages matching `filter` (over `messages m`),
     /// including an interactive card's image and each carousel card's image.
     fn cached_media(&self, filter: &str, params: impl rusqlite::Params) -> Result<Vec<PathBuf>> {
@@ -2740,16 +2768,23 @@ impl Archive {
         content: &Content,
         edited: bool,
     ) -> Result<bool> {
+        let revoked = matches!(content, Content::Revoked);
+        // Deleted for everyone, the original protobuf (body, media keys) and
+        // the preview picture have nothing left to serve.
         let changed = self.connection.execute(
-            "UPDATE messages SET content = ?3, edited = ?4 WHERE chat = ?1 AND id = ?2",
+            "UPDATE messages SET content = ?3, edited = ?4,
+                 raw = CASE WHEN ?5 THEN NULL ELSE raw END,
+                 thumbnail = CASE WHEN ?5 THEN NULL ELSE thumbnail END
+             WHERE chat = ?1 AND id = ?2",
             params![
                 chat,
                 id,
                 serde_json::to_string(content).unwrap_or_default(),
-                edited
+                edited,
+                revoked
             ],
         )?;
-        if matches!(content, Content::Revoked) {
+        if revoked {
             // Deleted for everyone: the message is gone, so its pin is too.
             self.delete_pin(chat, id)?;
         }
@@ -4582,6 +4617,76 @@ pub(crate) mod tests {
             );
         }
         chat.to_owned()
+    }
+
+    #[test]
+    fn a_revoked_message_lets_go_of_its_protobuf_and_its_own_files() {
+        let archive = Archive::in_memory().expect("archive");
+        let chat = "peer@s.whatsapp.net";
+        archive.ensure_chat(chat, "Somebody").expect("chat");
+        let image = |id: &str, file: &str| {
+            let mut row = message(chat, id, 100, false);
+            row.content = Content::Image {
+                motion: None,
+                caption: None,
+                media: crate::model::Media {
+                    mime: "image/jpeg".into(),
+                    size: 1,
+                    width: None,
+                    height: None,
+                    album: None,
+                    path: None,
+                    state: crate::model::MediaState::Idle,
+                },
+            };
+            row.thumbnail = Some(vec![1, 2, 3]);
+            archive.insert_message(&row, Some(b"raw")).expect("insert");
+            archive
+                .set_media_path(chat, id, Path::new(file))
+                .expect("media path");
+        };
+        image("own", "own.jpg");
+        // A forward made here points at the file its original downloaded.
+        image("original", "shared.jpg");
+        image("forward", "shared.jpg");
+        let here = [chat.to_owned()];
+        assert_eq!(
+            archive.files_only_in(&here, "own").unwrap(),
+            vec![PathBuf::from("own.jpg")]
+        );
+        assert!(archive.files_only_in(&here, "original").unwrap().is_empty());
+
+        assert!(
+            archive
+                .set_content(chat, "own", &Content::Revoked, false)
+                .unwrap()
+        );
+        assert_eq!(archive.raw(chat, "own").unwrap(), None);
+        let revoked = archive.message(chat, "own").unwrap().unwrap();
+        assert!(matches!(revoked.content, Content::Revoked));
+        assert_eq!(revoked.thumbnail, None);
+        assert!(archive.files_only_in(&here, "own").unwrap().is_empty());
+        // An edit keeps them.
+        let edited = Content::text("edited".to_owned());
+        assert!(archive.set_content(chat, "forward", &edited, true).unwrap());
+        assert_eq!(
+            archive.raw(chat, "forward").unwrap().as_deref(),
+            Some(&b"raw"[..])
+        );
+        assert!(
+            archive
+                .message(chat, "forward")
+                .unwrap()
+                .unwrap()
+                .thumbnail
+                .is_some()
+        );
+
+        archive.delete_message(chat, "forward").expect("delete");
+        assert_eq!(
+            archive.files_only_in(&here, "original").unwrap(),
+            vec![PathBuf::from("shared.jpg")]
+        );
     }
 
     /// Every table keyed by chat besides `chats` itself.

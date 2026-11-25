@@ -2174,9 +2174,26 @@ impl Worker {
         }
     }
 
-    /// Deletes attachment files that belonged to a removed chat. Only the
-    /// app's own media cache is touched; anything the user saved elsewhere
-    /// stays where it is.
+    /// Marks a message deleted for everyone and removes the cached files
+    /// only it used; false when the archive has no such message.
+    fn revoke_here(&self, chat: &str, id: &str) -> bool {
+        let files = self
+            .archive
+            .files_only_in(&[chat.to_owned()], id)
+            .unwrap_or_default();
+        let revoked = matches!(
+            self.archive.set_content(chat, id, &Content::Revoked, false),
+            Ok(true)
+        );
+        if revoked {
+            self.drop_cached_media(&files);
+        }
+        revoked
+    }
+
+    /// Deletes attachment files that belonged to a removed chat or message.
+    /// Only the app's own media cache is touched; anything the user saved
+    /// elsewhere stays where it is.
     fn drop_cached_media(&self, paths: &[std::path::PathBuf]) {
         let Ok(cache) = self.dirs.media_cache_dir().canonicalize() else {
             return;
@@ -5281,10 +5298,7 @@ impl Worker {
                     // A late answer to an edit sent from here must not
                     // replace what the phone did since.
                     self.edits.remove(&(chat.clone(), target.clone()));
-                    if let Ok(true) =
-                        self.archive
-                            .set_content(&chat, &target, &Content::Revoked, false)
-                    {
+                    if self.revoke_here(&chat, &target) {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
                         self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
@@ -6788,9 +6802,7 @@ impl Worker {
                 {
                     media_changed_in.insert(id.clone());
                 }
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
+                self.revoke_here(&id, &revoked);
             }
             for clip in chat.clips {
                 let sender = if clip.from_me {
@@ -11448,8 +11460,10 @@ impl Worker {
                 revoked |= matches!(old.content, Content::Revoked);
             }
         }
+        let files = self.archive.files_only_in(&aliases, id).unwrap_or_default();
         match self.archive.delete_message_aliases(&aliases, id) {
             Ok(found) => {
+                self.drop_cached_media(&files);
                 for chat in aliases {
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
@@ -11481,10 +11495,7 @@ impl Worker {
             return;
         };
         let old = self.archive.message(&chat, &id).ok().flatten();
-        if let Ok(true) = self
-            .archive
-            .set_content(&chat, &id, &Content::Revoked, false)
-        {
+        if self.revoke_here(&chat, &id) {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
             self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
