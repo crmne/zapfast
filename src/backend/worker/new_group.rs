@@ -21,10 +21,15 @@ impl Worker {
         let dir = self.dirs.media_cache_dir();
         let events = self.events.clone();
         let waker = self.waker.clone();
+        let locale = self.locale;
+
         tokio::task::spawn_blocking(move || {
             let Some(path) = rfd::FileDialog::new()
-                .set_title("Choose a group photo")
-                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "gif"])
+                .set_title(crate::i18n::gettext(locale, "Choose a group photo"))
+                .add_filter(
+                    crate::i18n::gettext(locale, "Images"),
+                    &["jpg", "jpeg", "png", "webp", "gif"],
+                )
                 .pick_file()
             else {
                 return;

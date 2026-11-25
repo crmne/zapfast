@@ -91,6 +91,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
     let hint = crate::i18n::gettext(app.locale, "Search contacts");
     let search = super::widgets::search_field(
         ui,
+        app.locale,
         &palette,
         egui::Id::new("new-chat-search"),
         &mut app.new_chat_search,

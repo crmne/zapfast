@@ -4,6 +4,21 @@ use crate::archive::chat_export::Counts;
 use anyhow::Context;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// What a failed export says, in the interface's language. The archive names
+/// its own refusals in English, since it has no language; the rest is what
+/// the system wrote.
+fn chat_export_failure(locale: crate::i18n::Locale, failure: &str) -> String {
+    match failure {
+        "This chat is no longer available" => {
+            crate::i18n::gettext(locale, "This chat is no longer available").into_owned()
+        }
+        "Locked chats cannot be exported" => {
+            crate::i18n::gettext(locale, "Locked chats cannot be exported").into_owned()
+        }
+        written => written.to_owned(),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub allowed: bool,
@@ -34,15 +49,20 @@ impl Worker {
             let result = if let Some(mut task) = job.task {
                 match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
                     Ok(Ok(())) => Ok(None),
-                    Ok(Err(_)) => Err("The export stopped unexpectedly".into()),
+                    Ok(Err(_)) => Err(crate::i18n::gettext(
+                        self.locale,
+                        "The export stopped unexpectedly",
+                    )
+                    .into_owned()),
                     Err(_) => {
                         // Queued blocking tasks can be aborted; running ones retain their
                         // cancellation flag and temporary-file cleanup until I/O returns.
                         task.abort();
-                        Err(
-                            "Export cancellation is pending while storage finishes responding"
-                                .into(),
+                        Err(crate::i18n::gettext(
+                            self.locale,
+                            "Export cancellation is pending while storage finishes responding",
                         )
+                        .into_owned())
                     }
                 }
             } else {
@@ -84,7 +104,11 @@ impl Worker {
         {
             self.emit(Event::ChatExportFinished {
                 request,
-                result: Err("This chat is not available for export".into()),
+                result: Err(crate::i18n::gettext(
+                    self.locale,
+                    "This chat is not available for export",
+                )
+                .into_owned()),
             });
             return;
         }
@@ -96,16 +120,18 @@ impl Worker {
             task: None,
         });
         let commands = self.commands.clone();
+        let locale = self.locale;
+
         tokio::task::spawn_blocking(move || {
             let extension = if include_media { "zip" } else { "txt" };
             let target = rfd::FileDialog::new()
-                .set_title("Export chat")
+                .set_title(crate::i18n::gettext(locale, "Export chat"))
                 .set_file_name(format!("Chat export.{extension}"))
                 .add_filter(
                     if include_media {
-                        "Chat with attachments"
+                        crate::i18n::gettext(locale, "Chat with attachments")
                     } else {
-                        "Text file"
+                        crate::i18n::gettext(locale, "Text file")
                     },
                     &[extension],
                 )
@@ -157,7 +183,7 @@ impl Worker {
             self.chat_export.job = None;
             self.emit(Event::ChatExportFinished {
                 request,
-                result: Err("Export cancelled".into()),
+                result: Err(crate::i18n::gettext(self.locale, "Export cancelled").into_owned()),
             });
             return;
         }
@@ -166,20 +192,24 @@ impl Worker {
         let commands = self.commands.clone();
         let chat = job.chat.clone();
         let cancelled = job.cancelled.clone();
+        let locale = self.locale;
         job.task = Some(tokio::task::spawn_blocking(move || {
             let result = (|| -> anyhow::Result<_> {
                 crate::archive::chat_export::check_cancelled(&cancelled)?;
                 let parent = target
                     .parent()
-                    .context("Choose an export folder")?
+                    .context(crate::i18n::gettext(locale, "Choose an export folder").into_owned())?
                     .canonicalize()?;
                 for root in &roots {
                     let root = root.parent().and_then(Path::parent).unwrap_or(root);
                     if let Ok(root) = root.canonicalize() {
-                        anyhow::ensure!(
-                            !parent.starts_with(root),
-                            "Choose a folder outside ZapFast's application data"
+                        // Asked for outside the macro: xgettext's Rust reader
+                        // finds no sentence inside a path-qualified one.
+                        let inside = crate::i18n::gettext(
+                            locale,
+                            "Choose a folder outside ZapFast's application data",
                         );
+                        anyhow::ensure!(!parent.starts_with(root), inside.into_owned());
                     }
                 }
                 crate::archive::chat_export::check_cancelled(&cancelled)?;
@@ -194,7 +224,7 @@ impl Worker {
             } else {
                 result
                     .map(|counts| Some((target, counts)))
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| chat_export_failure(locale, &error.to_string()))
             };
             let _ = commands.send(Command::ChatExportFinished { request, result });
         }));

@@ -30,7 +30,10 @@ pub fn button_id() -> egui::Id {
 pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Response {
     let palette = app.palette;
     let me = app.me.clone().unwrap_or_default();
-    let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
+    let name = app
+        .me_name
+        .clone()
+        .unwrap_or_else(|| gettext(app.locale, "You").into_owned());
     let picture = app.avatar(&me);
     let label = gettext(app.locale, "Switch account");
     let response = ui

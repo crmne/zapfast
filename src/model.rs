@@ -1104,8 +1104,55 @@ impl Default for PollDraft {
     }
 }
 
+/// Why a poll draft is not ready to be sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PollRefusal {
+    /// The question is empty or too long.
+    Question,
+    /// There are not enough answers, or one is empty or too long.
+    Answers,
+    /// Two answers are the same.
+    SameAnswers,
+}
+
+impl PollRefusal {
+    /// The refusal in `locale`. Literal calls, so xgettext extracts each.
+    pub fn said(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        match self {
+            Self::Question => {
+                crate::i18n::gettext(locale, "Enter a question of up to 255 characters.")
+            }
+            Self::Answers => {
+                crate::i18n::gettext(locale, "Add 2–12 answers, each with 1–100 characters.")
+            }
+            Self::SameAnswers => crate::i18n::gettext(locale, "Each answer must be different."),
+        }
+    }
+
+    /// The refusal whose text, as the worker sends it back, is `written`.
+    pub fn of_text(
+        locale: crate::i18n::Locale,
+        written: &str,
+    ) -> Option<std::borrow::Cow<'static, str>> {
+        [Self::Question, Self::Answers, Self::SameAnswers]
+            .into_iter()
+            .find(|refusal| refusal.to_string() == written)
+            .map(|refusal| refusal.said(locale))
+    }
+}
+
+impl std::fmt::Display for PollRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Question => "Enter a question of up to 255 characters.",
+            Self::Answers => "Add 2–12 answers, each with 1–100 characters.",
+            Self::SameAnswers => "Each answer must be different.",
+        })
+    }
+}
+
 impl PollDraft {
-    pub fn validated(&self) -> Result<Self, &'static str> {
+    pub fn validated(&self) -> Result<Self, PollRefusal> {
         let question = self.question.trim().to_owned();
         let options: Vec<String> = self
             .options
@@ -1113,18 +1160,18 @@ impl PollDraft {
             .map(|option| option.trim().to_owned())
             .collect();
         if question.is_empty() || question.chars().count() > 255 {
-            return Err("Enter a question of up to 255 characters.");
+            return Err(PollRefusal::Question);
         }
         if !(2..=12).contains(&options.len())
             || options
                 .iter()
                 .any(|option| option.is_empty() || option.chars().count() > 100)
         {
-            return Err("Add 2–12 answers, each with 1–100 characters.");
+            return Err(PollRefusal::Answers);
         }
         let mut unique = std::collections::HashSet::new();
         if options.iter().any(|option| !unique.insert(option)) {
-            return Err("Each answer must be different.");
+            return Err(PollRefusal::SameAnswers);
         }
         Ok(Self {
             question,
@@ -1374,6 +1421,10 @@ impl Content {
         if let Self::DisappearingTimer { seconds } = self {
             return disappearing_summary(locale, *seconds);
         }
+        if let Self::Unsupported { what } = self {
+            let summary = format!("Unsupported message ({})", unsupported_kind(locale, what));
+            return localized_summary(locale, &summary).into_owned();
+        }
         let summary = self.summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1384,7 +1435,10 @@ impl Content {
 
     /// [`Self::full_summary`] with its content label in `locale`.
     pub fn full_summary_in(&self, locale: crate::i18n::Locale) -> String {
-        if matches!(self, Self::DisappearingTimer { .. }) {
+        if matches!(
+            self,
+            Self::DisappearingTimer { .. } | Self::Unsupported { .. }
+        ) {
             return self.summary_in(locale);
         }
         let summary = self.full_summary();
@@ -1771,6 +1825,26 @@ fn disappearing_summary(locale: crate::i18n::Locale, seconds: u32) -> String {
     // A known duration always reads, so the label alone is only a fallback.
     crate::util::disappearing_line(locale, Some(seconds))
         .unwrap_or_else(|| crate::i18n::gettext(locale, "Disappearing messages").into_owned())
+}
+
+/// What stands in for a message this device could not open, said in `locale`.
+/// The worker files the kind as a word, or a placeholder as its whole
+/// sentence; a word a later build files is shown as it is.
+pub fn unsupported_kind(locale: crate::i18n::Locale, what: &str) -> std::borrow::Cow<'_, str> {
+    match what {
+        "group invite" => crate::i18n::pgettext(locale, "unsupported message", "group invite"),
+        "event" => crate::i18n::pgettext(locale, "unsupported message", "event"),
+        "product" => crate::i18n::pgettext(locale, "unsupported message", "product"),
+        "payment" => crate::i18n::pgettext(locale, "unsupported message", "payment"),
+        "call" => crate::i18n::pgettext(locale, "unsupported message", "call"),
+        "message" => crate::i18n::pgettext(locale, "unsupported message", "message"),
+        "Waiting for this message. Open WhatsApp on your phone" => crate::i18n::gettext(
+            locale,
+            "Waiting for this message. Open WhatsApp on your phone",
+        ),
+        "edited message" => crate::i18n::gettext(locale, "edited message"),
+        other => std::borrow::Cow::Borrowed(other),
+    }
 }
 
 /// `summary` with the content label it starts with, such as "Photo" or
@@ -3999,6 +4073,37 @@ mod tests {
         assert!(draft.validated().is_err());
     }
 
+    /// Each reason a draft is refused is said in the interface's language as
+    /// its own message, and is named again from the text the worker sends
+    /// back. No catalog translates these yet, so the lookup answers English.
+    #[test]
+    fn poll_refusals_are_said_in_the_interface_language() {
+        use crate::i18n::Locale;
+        let draft = |question: &str, options: &[&str]| PollDraft {
+            question: question.into(),
+            options: options.iter().map(|option| option.to_string()).collect(),
+            multiple: false,
+        };
+        for (draft, refusal) in [
+            (draft("", &["Here", "There"]), PollRefusal::Question),
+            (draft("Where?", &["Here"]), PollRefusal::Answers),
+            (draft("Where?", &["", "There"]), PollRefusal::Answers),
+            (draft("Where?", &["Here", "Here"]), PollRefusal::SameAnswers),
+        ] {
+            assert_eq!(draft.validated().unwrap_err(), refusal);
+            let written = refusal.to_string();
+            assert_eq!(refusal.said(Locale::Spanish), written, "{refusal:?}");
+            assert_eq!(
+                PollRefusal::of_text(Locale::Spanish, &written).as_deref(),
+                Some(written.as_str())
+            );
+        }
+        assert_eq!(
+            PollRefusal::of_text(Locale::Spanish, "WhatsApp's words"),
+            None
+        );
+    }
+
     /// Builds synthetic attachment metadata for media-state and album regression tests.
     fn media() -> Media {
         Media {
@@ -4159,6 +4264,51 @@ mod tests {
         let text = Content::text("Location: home");
         assert_eq!(text.summary_in(Locale::Spanish), "Location: home");
         assert_eq!(text.full_summary_in(Locale::Spanish), "Location: home");
+    }
+
+    /// Each kind the worker files for a message this device could not open is
+    /// asked for as its own message, so a catalog can say it, and a summary
+    /// says the kind with its label. A word a later build files is shown as
+    /// it is.
+    #[test]
+    fn unsupported_kinds_are_asked_for_in_the_interface_language() {
+        use crate::i18n::Locale;
+        for what in [
+            "group invite",
+            "event",
+            "product",
+            "payment",
+            "call",
+            "message",
+        ] {
+            assert_eq!(
+                unsupported_kind(Locale::Spanish, what),
+                crate::i18n::pgettext(Locale::Spanish, "unsupported message", what),
+                "{what}"
+            );
+        }
+        for sentence in [
+            "Waiting for this message. Open WhatsApp on your phone",
+            "edited message",
+        ] {
+            assert_eq!(
+                unsupported_kind(Locale::Spanish, sentence),
+                crate::i18n::gettext(Locale::Spanish, sentence),
+                "{sentence}"
+            );
+        }
+        let later = "a later build's word";
+        assert_eq!(unsupported_kind(Locale::Spanish, later), later);
+        let placeholder = Content::Unsupported {
+            what: "group invite".into(),
+        };
+        assert_eq!(
+            placeholder.summary_in(Locale::Spanish),
+            format!(
+                "{} (group invite)",
+                crate::i18n::gettext(Locale::Spanish, "Unsupported message")
+            )
+        );
     }
 
     #[test]

@@ -25,9 +25,9 @@ use crate::theme::{self, Palette};
 
 /// The notice a failed attachment download shows, in the chat bubble and in
 /// the viewer alike: an expired file has a name of its own.
-fn download_notice(error: String) -> String {
+fn download_notice(locale: crate::i18n::Locale, error: String) -> String {
     if error.contains("403") || error.contains("404") {
-        "No longer available on WhatsApp's servers".to_owned()
+        crate::i18n::gettext(locale, "No longer available on WhatsApp's servers").into_owned()
     } else {
         error
     }
@@ -945,6 +945,9 @@ pub struct App {
     /// Whether the tray menu offers "Lock ZapFast": whether an app lock
     /// password was set when it last changed.
     tray_lockable: bool,
+    /// The language the tray menu was last said in. When the interface's
+    /// language moves away from it, `App::sync_tray` says the menu again.
+    tray_locale: crate::i18n::Locale,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
     /// Whether window close should keep the process running.
@@ -1324,8 +1327,10 @@ fn tray_action(event: fastframe_tray::Event, window_hidden: bool) -> Option<Acti
 /// the menu never name a chat, so they are safe while locked.
 ///
 /// "Lock ZapFast" is always in the menu, hidden without a password;
-/// `App::sync_tray` shows or hides it as the password is set or removed.
-fn tray_config(lockable: bool) -> fastframe_tray::Config {
+/// `App::sync_tray` shows or hides it as the password is set or removed, and
+/// says the menu in the interface's language.
+fn tray_config(lockable: bool, locale: crate::i18n::Locale) -> fastframe_tray::Config {
+    use crate::i18n::gettext;
     use fastframe_tray::MenuItem;
     fastframe_tray::Config {
         id: "zapfast",
@@ -1336,10 +1341,10 @@ fn tray_config(lockable: bool) -> fastframe_tray::Config {
         // installed icon's name would draw instead.
         themed_icon: false,
         menu: vec![
-            MenuItem::action(TRAY_SHOW, "Show or hide ZapFast"),
-            MenuItem::action(TRAY_LOCK, "Lock ZapFast").visible(lockable),
+            MenuItem::action(TRAY_SHOW, gettext(locale, "Show or hide ZapFast")),
+            MenuItem::action(TRAY_LOCK, gettext(locale, "Lock ZapFast")).visible(lockable),
             MenuItem::Separator,
-            MenuItem::action(TRAY_QUIT, "Quit"),
+            MenuItem::action(TRAY_QUIT, gettext(locale, "Quit")),
         ],
     }
 }
@@ -1796,6 +1801,7 @@ impl App {
             #[cfg(test)]
             test_raised: false,
             tray_lockable,
+            tray_locale: locale,
             window_hidden: false,
             hide_intent: false,
             wants_show: false,
@@ -2085,7 +2091,10 @@ impl App {
             match Account::detached(&self.dirs, id, crate::settings::AccountSettings::default()) {
                 Ok((account, _)) => account,
                 Err(error) => {
-                    self.toast_error(format!("Could not add an account: {error}"));
+                    self.toast_error(
+                        crate::i18n::gettext(self.locale, "Could not add an account: {error}")
+                            .replace("{error}", &error.to_string()),
+                    );
                     return;
                 }
             }
@@ -2093,7 +2102,10 @@ impl App {
             match Account::spawn(&self.dirs, id, &self.settings, &self.waker) {
                 Ok(account) => account,
                 Err(error) => {
-                    self.toast_error(format!("Could not add an account: {error}"));
+                    self.toast_error(
+                        crate::i18n::gettext(self.locale, "Could not add an account: {error}")
+                            .replace("{error}", &error.to_string()),
+                    );
                     return;
                 }
             }
@@ -2369,7 +2381,10 @@ impl App {
         }
         let waker = self.waker.clone();
         self.tray =
-            fastframe_tray::Tray::spawn(tray_config(self.tray_lockable), move || waker.wake());
+            fastframe_tray::Tray::spawn(tray_config(self.tray_lockable, self.locale), move || {
+                waker.wake()
+            });
+        self.tray_locale = self.locale;
         // No session bus, say: asked again only if the setting is turned
         // back on, not on every frame.
         self.tray_failed = self.tray.is_none();
@@ -2378,8 +2393,9 @@ impl App {
     }
 
     /// Offers "Lock ZapFast" in the tray exactly while an app lock password
-    /// is set, so setting or removing one changes the menu at once, and
-    /// makes the item when the setting that wants it is turned on.
+    /// is set, so setting or removing one changes the menu at once, says the
+    /// menu again when the interface's language changes, and makes the item
+    /// when the setting that wants it is turned on.
     fn sync_tray(&mut self) {
         if self.tray.is_none() {
             self.spawn_tray_if_wanted();
@@ -2397,6 +2413,18 @@ impl App {
                 tray.set_visible(TRAY_LOCK, lockable);
             }
         }
+        let locale = self.locale;
+        if self.tray_locale != locale
+            && let Some(tray) = &mut self.tray
+        {
+            tray.set_label(
+                TRAY_SHOW,
+                crate::i18n::gettext(locale, "Show or hide ZapFast"),
+            );
+            tray.set_label(TRAY_LOCK, crate::i18n::gettext(locale, "Lock ZapFast"));
+            tray.set_label(TRAY_QUIT, crate::i18n::gettext(locale, "Quit"));
+        }
+        self.tray_locale = locale;
         self.sync_tray_colour(Instant::now());
         // The same count as the taskbar's; a new icon only when it shows.
         let count = self.unread_chat_count_everywhere();
@@ -2583,6 +2611,7 @@ impl App {
             .has_several_accounts()
             .then(|| self.account().display_label(self.locale));
         let (title, body) = crate::notify::lines(
+            self.locale,
             &name,
             is_group,
             &sender,
@@ -2600,6 +2629,7 @@ impl App {
         let waker = self.waker.clone();
         let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
         self.notifications.show(
+            self.locale,
             title,
             body,
             picture,
@@ -2635,6 +2665,7 @@ impl App {
         let sound = notification_sound(&self.settings, None, is_group, false);
         let waker = self.waker.clone();
         self.notifications.show(
+            self.locale,
             title,
             body,
             None,
@@ -2763,7 +2794,7 @@ impl App {
         // the tray installs one when it makes its item on the first window.
         // Ours hands the tray its own events (#215).
         #[cfg(target_os = "macos")]
-        crate::macos::attach(ctx);
+        crate::macos::attach(ctx, self.locale);
         // The Dock first: on the first window the tray's item takes the
         // Dock's clicks over, and both are read.
         if let Some(dock) = &mut self.dock {
@@ -3049,7 +3080,7 @@ impl App {
 
     pub fn display_name_or(&self, id: &str, hint: Option<&str>) -> String {
         if self.me.as_deref() == Some(id) {
-            return "You".to_owned();
+            return crate::i18n::gettext(self.locale, "You").into_owned();
         }
         self.person_name(id, hint)
     }
@@ -3064,7 +3095,7 @@ impl App {
                 .me_name
                 .clone()
                 .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| "You".to_owned());
+                .unwrap_or_else(|| crate::i18n::gettext(self.locale, "You").into_owned());
         }
         self.person_name(id, None)
     }
@@ -3076,7 +3107,7 @@ impl App {
         {
             let participants = self.participant_names(chat);
             return if participants.is_empty() {
-                "Group".to_owned()
+                crate::i18n::gettext(self.locale, "Group").into_owned()
             } else {
                 participants
             };
@@ -3174,7 +3205,7 @@ impl App {
         }
         match phone {
             Some(digits) => crate::util::phone(digits),
-            None => "Unknown".to_owned(),
+            None => crate::i18n::gettext(self.locale, "Unknown").into_owned(),
         }
     }
 
@@ -3249,6 +3280,8 @@ impl App {
     /// Group members sorted by name, then phone number, with our id last.
     pub fn participant_list(&self, chat: &Chat) -> Vec<(String, String)> {
         let me = self.me.as_deref();
+        // A number without a name is told by the name this language gives it.
+        let unknown = crate::i18n::gettext(self.locale, "Unknown");
         let mut named = Vec::new();
         let mut numbers = Vec::new();
         for id in chat
@@ -3257,7 +3290,7 @@ impl App {
             .filter(|id| Some(id.as_str()) != me)
         {
             let name = self.display_name(id);
-            if name.starts_with('+') || name == "Unknown" {
+            if name.starts_with('+') || name == unknown {
                 numbers.push((id.clone(), name));
             } else {
                 named.push((id.clone(), name));
@@ -3269,7 +3302,10 @@ impl App {
         if let Some(me) = me
             && chat.participants.iter().any(|id| id == me)
         {
-            named.push((me.to_owned(), "You".to_owned()));
+            named.push((
+                me.to_owned(),
+                crate::i18n::gettext(self.locale, "You").into_owned(),
+            ));
         }
         named
     }
@@ -3319,6 +3355,8 @@ impl App {
 
     pub fn participant_names(&self, chat: &Chat) -> String {
         let me = self.me.as_deref();
+        // A number without a name is told by the name this language gives it.
+        let unknown = crate::i18n::gettext(self.locale, "Unknown");
         let mut names = Vec::new();
         let mut numbers = Vec::new();
         let mut seen = HashSet::new();
@@ -3328,7 +3366,7 @@ impl App {
             .filter(|id| Some(id.as_str()) != me && seen.insert(id.as_str()))
         {
             let name = self.display_name(id);
-            if name.starts_with('+') || name == "Unknown" {
+            if name.starts_with('+') || name == unknown {
                 numbers.push(name);
             } else {
                 names.push(self.short_name(id, name.trim_start_matches('~')).to_owned());
@@ -3355,7 +3393,7 @@ impl App {
         numbers.sort();
         counted.extend(numbers);
         if chat.participants.iter().any(|id| Some(id.as_str()) == me) {
-            counted.push("You".to_owned());
+            counted.push(crate::i18n::gettext(self.locale, "You").into_owned());
         }
         counted.join(", ")
     }
@@ -4142,7 +4180,12 @@ impl App {
             Event::PollCreated { chat, error } => {
                 self.poll_creating = false;
                 if let Some(error) = error {
-                    self.toast_error(crate::blocking::localize_error(self.locale, error));
+                    // The worker sends a draft's refusal back as its text.
+                    let error = match crate::model::PollRefusal::of_text(self.locale, &error) {
+                        Some(said) => said.into_owned(),
+                        None => crate::blocking::localize_error(self.locale, error),
+                    };
+                    self.toast_error(error);
                 } else if live && self.dialog == Some(Dialog::CreatePoll(chat)) {
                     self.dialog = None;
                     self.poll_draft = Default::default();
@@ -4543,7 +4586,7 @@ impl App {
             }
             Event::Syncing(syncing) => {
                 if self.syncing && !syncing {
-                    self.toast("History loaded");
+                    self.toast(crate::i18n::gettext(self.locale, "History loaded"));
                 }
                 if live && !self.syncing && syncing {
                     self.announcer.say(
@@ -4678,9 +4721,10 @@ impl App {
                                 self.dialog = None;
                             }
                             if pending {
-                                self.toast(
+                                self.toast(crate::i18n::gettext(
+                                    self.locale,
                                     "Request sent. An admin must approve it before you join.",
-                                );
+                                ));
                             } else if live {
                                 self.actions.push(Action::OpenChat(id));
                             }
@@ -4899,7 +4943,10 @@ impl App {
                     published_at: None,
                 };
                 if self.update.as_ref() != Some(&notice) {
-                    self.toast(format!("ZapFast {} is available", notice.version));
+                    self.toast(
+                        crate::i18n::gettext(self.locale, "ZapFast {} is available")
+                            .replace("{}", &notice.version),
+                    );
                 }
                 self.update = Some(notice);
             }
@@ -5139,7 +5186,7 @@ impl App {
                 if (live && self.announced_offline)
                     || matches!(self.link, LinkStatus::Disconnected { .. })
                 {
-                    self.toast("Back online");
+                    self.toast(crate::i18n::gettext(self.locale, "Back online"));
                 }
                 if live {
                     self.announced_offline = false;
@@ -5216,7 +5263,10 @@ impl App {
                 if !self.any_linked() {
                     self.forget_app_lock();
                 }
-                self.toast_error("This device was unlinked from your phone");
+                self.toast_error(crate::i18n::gettext(
+                    self.locale,
+                    "This device was unlinked from your phone",
+                ));
                 return;
             }
             LinkStatus::Failed(message) => self.toast_error(message.clone()),
@@ -5926,6 +5976,8 @@ impl App {
         card: Option<usize>,
         result: Result<PathBuf, String>,
     ) {
+        // Taken before the message's media is borrowed for the rest.
+        let locale = self.locale;
         if card.is_none()
             && let Some(progress) = self.download_progress.get_mut(chat)
         {
@@ -5981,7 +6033,7 @@ impl App {
                 Err(error) => {
                     self.viewer_media_state.insert(
                         id.to_owned(),
-                        MediaState::Failed(download_notice(error.clone())),
+                        MediaState::Failed(download_notice(self.locale, error.clone())),
                     );
                 }
             }
@@ -6026,7 +6078,7 @@ impl App {
                 }
                 Err(error) => {
                     log::warn!("attachment download failed; details are shown in the bubble");
-                    media.state = MediaState::Failed(download_notice(error));
+                    media.state = MediaState::Failed(download_notice(locale, error));
                     Err(())
                 }
             }
@@ -6804,7 +6856,7 @@ impl App {
 
     fn stage_all(&mut self, items: impl IntoIterator<Item = Pending>) {
         if self.open_chat.is_none() {
-            self.toast_error("Open a chat first");
+            self.toast_error(crate::i18n::gettext(self.locale, "Open a chat first"));
             return;
         }
         for item in items {
@@ -6961,17 +7013,22 @@ impl App {
     #[allow(dead_code)]
     fn send_files(&mut self, paths: Vec<PathBuf>) {
         let Some(chat) = self.open_chat.clone() else {
-            self.toast_error("Open a chat first");
+            self.toast_error(crate::i18n::gettext(self.locale, "Open a chat first"));
             return;
         };
         if paths.is_empty() {
             return;
         }
-        self.toast(format!(
-            "Sending {} file{}…",
-            paths.len(),
-            if paths.len() == 1 { "" } else { "s" }
-        ));
+        // The count takes this language's own plural form.
+        self.toast(
+            crate::i18n::ngettext(
+                self.locale,
+                "Sending {} file…",
+                "Sending {} files…",
+                paths.len() as u32,
+            )
+            .replace("{}", &paths.len().to_string()),
+        );
         self.backend.send(Command::SendFiles {
             chat,
             paths,
@@ -7594,7 +7651,7 @@ impl App {
                         self.apply(
                             Action::StartChat {
                                 id,
-                                name: "You".to_owned(),
+                                name: crate::i18n::gettext(self.locale, "You").into_owned(),
                                 dismiss_dialog: true,
                             },
                             ctx,
@@ -7737,7 +7794,7 @@ impl App {
                             self.backend.send(Command::CreatePoll { chat, draft });
                             self.follow_sent_chat();
                         }
-                        Err(error) => self.toast_error(error),
+                        Err(error) => self.toast_error(error.said(self.locale)),
                     }
                 }
             }
@@ -7773,7 +7830,10 @@ impl App {
                     return;
                 };
                 if conversation.fetching_phone {
-                    self.toast("History is already being requested for this chat");
+                    self.toast(crate::i18n::gettext(
+                        self.locale,
+                        "History is already being requested for this chat",
+                    ));
                     return;
                 }
                 if conversation.message(&message).is_none() {
@@ -7782,7 +7842,10 @@ impl App {
                 conversation.fetching_phone = true;
                 conversation.phone_explicit = true;
                 self.backend.send(Command::ReloadHistory { chat, message });
-                self.toast("Requesting earlier messages from your phone");
+                self.toast(crate::i18n::gettext(
+                    self.locale,
+                    "Requesting earlier messages from your phone",
+                ));
             }
             Action::ToggleMotion { chat, message } => {
                 let playing = (chat, message);
@@ -7815,6 +7878,8 @@ impl App {
                 chat,
                 message,
             } => {
+                // Taken before the message's media is borrowed below.
+                let locale = self.locale;
                 // The viewer browses the album the archive holds, which reaches
                 // older messages than the loaded transcript: the message may be
                 // absent from `conversations` and still be in the archive, where
@@ -7830,11 +7895,14 @@ impl App {
                     // The limit spares the disk and the link from what nobody
                     // asked for; a file the reader clicked downloads whole.
                     if !manual && !media.is_within_download_limit() {
-                        let notice =
-                            "This attachment is larger than the 64 MiB automatic download limit";
-                        media.state = MediaState::Failed(notice.into());
+                        let notice = crate::i18n::gettext(
+                            locale,
+                            "This attachment is larger than the 64 MiB automatic download limit",
+                        )
+                        .into_owned();
+                        media.state = MediaState::Failed(notice.clone());
                         self.viewer_media_state
-                            .insert(message.clone(), MediaState::Failed(notice.into()));
+                            .insert(message.clone(), MediaState::Failed(notice));
                         return;
                     }
                     if matches!(media.state, MediaState::Downloading) {
@@ -7862,6 +7930,8 @@ impl App {
                 // decoded afresh rather than answered with this failure.
                 crate::animation::forget(ctx, &path);
                 crate::image_cache::forget(ctx, &crate::util::image_uri(&path));
+                // Taken before the message's media is borrowed below.
+                let locale = self.locale;
                 let Some(media) = self
                     .conversations
                     .get_mut(&chat)
@@ -7877,7 +7947,10 @@ impl App {
                     // own, or one that never decodes would download forever:
                     // the bubble offers the retry, as a failed download does.
                     log::warn!("a downloaded attachment could not be displayed");
-                    media.state = MediaState::Failed("ZapFast could not display this file".into());
+                    media.state = MediaState::Failed(
+                        crate::i18n::gettext(locale, "ZapFast could not display this file")
+                            .into_owned(),
+                    );
                 } else if !matches!(media.state, MediaState::Downloading) {
                     // Gone from the disk: it downloads again like any
                     // attachment that was never downloaded.
@@ -8045,7 +8118,10 @@ impl App {
                         self.toast_error(format!("Could not open the attachment: {error}"));
                     }
                 } else {
-                    self.toast("For safety, open this file yourself from its folder");
+                    self.toast(crate::i18n::gettext(
+                        self.locale,
+                        "For safety, open this file yourself from its folder",
+                    ));
                     if let Some(folder) = path.parent() {
                         self.actions.push(Action::OpenFolder(folder.to_owned()));
                     }
@@ -8082,7 +8158,10 @@ impl App {
                         self.toast_error(format!("Could not open the folder: {error}"));
                     }
                 } else {
-                    self.toast_error("The folder is unavailable");
+                    self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "The folder is unavailable",
+                    ));
                 }
             }
             Action::OpenUrl(url) => {
@@ -8105,12 +8184,15 @@ impl App {
                 } else if let Some(url) = crate::safety::external_url(&url) {
                     ctx.open_url(egui::OpenUrl::new_tab(url));
                 } else {
-                    self.toast_error("This link type cannot be opened from ZapFast");
+                    self.toast_error(crate::i18n::gettext(
+                        self.locale,
+                        "This link type cannot be opened from ZapFast",
+                    ));
                 }
             }
             Action::CopyText(text) => {
                 ctx.copy_text(text);
-                self.toast("Copied");
+                self.toast(crate::i18n::gettext(self.locale, "Copied"));
             }
             Action::CopyImage(path) => {
                 self.backend.send(Command::PrepareClipboardImage(path));
@@ -8969,7 +9051,7 @@ impl App {
             }
             Action::SendGif(gif) => {
                 if let Some(chat) = self.open_chat.clone() {
-                    self.toast("Sending GIF…");
+                    self.toast(crate::i18n::gettext(self.locale, "Sending GIF…"));
                     let quoting = self.reply_to.take();
                     self.backend.send(Command::SendGif { chat, gif, quoting });
                     self.picker = None;
@@ -9655,6 +9737,10 @@ impl App {
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
+                // The worker's own words follow the interface's language.
+                for account in &self.accounts {
+                    account.backend.send(Command::SetLocale(self.locale));
+                }
                 self.mark_settings_dirty();
             }
             Action::SetCustomTheme(filename) => {
@@ -9970,9 +10056,10 @@ impl App {
             Action::PairWithPhone(phone) => {
                 let digits: String = phone.chars().filter(char::is_ascii_digit).collect();
                 if digits.len() < 7 {
-                    self.toast_error(
+                    self.toast_error(crate::i18n::gettext(
+                        self.locale,
                         "Enter the phone number with its country code, using digits only",
-                    );
+                    ));
                 } else {
                     self.backend.send(Command::PairWithPhone(digits));
                 }
@@ -10560,12 +10647,21 @@ impl App {
                 self.start_with_system = crate::autostart::switch(state);
                 if outcome.changed && matches!(state, fastframe_autostart::State::NeedsApproval(_))
                 {
-                    self.toast("Allow ZapFast in System Settings, under Login Items.");
+                    self.toast(crate::i18n::gettext(
+                        self.locale,
+                        "Allow ZapFast in System Settings, under Login Items.",
+                    ));
                 }
             }
             Err(error) => {
                 if outcome.changed {
-                    self.toast_error(format!("Could not change the login item: {error}"));
+                    self.toast_error(
+                        crate::i18n::gettext(
+                            self.locale,
+                            "Could not change the login item: {error}",
+                        )
+                        .replace("{error}", &error),
+                    );
                 }
             }
         }
@@ -15174,6 +15270,28 @@ mod tests {
         );
     }
 
+    /// The worker's own words, its file dialog titles and failure texts,
+    /// follow the interface's language: a change reaches every account's
+    /// worker, the hidden account's too.
+    #[test]
+    fn the_interface_language_reaches_every_worker() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::SetInterfaceLanguage(Some(crate::i18n::Locale::Dutch)),
+            &ctx,
+        );
+        assert_eq!(app.locale, crate::i18n::Locale::Dutch);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SetLocale(locale) if locale == crate::i18n::Locale::Dutch
+            )),
+            "the hidden account's worker is told too"
+        );
+    }
+
     /// `zapfast quit` takes the tray's Quit path, and does even behind the
     /// app lock, since quitting reveals nothing.
     #[test]
@@ -18859,7 +18977,7 @@ mod tests {
         ));
         for lockable in [false, true] {
             assert_eq!(
-                super::tray_config(lockable).menu,
+                super::tray_config(lockable, crate::i18n::Locale::default()).menu,
                 [
                     fastframe_tray::MenuItem::action(super::TRAY_SHOW, "Show or hide ZapFast"),
                     fastframe_tray::MenuItem::action(super::TRAY_LOCK, "Lock ZapFast")
@@ -18869,6 +18987,38 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// The tray menu's words are the interface's language, and a change of
+    /// language is noted for the menu at once, not at the next start.
+    #[test]
+    fn the_tray_menu_follows_the_interface_language() {
+        use crate::i18n::Locale;
+        let dutch = super::tray_config(false, Locale::Dutch);
+        assert_eq!(
+            dutch.menu,
+            [
+                fastframe_tray::MenuItem::action(
+                    super::TRAY_SHOW,
+                    crate::i18n::gettext(Locale::Dutch, "Show or hide ZapFast")
+                ),
+                fastframe_tray::MenuItem::action(
+                    super::TRAY_LOCK,
+                    crate::i18n::gettext(Locale::Dutch, "Lock ZapFast")
+                )
+                .visible(false),
+                fastframe_tray::MenuItem::Separator,
+                fastframe_tray::MenuItem::action(
+                    super::TRAY_QUIT,
+                    crate::i18n::gettext(Locale::Dutch, "Quit")
+                ),
+            ]
+        );
+        let mut app = app();
+        assert_eq!(app.tray_locale, Locale::default());
+        app.locale = Locale::Dutch;
+        app.handle_tray();
+        assert_eq!(app.tray_locale, Locale::Dutch);
     }
 
     /// The tray offers "Lock ZapFast" as soon as a password is set and stops
@@ -26091,6 +26241,18 @@ mod name_tests {
         let hidden = "167650256810092@lid";
         app.chats.push(Chat::new(hidden.into(), masked.into()));
         assert_eq!(app.display_name(hidden), masked);
+    }
+
+    /// What we ourselves are called reads in the interface's language, as the
+    /// rest of the list does: Dutch reads "Jij" where it read "You" (#1150).
+    #[test]
+    fn our_own_name_reads_in_the_interface_language() {
+        let mut app = app();
+        let me = app.me.clone().expect("the account's own id");
+        app.locale = crate::i18n::Locale::Dutch;
+        let you = crate::i18n::gettext(app.locale, "You");
+        assert_ne!(you, "You", "the catalog translates the name");
+        assert_eq!(app.display_name_or(&me, None), you);
     }
 
     #[test]

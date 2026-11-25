@@ -10,14 +10,20 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use whatsapp_rust::store::SqliteStore;
 
-pub(super) async fn open(path: &Path) -> Result<SqliteStore> {
+pub(super) async fn open(locale: crate::i18n::Locale, path: &Path) -> Result<SqliteStore> {
     let store = SqliteStore::open(&path.to_string_lossy()).await;
     let path = path.to_owned();
     // Also repair after a later migration fails, before returning its error.
     tokio::task::spawn_blocking(move || preserve_legacy_column(&path))
         .await
-        .context("Device store compatibility task failed")??;
-    store.context("Could not open the device store")
+        .context(crate::i18n::gettext(
+            locale,
+            "Device store compatibility task failed",
+        ))??;
+    store.context(crate::i18n::gettext(
+        locale,
+        "Could not open the device store",
+    ))
 }
 
 fn preserve_legacy_column(path: &Path) -> Result<()> {
@@ -49,7 +55,7 @@ mod tests {
     async fn library_migration_keeps_legacy_writes_working() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.db");
-        let store = open(&path).await.unwrap();
+        let store = open(crate::i18n::Locale::default(), &path).await.unwrap();
         let connection = Connection::open(&path).unwrap();
         // This is the column set used by the old library. All values are fixtures.
         connection.execute(
@@ -58,7 +64,7 @@ mod tests {
         ).unwrap();
         drop(connection);
         drop(store);
-        let _store = open(&path).await.unwrap();
+        let _store = open(crate::i18n::Locale::default(), &path).await.unwrap();
         let connection = Connection::open(&path).unwrap();
         assert_eq!(
             connection

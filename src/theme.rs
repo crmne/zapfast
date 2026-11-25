@@ -30,33 +30,6 @@ pub fn presets() -> impl Iterator<Item = CustomTheme> {
     fastframe_theme::presets::themes::<Palette>()
 }
 
-/// What the theme setting says under it while the catalogue loads or when
-/// something went wrong.
-pub fn theme_status(status: fastframe_theme::Status) -> &'static str {
-    use fastframe_theme::{Problem, Status};
-    match status {
-        Status::Loading => "Loading local themes…",
-        Status::SelectedUnavailable => {
-            "The selected theme is unavailable. Keeping the last usable appearance. See the log for details."
-        }
-        Status::Problem(Problem::Unreadable) => {
-            "The themes folder could not be read. See the log for details."
-        }
-        Status::Problem(Problem::TooManyEntries) => {
-            "The themes folder has more than 512 entries. Keep fewer files there to list the custom palettes."
-        }
-        Status::Problem(Problem::TooManyThemes) => {
-            "Only 128 custom palettes can be listed. Keep fewer JSON files in the themes folder to see the rest."
-        }
-        Status::Problem(Problem::OmarchyUnreadable) => {
-            "The Omarchy palette could not be loaded. Keeping the last usable appearance. See the log for details."
-        }
-        Status::Problem(Problem::LoaderFailed | _) => {
-            "Custom themes could not be loaded. Run zapfast reload-themes to try again."
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Palette {
     pub dark: bool,

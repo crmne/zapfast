@@ -12,13 +12,16 @@ use std::path::Path;
 
 /// Opens `path` in its default application or, failing that, shows it in its
 /// folder. Blocks for up to a few seconds per attempt, so call it off the
-/// interface thread. The error names the file so the reader can go there.
-pub fn open_or_reveal(path: &Path) -> Result<(), String> {
+/// interface thread. The error names the file, so the reader can go there,
+/// and says it in `locale`.
+pub fn open_or_reveal(locale: crate::i18n::Locale, path: &Path) -> Result<(), String> {
     first_success(&attempts(path)).map_err(|error| {
-        format!(
-            "Could not open {}: {error}. Open it from its folder instead.",
-            path.display()
+        crate::i18n::gettext(
+            locale,
+            "Could not open {path}: {error}. Open it from its folder instead.",
         )
+        .replace("{path}", &path.display().to_string())
+        .replace("{error}", &error)
     })
 }
 

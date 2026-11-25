@@ -260,7 +260,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             20.0,
                             palette.secondary,
                             palette.text,
-                            "Back (Esc)",
+                            crate::i18n::gettext(app.locale, "Back (Esc)").as_ref(),
                         )
                         .clicked()
                         {
@@ -318,6 +318,7 @@ fn search(app: &mut App, ui: &mut egui::Ui) {
     let mut text = app.settings_search.clone();
     let response = widgets::search_field(
         ui,
+        app.locale,
         &palette,
         egui::Id::new(SEARCH_ID),
         &mut text,
@@ -334,6 +335,42 @@ fn search(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// What the theme setting says under it while the catalogue loads or when
+/// something went wrong. Each message is asked for by itself, so every
+/// language can say it its own way.
+fn theme_status(locale: Locale, status: fastframe_theme::Status) -> Text {
+    use crate::i18n::gettext;
+    use fastframe_theme::{Problem, Status};
+    let text = match status {
+        Status::Loading => gettext(locale, "Loading local themes…"),
+        Status::SelectedUnavailable => gettext(
+            locale,
+            "The selected theme is unavailable. Keeping the last usable appearance. See the log for details.",
+        ),
+        Status::Problem(Problem::Unreadable) => gettext(
+            locale,
+            "The themes folder could not be read. See the log for details.",
+        ),
+        Status::Problem(Problem::TooManyEntries) => gettext(
+            locale,
+            "The themes folder has more than 512 entries. Keep fewer files there to list the custom palettes.",
+        ),
+        Status::Problem(Problem::TooManyThemes) => gettext(
+            locale,
+            "Only 128 custom palettes can be listed. Keep fewer JSON files in the themes folder to see the rest.",
+        ),
+        Status::Problem(Problem::OmarchyUnreadable) => gettext(
+            locale,
+            "The Omarchy palette could not be loaded. Keeping the last usable appearance. See the log for details.",
+        ),
+        Status::Problem(Problem::LoaderFailed | _) => gettext(
+            locale,
+            "Custom themes could not be loaded. Run zapfast reload-themes to try again.",
+        ),
+    };
+    text.into_owned().into()
+}
+
 /// Every settings section, in page order, with the rows this setup offers.
 fn sections(app: &App) -> Vec<Section> {
     let locale = app.locale;
@@ -344,7 +381,7 @@ fn sections(app: &App) -> Vec<Section> {
         .custom_themes
         .status(app.settings.custom_theme.as_deref());
     let detail = if let Some(status) = status {
-        theme::theme_status(status).to_owned().into()
+        theme_status(locale, status)
     } else if app.custom_themes.follows_omarchy() {
         translated(locale, "Follow system uses your Omarchy colours.")
     } else {
@@ -1099,8 +1136,8 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             .settings
             .custom_theme
             .as_deref()
-            .map(fastframe_theme::display_name)
-            .unwrap_or_else(|| app.settings.theme.label());
+            .map(|name| fastframe_theme::display_name(name).to_owned())
+            .unwrap_or_else(|| app.settings.theme.said(app.locale).into_owned());
         let response = egui::ComboBox::from_id_salt("appearance_theme")
             .selected_text(" ")
             .width(200.0_f32.min(ui.available_width()))
@@ -1110,7 +1147,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
                     if theme_option(
                         ui,
                         &palette,
-                        choice.label(),
+                        &choice.said(app.locale),
                         app.settings.custom_theme.is_none() && app.settings.theme == choice,
                     ) {
                         app.actions.push(Action::SetTheme(choice));
@@ -1135,7 +1172,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
         let rect = response.response.rect;
         let text = widgets::line(
             ui,
-            selected,
+            &selected,
             theme::regular(14.0),
             palette.text,
             rect.width() - 36.0,
@@ -1190,7 +1227,7 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
     let selected = app.settings.font;
     // "Inter" is a name; "System" is a word.
     let label = |choice: FontChoice| match choice {
-        FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
+        FontChoice::System => crate::i18n::gettext(app.locale, "System").into_owned(),
         FontChoice::Inter => choice.label().to_owned(),
     };
     let response = egui::ComboBox::from_id_salt("interface_font")
@@ -1275,13 +1312,18 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                 20.0,
                                 palette.secondary,
                                 palette.text,
-                                "Back to settings",
+                                crate::i18n::gettext(app.locale, "Back to settings").as_ref(),
                             )
                             .clicked()
                             {
                                 app.actions.push(Action::Open(Page::Settings));
                             }
-                            theme::text(ui, "Set chat wallpaper", theme::bold(18.0), palette.text);
+                            theme::text(
+                                ui,
+                                crate::i18n::gettext(app.locale, "Set chat wallpaper"),
+                                theme::bold(18.0),
+                                palette.text,
+                            );
                         },
                     );
 
@@ -1366,7 +1408,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                     ui.painter().text(
                         header.center(),
                         egui::Align2::CENTER_CENTER,
-                        "Wallpaper preview",
+                        crate::i18n::gettext(app.locale, "Wallpaper preview").as_ref(),
                         theme::bold(18.0),
                         palette.text,
                     );
@@ -1982,7 +2024,7 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
     ];
     let selected = match &current {
         NotificationSound::Custom(path) => path.file_name().map_or_else(
-            || "Custom".to_owned(),
+            || crate::i18n::gettext(locale, "Custom").into_owned(),
             |name| name.to_string_lossy().into_owned(),
         ),
         sound => choices

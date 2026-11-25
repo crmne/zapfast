@@ -52,6 +52,17 @@ impl ThemeChoice {
             Self::Messages => "Messages",
         }
     }
+
+    /// The choice's name in the interface's language. "Messages" is the
+    /// theme's own name, and stays.
+    pub fn said(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        match self {
+            Self::Dark => crate::i18n::gettext(locale, "Dark"),
+            Self::Light => crate::i18n::gettext(locale, "Light"),
+            Self::System => crate::i18n::gettext(locale, "Follow system"),
+            Self::Messages => "Messages".into(),
+        }
+    }
 }
 
 /// The typeface the interface is drawn with.
@@ -985,6 +996,26 @@ mod tests {
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
         assert_eq!(Settings::load(&path).theme, ThemeChoice::System);
+    }
+
+    /// Each theme's name goes through gettext as its own literal, so a
+    /// catalog can say it. No catalog translates these yet, and the template
+    /// is regenerated on main, so this file's own gettext call proves the
+    /// literal. "Messages" is the theme's own name, and stays.
+    #[test]
+    fn theme_names_are_asked_for_in_the_interface_language() {
+        const SOURCE: &str = include_str!("settings.rs");
+        for choice in ThemeChoice::ALL {
+            let shown = choice.said(crate::i18n::Locale::default());
+            assert_eq!(shown, choice.label(), "{choice:?}");
+            if *choice != ThemeChoice::Messages {
+                assert!(
+                    SOURCE.contains(&format!("gettext(locale, \"{}\")", choice.label())),
+                    "{choice:?}: {:?} is not a gettext literal",
+                    choice.label()
+                );
+            }
+        }
     }
 
     #[test]

@@ -289,7 +289,10 @@ impl Account {
             AccountSettings::default()
         };
         resolve_wallpaper_path(&dirs, &mut settings);
-        let backend = Backend::spawn(dirs.clone(), waker.clone());
+        // The worker's own words start in the interface's language, read the
+        // same way the window reads it: no command can reach it that early.
+        let locale = crate::i18n::resolve(legacy.interface_language);
+        let backend = Backend::spawn(dirs.clone(), locale, waker.clone());
         Ok(Self::new(id, dirs, settings, backend))
     }
 

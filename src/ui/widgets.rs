@@ -1006,6 +1006,7 @@ pub fn search_galley_id(field: egui::Id) -> egui::Id {
 /// Search field with icon and clear button.
 pub fn search_field(
     ui: &mut Ui,
+    locale: crate::i18n::Locale,
     palette: &Palette,
     id: egui::Id,
     text: &mut String,
@@ -1109,7 +1110,7 @@ pub fn search_field(
             15.0,
             palette.secondary,
             palette.text,
-            "Clear",
+            crate::i18n::gettext(locale, "Clear").as_ref(),
         )
         .clicked()
         {
@@ -1989,18 +1990,20 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
 /// Selectable pill with an optional count, used for the chat-list filters.
 pub fn filter_chip(
     ui: &mut Ui,
+    locale: crate::i18n::Locale,
     palette: &Palette,
     label: &str,
     count: usize,
     selected: bool,
 ) -> egui::Response {
-    dotted_chip(ui, palette, None, label, count, selected)
+    dotted_chip(ui, locale, palette, None, label, count, selected)
 }
 
 /// A filter chip led by a coloured dot, for filters the user named and
 /// coloured, such as labels.
 pub fn dotted_chip(
     ui: &mut Ui,
+    locale: crate::i18n::Locale,
     palette: &Palette,
     dot: Option<Color32>,
     label: &str,
@@ -2064,8 +2067,16 @@ pub fn dotted_chip(
         }
     }
     response.widget_info(|| {
+        // The count takes this language's own plural form.
         let label = if count > 0 {
-            format!("{label}, {count} unread")
+            let unread = crate::i18n::ngettext(
+                locale,
+                "{} unread message",
+                "{} unread messages",
+                count as u32,
+            )
+            .replace("{}", &count.to_string());
+            format!("{label}, {unread}")
         } else {
             label.to_owned()
         };

@@ -246,6 +246,7 @@ impl Notifications {
     #[expect(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
+        locale: crate::i18n::Locale,
         title: String,
         body: String,
         picture: Option<PathBuf>,
@@ -290,6 +291,7 @@ impl Notifications {
                     play_sound(sound.clone());
                 }
                 deliver(
+                    locale,
                     &title,
                     &body,
                     picture.as_deref(),
@@ -403,6 +405,7 @@ pub fn locked_lines(locale: crate::i18n::Locale) -> (String, String) {
 
 /// Builds the notification title and body, including the group sender.
 pub fn lines(
+    locale: crate::i18n::Locale,
     chat_name: &str,
     is_group: bool,
     sender: &str,
@@ -410,12 +413,16 @@ pub fn lines(
     account: Option<&str>,
 ) -> (String, String) {
     let body = if is_group {
-        format!("{sender}: {summary}")
+        crate::i18n::gettext(locale, "{sender}: {summary}")
+            .replace("{sender}", sender)
+            .replace("{summary}", summary)
     } else {
         summary.to_owned()
     };
     let title = match account {
-        Some(account) => format!("{chat_name} · {account}"),
+        Some(account) => crate::i18n::gettext(locale, "{chat_name} · {account}")
+            .replace("{chat_name}", chat_name)
+            .replace("{account}", account),
         None => chat_name.to_owned(),
     };
     (title, body)
@@ -441,6 +448,7 @@ fn notification_app_id() -> &'static str {
 /// thread only keeps ZapFast's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
 fn deliver(
+    locale: crate::i18n::Locale,
     title: &str,
     body: &str,
     picture: Option<&std::path::Path>,
@@ -499,7 +507,7 @@ fn deliver(
             let Some(wait) = before_showing(&mut cancelled) else { return; };
             wait
         } else { false };
-        let mut notification = Notification::new(title).body(body).category("im.received").sound(native_sound(sound)).action("default", "Open");
+        let mut notification = Notification::new(title).body(body).category("im.received").sound(native_sound(sound)).action("default", crate::i18n::gettext(locale, "Open").as_ref());
         if let Some(picture) = picture { notification = notification.image(picture); }
         let (events, mut responses) = tokio::sync::mpsc::unbounded_channel();
         let handle = match client.show_with(notification, move |event| { let _ = events.send(event); }) {
@@ -800,6 +808,7 @@ mod tests {
             .and_then(|entries| entries.flatten().map(|entry| entry.path()).next());
         let mut notifications = Notifications::default();
         notifications.show(
+            crate::i18n::Locale::default(),
             "Ada Lovelace".into(),
             "A test from ZapFast, with a picture".into(),
             picture,
@@ -854,15 +863,37 @@ mod tests {
     #[test]
     fn a_group_names_the_sender_and_a_chat_does_not() {
         assert_eq!(
-            lines("Rust Berlin", true, "Mira", "Save me a seat", None),
+            lines(
+                crate::i18n::Locale::default(),
+                "Rust Berlin",
+                true,
+                "Mira",
+                "Save me a seat",
+                None,
+            ),
             ("Rust Berlin".to_owned(), "Mira: Save me a seat".to_owned())
         );
         assert_eq!(
-            lines("Ada Lovelace", false, "Ada Lovelace", "Photo", Some("Work")).0,
+            lines(
+                crate::i18n::Locale::default(),
+                "Ada Lovelace",
+                false,
+                "Ada Lovelace",
+                "Photo",
+                Some("Work"),
+            )
+            .0,
             "Ada Lovelace · Work"
         );
         assert_eq!(
-            lines("Ada Lovelace", false, "Ada Lovelace", "Photo", None),
+            lines(
+                crate::i18n::Locale::default(),
+                "Ada Lovelace",
+                false,
+                "Ada Lovelace",
+                "Photo",
+                None,
+            ),
             ("Ada Lovelace".to_owned(), "Photo".to_owned())
         );
     }

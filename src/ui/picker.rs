@@ -166,13 +166,14 @@ fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab)
 
 fn search_box(
     ui: &mut egui::Ui,
+    locale: crate::i18n::Locale,
     palette: &Palette,
     id: &str,
     text: &mut String,
     hint: &str,
 ) -> egui::Response {
     let width = ui.available_width();
-    widgets::search_field(ui, palette, egui::Id::new(id), text, hint, width)
+    widgets::search_field(ui, locale, palette, egui::Id::new(id), text, hint, width)
 }
 
 // --- emoji ---------------------------------------------------------------
@@ -188,6 +189,29 @@ fn group_name(group: emojis::Group) -> &'static str {
         emojis::Group::Objects => "Objects",
         emojis::Group::Symbols => "Symbols",
         emojis::Group::Flags => "Flags",
+    }
+}
+
+/// What an emoji grid's sections are called in the reader's language. The
+/// grid, its tabs, the scroll memory and the keyboard all name a section by
+/// its English words, which never change under them; this is where each is
+/// said, once for the heading and once for a tab's tooltip.
+fn section_name(locale: crate::i18n::Locale, name: &'static str) -> std::borrow::Cow<'static, str> {
+    use crate::i18n::gettext;
+    match name {
+        "Recent" => gettext(locale, "Recent"),
+        "Frequently Used" => gettext(locale, "Frequently Used"),
+        "Nothing matches" => gettext(locale, "Nothing matches"),
+        "Smileys & Emotion" => gettext(locale, "Smileys & Emotion"),
+        "People & Body" => gettext(locale, "People & Body"),
+        "Animals & Nature" => gettext(locale, "Animals & Nature"),
+        "Food & Drink" => gettext(locale, "Food & Drink"),
+        "Travel & Places" => gettext(locale, "Travel & Places"),
+        "Activities" => gettext(locale, "Activities"),
+        "Objects" => gettext(locale, "Objects"),
+        "Symbols" => gettext(locale, "Symbols"),
+        "Flags" => gettext(locale, "Flags"),
+        other => other.into(),
     }
 }
 
@@ -621,7 +645,7 @@ fn category_tabs(
                 }
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(label)
+                    .on_hover_text(section_name(app.locale, label))
                     .clicked()
                 {
                     app.picker_search.clear();
@@ -670,7 +694,14 @@ fn emoji_grid(
     let submit = search_active && take_plain_key(ui, Key::Enter);
     let mut search = app.picker_search.clone();
     let search_hint = gettext(app.locale, "Search emoji");
-    let response = search_box(ui, palette, search_id, &mut search, &search_hint);
+    let response = search_box(
+        ui,
+        app.locale,
+        palette,
+        search_id,
+        &mut search,
+        &search_hint,
+    );
     let query_changed = search != app.picker_search;
     if query_changed {
         app.picker_search = search;
@@ -785,7 +816,7 @@ fn emoji_grid(
                     ui.painter().text(
                         pos2(rect.left() + 4.0, rect.bottom() - 8.0),
                         Align2::LEFT_BOTTOM,
-                        *label,
+                        section_name(app.locale, label).as_ref(),
                         theme::semibold(12.5),
                         palette.secondary,
                     );
@@ -913,6 +944,29 @@ mod emoji_tests {
                 "{recent:?}"
             );
         }
+    }
+
+    /// Every section an emoji grid names is asked for by its own literal, so a
+    /// catalog can translate it, and a language without the words keeps the
+    /// English. Turkish has "Recent" in its catalog today.
+    #[test]
+    fn every_emoji_section_is_named_through_gettext() {
+        let source = include_str!("picker.rs");
+        let named = |name: &str| source.contains(&format!("gettext(locale, \"{name}\")"));
+        for (_, _, label) in CATEGORIES {
+            assert!(named(label), "{label:?} is not a gettext literal");
+        }
+        for label in ["Recent", "Nothing matches"] {
+            assert!(named(label), "{label:?} is not a gettext literal");
+        }
+        assert_eq!(
+            section_name(crate::i18n::Locale::Turkish, "Recent"),
+            "Son kullanılanlar"
+        );
+        assert_eq!(
+            section_name(crate::i18n::Locale::default(), "Flags"),
+            "Flags"
+        );
     }
 
     #[test]
@@ -1056,7 +1110,14 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let submit = ui.memory(|memory| memory.has_focus(egui::Id::new("gif-search")))
         && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
     let search_hint = gettext(app.locale, "Search GIFs via GIPHY");
-    search_box(ui, palette, "gif-search", &mut query, &search_hint);
+    search_box(
+        ui,
+        app.locale,
+        palette,
+        "gif-search",
+        &mut query,
+        &search_hint,
+    );
     if query != app.picker_search {
         app.picker_search = query.clone();
     }
@@ -1320,6 +1381,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     let locale = app.locale;
     search_box(
         ui,
+        app.locale,
         palette,
         "sticker-search",
         &mut app.sticker_search,

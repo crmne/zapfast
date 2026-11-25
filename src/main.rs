@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use zapfast::{app, backend, paths, settings, single_instance};
+use zapfast::{app, backend, i18n, paths, settings, single_instance};
 
 use clap::Parser;
 
@@ -523,24 +523,40 @@ fn is_graphics_failure(error: &eframe::Error) -> bool {
     )
 }
 
-/// The text of the dialog shown when ZapFast cannot start, kept apart from
-/// the dialog so it is tested on every platform.
+/// The language the startup dialog speaks: the interface language saved in
+/// the settings, else the system's.
 #[cfg(any(windows, test))]
-fn startup_failure_text(graphics: bool, details: &str, log: &std::path::Path) -> String {
+fn startup_failure_locale(settings_file: &std::path::Path) -> i18n::Locale {
+    i18n::resolve(settings::Settings::load(settings_file).interface_language)
+}
+
+/// The text of the dialog shown when ZapFast cannot start, kept apart from
+/// the dialog so it is tested on every platform. It is said in `locale`.
+#[cfg(any(windows, test))]
+fn startup_failure_text(
+    locale: i18n::Locale,
+    graphics: bool,
+    details: &str,
+    log: &std::path::Path,
+) -> String {
     let summary = if graphics {
-        "ZapFast could not start because the graphics driver does not offer \
-         OpenGL 2.1 or newer, which ZapFast needs to draw its window.\n\n\
-         Install the current driver from the maker of the graphics chip \
-         (Intel, AMD or NVIDIA). The Microsoft Basic Display Adapter, some \
-         virtual machines and some remote desktop sessions offer no usable \
-         OpenGL."
+        i18n::gettext(
+            locale,
+            "ZapFast could not start because the graphics driver does not offer OpenGL 2.1 or newer, which ZapFast needs to draw its window.\n\nInstall the current driver from the maker of the graphics chip (Intel, AMD or NVIDIA). The Microsoft Basic Display Adapter, some virtual machines and some remote desktop sessions offer no usable OpenGL.",
+        )
+        .into_owned()
     } else {
-        "ZapFast could not start."
+        i18n::gettext(locale, "ZapFast could not start.").into_owned()
     };
-    format!(
-        "{summary}\n\nDetails: {details}\n\nThe log may say more: {}",
-        log.display()
+    i18n::gettext(
+        locale,
+        "{summary}\n\nDetails: {details}\n\nThe log may say more: {log}",
     )
+    // The error's own words go in last, so nothing in them is read as a
+    // placeholder.
+    .replace("{summary}", &summary)
+    .replace("{log}", &log.display().to_string())
+    .replace("{details}", details)
 }
 
 /// Explains a failed start in a message box, the only thing a release
@@ -552,10 +568,12 @@ fn startup_failure_dialog(error: &eframe::Error) {
     };
     use windows::core::PCWSTR;
 
+    let dirs = paths::AppDirs::discover();
     let text = startup_failure_text(
+        startup_failure_locale(&dirs.settings_file()),
         is_graphics_failure(error),
         &error.to_string(),
-        &paths::AppDirs::discover().log_file(),
+        &dirs.log_file(),
     );
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let (text, caption) = (wide(&text), wide("ZapFast"));
@@ -1084,10 +1102,15 @@ mod tests {
 mod startup_failure_tests {
     use super::*;
 
+    // English whatever the machine's language: no catalog stands between
+    // the words and these assertions.
+    const ENGLISH: i18n::Locale = i18n::Locale::English;
+
     #[test]
     fn a_graphics_failure_names_the_driver_requirement_and_the_details() {
         let log = std::path::Path::new("C:/zapfast/zapfast.log");
         let text = startup_failure_text(
+            ENGLISH,
             true,
             "glutin error: extension to create ES context with wgl is not present",
             log,
@@ -1101,6 +1124,7 @@ mod startup_failure_tests {
     #[test]
     fn any_other_failure_shows_its_details_without_blaming_the_driver() {
         let text = startup_failure_text(
+            ENGLISH,
             false,
             "The directory is not writable",
             std::path::Path::new("zapfast.log"),
@@ -1108,6 +1132,32 @@ mod startup_failure_tests {
         assert!(text.starts_with("ZapFast could not start."));
         assert!(!text.contains("OpenGL"));
         assert!(text.contains("The directory is not writable"));
+    }
+
+    /// The error's own words are shown as they came, even when they read
+    /// like a placeholder of the text around them.
+    #[test]
+    fn the_details_are_not_read_as_placeholders() {
+        let text = startup_failure_text(
+            ENGLISH,
+            false,
+            "could not read {log}",
+            std::path::Path::new("zapfast.log"),
+        );
+        assert!(text.contains("Details: could not read {log}"));
+        assert_eq!(text.matches("zapfast.log").count(), 1);
+    }
+
+    /// The dialog speaks the interface language chosen in the settings, and
+    /// the system's when none was chosen or the settings cannot be read.
+    #[test]
+    fn the_dialog_speaks_the_saved_interface_language() {
+        let directory = tempfile::tempdir().unwrap();
+        let chosen = directory.path().join("chosen.json");
+        std::fs::write(&chosen, r#"{"interface_language": "de"}"#).unwrap();
+        assert_eq!(startup_failure_locale(&chosen), i18n::Locale::German);
+        let missing = directory.path().join("missing.json");
+        assert_eq!(startup_failure_locale(&missing), i18n::resolve(None));
     }
 }
 

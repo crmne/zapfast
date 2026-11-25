@@ -101,7 +101,11 @@ mod tests {
     fn backend_waits_for_window_acknowledgement_before_touching_storage() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = crate::paths::AppDirs::under(directory.path());
-        let mut backend = super::Backend::spawn(dirs.as_account(), super::Waker::default());
+        let mut backend = super::Backend::spawn(
+            dirs.as_account(),
+            crate::i18n::Locale::default(),
+            super::Waker::default(),
+        );
         assert!(!dirs.session_db().exists());
         assert!(!dirs.archive_db().exists());
         // Closing before a first frame must cancel startup without connecting
@@ -1006,6 +1010,9 @@ pub enum Command {
     Relink,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
+    /// The language of the worker's own words to the person: file dialog
+    /// titles and failure texts. A worker starts in it; this follows a change.
+    SetLocale(crate::i18n::Locale),
     /// Sets aside an unreadable archive and the linked session, then starts
     /// over with a new archive and a new link.
     StartOverArchive,
@@ -1781,7 +1788,10 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn spawn(dirs: AccountDirs, waker: Waker) -> Self {
+    /// `locale` is the interface's language from the first moment: the worker
+    /// opens the archive and links before it reads its first command, and it
+    /// may have to say why that failed.
+    pub fn spawn(dirs: AccountDirs, locale: crate::i18n::Locale, waker: Waker) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -1797,7 +1807,8 @@ impl Backend {
             .spawn(move || {
                 runtime.block_on(async move {
                     if started.await.is_ok() {
-                        worker::run(dirs, event_tx, worker_commands, command_rx, waker).await;
+                        worker::run(dirs, locale, event_tx, worker_commands, command_rx, waker)
+                            .await;
                     }
                 });
                 runtime.shutdown_timeout(Duration::from_secs(3));

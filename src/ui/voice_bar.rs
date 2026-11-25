@@ -37,9 +37,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     );
     let playing = status.state == State::Playing;
     let (icon, tooltip) = if playing {
-        (Icon::Pause, "Pause")
+        (Icon::Pause, crate::i18n::gettext(app.locale, "Pause"))
     } else {
-        (Icon::Play, "Play")
+        (Icon::Play, crate::i18n::gettext(app.locale, "Play"))
     };
     let button_at = |left: f32| {
         Rect::from_center_size(
@@ -47,7 +47,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             egui::Vec2::splat(BUTTON),
         )
     };
-    let tooltip = crate::i18n::gettext(app.locale, tooltip);
     let hover = palette.accent.gamma_multiply(0.22);
     let mut toggled = false;
     ui.scope_builder(

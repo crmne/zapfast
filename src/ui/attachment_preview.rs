@@ -168,7 +168,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) -> bool {
                     palette.accent,
                     palette.accent_hover,
                     palette.on_accent,
-                    "Send",
+                    crate::i18n::gettext(app.locale, "Send").as_ref(),
                 )
                 .tab_stop(Stop::Send)
                 .clicked();
