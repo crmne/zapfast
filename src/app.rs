@@ -8512,10 +8512,12 @@ impl App {
                 {
                     self.camera = None;
                     let [width, height] = frame.size;
-                    // Camera frames are opaque, so premultiplied is straight.
+                    // Mirrored, as the viewfinder showed it. Camera frames
+                    // are opaque, so premultiplied is straight.
                     let rgba = frame
                         .pixels
-                        .iter()
+                        .chunks_exact(width)
+                        .flat_map(|row| row.iter().rev())
                         .flat_map(|pixel| pixel.to_array())
                         .collect();
                     let id = self.stage(Pending::Picture {
@@ -23067,7 +23069,8 @@ mod tests {
         }
     }
 
-    /// The camera's frame is staged as a photo and the cropper opens on it.
+    /// The camera's frame is staged as a photo, mirrored as the viewfinder
+    /// showed it, and the cropper opens on it.
     #[test]
     fn a_photo_from_the_camera_is_staged_and_opens_the_cropper() {
         let ctx = egui::Context::default();
@@ -23076,15 +23079,18 @@ mod tests {
         app.chats
             .push(Chat::new(chat.into(), "Camera fixture".into()));
         app.open_chat = Some(chat.into());
-        app.camera = Some(crate::camera::Viewfinder::showing(
-            egui::ColorImage::filled([4, 2], egui::Color32::RED),
-        ));
+        // Red on the left of the camera's frame, blue on the right.
+        app.camera = Some(crate::camera::Viewfinder::showing(egui::ColorImage::new(
+            [2, 1],
+            vec![egui::Color32::RED, egui::Color32::BLUE],
+        )));
         app.apply(Action::TakePhoto, &ctx);
         assert!(app.camera.is_none(), "the camera closes");
         assert_eq!(app.pending.len(), 1);
         assert!(matches!(
             &app.pending[0].item,
-            Pending::Picture { width: 4, height: 2, rgba, .. } if rgba[..4] == [255, 0, 0, 255]
+            Pending::Picture { width: 2, height: 1, rgba, .. }
+                if rgba[..] == [0, 0, 255, 255, 255, 0, 0, 255]
         ));
         assert!(app.picture_edit.is_some(), "the cropper opens on the photo");
     }

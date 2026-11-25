@@ -78,8 +78,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     ui.painter().image(
                         *texture,
                         super::call::fit_inside(inner, vec2(*width as f32, *height as f32)),
-                        // Mirrored, as a mirror shows you; the photo taken
-                        // keeps the camera's view, as others see you.
+                        // Mirrored, as a mirror shows you, and the photo
+                        // is taken as shown.
                         Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0)),
                         Color32::WHITE,
                     );
