@@ -2184,7 +2184,11 @@ impl Worker {
         let files = self
             .archive
             .files_only_in(&[chat.to_owned()], id)
-            .unwrap_or_default();
+            .unwrap_or_else(|error| {
+                // Keeping the files is the safe side: another message may use them.
+                log::warn!("could not list a revoked message's cached files: {error}");
+                Vec::new()
+            });
         let revoked = matches!(
             self.archive.set_content(chat, id, &Content::Revoked, false),
             Ok(true)
@@ -11499,7 +11503,14 @@ impl Worker {
                 revoked |= matches!(old.content, Content::Revoked);
             }
         }
-        let files = self.archive.files_only_in(&aliases, id).unwrap_or_default();
+        let files = self
+            .archive
+            .files_only_in(&aliases, id)
+            .unwrap_or_else(|error| {
+                // Keeping the files is the safe side: another message may use them.
+                log::warn!("could not list a deleted message's cached files: {error}");
+                Vec::new()
+            });
         match self.archive.delete_message_aliases(&aliases, id) {
             Ok(found) => {
                 self.drop_cached_media(&files);
