@@ -11369,16 +11369,32 @@ fn voice_player(
             let mut wave_middle = None;
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(wave_width, bar_height), Sense::click());
+                let (_, rect) = ui.allocate_space(vec2(wave_width, bar_height));
+                // A playable clip takes drags too, or the strip beneath would
+                // sweep messages into a selection instead.
+                let response = ui.interact(
+                    rect,
+                    bubble_id(&view.chat.id, &message.id).with("voice-seek"),
+                    if media.path.is_some() {
+                        Sense::click_and_drag()
+                    } else {
+                        Sense::click()
+                    },
+                );
+                let pointed = response
+                    .interact_pointer_pos()
+                    .filter(|_| rect.width() > 0.0)
+                    .map(|pointer| ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+                // Seeking restarts the clip, so a drag seeks once, where it ends.
+                let dragged = pointed.filter(|_| response.dragged());
                 wave_middle = Some(rect.center().y);
                 let pitch = 3.0;
                 let count = (rect.width() / pitch).floor() as usize;
-                let fraction = if status.total > Duration::ZERO {
+                let fraction = dragged.unwrap_or(if status.total > Duration::ZERO {
                     status.position.as_secs_f32() / status.total.as_secs_f32()
                 } else {
                     0.0
-                };
+                });
                 let played_until = rect.left() + fraction * rect.width();
                 let quiet = palette.secondary.gamma_multiply(0.7);
                 let kind = if voice_note {
@@ -11404,7 +11420,9 @@ fn voice_player(
                         let level = f32::from(bars[index * bars.len() / count]) / 100.0;
                         let height = (2.0 + level * (bar_height - 4.0)).max(2.0);
                         let x = rect.left() + index as f32 * pitch + 1.0;
-                        let colour = if status.state != State::Idle && x <= played_until {
+                        let colour = if (status.state != State::Idle || dragged.is_some())
+                            && x <= played_until
+                        {
                             palette.accent
                         } else {
                             quiet
@@ -11419,7 +11437,9 @@ fn voice_player(
                         );
                     }
                 }
-                if (!voice_note || matches!(status.state, State::Playing | State::Paused))
+                if (!voice_note
+                    || dragged.is_some()
+                    || matches!(status.state, State::Playing | State::Paused))
                     && rect.width() >= 10.0
                 {
                     let knob = played_until.clamp(rect.left() + 5.0, rect.right() - 5.0);
@@ -11431,14 +11451,9 @@ fn voice_player(
                 }
                 if let Some(path) = &media.path {
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if response.clicked()
-                        && let Some(pointer) = response.interact_pointer_pos()
+                    if (response.clicked() || response.drag_stopped())
+                        && let Some(fraction) = pointed
                     {
-                        let fraction = if rect.width() > 0.0 {
-                            ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
                         actions.push(Action::SeekVoice {
                             message: message.id.clone(),
                             path: path.clone(),

@@ -380,6 +380,12 @@ impl Player {
         });
     }
 
+    /// Where the clip being decoded will start, as a fraction from 0 to 1.
+    #[cfg(test)]
+    pub fn decoding_start(&self) -> Option<f32> {
+        self.decoding.as_ref().map(|decoding| decoding.start)
+    }
+
     /// Takes the message whose clip just played to its end, once. The app uses
     /// it to carry on with the next unplayed voice message.
     pub fn take_finished(&mut self) -> Option<String> {

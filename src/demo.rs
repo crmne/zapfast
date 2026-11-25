@@ -15890,6 +15890,60 @@ mod tests {
         assert_eq!(selected_ids(&app), ["m003", "m005"]);
     }
 
+    /// A drag along a clip's waveform or track seeks once, where it ends. It
+    /// used to fall through to the strip beneath and sweep messages (#246).
+    #[test]
+    fn a_drag_along_an_audio_clip_seeks_instead_of_selecting_messages() {
+        for from_me in [false, true] {
+            for (id, kind) in [
+                ("audio-original", "voice-waveform"),
+                ("audio-file", "audio-track"),
+            ] {
+                let mut app = app();
+                apply_flags(&mut app, Some("audio-types"));
+                let chat = app.open_chat.clone().unwrap();
+                // No such file: the player only has to be asked for it.
+                let path = app.account().dirs.media_cache_dir().join("missing.ogg");
+                for row in &mut app.conversations.get_mut(&chat).unwrap().messages {
+                    row.from_me = from_me;
+                    if let Content::Audio { media, .. } = &mut row.content {
+                        media.path = Some(path.clone());
+                    }
+                }
+                let ctx = egui::Context::default();
+                app.attach(&ctx);
+                for _ in 0..4 {
+                    render(&mut app, &ctx);
+                }
+                let track = drawn_rect(&ctx, &chat, id, kind);
+                let at = |fraction: f32| {
+                    egui::pos2(track.left() + fraction * track.width(), track.center().y)
+                };
+                // Back along the clip, leaving its height on the way.
+                let end = at(0.25) + egui::vec2(0.0, 120.0);
+                frame_with(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerMoved(at(0.75)), primary(at(0.75), true)],
+                );
+                for pos in [at(0.5), end, end] {
+                    frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+                    assert!(app.sweep.is_none(), "{id}: the drag sweeps no messages");
+                    assert_eq!(
+                        app.player.decoding_start(),
+                        None,
+                        "{id}: not before release"
+                    );
+                }
+                frame_with(&mut app, &ctx, vec![primary(end, false)]);
+                let start = app.player.decoding_start().expect("the release seeks");
+                assert!((start - 0.25).abs() < 0.01, "{id}: sought to {start}");
+                render(&mut app, &ctx);
+                assert!(app.selection.is_none(), "{id}: no message is selected");
+            }
+        }
+    }
+
     /// #246: a sweep held at the top edge scrolls the list, and takes every
     /// message it passes, rows the list only estimated included.
     #[test]
