@@ -760,6 +760,7 @@ fn ringing(
     let proxy_note = app
         .calls_skip_proxy()
         .then(|| super::dialogs::proxy_skipped_by_calls(locale));
+    let asked = proxy_note.is_some() && app.call_proxy_asked();
     // Everything above the answers stays above them: in a short window it
     // scrolls rather than running into Accept and Decline.
     let above = Rect::from_min_max(
@@ -794,7 +795,8 @@ fn ringing(
                         0.0
                     };
                     // The name, the call line, and the gaps egui keeps between them.
-                    let words = 120.0 + note + pictures;
+                    let question = if asked { 30.0 } else { 0.0 };
+                    let words = 120.0 + note + question + pictures;
                     let room = (above.height() - words).max(0.0);
                     let size = (area.height() * 0.24).clamp(96.0, 160.0).min(room);
                     ui.add_space((area.height() * 0.18).min(room - size));
@@ -816,6 +818,19 @@ fn ringing(
                     if let Some(note) = proxy_note {
                         ui.add_space(10.0);
                         theme::paragraph(ui, note, theme::regular(13.5), palette.secondary);
+                        // After the first Accept the prompt asks outright.
+                        if asked {
+                            ui.add_space(6.0);
+                            theme::paragraph(
+                                ui,
+                                gettext(
+                                    locale,
+                                    "Answer without the proxy? Accept again to answer.",
+                                ),
+                                theme::medium(13.5),
+                                palette.text,
+                            );
+                        }
                     }
                     // Who is on the group call already, by their pictures.
                     let joined: Vec<&CallPerson> =

@@ -195,6 +195,14 @@ impl App {
 
     /// Whether the call on screen is being answered: Accept was clicked and
     /// the call is not up yet.
+    /// Whether Accept was clicked once on the ringing call while a proxy is
+    /// set, so the prompt now asks and the next Accept answers.
+    pub fn call_proxy_asked(&self) -> bool {
+        self.call
+            .as_ref()
+            .is_some_and(|call| self.call_proxy_asked == Some(call.generation))
+    }
+
     pub fn call_being_answered(&self) -> bool {
         self.call
             .as_ref()
@@ -744,6 +752,14 @@ impl App {
                     ));
                 } else {
                     match call {
+                        // Blocked while the question was open: same answer
+                        // as before it was asked.
+                        UnproxiedCall::Place { chat, .. } if self.blocklist.contains(&chat) => {
+                            self.toast_error(crate::i18n::gettext(
+                                self.locale,
+                                "Unblock this contact to call them.",
+                            ));
+                        }
                         UnproxiedCall::Place { chat, video } => self.start_call(chat, video),
                         UnproxiedCall::Link { token, video } => self.start_call_link(token, video),
                     }
@@ -757,8 +773,15 @@ impl App {
                 if let Some(call) = &self.call
                     && self.call_answering != Some(call.generation)
                 {
-                    self.call_answering = Some(call.generation);
-                    self.send_call_command(Command::AnswerCall);
+                    let generation = call.generation;
+                    // While a proxy is set the first Accept only asks, on
+                    // the ringing screen itself, which covers any dialog.
+                    if self.calls_skip_proxy() && self.call_proxy_asked != Some(generation) {
+                        self.call_proxy_asked = Some(generation);
+                    } else {
+                        self.call_answering = Some(generation);
+                        self.send_call_command(Command::AnswerCall);
+                    }
                 }
             }
             Action::DeclineCall => {
@@ -1165,6 +1188,20 @@ mod tests {
         app.apply(Action::HangupCall, &ctx);
         let _ = self::sent(&mut commands);
 
+        // A contact blocked while the question was open is not called.
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        app.blocklist.ids = Some([ADA.to_owned()].into());
+        app.apply(
+            Action::CallWithoutProxy(UnproxiedCall::Place {
+                chat: ADA.into(),
+                video: false,
+            }),
+            &ctx,
+        );
+        assert!(self::sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        app.blocklist.ids = None;
+
         app.apply(
             Action::OpenUrl("https://call.whatsapp.com/voice/AbCdEf1234567890".to_owned()),
             &ctx,
@@ -1228,6 +1265,38 @@ mod tests {
         chat.archived = false;
         chat.locked = true;
         assert!(!call_notification_eligible(&chat, now));
+    }
+
+    /// With a proxy set, the first Accept only asks on the ringing screen;
+    /// the second answers, around the proxy.
+    #[test]
+    fn with_a_proxy_accept_asks_before_it_answers() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        app.proxy_for_calls = Some(true);
+        let ctx = egui::Context::default();
+        app.handle_call_update(update(1, CallPhase::Incoming));
+        let _ = sent(&mut commands);
+        app.apply(Action::AnswerCall, &ctx);
+        assert!(app.call_proxy_asked());
+        assert!(!app.call_being_answered());
+        assert!(
+            !sent(&mut commands)
+                .iter()
+                .any(|command| matches!(command, Command::AnswerCall))
+        );
+        app.apply(Action::AnswerCall, &ctx);
+        assert!(app.call_being_answered());
+        assert!(
+            sent(&mut commands)
+                .iter()
+                .any(|command| matches!(command, Command::AnswerCall))
+        );
+        // The next call asks afresh.
+        app.handle_call_update(update(1, CallPhase::Ended));
+        app.dismiss_call();
+        app.handle_call_update(update(2, CallPhase::Incoming));
+        assert!(!app.call_proxy_asked());
     }
 
     /// Answering takes seconds while the call keeps ringing on screen: Accept is disabled and a

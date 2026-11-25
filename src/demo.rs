@@ -2628,9 +2628,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "call" => call_sample(app, true, false),
             // A call rings while a proxy is set: the prompt says the call
             // goes around it.
-            "call-proxy" => {
+            "call-proxy" | "call-proxy-asked" => {
                 app.proxy_for_calls = Some(true);
                 call_sample(app, true, false);
+                if part == "call-proxy-asked" {
+                    app.call_proxy_asked = app.call.as_ref().map(|call| call.generation);
+                }
             }
             // Placing a call while a proxy is set asks first.
             "call-without-proxy" => {
@@ -9866,6 +9869,7 @@ mod tests {
             "call-bubbles,light",
             "call",
             "call-proxy",
+            "call-proxy-asked",
             "call-without-proxy",
             "call-active",
             "call-outgoing",

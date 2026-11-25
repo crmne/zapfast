@@ -886,6 +886,9 @@ pub struct App {
     /// takes seconds, and the call keeps ringing on screen until it is up, so
     /// Accept stays disabled meanwhile and a second click is not sent.
     call_answering: Option<u64>,
+    /// The incoming call (by generation) whose first Accept, while a proxy
+    /// is set, only asked: the next Accept answers it around the proxy.
+    pub(crate) call_proxy_asked: Option<u64>,
     /// The ringback and ringtone, played on the default output in the real
     /// app and only tracked in tests and demos.
     call_tones: crate::call_tones::Tones,
@@ -1773,6 +1776,7 @@ impl App {
             call_notified: None,
             call_rings: None,
             call_answering: None,
+            call_proxy_asked: None,
             call_tones: Default::default(),
             call_dismissed: None,
             call_cancel: None,
