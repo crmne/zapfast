@@ -2565,6 +2565,13 @@ pub enum Dialog {
         chat: ChatId,
         member: ChatId,
     },
+    /// Asks before joining a call link, whose text or button may say
+    /// something else, since joining turns on the microphone (and the
+    /// camera for a video link).
+    ConfirmJoinCallLink {
+        token: String,
+        video: bool,
+    },
 }
 
 /// One recipient's receipts for one of our group messages.
@@ -2977,6 +2984,11 @@ pub enum Action {
         files: Vec<(PathBuf, String)>,
     },
     OpenUrl(String),
+    /// Joins a call link once its confirmation is accepted.
+    JoinCallLink {
+        token: String,
+        video: bool,
+    },
     CopyText(String),
     CopyImage(PathBuf),
     /// Closes the toast at this index. Only errors wait to be dismissed.

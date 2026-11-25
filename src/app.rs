@@ -8088,7 +8088,7 @@ impl App {
             Action::OpenUrl(url) => {
                 if let Some((token, video)) = crate::safety::call_link(&url) {
                     if crate::calls::group_calls_enabled() {
-                        self.join_call_link(token, video);
+                        self.dialog = Some(Dialog::ConfirmJoinCallLink { token, video });
                     } else {
                         self.toast(crate::i18n::gettext(
                             self.locale,
@@ -8107,6 +8107,16 @@ impl App {
                 } else {
                     self.toast_error("This link type cannot be opened from ZapFast");
                 }
+            }
+            Action::JoinCallLink { token, video } => {
+                let asked = Dialog::ConfirmJoinCallLink {
+                    token: token.clone(),
+                    video,
+                };
+                if self.dialog.as_ref() == Some(&asked) {
+                    self.dialog = None;
+                }
+                self.join_call_link(token, video);
             }
             Action::CopyText(text) => {
                 ctx.copy_text(text);
