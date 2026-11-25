@@ -2640,6 +2640,8 @@ struct View<'a> {
     chat: &'a Chat,
     me: Option<&'a str>,
     auto_download: bool,
+    /// Whether the phone is asked for history without the reader asking.
+    history_prefetch: bool,
     connected: bool,
     account_receipts_off: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
@@ -3091,6 +3093,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         chat,
         me: app.me.as_deref(),
         auto_download: app.account().settings.auto_download,
+        history_prefetch: app.account().settings.history_prefetch,
         connected: app.link.is_connected(),
         account_receipts_off: app.account_receipts_off,
         poll_voting: &app.poll_voting,
@@ -3455,7 +3458,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     if under > 0.0 {
                         ui.add_space(under);
                     }
-                    top_of_history(ui, &palette, &conversation, chat, &mut actions);
+                    top_of_history(ui, &view, &conversation, &mut actions);
                     let mut previous: Option<&Message> = None;
                     let mut day_separator_top = f32::NEG_INFINITY;
                     // The pin notices still to place, in time order. Each one
@@ -4454,11 +4457,11 @@ fn floating_circle(ui: &egui::Ui, palette: &Palette, rect: Rect, hovered: bool) 
 /// Loading state above the oldest visible message.
 fn top_of_history(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    view: &View<'_>,
     conversation: &Conversation,
-    _chat: &Chat,
-    _actions: &mut [Action],
+    actions: &mut Vec<Action>,
 ) {
+    let palette = &view.palette;
     ui.vertical_centered(|ui| {
         if !conversation.complete {
             if conversation.loading_older {
@@ -4484,11 +4487,37 @@ fn top_of_history(
                 widgets::chip(ui, palette, "Loading messages from your phone…");
             } else {
                 widgets::chip(ui, palette, "No messages here yet");
+                ui.add_space(6.0);
+                phone_history_link(ui, view, conversation, actions);
             }
         } else {
             ui.add_space(6.0);
+            phone_history_link(ui, view, conversation, actions);
         }
     });
+}
+
+/// Without Fetch older history, an empty or short chat does not ask the phone
+/// on its own and cannot be scrolled to the top, so the reader asks here.
+fn phone_history_link(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    conversation: &Conversation,
+    actions: &mut Vec<Action>,
+) {
+    if view.history_prefetch || !view.connected || conversation.phone_exhausted {
+        return;
+    }
+    if theme::link(
+        ui,
+        "Load older messages from your phone",
+        theme::regular(12.5),
+        view.palette.accent,
+    )
+    .clicked()
+    {
+        actions.push(Action::FetchOlder(view.chat.id.clone()));
+    }
 }
 
 /// Live chat activity with stacked avatars, typing dots, and a recording icon.
@@ -7097,6 +7126,7 @@ pub(crate) fn list_menu(
         chat,
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
+        history_prefetch: app.account().settings.history_prefetch,
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
@@ -12832,6 +12862,7 @@ mod tests {
             chat: &chat,
             me: None,
             auto_download: app.settings.auto_download,
+            history_prefetch: false,
             connected: false,
             poll_voting: &app.poll_voting,
             interactive_pending: &app.interactive_sending,
