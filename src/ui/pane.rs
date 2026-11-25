@@ -254,6 +254,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 let mut text = app.chat_search.clone();
                 let response = widgets::search_field(
                     ui,
+                    app.locale,
                     &palette,
                     field_id(),
                     &mut text,

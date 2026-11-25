@@ -499,6 +499,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         && ui.input_mut(|input| super::keys::take_plain(input, egui::Key::Enter));
     let search = super::widgets::search_field(
         ui,
+        app.locale,
         &palette,
         field,
         &mut app.new_chat_search,
@@ -677,10 +678,11 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     let width = ui.available_width();
     let search = super::widgets::search_field(
         ui,
+        app.locale,
         &palette,
         egui::Id::new("forward-search"),
         &mut app.forward_search,
-        "Search chats",
+        crate::i18n::gettext(app.locale, "Search chats").as_ref(),
         width,
     );
     if ui.memory(|memory| memory.focused().is_none()) {
@@ -793,7 +795,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             if chats.is_empty() {
                 theme::text(
                     ui,
-                    "No writable chats found",
+                    crate::i18n::gettext(app.locale, "No writable chats found"),
                     theme::regular(13.5),
                     palette.secondary,
                 );
@@ -994,6 +996,7 @@ fn shortcut_row(
 
 fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let locale = app.locale;
     title(
         ui,
         app,
@@ -1036,7 +1039,13 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
                             ui.set_width(column);
                             ui.spacing_mut().item_spacing = vec2(18.0, 8.0);
                             for (keys, what) in rows {
-                                shortcut_row(ui, &palette, keys_width, keys, what);
+                                shortcut_row(
+                                    ui,
+                                    &palette,
+                                    keys_width,
+                                    keys,
+                                    &super::keys::does(locale, what),
+                                );
                             }
                         },
                     );

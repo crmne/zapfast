@@ -338,6 +338,7 @@ fn view_photo(picture: &std::path::Path) -> Action {
 /// The picture, name, details, actions and members, top to bottom.
 fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     let palette = app.palette;
+    let locale = app.locale;
     let id = shown.id.as_str();
     let name = shown.name.as_str();
     // The photo takes the panel's width, up to a portrait size.
@@ -480,8 +481,10 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                     );
                     field.inner
                 };
-                let first_field = name_field(ui, first, "contact-first", "First name");
-                let last_field = name_field(ui, last, "contact-last", "Surname");
+                let first_hint = crate::i18n::gettext(locale, "First name");
+                let last_hint = crate::i18n::gettext(locale, "Surname");
+                let first_field = name_field(ui, first, "contact-first", first_hint.as_ref());
+                let last_field = name_field(ui, last, "contact-last", last_hint.as_ref());
                 if ui.memory(|memory| memory.focused().is_none()) {
                     first_field.request_focus();
                 }
@@ -493,7 +496,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                     18.0,
                     palette.secondary,
                     palette.accent,
-                    "Save name (Enter)",
+                    &crate::i18n::gettext(locale, "Save name (Enter)"),
                 )
                 .tab_stop(Stop::InfoControl(NAME_CHECK_STOP))
                 .clicked()
@@ -545,16 +548,13 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             }
         }
         if let Some(until) = shown.muted_until {
-            theme::text(
-                ui,
-                if until == 0 {
-                    "Muted".to_owned()
-                } else {
-                    format!("Muted until {}", crate::util::chat_stamp(app.locale, until))
-                },
-                theme::regular(12.5),
-                palette.secondary,
-            );
+            let muted = if until == 0 {
+                crate::i18n::gettext(locale, "Muted").into_owned()
+            } else {
+                crate::i18n::gettext(locale, "Muted until {}")
+                    .replace("{}", &crate::util::chat_stamp(locale, until))
+            };
+            theme::text(ui, muted, theme::regular(12.5), palette.secondary);
         }
         // Keep a known timer visible even when the group's permissions make
         // it read-only. An editable chat with no known timer still offers the
@@ -804,12 +804,13 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
 /// The actions the chat offers, as many per row as fit, centred.
 fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable: bool) {
     let palette = app.palette;
+    let locale = app.locale;
     let id = shown.id.as_str();
-    let mut buttons: Vec<(Icon, &str, Vec<Action>)> = Vec::new();
+    let mut buttons: Vec<(Icon, String, Vec<Action>)> = Vec::new();
     if !shown.group && !mine {
         buttons.push((
             Icon::MessageCircle,
-            "Message",
+            crate::i18n::gettext(locale, "Message").into_owned(),
             vec![
                 Action::StartChat {
                     id: id.to_owned(),
@@ -829,7 +830,12 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             .is_some_and(|full| !full.is_empty());
         buttons.push((
             Icon::User,
-            if known { "Rename" } else { "Add to contacts" },
+            if known {
+                crate::i18n::gettext(locale, "Rename")
+            } else {
+                crate::i18n::gettext(locale, "Add to contacts")
+            }
+            .into_owned(),
             vec![Action::EditContact {
                 id: id.to_owned(),
                 name: shown.name.trim_start_matches('~').to_owned(),
@@ -839,7 +845,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
     if let Some(phone) = &shown.phone {
         buttons.push((
             Icon::Copy,
-            "Copy number",
+            crate::i18n::gettext(locale, "Copy number").into_owned(),
             vec![Action::CopyText(format!("+{phone}"))],
         ));
     }
@@ -847,13 +853,13 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         buttons.push(if shown.muted {
             (
                 Icon::Bell,
-                "Unmute",
+                crate::i18n::gettext(locale, "Unmute").into_owned(),
                 vec![Action::SetMuted(id.to_owned(), None)],
             )
         } else {
             (
                 Icon::BellOff,
-                "Mute",
+                crate::i18n::gettext(locale, "Mute").into_owned(),
                 vec![Action::SetMuted(id.to_owned(), Some(0))],
             )
         });
@@ -863,16 +869,22 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             } else {
                 Icon::Pin
             },
-            if shown.pinned { "Unpin" } else { "Pin" },
+            if shown.pinned {
+                crate::i18n::gettext(locale, "Unpin")
+            } else {
+                crate::i18n::gettext(locale, "Pin")
+            }
+            .into_owned(),
             vec![Action::SetPinned(id.to_owned(), !shown.pinned)],
         ));
         buttons.push((
             Icon::Archive,
             if shown.archived {
-                "Unarchive"
+                crate::i18n::gettext(locale, "Unarchive")
             } else {
-                "Archive"
-            },
+                crate::i18n::gettext(locale, "Archive")
+            }
+            .into_owned(),
             vec![
                 Action::SetArchived(id.to_owned(), !shown.archived),
                 Action::CloseInfo,
@@ -888,7 +900,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         let mut end = start;
         let mut total = 0.0;
         while end < buttons.len() {
-            let width = theme::soft_button_width(ui, buttons[end].1, true);
+            let width = theme::soft_button_width(ui, &buttons[end].1, true);
             let grown = if end == start {
                 width
             } else {
@@ -934,12 +946,9 @@ fn members(app: &mut App, ui: &mut egui::Ui, shown: &Shown, window: f32, photo: 
     let Some((_, members)) = app.info_members.take() else {
         return;
     };
-    theme::text(
-        ui,
-        format!("Members ({})", members.len()),
-        theme::medium(12.5),
-        palette.secondary,
-    );
+    let heading =
+        crate::i18n::gettext(app.locale, "Members ({})").replace("{}", &members.len().to_string());
+    theme::text(ui, heading, theme::medium(12.5), palette.secondary);
     ui.add_space(4.0);
     if shown.can_add {
         let label = crate::i18n::gettext(app.locale, "Add members");

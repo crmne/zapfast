@@ -43,63 +43,126 @@ fn item(id: &str, text: &str, shortcut: Option<&str>) -> MenuItem {
     )
 }
 
-fn build_menu() -> tray_icon::menu::Result<Menu> {
+/// Makes the menu in the interface's language. It is made once, at start,
+/// and outlives the window, so a language chosen later reaches it at the
+/// next start. AppKit's own items, which it localizes itself, stay as they are.
+fn build_menu(locale: crate::i18n::Locale) -> tray_icon::menu::Result<Menu> {
+    use crate::i18n::{gettext, pgettext};
     let menu = Menu::new();
     let app = Submenu::new("ZapFast", true);
     app.append_items(&[
-        &item("about", "About ZapFast", None),
+        &item("about", gettext(locale, "About ZapFast").as_ref(), None),
         &Native::separator(),
-        &item("settings", "Settings…", Some("Super+Comma")),
+        &item(
+            "settings",
+            gettext(locale, "Settings…").as_ref(),
+            Some("Super+Comma"),
+        ),
         &Native::separator(),
         &Native::services(None),
         &Native::separator(),
-        &Native::hide(Some("Hide ZapFast")),
+        &Native::hide(Some(gettext(locale, "Hide ZapFast").as_ref())),
         &Native::hide_others(None),
         &Native::show_all(None),
         &Native::separator(),
-        &item("quit", "Quit ZapFast", Some("Super+KeyQ")),
+        &item(
+            "quit",
+            gettext(locale, "Quit ZapFast").as_ref(),
+            Some("Super+KeyQ"),
+        ),
     ])?;
-    let file = Submenu::new("File", true);
+    let file = Submenu::new(gettext(locale, "File").as_ref(), true);
     file.append_items(&[
-        &item("new", "New Chat…", Some("Super+KeyN")),
+        &item(
+            "new",
+            gettext(locale, "New Chat…").as_ref(),
+            Some("Super+KeyN"),
+        ),
         &Native::separator(),
-        &item("close", "Close Window", Some("Super+KeyW")),
+        &item(
+            "close",
+            gettext(locale, "Close Window").as_ref(),
+            Some("Super+KeyW"),
+        ),
     ])?;
-    let edit = Submenu::new("Edit", true);
+    // "Edit" names the menu here, while the message menu uses the word as
+    // its action: each has a message of its own, as "About" does (#352).
+    let edit = Submenu::new(pgettext(locale, "application menu", "Edit").as_ref(), true);
     // Winit's view is not an NSTextView: AppKit's copy:/undo: selectors
     // cannot edit egui text. Send the same events as its keyboard shortcuts.
     edit.append_items(&[
-        &item("undo", "Undo", Some("Super+KeyZ")),
-        &item("redo", "Redo", Some("Super+Shift+KeyZ")),
+        &item("undo", gettext(locale, "Undo").as_ref(), Some("Super+KeyZ")),
+        &item(
+            "redo",
+            gettext(locale, "Redo").as_ref(),
+            Some("Super+Shift+KeyZ"),
+        ),
         &Native::separator(),
-        &item("cut", "Cut", Some("Super+KeyX")),
-        &item("copy", "Copy", Some("Super+KeyC")),
-        &item("paste", "Paste", Some("Super+KeyV")),
-        &item("select-all", "Select All", Some("Super+KeyA")),
+        &item("cut", gettext(locale, "Cut").as_ref(), Some("Super+KeyX")),
+        &item("copy", gettext(locale, "Copy").as_ref(), Some("Super+KeyC")),
+        &item(
+            "paste",
+            gettext(locale, "Paste").as_ref(),
+            Some("Super+KeyV"),
+        ),
+        &item(
+            "select-all",
+            gettext(locale, "Select All").as_ref(),
+            Some("Super+KeyA"),
+        ),
         &Native::separator(),
-        &item("search", "Find…", Some("Super+KeyF")),
+        &item(
+            "search",
+            gettext(locale, "Find…").as_ref(),
+            Some("Super+KeyF"),
+        ),
     ])?;
-    let view = Submenu::new("View", true);
+    let view = Submenu::new(gettext(locale, "View").as_ref(), true);
     view.append_items(&[
-        &item("sidebar", "Toggle Sidebar", Some("Super+KeyB")),
+        &item(
+            "sidebar",
+            gettext(locale, "Toggle Sidebar").as_ref(),
+            Some("Super+KeyB"),
+        ),
         &Native::separator(),
-        &item("zoom-in", "Zoom In", Some("Super+Equal")),
-        &item("zoom-out", "Zoom Out", Some("Super+Minus")),
-        &item("zoom-reset", "Actual Size", Some("Super+Digit0")),
+        &item(
+            "zoom-in",
+            gettext(locale, "Zoom In").as_ref(),
+            Some("Super+Equal"),
+        ),
+        &item(
+            "zoom-out",
+            gettext(locale, "Zoom Out").as_ref(),
+            Some("Super+Minus"),
+        ),
+        &item(
+            "zoom-reset",
+            gettext(locale, "Actual Size").as_ref(),
+            Some("Super+Digit0"),
+        ),
         &Native::separator(),
         &Native::fullscreen(None),
     ])?;
-    let window = Submenu::new("Window", true);
+    let window = Submenu::new(gettext(locale, "Window").as_ref(), true);
     window.append_items(&[
         &Native::minimize(None),
-        &Native::maximize(Some("Zoom")),
+        // The window's zoom, not the setting.
+        &Native::maximize(Some(pgettext(locale, "application menu", "Zoom").as_ref())),
         &Native::separator(),
-        &item("show-window", "Show ZapFast", None),
+        &item(
+            "show-window",
+            gettext(locale, "Show ZapFast").as_ref(),
+            None,
+        ),
     ])?;
-    let help = Submenu::new("Help", true);
+    let help = Submenu::new(gettext(locale, "Help").as_ref(), true);
     help.append_items(&[
-        &item("shortcuts", "Keyboard Shortcuts", Some("Super+Slash")),
-        &item("help", "ZapFast Help", None),
+        &item(
+            "shortcuts",
+            gettext(locale, "Keyboard Shortcuts").as_ref(),
+            Some("Super+Slash"),
+        ),
+        &item("help", gettext(locale, "ZapFast Help").as_ref(), None),
     ])?;
     menu.append_items(&[&app, &file, &edit, &view, &window, &help])?;
     window.set_as_windows_menu_for_nsapp();
@@ -107,7 +170,7 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
     Ok(menu)
 }
 
-pub fn attach(ctx: &egui::Context) {
+pub fn attach(ctx: &egui::Context, locale: crate::i18n::Locale) {
     ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
     // Layout tests use headless contexts on test threads, without an NSApp.
     if objc2::MainThreadMarker::new().is_none() {
@@ -139,7 +202,7 @@ pub fn attach(ctx: &egui::Context) {
     }));
     MENU.with_borrow_mut(|menu| {
         if menu.is_none() {
-            match build_menu() {
+            match build_menu(locale) {
                 Ok(created) => *menu = Some(created),
                 Err(error) => log::warn!("could not create the application menu: {error}"),
             }

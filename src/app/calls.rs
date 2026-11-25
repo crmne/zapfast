@@ -539,6 +539,7 @@ impl App {
         self.call_notified = Some(call.generation);
         self.wants_attention = true;
         self.notifications.show(
+            self.locale,
             title,
             body,
             picture,
@@ -599,6 +600,7 @@ impl App {
         let sound = notification_sound(&self.settings, chat_sound, group, false);
         let waker = self.waker.clone();
         self.notifications.show(
+            self.locale,
             title,
             body,
             picture,

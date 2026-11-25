@@ -176,7 +176,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             18.0,
                             palette.secondary,
                             palette.text,
-                            "Back to chats",
+                            &crate::i18n::gettext(app.locale, "Back to chats"),
                         )
                         .tab_stop(Stop::Back)
                         .clicked()
@@ -197,7 +197,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             18.0,
                             palette.secondary,
                             palette.text,
-                            "Back to chats",
+                            &crate::i18n::gettext(app.locale, "Back to chats"),
                         )
                         .tab_stop(Stop::Back)
                         .clicked()
@@ -209,14 +209,11 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         }
                         header_title(
                             ui,
-                            &crate::i18n::gettext(
-                                app.locale,
-                                if app.locked_folder {
-                                    "Locked chats"
-                                } else {
-                                    "Archived"
-                                },
-                            ),
+                            &if app.locked_folder {
+                                crate::i18n::gettext(app.locale, "Locked chats")
+                            } else {
+                                crate::i18n::gettext(app.locale, "Archived")
+                            },
                             theme::bold(20.0),
                             palette.text,
                             buttons_width,
@@ -226,7 +223,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         // rail beside the list.
                         header_title(
                             ui,
-                            &crate::i18n::gettext(app.locale, tab_title(&app.page)),
+                            &tab_title(app, &app.page),
                             theme::bold(20.0),
                             palette.text,
                             buttons_width,
@@ -247,11 +244,13 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// The header's title beside our avatar: the tab the list shows.
-fn tab_title(page: &Page) -> &'static str {
+fn tab_title(app: &App, page: &Page) -> std::borrow::Cow<'static, str> {
+    // Each name is asked for by itself: a name chosen first, then
+    // translated, is one the template never hears of.
     if *page == Page::Calls {
-        "Calls"
+        crate::i18n::gettext(app.locale, "Calls")
     } else {
-        "Chats"
+        crate::i18n::gettext(app.locale, "Chats")
     }
 }
 
@@ -296,6 +295,7 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
         };
         let response = widgets::search_field(
             ui,
+            app.locale,
             &palette,
             egui::Id::new(id),
             &mut text,
@@ -318,6 +318,7 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
     let mut text = app.search.clone();
     let response = widgets::search_field(
         ui,
+        app.locale,
         &palette,
         egui::Id::new("chat-search"),
         &mut text,
@@ -386,13 +387,20 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
     for button in buttons {
         match button {
             HeaderButton::NewChat => {
+                // macOS names the key in the menu's own way, so the two are
+                // messages of their own.
+                let tooltip = if macos {
+                    crate::i18n::gettext(app.locale, "New chat (⌘N)")
+                } else {
+                    crate::i18n::gettext(app.locale, "New chat")
+                };
                 if theme::icon_button(
                     ui,
                     Icon::SquarePen,
                     HEADER_ICON,
                     palette.secondary,
                     palette.text,
-                    if macos { "New chat (⌘N)" } else { "New chat" },
+                    tooltip.as_ref(),
                 )
                 .tab_stop(Stop::NewChat)
                 .clicked()
@@ -416,17 +424,18 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
                 }
             }
             HeaderButton::HideList => {
+                let tooltip = if macos {
+                    crate::i18n::gettext(app.locale, "Hide the chat list (⌘B)")
+                } else {
+                    crate::i18n::gettext(app.locale, "Hide the chat list (Ctrl+B)")
+                };
                 if theme::icon_button(
                     ui,
                     Icon::PanelLeft,
                     HEADER_ICON,
                     palette.secondary,
                     palette.text,
-                    if macos {
-                        "Hide the chat list (⌘B)"
-                    } else {
-                        "Hide the chat list (Ctrl+B)"
-                    },
+                    tooltip.as_ref(),
                 )
                 .tab_stop(Stop::Sidebar)
                 .clicked()
@@ -511,7 +520,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Back to chats",
+                        &crate::i18n::gettext(app.locale, "Back to chats"),
                     )
                     .tab_stop(Stop::Back)
                     .clicked()
@@ -532,7 +541,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         18.0,
                         palette.secondary,
                         palette.text,
-                        "Back to chats",
+                        &crate::i18n::gettext(app.locale, "Back to chats"),
                     )
                     .tab_stop(Stop::Back)
                     .clicked()
@@ -544,14 +553,11 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     }
                     header_title(
                         ui,
-                        &crate::i18n::gettext(
-                            app.locale,
-                            if app.locked_folder {
-                                "Locked chats"
-                            } else {
-                                "Archived"
-                            },
-                        ),
+                        &if app.locked_folder {
+                            crate::i18n::gettext(app.locale, "Locked chats")
+                        } else {
+                            crate::i18n::gettext(app.locale, "Archived")
+                        },
                         theme::bold(16.0),
                         palette.text,
                         header_buttons_width(ui, &buttons),
@@ -561,7 +567,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     // under the traffic lights.
                     header_title(
                         ui,
-                        &crate::i18n::gettext(app.locale, tab_title(&app.page)),
+                        &tab_title(app, &app.page),
                         theme::bold(20.0),
                         palette.text,
                         header_buttons_width(ui, &buttons),
@@ -602,6 +608,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
+    let locale = app.locale;
     ui.add_space(8.0);
     let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
         ui.horizontal(|ui| {
@@ -615,9 +622,11 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     && !app.show_archived
                     && app.label_filter.is_none()
                     && app.chat_filter == filter;
-                let chip = widgets::filter_chip(
+                let chip = widgets::unread_chip(
                     ui,
+                    app.locale,
                     &palette,
+                    None,
                     filter.label(app.locale).as_ref(),
                     count,
                     selected,
@@ -642,11 +651,17 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                         .all(|chat| chat.muted(now));
                     chip.context_menu(|ui| {
                         let (icon, label) = if all_muted {
-                            (Icon::Bell, "Unmute all channels")
+                            (
+                                Icon::Bell,
+                                crate::i18n::gettext(locale, "Unmute all channels"),
+                            )
                         } else {
-                            (Icon::BellOff, "Mute all channels")
+                            (
+                                Icon::BellOff,
+                                crate::i18n::gettext(locale, "Mute all channels"),
+                            )
                         };
-                        if widgets::menu_item(ui, &palette, Some(icon), label) {
+                        if widgets::menu_item(ui, &palette, Some(icon), &label) {
                             app.actions.push(Action::MuteAllChannels(!all_muted));
                             ui.close();
                         }
@@ -931,32 +946,36 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     if chats.is_empty() {
-        // The favorites title is translated, so it is bound here: the tuple
-        // below borrows it for this frame, and every other arm stays a literal.
-        let favorites_title;
+        let locale = app.locale;
         let (title, body) = if app.show_archived {
-            ("Nothing archived", "Archived chats appear here.")
+            (
+                crate::i18n::gettext(locale, "Nothing archived"),
+                crate::i18n::gettext(locale, "Archived chats appear here."),
+            )
         } else if app.chat_filter != ChatFilter::All {
             let title = match app.chat_filter {
-                ChatFilter::Unread => "No unread chats",
-                ChatFilter::Private => "No private chats",
-                ChatFilter::Channels => "No channels",
-                ChatFilter::Favorites => {
-                    favorites_title = crate::i18n::gettext(app.locale, "No favorites yet");
-                    favorites_title.as_ref()
-                }
-                _ => "No groups",
+                ChatFilter::Unread => crate::i18n::gettext(locale, "No unread chats"),
+                ChatFilter::Private => crate::i18n::gettext(locale, "No private chats"),
+                ChatFilter::Channels => crate::i18n::gettext(locale, "No channels"),
+                ChatFilter::Favorites => crate::i18n::gettext(locale, "No favorites yet"),
+                _ => crate::i18n::gettext(locale, "No groups"),
             };
-            (title, "Choose All to see every chat.")
+            (
+                title,
+                crate::i18n::gettext(locale, "Choose All to see every chat."),
+            )
         } else if app.syncing {
-            ("Loading your chats", "Receiving history from your phone.")
+            (
+                crate::i18n::gettext(locale, "Loading your chats"),
+                crate::i18n::gettext(locale, "Receiving history from your phone."),
+            )
         } else {
             (
-                "No chats yet",
-                "Use New chat to message a contact or yourself.",
+                crate::i18n::gettext(locale, "No chats yet"),
+                crate::i18n::gettext(locale, "Use New chat to message a contact or yourself."),
             )
         };
-        widgets::empty_state(ui, &palette, Icon::MessageCircle, title, body);
+        widgets::empty_state(ui, &palette, Icon::MessageCircle, &title, &body);
         return;
     }
     // Rows touch: one clickable surface from top to bottom, no gaps or rules.
@@ -1126,8 +1145,11 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
             ui,
             &palette,
             Icon::LockOpen,
-            "No locked chats",
-            "Lock a chat from its context menu to hide it here.",
+            &crate::i18n::gettext(app.locale, "No locked chats"),
+            &crate::i18n::gettext(
+                app.locale,
+                "Lock a chat from its context menu to hide it here.",
+            ),
         );
         return;
     }
@@ -1185,6 +1207,7 @@ fn row_scroll_offset(
 /// Search results grouped into chats, messages, and contacts.
 fn results(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let locale = app.locale;
     let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
     let hits: Vec<Message> = app.search_hits.clone();
     let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
@@ -1199,8 +1222,8 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             ui,
             &palette,
             Icon::Search,
-            "No results",
-            "Try another name, number, or message text.",
+            &crate::i18n::gettext(locale, "No results"),
+            &crate::i18n::gettext(locale, "Try another name, number, or message text."),
         );
         return;
     }
@@ -1210,7 +1233,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !chats.is_empty() {
-                section(ui, &palette, "Chats");
+                section(ui, &palette, &crate::i18n::gettext(locale, "Chats"));
                 for chat in &chats {
                     let reveal = ui.is_enabled()
                         && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
@@ -1233,7 +1256,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::SelectableLabel,
                                     ui.is_enabled(),
-                                    unread_announcement(&title, chat),
+                                    unread_announcement(locale, &title, chat),
                                 )
                             });
                             // A screen reader can activate the node: open the
@@ -1254,13 +1277,13 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             if !hits.is_empty() {
-                section(ui, &palette, "Messages");
+                section(ui, &palette, &crate::i18n::gettext(locale, "Messages"));
                 for hit in &hits {
                     ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, hit));
                 }
             }
             if !contacts.is_empty() || offer_self {
-                section(ui, &palette, "Contacts");
+                section(ui, &palette, &crate::i18n::gettext(locale, "Contacts"));
                 if offer_self {
                     ui.push_id("self", |ui| self_row(app, ui));
                 }
@@ -1345,7 +1368,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         if hit.from_me {
             let who = widgets::line(
                 ui,
-                "You: ",
+                &format!("{}: ", crate::i18n::gettext(app.locale, "You")),
                 theme::regular(13.0),
                 palette.dim,
                 (right - x) * 0.5,
@@ -1528,6 +1551,7 @@ fn person_row(
 
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
+    let locale = app.locale;
     let title = app.chat_title(chat);
     // While searching, the result reached with the arrows is the selection;
     // before any arrow press it stays the open chat, as a click leaves it.
@@ -1551,7 +1575,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             egui::WidgetType::SelectableLabel,
             ui.is_enabled(),
             selected,
-            unread_announcement(&title, chat),
+            unread_announcement(locale, &title, chat),
         )
     });
     if ui.is_rect_visible(rect) {
@@ -1653,11 +1677,12 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 crate::i18n::gettext(app.locale, "{name} is recording audio…")
                     .replace("{name}", typing[0].1.trim_start_matches('~'))
             } else if chat.is_group() {
-                format!("{} is typing…", typing[0].1.trim_start_matches('~'))
+                crate::i18n::gettext(app.locale, "{name} is typing…")
+                    .replace("{name}", typing[0].1.trim_start_matches('~'))
             } else if recording {
                 crate::i18n::gettext(app.locale, "recording audio…").into_owned()
             } else {
-                "typing…".to_owned()
+                crate::i18n::gettext(app.locale, "typing…").into_owned()
             };
             widgets::line(
                 ui,
@@ -2039,6 +2064,7 @@ fn compact_locked_id() -> egui::Id {
 /// names it, and unread chats carry the same badge as a full row.
 fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
+    let locale = app.locale;
     let title = app.chat_title(chat);
     let selected = app.open_chat.as_deref() == Some(chat.id.as_str());
     let (rect, response) =
@@ -2050,7 +2076,7 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
             egui::WidgetType::SelectableLabel,
             ui.is_enabled(),
             selected,
-            unread_announcement(&title, chat),
+            unread_announcement(locale, &title, chat),
         )
     });
     if ui.is_rect_visible(rect) {
@@ -2277,14 +2303,27 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
 
 /// What a screen reader reads out for a chat's unread state. A chat marked
 /// unread by hand has no count to read, so it must not announce zero.
-fn unread_announcement(title: &str, chat: &Chat) -> String {
-    if chat.marked_unread && chat.unread == 0 {
-        format!("{title}, unread")
-    } else if chat.unread > 0 && chat.unread_mention.is_some() {
-        format!("{title}, {} unread messages, mentioned you", chat.unread)
+fn unread_announcement(locale: crate::i18n::Locale, title: &str, chat: &Chat) -> String {
+    use crate::i18n::{gettext, ngettext};
+    let count = chat.unread;
+    // A chat marked unread by hand has no count to read, so it must not
+    // announce zero; a count reads in this language's own plural form. Each
+    // message is asked for by itself, where the template can find it.
+    let state = if chat.marked_unread && count == 0 {
+        gettext(locale, "unread").into_owned()
+    } else if chat.unread_mention.is_some() {
+        ngettext(
+            locale,
+            "{} unread message, mentioned you",
+            "{} unread messages, mentioned you",
+            count,
+        )
+        .replace("{}", &count.to_string())
     } else {
-        format!("{title}, {} unread messages", chat.unread)
-    }
+        ngettext(locale, "{} unread message", "{} unread messages", count)
+            .replace("{}", &count.to_string())
+    };
+    format!("{title}, {state}")
 }
 
 /// A chat's own notification sound, overriding Settings for this chat.
@@ -2368,10 +2407,8 @@ fn mute_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat, n
 fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
     let options: Vec<(Option<f32>, String)> = std::iter::once((
         None,
-        format!(
-            "Default ({})",
-            crate::audio::speed_label(app.settings.voice_speed)
-        ),
+        crate::i18n::gettext(app.locale, "Default ({})")
+            .replace("{}", &crate::audio::speed_label(app.settings.voice_speed)),
     ))
     .chain(
         crate::audio::SPEEDS
@@ -2406,6 +2443,18 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 mod tests {
     use super::*;
 
+    /// The list's title is asked for by itself, in the reader's language: a
+    /// name chosen first and translated after is one the template never
+    /// hears of, so no catalog can translate it.
+    #[test]
+    fn the_lists_title_is_translated() {
+        let (_directory, mut app, _ids, _ctx) = rail_app(1);
+        app.locale = crate::i18n::Locale::Dutch;
+        let calls = crate::i18n::gettext(app.locale, "Calls");
+        assert_ne!(calls, "Calls", "the catalog translates the name");
+        assert_eq!(tab_title(&app, &Page::Calls), calls);
+    }
+
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
     #[test]
@@ -2422,6 +2471,32 @@ mod tests {
         assert!(!title_fits(100.0, 176.0, three, spacing));
         assert!(title_fits(100.0, 214.0, three, spacing));
         assert_eq!(row_width(0, 30.0, spacing), 0.0);
+    }
+
+    /// A screen reader hears a chat's unread count in the reader's language
+    /// and plural form, and a chat marked unread by hand hears no count.
+    #[test]
+    fn the_unread_state_is_announced_in_the_readers_language() {
+        let locale = crate::i18n::Locale::Dutch;
+        let mut chat = Chat::new("4917000000001@s.whatsapp.net".to_owned(), "Ada".to_owned());
+        chat.unread = 3;
+        let count = crate::i18n::ngettext(locale, "{} unread message", "{} unread messages", 3)
+            .replace("{}", "3");
+        assert_ne!(
+            count, "3 unread messages",
+            "the catalog translates the count"
+        );
+        assert_eq!(
+            unread_announcement(locale, "Ada", &chat),
+            format!("Ada, {count}")
+        );
+        chat.marked_unread = true;
+        chat.unread = 0;
+        let announced = unread_announcement(locale, "Ada", &chat);
+        assert!(
+            !announced.contains(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']),
+            "no count is read for it: {announced}"
+        );
     }
 
     /// The title measures its room from the list the header draws: New chat,

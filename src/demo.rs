@@ -6647,6 +6647,25 @@ mod tests {
         assert!(label.contains(", replying to You: "), "{label}");
     }
 
+    /// The header's buttons are named in the reader's language: in Dutch a
+    /// screen reader hears the New chat button as "Nieuwe chat", the tooltip
+    /// it shows (#1150, #904).
+    #[test]
+    fn the_new_chat_button_is_named_in_the_readers_language() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        app.locale = crate::i18n::Locale::Dutch;
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let new_chat = crate::i18n::gettext(app.locale, "New chat");
+        assert_ne!(new_chat, "New chat", "the catalog translates the label");
+        let named = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .any(|(text, _, _)| text == new_chat.as_ref());
+        assert!(named, "the button is named {new_chat:?}");
+    }
+
     /// A reply reads the quoted summary in the interface language, as its
     /// quote block draws it (#527): "Voice message" in a German interface
     /// reads "Sprachnachricht".
@@ -7285,6 +7304,52 @@ mod tests {
             app.announcer.spoken().contains(&"No chat open"),
             "{:?}",
             app.announcer.spoken()
+        );
+    }
+
+    /// The conversation draws its own words in the reader's language: in
+    /// Dutch an edited message ends in "bewerkt", and a document says
+    /// "12 pagina's", where both read in English (#1150, #904).
+    #[test]
+    fn the_edited_mark_and_a_documents_pages_are_drawn_in_the_readers_language() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut app = app();
+        app.locale = crate::i18n::Locale::Dutch;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let edited = crate::i18n::gettext(app.locale, "edited");
+        assert_ne!(edited, "edited", "the catalog translates the mark");
+        let pages =
+            crate::i18n::ngettext(app.locale, "{} page", "{} pages", 12).replace("{}", "12");
+        assert_ne!(pages, "12 pages", "the catalog translates the count");
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let drawn: Vec<String> = shapes.iter().fold(Vec::new(), |mut out, clipped| {
+            texts(&clipped.shape, &mut out);
+            out
+        });
+        assert!(
+            drawn.iter().any(|text| text == edited.as_ref()),
+            "the mark is drawn: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|text| text.starts_with(&pages)),
+            "the pages are drawn: {drawn:?}"
+        );
+        assert!(
+            !drawn
+                .iter()
+                .any(|text| text == "edited" || text.starts_with("12 pages")),
+            "and no longer their English: {drawn:?}"
         );
     }
 
@@ -11091,6 +11156,43 @@ mod tests {
             drawn.iter().filter(|text| **text == line).count(),
             2,
             "the header and the panel both say {line:?}"
+        );
+    }
+
+    /// A contact's actions are drawn in the reader's language, as the rest of
+    /// the panel is: the catalog translates "Copy number", and the panel asks
+    /// for it (#1150, #904).
+    #[test]
+    fn a_contacts_actions_are_drawn_in_the_readers_language() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut app = app();
+        app.locale = crate::i18n::Locale::Dutch;
+        apply_flags(&mut app, Some("info"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let mut drawn = Vec::new();
+        for clipped in &shapes {
+            texts(&clipped.shape, &mut drawn);
+        }
+        let copy = crate::i18n::gettext(app.locale, "Copy number");
+        assert_ne!(copy, "Copy number", "the catalog translates the label");
+        assert!(
+            drawn.iter().any(|text| **text == *copy),
+            "the panel draws {copy:?}: {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|text| text == "Copy number"),
+            "and no longer its English: {drawn:?}"
         );
     }
 
@@ -18456,6 +18558,26 @@ mod tests {
             .map(|toast| toast.message.as_str())
             .collect();
         assert_eq!(errors, ["Failure 2", "Failure 3", "Failure 4"]);
+    }
+
+    /// A search field's clear button is named in the reader's language: in
+    /// Dutch a screen reader hears "Wissen" where it heard "Clear" (#1150,
+    /// #904).
+    #[test]
+    fn a_search_fields_clear_button_is_named_in_the_readers_language() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        app.locale = crate::i18n::Locale::Dutch;
+        app.search = "Ada".to_owned();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let clear = crate::i18n::gettext(app.locale, "Clear");
+        assert_ne!(clear, "Clear", "the catalog translates the label");
+        let named = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .any(|(text, _, _)| text == clear.as_ref());
+        assert!(named, "the button is named {clear:?}");
     }
 
     #[test]

@@ -267,7 +267,7 @@ pub fn content_description(locale: Locale, content: &Content, text: &str) -> Str
         Content::Revoked => gettext(locale, "This message was deleted").into_owned(),
         Content::Unsupported { what } => fill(
             &gettext(locale, "Unsupported message ({what})"),
-            &[("what", what)],
+            &[("what", &crate::model::unsupported_kind(locale, what))],
         ),
         Content::PhoneOnly {
             live_location: true,

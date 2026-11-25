@@ -267,7 +267,10 @@ fn show_list_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 18.0,
                 palette.secondary,
                 palette.text,
-                &super::keys::label("Show the chat list (Ctrl+B)"),
+                &super::keys::label(&crate::i18n::gettext(
+                    app.locale,
+                    "Show the chat list (Ctrl+B)",
+                )),
             )
             .tab_stop(Stop::Sidebar)
             .clicked()
@@ -329,15 +332,14 @@ fn destination_button(
             gettext(app.locale, "Locked").into_owned(),
         ),
         // Same as before the rail: the label says what the click does now.
-        Destination::Settings => (
-            Icon::Settings,
-            Stop::Settings,
-            super::keys::label(if lit {
-                "Close settings (Ctrl+,)"
+        Destination::Settings => {
+            let text = if lit {
+                crate::i18n::gettext(app.locale, "Close settings (Ctrl+,)")
             } else {
-                "Settings (Ctrl+,)"
-            }),
-        ),
+                crate::i18n::gettext(app.locale, "Settings (Ctrl+,)")
+            };
+            (Icon::Settings, Stop::Settings, super::keys::label(&text))
+        }
     };
     let (cell, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let plate = Rect::from_center_size(cell.center(), Vec2::splat(PLATE));

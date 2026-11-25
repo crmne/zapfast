@@ -1006,6 +1006,7 @@ pub fn search_galley_id(field: egui::Id) -> egui::Id {
 /// Search field with icon and clear button.
 pub fn search_field(
     ui: &mut Ui,
+    locale: crate::i18n::Locale,
     palette: &Palette,
     id: egui::Id,
     text: &mut String,
@@ -1109,7 +1110,7 @@ pub fn search_field(
             15.0,
             palette.secondary,
             palette.text,
-            "Clear",
+            crate::i18n::gettext(locale, "Clear").as_ref(),
         )
         .clicked()
         {
@@ -1986,7 +1987,11 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     response
 }
 
-/// Selectable pill with an optional count, used for the chat-list filters.
+/// Selectable pill with an optional count: the Calls page's filters and the
+/// media tabs use it. A screen reader hears the chip's name and whether it
+/// is selected, then its count as a plain number, since these chips count
+/// different things. A chip that counts unread chats is an `unread_chip`,
+/// which says so.
 pub fn filter_chip(
     ui: &mut Ui,
     palette: &Palette,
@@ -1994,12 +1999,46 @@ pub fn filter_chip(
     count: usize,
     selected: bool,
 ) -> egui::Response {
-    dotted_chip(ui, palette, None, label, count, selected)
+    let enabled = ui.is_enabled();
+    let chip = dotted_chip(ui, palette, None, label, count, selected);
+    chip.widget_info(|| {
+        let label = if count > 0 {
+            format!("{label}, {count}")
+        } else {
+            label.to_owned()
+        };
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label)
+    });
+    chip
 }
 
-/// A filter chip led by a coloured dot, for filters the user named and
-/// coloured, such as labels.
-pub fn dotted_chip(
+/// A chip that counts unread chats, as the chat list's filters and its labels
+/// do: a screen reader hears its name, then the count.
+pub fn unread_chip(
+    ui: &mut Ui,
+    locale: crate::i18n::Locale,
+    palette: &Palette,
+    dot: Option<Color32>,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> egui::Response {
+    let enabled = ui.is_enabled();
+    let chip = dotted_chip(ui, palette, dot, label, count, selected);
+    chip.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            enabled,
+            selected,
+            unread_chats_label(locale, label, count),
+        )
+    });
+    chip
+}
+
+/// The pill both chips above are drawn with, led by a coloured dot when a
+/// filter has one. It only draws: each chip says what a screen reader reads.
+fn dotted_chip(
     ui: &mut Ui,
     palette: &Palette,
     dot: Option<Color32>,
@@ -2063,20 +2102,19 @@ pub fn dotted_chip(
             ui.painter().galley(pos, number, color);
         }
     }
-    response.widget_info(|| {
-        let label = if count > 0 {
-            format!("{label}, {count} unread")
-        } else {
-            label.to_owned()
-        };
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            selected,
-            label,
-        )
-    });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// What a screen reader reads for a chip that counts unread chats: its name,
+/// then how many chats under it are unread, in this language's own plural
+/// form. The number is of chats, not of the messages inside them.
+fn unread_chats_label(locale: crate::i18n::Locale, label: &str, count: usize) -> String {
+    if count == 0 {
+        return label.to_owned();
+    }
+    let unread = crate::i18n::ngettext(locale, "{} unread chat", "{} unread chats", count as u32)
+        .replace("{}", &count.to_string());
+    format!("{label}, {unread}")
 }
 
 #[cfg(test)]
@@ -2987,5 +3025,74 @@ mod tests {
         assert!(off_outline > 0.0, "the off track is outlined");
         assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
         assert!(on_knob > off_knob, "the knob grows when on");
+    }
+
+    /// A chip's count is of chats, and a screen reader hears it as such, in
+    /// this language's own plural form. No catalog translates these yet, so
+    /// the lookup answers English.
+    #[test]
+    fn a_chip_count_is_read_as_unread_chats_in_the_interface_language() {
+        use crate::i18n::Locale;
+        assert_eq!(unread_chats_label(Locale::Dutch, "All", 0), "All");
+        for count in [1usize, 3] {
+            let unread = crate::i18n::ngettext(
+                Locale::Dutch,
+                "{} unread chat",
+                "{} unread chats",
+                count as u32,
+            )
+            .replace("{}", &count.to_string());
+            assert_eq!(
+                unread_chats_label(Locale::Dutch, "Unread", count),
+                format!("Unread, {unread}")
+            );
+        }
+    }
+
+    /// What a screen reader is told about a chip: its name and whether it
+    /// is selected, read from the tree of one frame.
+    fn chip_said(
+        draw: impl Fn(&mut egui::Ui) -> egui::Response,
+    ) -> (String, Option<egui::accesskit::Toggled>) {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        ctx.enable_accesskit();
+        let mut chip = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| chip = Some(draw(ui)));
+        output.textures_delta.clear();
+        let id = chip.expect("the chip").id.accesskit_id();
+        let tree = output
+            .platform_output
+            .accesskit_update
+            .expect("the tree of one frame");
+        let node = &tree
+            .nodes
+            .iter()
+            .find(|(node_id, _)| *node_id == id)
+            .expect("the chip's node")
+            .1;
+        (node.label().unwrap_or_default().to_owned(), node.toggled())
+    }
+
+    /// Every chip tells a screen reader its name and whether it is selected,
+    /// as it did before their counts were translated. A chip that counts
+    /// something other than unread chats says its count as a plain number; a
+    /// chip that counts unread chats says so. No catalog translates these
+    /// yet, so the lookup answers English.
+    #[test]
+    fn a_chip_tells_a_screen_reader_its_name_and_state() {
+        use crate::i18n::Locale;
+        use egui::accesskit::Toggled;
+        let palette = crate::theme::Palette::light();
+        let links = chip_said(|ui| filter_chip(ui, &palette, "Links", 12, true));
+        assert_eq!(links, ("Links, 12".to_owned(), Some(Toggled::True)));
+        let missed = chip_said(|ui| filter_chip(ui, &palette, "Missed", 0, false));
+        assert_eq!(missed, ("Missed".to_owned(), Some(Toggled::False)));
+        let unread =
+            chip_said(|ui| unread_chip(ui, Locale::English, &palette, None, "Unread", 3, false));
+        assert_eq!(
+            unread,
+            ("Unread, 3 unread chats".to_owned(), Some(Toggled::False))
+        );
     }
 }

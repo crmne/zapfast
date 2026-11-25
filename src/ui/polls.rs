@@ -144,7 +144,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     ui.add_space(8.0);
     let valid = app.poll_draft.validated();
     if let Err(error) = valid.as_ref() {
-        theme::text(ui, *error, theme::regular(12.0), palette.dim);
+        theme::text(ui, error.said(locale), theme::regular(12.0), palette.dim);
     }
     ui.horizontal(|ui| {
         if theme::soft_button(

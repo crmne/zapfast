@@ -334,8 +334,9 @@ impl Worker {
     }
 
     pub(super) fn create_poll(&mut self, chat: ChatId, draft: PollDraft) {
+        let locale = self.locale;
         let error = if !self.status.is_connected() {
-            Some("Not connected to WhatsApp")
+            Some(crate::i18n::gettext(locale, "Not connected to WhatsApp").into_owned())
         } else if ChatKind::from_id(&chat) == ChatKind::Broadcast
             || self
                 .archive
@@ -344,29 +345,38 @@ impl Worker {
                 .flatten()
                 .is_some_and(|chat| chat.read_only)
         {
-            Some("Polls cannot be sent to this chat.")
+            Some(crate::i18n::gettext(locale, "Polls cannot be sent to this chat.").into_owned())
         } else if self.ephemeral_expiration(&chat).is_some() {
-            Some("Poll creation in disappearing-message chats is not supported yet.")
+            Some(
+                crate::i18n::gettext(
+                    locale,
+                    "Poll creation in disappearing-message chats is not supported yet.",
+                )
+                .into_owned(),
+            )
         } else {
             None
         };
         let draft = draft.validated();
-        if let Some(error) = error.or_else(|| draft.as_ref().err().copied()) {
+        if let Some(error) = error.or_else(|| draft.as_ref().err().map(|error| error.to_string())) {
             self.emit(Event::PollCreated {
                 chat,
-                error: Some(error.into()),
+                error: Some(error),
             });
             return;
         }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::PollCreated {
                 chat,
-                error: Some("Not connected to WhatsApp".into()),
+                error: Some(
+                    crate::i18n::gettext(self.locale, "Not connected to WhatsApp").into_owned(),
+                ),
             });
             return;
         };
         let draft = draft.unwrap();
         let commands = self.commands.clone();
+        let locale = self.locale;
         tokio::spawn(async move {
             let result = async {
                 let recipients = if jid.is_group() {
@@ -374,7 +384,10 @@ impl Worker {
                         .groups()
                         .routing_info(&jid)
                         .await
-                        .map_err(|_| "Could not load the group recipients")?
+                        .map_err(|_| {
+                            crate::i18n::gettext(locale, "Could not load the group recipients")
+                                .into_owned()
+                        })?
                         .participants
                         .iter()
                         .map(Jid::to_non_ad_string)
@@ -384,7 +397,9 @@ impl Worker {
                 };
                 let creator = client
                     .pn()
-                    .ok_or("Not connected to WhatsApp")?
+                    .ok_or_else(|| {
+                        crate::i18n::gettext(locale, "Not connected to WhatsApp").into_owned()
+                    })?
                     .to_non_ad_string();
                 let created = client
                     .polls()
@@ -395,7 +410,10 @@ impl Worker {
                         draft.selectable() as u32,
                     )
                     .await
-                    .map_err(|_| "Could not send the poll. Please try again.")?;
+                    .map_err(|_| {
+                        crate::i18n::gettext(locale, "Could not send the poll. Please try again.")
+                            .into_owned()
+                    })?;
                 Ok(super::super::CreatedPoll {
                     id: created.send_result().message_id.to_string(),
                     secret: created.secret().as_bytes().to_vec(),
@@ -403,8 +421,7 @@ impl Worker {
                     recipients,
                 })
             }
-            .await
-            .map_err(str::to_owned);
+            .await;
             let _ = commands.send(Command::PollCreated {
                 chat,
                 draft,
@@ -432,7 +449,13 @@ impl Worker {
         if !self.is_me(&created.creator) {
             self.emit(Event::PollCreated {
                 chat,
-                error: Some("The account changed while the poll was being sent.".into()),
+                error: Some(
+                    crate::i18n::gettext(
+                        self.locale,
+                        "The account changed while the poll was being sent.",
+                    )
+                    .into_owned(),
+                ),
             });
             return;
         }
@@ -470,7 +493,13 @@ impl Worker {
             log::warn!("could not archive a sent poll definition: {error}");
             self.emit(Event::PollCreated {
                 chat,
-                error: Some("The poll was sent, but its voting key could not be saved.".into()),
+                error: Some(
+                    crate::i18n::gettext(
+                        self.locale,
+                        "The poll was sent, but its voting key could not be saved.",
+                    )
+                    .into_owned(),
+                ),
             });
             return;
         }
@@ -520,12 +549,19 @@ impl Worker {
             self.emit(Event::PollVoted {
                 chat,
                 message: id,
-                error: Some("This poll is not ready for voting. Reconnect and try again.".into()),
+                error: Some(
+                    crate::i18n::gettext(
+                        self.locale,
+                        "This poll is not ready for voting. Reconnect and try again.",
+                    )
+                    .into_owned(),
+                ),
             });
             return;
         };
         self.poll_sending.insert(request);
         let commands = self.commands.clone();
+        let locale = self.locale;
         tokio::spawn(async move {
             let at = jiff::Timestamp::now().as_millisecond();
             let result = client
@@ -533,7 +569,10 @@ impl Worker {
                 .vote_raw(jid, &id, &creator, &secret, &names)
                 .await
                 .map(|sent| sent.message_id.into_string())
-                .map_err(|_| "Could not send your vote. Please try again.".into());
+                .map_err(|_| {
+                    crate::i18n::gettext(locale, "Could not send your vote. Please try again.")
+                        .into_owned()
+                });
             let _ = commands.send(Command::PollVoted {
                 chat,
                 message: id,
@@ -587,7 +626,13 @@ impl Worker {
                         self.emit_message(&chat, &id);
                         None
                     }
-                    Err(_) => Some("Your vote was sent, but could not be saved locally.".into()),
+                    Err(_) => Some(
+                        crate::i18n::gettext(
+                            self.locale,
+                            "Your vote was sent, but could not be saved locally.",
+                        )
+                        .into_owned(),
+                    ),
                 }
             }
             Err(error) => Some(error),

@@ -238,7 +238,9 @@ impl Worker {
             return;
         }
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
-            self.emit(Event::Error("Not connected to WhatsApp".into()));
+            self.emit(Event::Error(
+                crate::i18n::gettext(self.locale, "Not connected to WhatsApp").into_owned(),
+            ));
             return;
         };
         let prepared = (|| {
@@ -249,7 +251,7 @@ impl Worker {
             Some((row, reply))
         })();
         let Some((source, mut message)) = prepared else {
-            self.emit(Event::Error("This option is unavailable in ZapFast. Open the message in WhatsApp Web or on your phone.".into()));
+            self.emit(Event::Error(crate::i18n::gettext(self.locale, "This option is unavailable in ZapFast. Open the message in WhatsApp Web or on your phone.").into_owned()));
             return;
         };
         let expiration = self.apply_ephemeral(&chat, &mut message);

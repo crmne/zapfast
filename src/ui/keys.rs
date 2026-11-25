@@ -1140,6 +1140,109 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Q", "Quit"),
 ];
 
+/// What a shortcut does, in the reader's language. The table keeps each
+/// description's English words, which never change under it; this is where
+/// each is said.
+pub fn does(locale: crate::i18n::Locale, what: &'static str) -> std::borrow::Cow<'static, str> {
+    use crate::i18n::gettext;
+    match what {
+        "Search chats" => gettext(locale, "Search chats"),
+        "Search the open chat or the settings" => {
+            gettext(locale, "Search the open chat or the settings")
+        }
+        "Walk the open chat's search results and jump to one" => gettext(
+            locale,
+            "Walk the open chat's search results and jump to one",
+        ),
+        "Focus the message input" => gettext(locale, "Focus the message input"),
+        "Previous / next chat" => gettext(locale, "Previous / next chat"),
+        "Previous / next chat, as in WhatsApp" => {
+            gettext(locale, "Previous / next chat, as in WhatsApp")
+        }
+        "Open a chat by its position in the chat list" => {
+            gettext(locale, "Open a chat by its position in the chat list")
+        }
+        "Chats" => gettext(locale, "Chats"),
+        "Calls" => gettext(locale, "Calls"),
+        "Edit the previous message (when the input is empty)" => gettext(
+            locale,
+            "Edit the previous message (when the input is empty)",
+        ),
+        "Send (Shift+Enter for a new line)" => gettext(locale, "Send (Shift+Enter for a new line)"),
+        "Dismiss the current action, return from search, Calls or Starred, or close the chat" => {
+            gettext(
+                locale,
+                "Dismiss the current action, return from search, Calls or Starred, or close the chat",
+            )
+        }
+        "New chat or message yourself" => gettext(locale, "New chat or message yourself"),
+        "Archive or unarchive the open chat" => {
+            gettext(locale, "Archive or unarchive the open chat")
+        }
+        "Switch to the next linked number" => gettext(locale, "Switch to the next linked number"),
+        "Paste text, or stage a picture from the clipboard" => {
+            gettext(locale, "Paste text, or stage a picture from the clipboard")
+        }
+        "Copy the selected messages" => gettext(locale, "Copy the selected messages"),
+        "Collapse or expand the chat list" => gettext(locale, "Collapse or expand the chat list"),
+        "Jump to the newest message (when the input is empty)" => gettext(
+            locale,
+            "Jump to the newest message (when the input is empty)",
+        ),
+        "Go to the message list" => gettext(locale, "Go to the message list"),
+        "Move through messages (in the message list)" => {
+            gettext(locale, "Move through messages (in the message list)")
+        }
+        "Message menu (in the message list)" => {
+            gettext(locale, "Message menu (in the message list)")
+        }
+        "Reply to the message (in the message list)" => {
+            gettext(locale, "Reply to the message (in the message list)")
+        }
+        "React to the message (in the message list)" => {
+            gettext(locale, "React to the message (in the message list)")
+        }
+        "Copy the message (in the message list)" => {
+            gettext(locale, "Copy the message (in the message list)")
+        }
+        "Forward the message (in the message list)" => {
+            gettext(locale, "Forward the message (in the message list)")
+        }
+        "Delete the message for me (in the message list)" => {
+            gettext(locale, "Delete the message for me (in the message list)")
+        }
+        "Delete the message for everyone (in the message list)" => gettext(
+            locale,
+            "Delete the message for everyone (in the message list)",
+        ),
+        "Go to the replied message (in the message list)" => {
+            gettext(locale, "Go to the replied message (in the message list)")
+        }
+        "Scroll the open chat by a page" => gettext(locale, "Scroll the open chat by a page"),
+        "Top / bottom of the open chat (when the input is empty)" => gettext(
+            locale,
+            "Top / bottom of the open chat (when the input is empty)",
+        ),
+        "Settings" => gettext(locale, "Settings"),
+        "Zoom in / out" => gettext(locale, "Zoom in / out"),
+        "Reset zoom" => gettext(locale, "Reset zoom"),
+        "Previous / next item in the media viewer" => {
+            gettext(locale, "Previous / next item in the media viewer")
+        }
+        "Keyboard shortcuts (? when not typing)" => {
+            gettext(locale, "Keyboard shortcuts (? when not typing)")
+        }
+        "Lock ZapFast (with an app lock password)" => {
+            gettext(locale, "Lock ZapFast (with an app lock password)")
+        }
+        "Close the window (ZapFast remains in the tray)" => {
+            gettext(locale, "Close the window (ZapFast remains in the tray)")
+        }
+        "Quit" => gettext(locale, "Quit"),
+        other => other.into(),
+    }
+}
+
 /// Uses Command and Option labels on macOS.
 pub fn label(keys: &str) -> String {
     if cfg!(target_os = "macos") {
@@ -1155,6 +1258,35 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every description the shortcuts dialog shows is asked for by its own
+    /// literal, so a catalog can translate it, and a language without the
+    /// words keeps the English.
+    #[test]
+    fn every_shortcut_description_is_said_through_gettext() {
+        let source = include_str!("keys.rs");
+        // The function's own text, however rustfmt lays it out.
+        let said = source
+            .split("pub fn does(")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split(
+                    "
+}
+",
+                )
+                .next()
+            })
+            .expect("the function that says them");
+        let english = crate::i18n::Locale::default();
+        for (_, what) in SHORTCUTS {
+            assert!(
+                said.contains(&format!("\"{what}\"")),
+                "{what:?} is not said by its own literal"
+            );
+            assert_eq!(does(english, what), *what);
+        }
+    }
 
     /// An app whose open chat holds `messages`, by id and content, in order,
     /// with the folder it keeps its files in, which goes when dropped.
