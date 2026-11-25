@@ -310,6 +310,11 @@ async fn request_reupload(
     match client.media_reupload().request(&request).await {
         Ok(MediaRetryResult::Success { direct_path }) => Ok(direct_path),
         Ok(_) => Err("No longer available on WhatsApp's servers".to_owned()),
+        // The phone is already fetching another file of this message, such
+        // as a sticker's picture while its sound is asked for.
+        Err(whatsapp_rust::MediaReuploadError::Conflict(_)) => {
+            Err("Still fetching from your phone. Try again in a moment".to_owned())
+        }
         Err(_error) => {
             log::info!("media re-upload was not granted");
             Err("No longer available on WhatsApp's servers".to_owned())

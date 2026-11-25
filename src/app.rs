@@ -2003,6 +2003,7 @@ impl App {
             self.close_locked_folder();
         }
         self.sticker_shelf = StickerShelf::default();
+        self.sticker_view = None;
         self.sticker_emojis.clear();
         self.sticker_pack_created = None;
         self.account_menu = false;
@@ -4527,19 +4528,16 @@ impl App {
                         .motion_playing
                         .as_ref()
                         .is_some_and(|(c, m)| *c == chat && *m == message);
-                let sound = requested
-                    && self.open_chat.as_deref() == Some(chat.as_str())
-                    && self
-                        .conversations
-                        .get(&chat)
-                        .and_then(|conversation| conversation.message(&message))
-                        .is_some_and(|row| row.content.sticker_audio().is_some());
+                let sticker = self.is_sticker_sound(&chat, &message);
+                let sound =
+                    requested && sticker && self.open_chat.as_deref() == Some(chat.as_str());
                 if let Some(motion) = self.motion_mut(&chat, &message) {
                     match result {
                         Ok(path) => {
                             motion.path = Some(path.clone());
                             motion.state = MediaState::Idle;
-                            if requested {
+                            // An inline motion photo keeps playing its clip.
+                            if requested && sticker {
                                 self.motion_playing = None;
                             }
                             if sound {
@@ -8664,6 +8662,7 @@ impl App {
                 // over one a run is still fetching.
                 self.video.stop();
                 self.voice_wanted = None;
+                self.cancel_sticker_sound();
                 self.voice_chat = self.open_chat.clone();
                 self.voice_clip_chat = self.open_chat.clone();
                 self.player
@@ -11019,6 +11018,7 @@ impl App {
     fn play_voice(&mut self, message: String, path: PathBuf) {
         self.video.stop();
         self.voice_wanted = None;
+        self.cancel_sticker_sound();
         self.voice_chat = self.open_chat.clone();
         self.voice_clip_chat = self.open_chat.clone();
         let speed = self.voice_speed_for(Some(&message));
@@ -11029,6 +11029,26 @@ impl App {
         }
         if !self.voice_is_sticker(&message) {
             self.tell_played(message);
+        }
+    }
+
+    /// Whether `message` in `chat` is an audio sticker with a sound.
+    fn is_sticker_sound(&self, chat: &str, message: &str) -> bool {
+        self.conversations
+            .get(chat)
+            .and_then(|conversation| conversation.message(message))
+            .is_some_and(|row| row.content.sticker_audio().is_some())
+    }
+
+    /// Drops a sticker sound still downloading, so it does not interrupt
+    /// a clip the reader chose after it.
+    fn cancel_sticker_sound(&mut self) {
+        if self
+            .motion_playing
+            .as_ref()
+            .is_some_and(|(chat, message)| self.is_sticker_sound(chat, message))
+        {
+            self.motion_playing = None;
         }
     }
 
