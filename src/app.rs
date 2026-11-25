@@ -3162,13 +3162,13 @@ impl App {
         // nor as WhatsApp masks it (`+233∙∙∙∙∙∙42`) for someone not in the
         // contacts: that is formatted afresh from the id.
         let phone = crate::model::phone_of(id);
-        let number = |c: char| {
-            c.is_ascii_digit()
-                || (phone.is_some() && matches!(c, '+' | ' ' | '(' | ')' | '-' | '\u{2219}'))
+        let number_only = |name: &str| match phone {
+            Some(_) => crate::model::is_number_only(name),
+            None => name.chars().all(|c| c.is_ascii_digit()),
         };
         if let Some(chat) = chat.or_else(|| self.chat(id))
             && !chat.name.is_empty()
-            && !chat.name.chars().all(number)
+            && !number_only(&chat.name)
         {
             return chat.name.clone();
         }
@@ -11934,6 +11934,10 @@ fn compose_name(first: &str, last: &str) -> (Option<String>, Option<String>) {
     } else {
         format!("{first} {last}")
     };
+    // A number-only name would read back as none: see `archive::saved_name`.
+    if crate::model::is_number_only(&full) {
+        return (None, None);
+    }
     let short = (!first.is_empty()).then(|| first.to_owned());
     (Some(full), short)
 }
@@ -26199,6 +26203,8 @@ mod name_tests {
             compose_name("My Dih", ""),
             (Some("My Dih".into()), Some("My Dih".into()))
         );
+        assert_eq!(compose_name("+55 41", "1234"), (None, None));
+        assert_eq!(compose_name("-", ""), (Some("-".into()), Some("-".into())));
     }
 
     #[test]
