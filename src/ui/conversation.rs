@@ -10496,7 +10496,7 @@ fn sticker_sound(
     let state = view.player.status(&message.id).state;
     let id = bubble_id(&view.chat.id, &message.id).with("sticker-sound");
     if sound_badge(ui, id, picture, state, audio, view.locale).clicked() {
-        actions.push(sound_action(&view.chat.id, &message.id, audio));
+        actions.push(sound_action(&view.chat.id, &message.id, audio, state));
     }
 }
 
@@ -10517,9 +10517,17 @@ pub(crate) fn sound_in_step(
     playing
 }
 
-/// Plays or stops an audio sticker's sound, fetching it first.
-pub(crate) fn sound_action(chat: &str, message: &str, audio: &crate::model::Motion) -> Action {
+/// Plays or stops an audio sticker's sound, fetching it first. A playing
+/// sound stops rather than pauses, so the next click starts it, and the
+/// picture, from the beginning together.
+pub(crate) fn sound_action(
+    chat: &str,
+    message: &str,
+    audio: &crate::model::Motion,
+    state: crate::audio::State,
+) -> Action {
     match &audio.path {
+        Some(_) if matches!(state, crate::audio::State::Playing) => Action::StopVoice,
         Some(path) => Action::PlayVoice {
             message: message.to_owned(),
             path: path.clone(),
@@ -10549,9 +10557,6 @@ pub(crate) fn sound_badge(
         _ => Some(Icon::VolumeX),
     };
     let response = corner_badge(ui, id, picture, icon);
-    if !response.hovered() {
-        return response;
-    }
     let label = match (&audio.state, state) {
         (MediaState::Failed(error), _) => error.clone(),
         (_, State::Playing) => {
@@ -10559,6 +10564,12 @@ pub(crate) fn sound_badge(
         }
         _ => crate::i18n::gettext(locale, "Play the sticker's sound").into_owned(),
     };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    if !response.hovered() {
+        return response;
+    }
     response.on_hover_text(label)
 }
 

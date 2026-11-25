@@ -285,6 +285,36 @@ async fn download_attachment(
     fetch_attachment(client, downloadable, dir, path, limit, false, None, None).await
 }
 
+/// Asks the phone to re-upload media whose download failed with `error`
+/// because the server no longer has it, and returns its new direct path.
+/// Any other failure comes back as `error`.
+async fn request_reupload(
+    client: &Client,
+    chat: &Jid,
+    id: &str,
+    participant: Option<&Jid>,
+    is_from_me: bool,
+    media_key: &[u8],
+    error: String,
+) -> Result<String, String> {
+    let expired = ["403", "404", "410"].iter().any(|code| error.contains(code));
+    let target = whatsapp_rust::MessageId::new(id)
+        .and_then(|id| whatsapp_rust::MessageRef::new(chat, id, participant, is_from_me));
+    let (true, Ok(target), Ok(media_key)) = (expired, target, <&[u8; 32]>::try_from(media_key))
+    else {
+        return Err(error);
+    };
+    let request = MediaReuploadRequest { target, media_key };
+    match client.media_reupload().request(&request).await {
+        Ok(MediaRetryResult::Success { direct_path }) => Ok(direct_path),
+        Ok(_) => Err("No longer available on WhatsApp's servers".to_owned()),
+        Err(_error) => {
+            log::info!("media re-upload was not granted");
+            Err("No longer available on WhatsApp's servers".to_owned())
+        }
+    }
+}
+
 /// [`download_attachment`], and with `keep_others` a file already at `path`
 /// stays: the download takes the first free `name (n).ext` instead, as in
 /// the reader's own download folder. `progress` hears how much of a known
@@ -10525,53 +10555,34 @@ impl Worker {
                     Ok(path) => Ok(path),
                     Err(error) => {
                         let text = error.to_string();
-                        let expired = ["403", "404", "410"].iter().any(|code| text.contains(code));
-                        match (&jid, expired && reupload && !media_key.is_empty()) {
-                            (Some(jid), true) => {
-                                // Ask the phone to re-upload expired media, then retry once.
-                                let target = whatsapp_rust::MessageId::new(&id).and_then(|id| {
-                                    whatsapp_rust::MessageRef::new(
-                                        jid,
-                                        id,
-                                        participant.as_ref(),
-                                        is_from_me,
-                                    )
-                                });
-                                let (Ok(target), Ok(media_key)) =
-                                    (target, <&[u8; 32]>::try_from(media_key.as_slice()))
-                                else {
-                                    return Err(text);
-                                };
-                                let request = MediaReuploadRequest { target, media_key };
-                                match client.media_reupload().request(&request).await {
-                                    Ok(MediaRetryResult::Success { direct_path }) => {
-                                        match refreshed(direct_path) {
-                                            Some(again) => {
-                                                fetch_attachment(
-                                                    &client,
-                                                    &*again,
-                                                    &dir,
-                                                    &path,
-                                                    limit,
-                                                    keep_others,
-                                                    Some(&cache_path),
-                                                    progress,
-                                                )
-                                                .await
-                                            }
-                                            None => Err(text),
-                                        }
-                                    }
-                                    Ok(_) => {
-                                        Err("No longer available on WhatsApp's servers".to_owned())
-                                    }
-                                    Err(_error) => {
-                                        log::info!("media re-upload was not granted");
-                                        Err("No longer available on WhatsApp's servers".to_owned())
-                                    }
-                                }
+                        let Some(jid) = jid.as_ref().filter(|_| reupload) else {
+                            return Err(text);
+                        };
+                        let direct_path = request_reupload(
+                            &client,
+                            jid,
+                            &id,
+                            participant.as_ref(),
+                            is_from_me,
+                            &media_key,
+                            text.clone(),
+                        )
+                        .await?;
+                        match refreshed(direct_path) {
+                            Some(again) => {
+                                fetch_attachment(
+                                    &client,
+                                    &*again,
+                                    &dir,
+                                    &path,
+                                    limit,
+                                    keep_others,
+                                    Some(&cache_path),
+                                    progress,
+                                )
+                                .await
                             }
-                            _ => Err(text),
+                            None => Err(text),
                         }
                     }
                 }
@@ -10610,6 +10621,7 @@ impl Worker {
                     size,
                     "motion",
                     "video/mp4".to_owned(),
+                    None,
                 )
             })
             .or_else(|| {
@@ -10622,13 +10634,14 @@ impl Worker {
                     .unwrap_or_else(|| "audio/ogg".to_owned());
                 let size = audio.file_length;
                 Some((
-                    Box::new(audio) as Box<dyn Downloadable + Send>,
+                    Box::new(audio.clone()) as Box<dyn Downloadable + Send>,
                     size,
                     "audio",
                     mime,
+                    Some(audio),
                 ))
             });
-        let (client, (video, size, suffix, mime)) = match (self.client.clone(), video) {
+        let (client, (video, size, suffix, mime, sound)) = match (self.client.clone(), video) {
             (Some(client), Some(video)) if !attachment_is_too_large(video.1) => (client, video),
             (client, video) => {
                 let error = match (client, video) {
@@ -10644,14 +10657,50 @@ impl Worker {
                 return;
             }
         };
+        // An expired sound asks the phone for a fresh copy, as attachments do.
+        let jid = Self::jid_of(&chat);
+        let row = self.archive.message(&chat, &id).ok().flatten();
+        let is_from_me = row.as_ref().is_some_and(|row| row.from_me);
+        let participant = match (&jid, &row) {
+            (Some(jid), Some(row)) if jid.is_group() => Self::jid_of(&row.sender),
+            _ => None,
+        };
         let dir = self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &format!("{id}-{suffix}"), &mime, None);
-            let result = with_attachment_deadline(
-                attachment_deadline(size),
-                download_attachment(&client, &*video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
-            )
+            let result = with_attachment_deadline(attachment_deadline(size), async {
+                let error = match download_attachment(
+                    &client,
+                    &*video,
+                    &dir,
+                    &path,
+                    ATTACHMENT_DOWNLOAD_LIMIT,
+                )
+                .await
+                {
+                    Ok(path) => return Ok(path),
+                    Err(error) => error,
+                };
+                let (Some(jid), Some(mut audio)) = (jid, sound) else {
+                    return Err(error);
+                };
+                let media_key = audio.media_key.clone().unwrap_or_default();
+                audio.direct_path = Some(
+                    request_reupload(
+                        &client,
+                        &jid,
+                        &id,
+                        participant.as_ref(),
+                        is_from_me,
+                        &media_key,
+                        error,
+                    )
+                    .await?,
+                );
+                audio.url = None;
+                download_attachment(&client, &audio, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT).await
+            })
             .await;
             let _ = commands.send(Command::MotionDownloaded { chat, id, result });
         });

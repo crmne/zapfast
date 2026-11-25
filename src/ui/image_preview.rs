@@ -1548,7 +1548,7 @@ fn sticker_sound_badge(ui: &mut egui::Ui, app: &mut App, message: &str, rect: eg
     let id = sticker_modal_id().with("sound");
     let badge = super::conversation::sound_badge(ui, id, rect, state, audio, app.locale);
     if badge.clicked() {
-        let action = super::conversation::sound_action(&chat, message, audio);
+        let action = super::conversation::sound_action(&chat, message, audio, state);
         app.actions.push(action);
     }
 }

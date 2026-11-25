@@ -4520,10 +4520,15 @@ impl App {
                         preview.chat() == chat && preview.message() == message
                     });
                 // A click on an audio sticker's speaker asked for its sound.
-                let sound = self
-                    .motion_playing
-                    .as_ref()
-                    .is_some_and(|(c, m)| *c == chat && *m == message)
+                // A hidden account's copy of the same message is not that
+                // request, and the sound only plays in the chat it came from.
+                let requested = !self.events_hidden
+                    && self
+                        .motion_playing
+                        .as_ref()
+                        .is_some_and(|(c, m)| *c == chat && *m == message);
+                let sound = requested
+                    && self.open_chat.as_deref() == Some(chat.as_str())
                     && self
                         .conversations
                         .get(&chat)
@@ -4534,8 +4539,10 @@ impl App {
                         Ok(path) => {
                             motion.path = Some(path.clone());
                             motion.state = MediaState::Idle;
-                            if sound {
+                            if requested {
                                 self.motion_playing = None;
+                            }
+                            if sound {
                                 self.actions.push(Action::PlayVoice { message, path });
                             } else if previewed {
                                 self.actions.push(Action::ExpandVideo { message, path });
@@ -4543,11 +4550,7 @@ impl App {
                         }
                         Err(error) => {
                             motion.state = MediaState::Failed(error);
-                            if self
-                                .motion_playing
-                                .as_ref()
-                                .is_some_and(|(c, m)| *c == chat && *m == message)
-                            {
+                            if requested {
                                 self.motion_playing = None;
                             }
                         }
@@ -7969,8 +7972,14 @@ impl App {
                             crate::audio::State::Playing
                         )
                     {
-                        self.actions
-                            .push(crate::ui::conversation::sound_action(chat, message, audio));
+                        // The picture starts over with the sound.
+                        crate::animation::restart(ctx, &path);
+                        self.actions.push(crate::ui::conversation::sound_action(
+                            chat,
+                            message,
+                            audio,
+                            crate::audio::State::Idle,
+                        ));
                     }
                     let sound = sound.map(|(_, message, _)| message);
                     let mut view = crate::image_preview::StickerPreview::new(path);
@@ -8657,7 +8666,8 @@ impl App {
                 self.voice_wanted = None;
                 self.voice_chat = self.open_chat.clone();
                 self.voice_clip_chat = self.open_chat.clone();
-                self.sync_voice_speed();
+                self.player
+                    .set_speed(self.voice_speed_for(Some(message.as_str())));
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
