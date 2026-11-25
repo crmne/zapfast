@@ -8037,6 +8037,11 @@ impl App {
                 }
             }
             Action::OpenFile(path) => {
+                // Another program plays the clip from here: ours stops, so
+                // the two do not play it at once.
+                if self.video.is_active() && self.video.path() == Some(path.as_path()) {
+                    self.video.stop();
+                }
                 let allowed = crate::safety::can_open_attachment(&path);
                 if allowed && matches!(path.try_exists(), Ok(false)) {
                     self.attachment_missing(path);
@@ -18257,6 +18262,42 @@ mod tests {
                 Command::AttachmentMissing { message, card: None, path: gone, .. }
                     if message == "m1" && gone == path
             ))
+        );
+    }
+
+    /// #1164: a clip playing here stops when another program is asked to open
+    /// its file, so the two do not play it at once. Another file leaves the
+    /// clip alone.
+    #[test]
+    fn opening_a_playing_clip_elsewhere_stops_it_here() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.video.silence();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        // Gone from disk, so nothing is opened in another program.
+        let clip = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/gone.mp4"
+        ));
+        app.apply(
+            Action::PlayVideo {
+                message: "clip".into(),
+                path: clip.clone(),
+            },
+            &ctx,
+        );
+        assert!(app.video.is_active());
+
+        app.apply(Action::OpenFile(PathBuf::from("/fixture/gone.jpg")), &ctx);
+        assert!(
+            app.video.is_active(),
+            "another file leaves the clip playing"
+        );
+
+        app.apply(Action::OpenFile(clip), &ctx);
+        assert!(
+            app.video.message().is_none(),
+            "the program that took the clip plays it alone"
         );
     }
 
