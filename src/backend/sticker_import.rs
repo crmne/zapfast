@@ -5,6 +5,28 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// The most one archive entry may hold once inflated. WhatsApp's own
+/// stickers stay under 500 KB; a .wastickers picture may still be a PNG to
+/// convert.
+const MAX_ENTRY_BYTES: u64 = 8 * 1024 * 1024;
+/// The most a whole archive may inflate to, counting entries that were read
+/// and then refused.
+const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads one archive entry if it fits in `MAX_ENTRY_BYTES` and in what is
+/// left of `budget`, which every byte read is charged to.
+///
+/// An entry's declared size is the sender's word, and a deflated entry can
+/// inflate a thousand times past its compressed bytes, so the read itself is
+/// bounded.
+fn read_bounded(entry: &mut impl Read, budget: &mut u64) -> Option<Vec<u8>> {
+    let limit = MAX_ENTRY_BYTES.min(*budget);
+    let mut bytes = Vec::new();
+    let read = entry.by_ref().take(limit + 1).read_to_end(&mut bytes);
+    *budget = budget.saturating_sub(bytes.len() as u64);
+    (read.is_ok() && bytes.len() as u64 <= limit).then_some(bytes)
+}
+
 /// Parses a pack id and key from a signal.art URL or parameter string.
 pub fn parse_signal_url(url: &str) -> Result<(String, [u8; 32]), String> {
     let tail = url.rsplit('#').next().unwrap_or(url);
@@ -289,17 +311,20 @@ pub fn import_archive(path: &Path, packs: &Path) -> Result<String, String> {
         .map_err(|error| format!("This file is not a sticker archive: {error}"))?;
     let mut title: Option<String> = None;
     let mut pictures: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut budget = MAX_ARCHIVE_BYTES;
     for index in 0..archive.len() {
+        if budget == 0 {
+            break;
+        }
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
         };
         let Ok(name) = entry.name().map(|name| name.to_lowercase()) else {
             continue;
         };
-        let mut bytes = Vec::new();
-        if entry.read_to_end(&mut bytes).is_err() {
+        let Some(bytes) = read_bounded(&mut entry, &mut budget) else {
             continue;
-        }
+        };
         if name.ends_with("title.txt") {
             let text = String::from_utf8_lossy(&bytes).trim().to_owned();
             if !text.is_empty() {
@@ -342,7 +367,11 @@ pub fn extract_whatsapp_pack(
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip))
         .map_err(|error| format!("This is not a sticker pack: {error}"))?;
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut budget = MAX_ARCHIVE_BYTES;
     for index in 0..archive.len() {
+        if budget == 0 {
+            break;
+        }
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
         };
@@ -352,8 +381,7 @@ pub fn extract_whatsapp_pack(
         if Some(file.as_str()) == tray || !file.to_lowercase().ends_with(".webp") {
             continue;
         }
-        let mut bytes = Vec::new();
-        if entry.read_to_end(&mut bytes).is_ok() {
+        if let Some(bytes) = read_bounded(&mut entry, &mut budget) {
             files.push((file, bytes));
         }
     }
@@ -796,6 +824,45 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn an_entry_is_read_only_within_its_limit_and_the_archive_budget() {
+        let mut budget = MAX_ARCHIVE_BYTES;
+        let small = vec![7u8; 1024];
+        assert_eq!(
+            read_bounded(&mut small.as_slice(), &mut budget),
+            Some(small.clone())
+        );
+        assert_eq!(budget, MAX_ARCHIVE_BYTES - 1024);
+        // An entry that never ends stops one byte past the limit, and that
+        // byte counts too.
+        assert_eq!(read_bounded(&mut std::io::repeat(0), &mut budget), None);
+        assert_eq!(budget, MAX_ARCHIVE_BYTES - 1024 - MAX_ENTRY_BYTES - 1);
+        let mut nearly_spent = 100;
+        assert_eq!(read_bounded(&mut small.as_slice(), &mut nearly_spent), None);
+        assert_eq!(nearly_spent, 0);
+    }
+
+    #[test]
+    fn a_pack_entry_that_inflates_too_far_is_left_out() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let sticker = webp_bytes(tiny_png()).expect("encodes");
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("bomb.webp", options).expect("starts");
+        // Deflates to a few kilobytes.
+        let zeros = vec![0u8; MAX_ENTRY_BYTES as usize + 1];
+        writer.write_all(&zeros).expect("writes");
+        writer.start_file("sticker.webp", options).expect("starts");
+        writer.write_all(&sticker).expect("writes");
+        let zip = writer.finish().expect("finishes").into_inner();
+        assert!(zip.len() < 1024 * 1024, "{} bytes", zip.len());
+        let root = tempfile::tempdir().expect("temp");
+        let files = extract_whatsapp_pack(&zip, &[], None, "Pack", root.path()).expect("unpacks");
+        assert_eq!(files.len(), 1, "only the sticker that fits");
     }
 
     /// Imports Signal's example pack from the live CDN. `ZAPFAST_TEST_PACK`

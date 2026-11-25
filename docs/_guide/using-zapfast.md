@@ -245,6 +245,8 @@ and size. Click **View stickers** to download and look at it, and **Add to my
 stickers** to keep it as a pack here. To share one of your packs, open its tab
 and click the send arrow beside its name: it goes to the open chat as a
 WhatsApp sticker pack of up to 60 stickers, with each sticker's emojis.
+A shared pack or `.wastickers` file is read up to 8 MB per sticker and 64 MB
+in all once unpacked; stickers past that are left out.
 
 You can also make packs of your own: type a name under **Make your own** and
 click **Create pack**. Right-click any sticker and choose one of your packs in
@@ -528,7 +530,8 @@ yet.
 ## Voice messages
 
 Voice messages play in the chat with a seekable waveform; audio files show a
-music icon and a seek bar instead. Pausing releases the sound output so it can
+music icon and a seek bar instead. Audio longer than an hour (less for a file with
+more than two channels or above 48 kHz) does not play in ZapFast. Pausing releases the sound output so it can
 sleep; playing again resumes from the same position. The chip beside the waveform or seek bar
 cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered
