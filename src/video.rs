@@ -865,6 +865,22 @@ impl Player {
         self.session = None;
     }
 
+    /// Pauses the loaded video and keeps its position. One that is still
+    /// loading waits where it is instead of starting.
+    pub fn pause(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            session.pause(Instant::now());
+        }
+    }
+
+    /// Pauses the video playing from `path`, for another program that has
+    /// taken its file to play it there.
+    pub fn hand_over(&mut self, path: &Path) {
+        if self.is_active() && self.path() == Some(path) {
+            self.pause();
+        }
+    }
+
     /// Whether a video is playing or about to.
     pub fn is_active(&self) -> bool {
         self.session.as_ref().is_some_and(|session| {
@@ -1626,6 +1642,50 @@ mod tests {
         assert_eq!(player.status("clip").unwrap().state, State::Paused);
         player.stop();
         assert!(player.message().is_none());
+    }
+
+    /// #1164: a clip handed to another program pauses and keeps its place.
+    /// A clip of another file plays on.
+    #[test]
+    fn a_clip_handed_over_pauses_and_keeps_its_place() {
+        let ctx = egui::Context::default();
+        let mut player = Player::new(Waker::default());
+        player.silence();
+        let path = Path::new(SAMPLE);
+        player.toggle("clip", path);
+        // Still loading, it waits instead of starting.
+        player.hand_over(path);
+        assert!(!player.is_active());
+        player.toggle("clip", path);
+        let step = |player: &mut Player| {
+            player.saw("clip");
+            player.poll(&ctx);
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let started = Instant::now();
+        while player.status("clip").unwrap().state != State::Playing {
+            assert!(started.elapsed() < Duration::from_secs(5));
+            step(&mut player);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        // Another file leaves it playing.
+        player.hand_over(Path::new("tests/fixtures/video/other.mp4"));
+        assert_eq!(player.status("clip").unwrap().state, State::Playing);
+        player.hand_over(path);
+        let paused = player.status("clip").unwrap();
+        assert_eq!(paused.state, State::Paused);
+        assert!(paused.position > Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(100));
+        player.poll(&ctx);
+        assert_eq!(player.status("clip").unwrap().position, paused.position);
+        // Handed over again, a paused clip keeps its place.
+        player.hand_over(path);
+        assert_eq!(player.status("clip").unwrap().position, paused.position);
+        // Tapped, it plays on from there.
+        player.toggle("clip", path);
+        let playing = player.status("clip").unwrap();
+        assert_eq!(playing.state, State::Playing);
+        assert!(playing.position >= paused.position);
     }
 
     /// Covering the window asks for larger frames. A playing video does not

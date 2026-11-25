@@ -8036,21 +8036,9 @@ impl App {
                     preview.show_album_item(path, item.id.clone(), item.card);
                 }
             }
-            Action::OpenFile(path) => {
-                let allowed = crate::safety::can_open_attachment(&path);
-                if allowed && matches!(path.try_exists(), Ok(false)) {
-                    self.attachment_missing(path);
-                } else if allowed && path.is_file() {
-                    if let Err(error) = open::that_detached(&path) {
-                        self.toast_error(format!("Could not open the attachment: {error}"));
-                    }
-                } else {
-                    self.toast("For safety, open this file yourself from its folder");
-                    if let Some(folder) = path.parent() {
-                        self.actions.push(Action::OpenFolder(folder.to_owned()));
-                    }
-                }
-            }
+            Action::OpenFile(path) => self.open_in_another_app(path, |path| {
+                open::that_detached(path).map_err(|error| error.to_string())
+            }),
             Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
             Action::ExportChat {
                 chat,
@@ -10355,6 +10343,34 @@ impl App {
                 card,
                 path,
             });
+        }
+    }
+
+    /// Opens a file in another app. A clip of ours that is playing pauses
+    /// once that app has the file, so the two do not play it at once. A file
+    /// that is gone, or that no app could open, leaves the clip playing.
+    ///
+    /// `open` is passed in, so a test hands a file over without starting
+    /// another program.
+    fn open_in_another_app(
+        &mut self,
+        path: PathBuf,
+        open: impl FnOnce(&std::path::Path) -> Result<(), String>,
+    ) {
+        let allowed = crate::safety::can_open_attachment(&path);
+        if allowed && matches!(path.try_exists(), Ok(false)) {
+            self.attachment_missing(path);
+        } else if allowed && path.is_file() {
+            if let Err(error) = open(&path) {
+                self.toast_error(format!("Could not open the attachment: {error}"));
+            } else {
+                self.video.hand_over(&path);
+            }
+        } else {
+            self.toast("For safety, open this file yourself from its folder");
+            if let Some(folder) = path.parent() {
+                self.actions.push(Action::OpenFolder(folder.to_owned()));
+            }
         }
     }
 
@@ -18257,6 +18273,101 @@ mod tests {
                 Command::AttachmentMissing { message, card: None, path: gone, .. }
                     if message == "m1" && gone == path
             ))
+        );
+    }
+
+    /// #1164: a clip playing here pauses, keeping its place, when another
+    /// program has opened its file, so the two do not play it at once. Another
+    /// file leaves it playing.
+    #[test]
+    fn opening_a_playing_clip_elsewhere_pauses_it_here() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.video.silence();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        let clip = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        app.apply(
+            Action::PlayVideo {
+                message: "clip".into(),
+                path: clip.clone(),
+            },
+            &ctx,
+        );
+        assert!(app.video.is_active());
+
+        app.open_in_another_app(
+            PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/demo/avatars/ada.jpg"
+            )),
+            |_| Ok(()),
+        );
+        assert!(
+            app.video.is_active(),
+            "another file leaves the clip playing"
+        );
+
+        app.open_in_another_app(clip, |_| Ok(()));
+        assert!(
+            !app.video.is_active(),
+            "the program that took the clip plays it alone"
+        );
+        assert_eq!(
+            app.video.message(),
+            Some("clip"),
+            "the clip waits here, paused, with its place kept"
+        );
+    }
+
+    /// #1164: a clip plays on when no other program could open its file,
+    /// since nothing else plays it.
+    #[test]
+    fn a_clip_plays_on_when_no_program_could_open_it() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.video.silence();
+        app.open_chat = Some("fixture@s.whatsapp.net".into());
+        // Gone from disk: nothing is opened in another program.
+        let gone = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/gone.mp4"
+        ));
+        app.apply(
+            Action::PlayVideo {
+                message: "clip".into(),
+                path: gone.clone(),
+            },
+            &ctx,
+        );
+        assert!(app.video.is_active());
+        app.open_in_another_app(gone, |_| panic!("a missing file is not opened elsewhere"));
+        assert!(app.video.is_active(), "the file being gone stops nothing");
+
+        let clip = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        app.apply(
+            Action::PlayVideo {
+                message: "clip".into(),
+                path: clip.clone(),
+            },
+            &ctx,
+        );
+        assert!(app.video.is_active());
+        app.open_in_another_app(clip, |_| Err("no program for it".into()));
+        assert!(
+            app.video.is_active(),
+            "a program that could not open the file leaves the clip playing"
+        );
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("Could not open the attachment")),
+            "and says so"
         );
     }
 
