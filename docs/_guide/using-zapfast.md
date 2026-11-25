@@ -517,6 +517,9 @@ again to return to the photo. In the viewer, the play button in the header
 plays the clip over the photo with sound, and the photo button beside it goes
 back. Clips over 64 MiB are not downloaded.
 
+An audio sticker has a speaker in its corner. Click it to download the
+sticker's sound to the local cache and play it; click again to stop it.
+
 ## Polls
 
 Choose **Create poll** from the plus menu beside the message field to ask a

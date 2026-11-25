@@ -1477,7 +1477,18 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
                 // stop, before the favorite button.
                 let (rect, response) =
                     ui.allocate_exact_size(Vec2::splat(side), egui::Sense::CLICK);
+                if let Some(message) = &preview.sound {
+                    super::conversation::sound_in_step(
+                        ui.ctx(),
+                        sticker_modal_id().with("sound-step"),
+                        preview.path(),
+                        app.player.status(message).state,
+                    );
+                }
                 paint_sticker(ui, &preview, rect, &palette);
+                if let Some(message) = &preview.sound {
+                    sticker_sound_badge(ui, app, message, rect);
+                }
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -1517,6 +1528,28 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
         });
     if response.should_close() {
         app.actions.push(Action::CloseStickerPreview);
+    }
+}
+
+/// The speaker over an audio sticker's large view, as on its bubble.
+fn sticker_sound_badge(ui: &mut egui::Ui, app: &mut App, message: &str, rect: egui::Rect) {
+    let Some(chat) = app.open_chat.clone() else {
+        return;
+    };
+    let Some(audio) = app
+        .conversations
+        .get(&chat)
+        .and_then(|conversation| conversation.message(message))
+        .and_then(|row| row.content.sticker_audio())
+    else {
+        return;
+    };
+    let state = app.player.status(message).state;
+    let id = sticker_modal_id().with("sound");
+    let badge = super::conversation::sound_badge(ui, id, rect, state, audio, app.locale);
+    if badge.clicked() {
+        let action = super::conversation::sound_action(&chat, message, audio, state);
+        app.actions.push(action);
     }
 }
 

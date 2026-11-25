@@ -326,6 +326,16 @@ fn frame_inner(
     }
 }
 
+/// Starts `path` over from its first frame the next time it is drawn
+/// moving, so an audio sticker's picture keeps time with its sound.
+pub fn restart(ctx: &egui::Context, path: &Path) {
+    let cache = cache(ctx);
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(Entry::Ready(playing)) = animations.entries.get_mut(path) {
+        playing.animating = false;
+    }
+}
+
 /// Forgets what is known of `path`, a failure included, so the file there is
 /// decoded afresh the next time it is drawn.
 pub fn forget(ctx: &egui::Context, path: &Path) {

@@ -2003,6 +2003,7 @@ impl App {
             self.close_locked_folder();
         }
         self.sticker_shelf = StickerShelf::default();
+        self.sticker_view = None;
         self.sticker_emojis.clear();
         self.sticker_pack_created = None;
         self.account_menu = false;
@@ -4519,22 +4520,35 @@ impl App {
                     && self.image_preview.as_ref().is_some_and(|preview| {
                         preview.chat() == chat && preview.message() == message
                     });
+                // A click on an audio sticker's speaker asked for its sound.
+                // A hidden account's copy of the same message is not that
+                // request, and the sound only plays in the chat it came from.
+                let requested = !self.events_hidden
+                    && self
+                        .motion_playing
+                        .as_ref()
+                        .is_some_and(|(c, m)| *c == chat && *m == message);
+                let sticker = self.is_sticker_sound(&chat, &message);
+                let sound =
+                    requested && sticker && self.open_chat.as_deref() == Some(chat.as_str());
                 if let Some(motion) = self.motion_mut(&chat, &message) {
                     match result {
                         Ok(path) => {
                             motion.path = Some(path.clone());
                             motion.state = MediaState::Idle;
-                            if previewed {
+                            // An inline motion photo keeps playing its clip.
+                            if requested && sticker {
+                                self.motion_playing = None;
+                            }
+                            if sound {
+                                self.actions.push(Action::PlayVoice { message, path });
+                            } else if previewed {
                                 self.actions.push(Action::ExpandVideo { message, path });
                             }
                         }
                         Err(error) => {
                             motion.state = MediaState::Failed(error);
-                            if self
-                                .motion_playing
-                                .as_ref()
-                                .is_some_and(|(c, m)| *c == chat && *m == message)
-                            {
+                            if requested {
                                 self.motion_playing = None;
                             }
                         }
@@ -5887,6 +5901,7 @@ impl App {
     fn motion_mut(&mut self, chat: &str, id: &str) -> Option<&mut crate::model::Motion> {
         match &mut self.conversations.get_mut(chat)?.message_mut(id)?.content {
             Content::Image { motion, .. } => motion.as_mut(),
+            Content::Sticker { audio, .. } => audio.as_mut(),
             _ => None,
         }
     }
@@ -7938,7 +7953,36 @@ impl App {
             }
             Action::PreviewSticker(path) => {
                 if path.is_file() {
-                    self.sticker_view = Some(crate::image_preview::StickerPreview::new(path));
+                    let sound = self.open_chat.as_ref().and_then(|chat| {
+                        let conversation = self.conversations.get(chat)?;
+                        conversation.messages.iter().rev().find_map(|row| {
+                            let audio = row.content.sticker_audio()?;
+                            (row.content.media()?.path.as_ref() == Some(&path))
+                                .then(|| (chat.clone(), row.id.clone(), audio.clone()))
+                        })
+                    });
+                    // Opening an audio sticker large plays its sound, as on
+                    // the phone, unless it already plays or is on its way.
+                    if let Some((chat, message, audio)) = &sound
+                        && !matches!(audio.state, MediaState::Downloading)
+                        && !matches!(
+                            self.player.status(message).state,
+                            crate::audio::State::Playing
+                        )
+                    {
+                        // The picture starts over with the sound.
+                        crate::animation::restart(ctx, &path);
+                        self.actions.push(crate::ui::conversation::sound_action(
+                            chat,
+                            message,
+                            audio,
+                            crate::audio::State::Idle,
+                        ));
+                    }
+                    let sound = sound.map(|(_, message, _)| message);
+                    let mut view = crate::image_preview::StickerPreview::new(path);
+                    view.sound = sound;
+                    self.sticker_view = Some(view);
                     self.dialog = None;
                     self.picker = None;
                     // As for the image preview: the composer must not take
@@ -8618,9 +8662,11 @@ impl App {
                 // over one a run is still fetching.
                 self.video.stop();
                 self.voice_wanted = None;
+                self.cancel_sticker_sound();
                 self.voice_chat = self.open_chat.clone();
                 self.voice_clip_chat = self.open_chat.clone();
-                self.sync_voice_speed();
+                self.player
+                    .set_speed(self.voice_speed_for(Some(message.as_str())));
                 if let Err(error) = self.player.seek(&message, &path, fraction) {
                     self.toast_error(error);
                 }
@@ -10972,14 +11018,61 @@ impl App {
     fn play_voice(&mut self, message: String, path: PathBuf) {
         self.video.stop();
         self.voice_wanted = None;
+        self.cancel_sticker_sound();
         self.voice_chat = self.open_chat.clone();
         self.voice_clip_chat = self.open_chat.clone();
-        self.sync_voice_speed();
+        let speed = self.voice_speed_for(Some(&message));
+        self.player.set_speed(speed);
         if let Err(error) = self.player.toggle(&message, &path) {
             self.toast_error(error);
             return;
         }
-        self.tell_played(message);
+        if !self.voice_is_sticker(&message) {
+            self.tell_played(message);
+        }
+    }
+
+    /// Whether `message` in `chat` is an audio sticker with a sound.
+    fn is_sticker_sound(&self, chat: &str, message: &str) -> bool {
+        self.conversations
+            .get(chat)
+            .and_then(|conversation| conversation.message(message))
+            .is_some_and(|row| row.content.sticker_audio().is_some())
+    }
+
+    /// Drops a sticker sound still downloading, so it does not interrupt
+    /// a clip the reader chose after it.
+    fn cancel_sticker_sound(&mut self) {
+        if self
+            .motion_playing
+            .as_ref()
+            .is_some_and(|(chat, message)| self.is_sticker_sound(chat, message))
+        {
+            self.motion_playing = None;
+        }
+    }
+
+    /// Whether `message`, in the player's chat, is an audio sticker.
+    fn voice_is_sticker(&self, message: &str) -> bool {
+        self.voice_clip_chat
+            .as_ref()
+            .or(self.open_chat.as_ref())
+            .and_then(|chat| self.conversations.get(chat))
+            .and_then(|conversation| conversation.message(message))
+            .is_some_and(|row| matches!(row.content, Content::Sticker { .. }))
+    }
+
+    /// The speed for `message`: an audio sticker's sound plays as recorded,
+    /// voice messages follow their chat's speed.
+    fn voice_speed_for(&self, message: Option<&str>) -> f32 {
+        if message.is_some_and(|message| self.voice_is_sticker(message)) {
+            return 1.0;
+        }
+        let chat = self
+            .voice_clip_chat
+            .as_deref()
+            .or(self.open_chat.as_deref());
+        self.voice_speed_in(chat)
     }
 
     /// Gives `chat` its own voice message speed, or `None` to follow
@@ -10997,8 +11090,9 @@ impl App {
     /// Plays the clip in the player at the speed of its own chat, which may
     /// not be the one on screen.
     fn sync_voice_speed(&mut self) {
-        let chat = self.voice_clip_chat.clone().or(self.open_chat.clone());
-        self.player.set_speed(self.voice_speed_in(chat.as_deref()));
+        let current = self.player.current().map(str::to_owned);
+        self.player
+            .set_speed(self.voice_speed_for(current.as_deref()));
     }
 
     /// The clip in the player and its chat, while that chat is not the one
@@ -11065,6 +11159,10 @@ impl App {
         let Some(chat) = self.open_chat.clone() else {
             return;
         };
+        // A sticker's sound is not part of a run of voice messages.
+        if self.voice_is_sticker(finished) {
+            return;
+        }
         if self.voice_chat.as_ref() != Some(&chat) {
             return;
         }
@@ -17665,6 +17763,7 @@ mod tests {
         sticker.content = Content::Sticker {
             media: media(Some(paths[3].clone())),
             animated: false,
+            audio: None,
         };
         rows.push(sticker);
         let mut pending = message("chat", "pending", 7);
@@ -25589,6 +25688,34 @@ mod tests {
         assert!(app.open_chat.is_none());
         app.open_chat(id.into());
         assert_eq!(app.composer, "unfinished message");
+    }
+
+    #[test]
+    fn an_audio_sticker_plays_its_sound_at_normal_speed() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "1@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Ada".into()));
+        app.apply(Action::SetVoiceSpeed(2.0), &ctx);
+        app.open_chat(chat.into());
+        let mut sticker = message(chat, "sticker", 1);
+        sticker.content = Content::Sticker {
+            media: crate::model::Media {
+                mime: "image/webp".into(),
+                size: 1,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            animated: false,
+            audio: Some(Default::default()),
+        };
+        app.conversations.entry(chat.into()).or_default().messages =
+            vec![sticker, message(chat, "voice", 2)];
+        assert_eq!(app.voice_speed_for(Some("sticker")), 1.0);
+        assert_eq!(app.voice_speed_for(Some("voice")), 2.0);
     }
 
     #[test]

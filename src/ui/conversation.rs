@@ -8233,8 +8233,15 @@ fn content(
                 )
             }
         }
-        Content::Sticker { media, animated } => {
-            picture(ui, view, message, media, width, Some(*animated), actions);
+        Content::Sticker {
+            media,
+            animated,
+            audio,
+        } => {
+            let drawn = picture(ui, view, message, media, width, Some(*animated), actions);
+            if let Some(audio) = audio {
+                sticker_sound(ui, view, message, audio, drawn, actions);
+            }
             None
         }
         Content::Video {
@@ -10165,7 +10172,16 @@ fn picture(
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let mut unreadable = false;
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
+                // An audio sticker moves while its sound plays, in step with it.
+                let sounding = matches!(message.content, Content::Sticker { audio: Some(_), .. })
+                    && sound_in_step(
+                        ui.ctx(),
+                        bubble_id(&view.chat.id, &message.id).with("sound-step"),
+                        path,
+                        view.player.status(&message.id).state,
+                    );
+                let moving = view.animate && (sounding || response.hovered());
+                match animation::frame(ui, path, rect, moving) {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
@@ -10426,17 +10442,6 @@ fn motion_clip(
         chat: view.chat.id.clone(),
         message: message.id.clone(),
     };
-    let badge = Rect::from_min_size(picture.min + vec2(6.0, 6.0), Vec2::splat(28.0));
-    let response = ui
-        .interact(
-            badge,
-            bubble_id(&view.chat.id, &message.id).with("motion"),
-            Sense::click(),
-        )
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    if response.clicked() {
-        actions.push(toggle());
-    }
     let frame = motion
         .path
         .as_ref()
@@ -10465,15 +10470,128 @@ fn motion_clip(
         (None, MediaState::Failed(_)) => Some(Icon::CircleAlert),
         (None, _) => Some(Icon::Play),
     };
+    let id = bubble_id(&view.chat.id, &message.id).with("motion");
+    let response = corner_badge(ui, id, picture, icon);
+    if response.clicked() {
+        actions.push(toggle());
+    }
+    if let MediaState::Failed(error) = &motion.state {
+        response.on_hover_text(error);
+    }
+}
+
+/// Draws an audio sticker's speaker in the corner of its picture. A click
+/// plays or stops the sound, fetching it first.
+fn sticker_sound(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    audio: &crate::model::Motion,
+    picture: Rect,
+    actions: &mut Vec<Action>,
+) {
+    if !ui.is_rect_visible(picture) {
+        return;
+    }
+    let state = view.player.status(&message.id).state;
+    let id = bubble_id(&view.chat.id, &message.id).with("sticker-sound");
+    if sound_badge(ui, id, picture, state, audio, view.locale).clicked() {
+        actions.push(sound_action(&view.chat.id, &message.id, audio, state));
+    }
+}
+
+/// Whether an audio sticker's sound is playing. When it starts, the
+/// sticker's animation starts over, so picture and sound begin together.
+pub(crate) fn sound_in_step(
+    ctx: &egui::Context,
+    id: egui::Id,
+    path: &std::path::Path,
+    state: crate::audio::State,
+) -> bool {
+    let playing = matches!(state, crate::audio::State::Playing);
+    let was =
+        ctx.data_mut(|data| std::mem::replace(data.get_temp_mut_or_default::<bool>(id), playing));
+    if playing && !was {
+        animation::restart(ctx, path);
+    }
+    playing
+}
+
+/// Plays or stops an audio sticker's sound, fetching it first. A playing
+/// sound stops rather than pauses, so the next click starts it, and the
+/// picture, from the beginning together.
+pub(crate) fn sound_action(
+    chat: &str,
+    message: &str,
+    audio: &crate::model::Motion,
+    state: crate::audio::State,
+) -> Action {
+    match &audio.path {
+        Some(_) if matches!(state, crate::audio::State::Playing) => Action::StopVoice,
+        Some(path) => Action::PlayVoice {
+            message: message.to_owned(),
+            path: path.clone(),
+        },
+        None => Action::ToggleMotion {
+            chat: chat.to_owned(),
+            message: message.to_owned(),
+        },
+    }
+}
+
+/// The speaker in an audio sticker's top left corner, in its bubble and in
+/// its large view.
+pub(crate) fn sound_badge(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    picture: Rect,
+    state: crate::audio::State,
+    audio: &crate::model::Motion,
+    locale: crate::i18n::Locale,
+) -> egui::Response {
+    use crate::audio::State;
+    let icon = match (state, &audio.state) {
+        (State::Loading, _) | (_, MediaState::Downloading) => None,
+        (State::Playing, _) => Some(Icon::Volume2),
+        (_, MediaState::Failed(_)) => Some(Icon::CircleAlert),
+        _ => Some(Icon::VolumeX),
+    };
+    let response = corner_badge(ui, id, picture, icon);
+    let label = match (&audio.state, state) {
+        (MediaState::Failed(error), _) => error.clone(),
+        (_, State::Playing) => {
+            crate::i18n::gettext(locale, "Stop the sticker's sound").into_owned()
+        }
+        _ => crate::i18n::gettext(locale, "Play the sticker's sound").into_owned(),
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    if !response.hovered() {
+        return response;
+    }
+    response.on_hover_text(label)
+}
+
+/// The round button in a picture's top left corner: a motion photo's play
+/// button or an audio sticker's speaker. `None` draws a spinner.
+fn corner_badge(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    picture: Rect,
+    icon: Option<Icon>,
+) -> egui::Response {
+    let badge = Rect::from_min_size(picture.min + vec2(6.0, 6.0), Vec2::splat(28.0));
+    let response = ui
+        .interact(badge, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     ui.painter()
         .circle_filled(badge.center(), 14.0, Color32::from_black_alpha(140));
     match icon {
         Some(icon) => theme::paint_icon(ui, icon, badge, 14.0, Color32::WHITE),
         None => theme::paint_spinner(ui, badge, 16.0, Color32::WHITE),
     }
-    if let MediaState::Failed(error) = &motion.state {
-        response.on_hover_text(error);
-    }
+    response
 }
 
 /// Whether this content downloads on its own once drawn, as the bubbles decide
@@ -13477,6 +13595,7 @@ mod reaction_tests {
             row(Content::Sticker {
                 media: media("image/webp", path, Idle),
                 animated: false,
+                audio: None,
             }),
         ]
     }

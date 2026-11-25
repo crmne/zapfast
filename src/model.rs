@@ -825,6 +825,10 @@ pub enum Content {
     Sticker {
         media: Media,
         animated: bool,
+        /// The sound of an audio sticker. Its download keys stay in the
+        /// raw message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio: Option<Motion>,
     },
     /// A WhatsApp sticker pack shared in a chat. Its stickers download when
     /// someone opens it.
@@ -1545,9 +1549,34 @@ impl Content {
         }
     }
 
+    /// An audio sticker's sound, when this is one.
+    pub fn sticker_audio(&self) -> Option<&Motion> {
+        match self {
+            Self::Sticker { audio, .. } => audio.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Keeps the sound file `old`, another copy of this audio sticker,
+    /// downloaded where this copy has none.
+    fn keep_sticker_audio(&mut self, old: &Content) {
+        if let (
+            Self::Sticker {
+                audio: Some(new), ..
+            },
+            Some(old),
+        ) = (&mut *self, old.sticker_audio())
+            && new.path.is_none()
+        {
+            new.path = old.path.clone();
+        }
+    }
+
     /// Carries downloaded file paths over from `old` when rederiving content
-    /// from the raw protobuf: the main attachment and each carousel card's image.
+    /// from the raw protobuf: the main attachment, a motion photo's clip, an
+    /// audio sticker's sound and each carousel card's image.
     pub fn keep_local_paths(&mut self, old: &Content) {
+        self.keep_sticker_audio(old);
         if let (Some(new), Some(old)) = (self.media_mut(), old.media()) {
             new.path = old.path.clone();
         }
@@ -1581,6 +1610,7 @@ impl Content {
     /// downloaded where this copy has none: the attachment, a motion photo's
     /// clip, and each carousel card's image. A file this copy has stays.
     pub fn fill_local_paths(&mut self, other: &Content) {
+        self.keep_sticker_audio(other);
         if let (Some(new), Some(old)) = (self.media_mut(), other.media())
             && new.path.is_none()
         {
@@ -1634,6 +1664,10 @@ impl Content {
         match self {
             Self::Image {
                 motion: Some(motion),
+                ..
+            }
+            | Self::Sticker {
+                audio: Some(motion),
                 ..
             } => forget(&mut motion.path, &mut motion.state),
             Self::Interactive {
@@ -1840,7 +1874,8 @@ impl Media {
     }
 }
 
-/// A motion photo's clip. Its download keys stay in the archive.
+/// A second file a message plays on request: a motion photo's clip or an
+/// audio sticker's sound. Its download keys stay in the archive.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Motion {
     /// Decrypted downloaded file.
@@ -3973,6 +4008,22 @@ mod tests {
         let mut new = content(None, [None, None]);
         new.keep_local_paths(&old);
         assert_eq!(new, old);
+
+        let sticker = |path: Option<&str>, sound: Option<&str>| Content::Sticker {
+            media: image(path),
+            animated: false,
+            audio: Some(Motion {
+                path: sound.map(PathBuf::from),
+                state: MediaState::Idle,
+            }),
+        };
+        let old = sticker(Some("/sticker.webp"), Some("/sound.ogg"));
+        let mut new = sticker(None, None);
+        new.keep_local_paths(&old);
+        assert_eq!(new, old);
+        let mut cached = sticker(Some("/sticker.webp"), None);
+        cached.forget_files_in(std::path::Path::new("/"));
+        assert_eq!(cached, sticker(None, None));
     }
 
     #[test]
@@ -4382,6 +4433,7 @@ mod tests {
                 Content::Sticker {
                     media: media(),
                     animated: false,
+                    audio: None,
                 },
             ),
             row(
