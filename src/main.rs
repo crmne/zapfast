@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use zapfast::{app, backend, i18n, paths, settings, single_instance};
+use zapfast::{app, backend, paths, settings, single_instance};
 
 use clap::Parser;
 
@@ -522,6 +522,11 @@ fn is_graphics_failure(error: &eframe::Error) -> bool {
         eframe::Error::Glutin(_) | eframe::Error::NoGlutinConfigs(..) | eframe::Error::OpenGL(_)
     )
 }
+
+// Only the two functions below read the interface's catalogs, and only
+// where they are compiled: elsewhere the import would be unused.
+#[cfg(any(windows, test))]
+use zapfast::i18n;
 
 /// The language the startup dialog speaks: the interface language saved in
 /// the settings, else the system's.

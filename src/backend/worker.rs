@@ -313,6 +313,52 @@ fn archive_failure(locale: crate::i18n::Locale, error: &anyhow::Error) -> String
         .join(": ")
 }
 
+/// One of the worker's own failures, said in the interface's language. A
+/// download or a send names why it failed deep inside, where the same words
+/// may be read as a sign (a pause, a re-upload), so they are translated only
+/// on their way to the window: by the worker for a failure it files itself,
+/// and by a send's task before it wraps the reason in its own sentence. What
+/// WhatsApp or the system wrote stays as it came.
+fn failure_text(locale: crate::i18n::Locale, failure: &str) -> String {
+    match failure {
+        "Download timed out" => crate::i18n::gettext(locale, "Download timed out"),
+        "This attachment is no longer in the archive" => {
+            crate::i18n::gettext(locale, "This attachment is no longer in the archive")
+        }
+        "Could not record the downloaded file in the archive. The file has been kept" => {
+            crate::i18n::gettext(
+                locale,
+                "Could not record the downloaded file in the archive. The file has been kept",
+            )
+        }
+        "Could not create a unique attachment staging file" => {
+            crate::i18n::gettext(locale, "Could not create a unique attachment staging file")
+        }
+        "No longer available on WhatsApp's servers" => {
+            crate::i18n::gettext(locale, "No longer available on WhatsApp's servers")
+        }
+        "Upload cancelled" => crate::i18n::gettext(locale, "Upload cancelled"),
+        "The application is shutting down" => {
+            crate::i18n::gettext(locale, "The application is shutting down")
+        }
+        "Could not save the group message recipients" => {
+            crate::i18n::gettext(locale, "Could not save the group message recipients")
+        }
+        "Clipboard image data is invalid" => {
+            crate::i18n::gettext(locale, "Clipboard image data is invalid")
+        }
+        "View once is only available for photos" => {
+            crate::i18n::gettext(locale, "View once is only available for photos")
+        }
+        "Could not attach the reply context" => {
+            crate::i18n::gettext(locale, "Could not attach the reply context")
+        }
+        ATTACHMENT_LIMIT_ERROR => std::borrow::Cow::Owned(attachment_limit_text(locale)),
+        written => std::borrow::Cow::Borrowed(written),
+    }
+    .into_owned()
+}
+
 /// The deadline of a download of unknown or small size.
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(120);
 /// A GIPHY request or GIF thumbnail download must finish within this time.
@@ -4538,14 +4584,16 @@ impl Worker {
                         .as_ref()
                         .map(|message| format!(": {message}"))
                         .unwrap_or_default();
-                    self.emit(Event::Error(
-                        crate::i18n::gettext(
+                    self.emit(Event::Error(crate::a11y::fill(
+                        &crate::i18n::gettext(
                             self.locale,
                             "WhatsApp connection failed ({:?}){detail}",
-                        )
-                        .replacen("{:?}", &format!("{:?}", failure.reason), 1)
-                        .replace("{detail}", &detail.to_string()),
-                    ));
+                        ),
+                        &[
+                            (":?", &format!("{:?}", failure.reason)),
+                            ("detail", detail.as_str()),
+                        ],
+                    )));
                 }
             }
             E::StreamReplaced(_) => {
@@ -8414,15 +8462,17 @@ impl Worker {
                     let event = if failed.is_empty() {
                         Event::Info(saved_words)
                     } else {
-                        Event::Error(
-                            crate::i18n::gettext(
+                        Event::Error(crate::a11y::fill(
+                            &crate::i18n::gettext(
                                 locale,
                                 "{saved} saved; {failed} could not be saved: {names}",
-                            )
-                            .replace("{saved}", &saved.to_string())
-                            .replace("{failed}", &failed.len().to_string())
-                            .replace("{names}", &failed.join("; ")),
-                        )
+                            ),
+                            &[
+                                ("saved", &saved.to_string()),
+                                ("failed", &failed.len().to_string()),
+                                ("names", &failed.join("; ")),
+                            ],
+                        ))
                     };
                     let _ = events.send(event);
                     waker.wake();
@@ -9470,7 +9520,7 @@ impl Worker {
                 if id.is_empty() {
                     // This is a command failure, not a failed message send.
                     if let Some(error) = error {
-                        self.emit(Event::Error(self.failure_text(&error)));
+                        self.emit(Event::Error(failure_text(self.locale, &error)));
                     }
                     return;
                 }
@@ -9491,7 +9541,7 @@ impl Worker {
                 if let Some(error) = error {
                     self.emit(Event::Error(
                         crate::i18n::gettext(self.locale, "Message not sent: {error}")
-                            .replace("{error}", &self.failure_text(&error)),
+                            .replace("{error}", &failure_text(self.locale, &error)),
                     ));
                 }
             }
@@ -9508,7 +9558,7 @@ impl Worker {
                         let saved = self.archive.put_motion_path(&chat, &id, Some(&path));
                         confirmed_download(path, saved)
                     })
-                    .map_err(|error| self.failure_text(&error));
+                    .map_err(|error| failure_text(self.locale, &error));
                 self.emit(Event::Motion {
                     chat,
                     message: id,
@@ -11116,52 +11166,6 @@ impl Worker {
         });
     }
 
-    /// One of the worker's own failures, said in the interface's language. A
-    /// download or a send names why it failed deep inside, where the same
-    /// words may be read as a sign (a pause, a re-upload), so they are
-    /// translated only here, on their way to the window. What WhatsApp or the
-    /// system wrote stays as it came.
-    fn failure_text(&self, failure: &str) -> String {
-        let locale = self.locale;
-        match failure {
-            "Download timed out" => crate::i18n::gettext(locale, "Download timed out"),
-            "This attachment is no longer in the archive" => {
-                crate::i18n::gettext(locale, "This attachment is no longer in the archive")
-            }
-            "Could not record the downloaded file in the archive. The file has been kept" => {
-                crate::i18n::gettext(
-                    locale,
-                    "Could not record the downloaded file in the archive. The file has been kept",
-                )
-            }
-            "Could not create a unique attachment staging file" => {
-                crate::i18n::gettext(locale, "Could not create a unique attachment staging file")
-            }
-            "No longer available on WhatsApp's servers" => {
-                crate::i18n::gettext(locale, "No longer available on WhatsApp's servers")
-            }
-            "Upload cancelled" => crate::i18n::gettext(locale, "Upload cancelled"),
-            "The application is shutting down" => {
-                crate::i18n::gettext(locale, "The application is shutting down")
-            }
-            "Could not save the group message recipients" => {
-                crate::i18n::gettext(locale, "Could not save the group message recipients")
-            }
-            "Clipboard image data is invalid" => {
-                crate::i18n::gettext(locale, "Clipboard image data is invalid")
-            }
-            "View once is only available for photos" => {
-                crate::i18n::gettext(locale, "View once is only available for photos")
-            }
-            "Could not attach the reply context" => {
-                crate::i18n::gettext(locale, "Could not attach the reply context")
-            }
-            ATTACHMENT_LIMIT_ERROR => std::borrow::Cow::Owned(attachment_limit_text(locale)),
-            written => std::borrow::Cow::Borrowed(written),
-        }
-        .into_owned()
-    }
-
     /// Files the result and releases any picker request that started it.
     fn downloaded(
         &mut self,
@@ -11205,7 +11209,7 @@ impl Worker {
             self.sticker_download_failed
                 .insert((chat.clone(), id.clone()));
         }
-        let result = result.map_err(|error| self.failure_text(&error));
+        let result = result.map_err(|error| failure_text(self.locale, &error));
         let result_ok = result.is_ok();
         self.emit(Event::Media {
             card,
@@ -12264,7 +12268,7 @@ impl Worker {
                             id: String::new(),
                             error: Some(
                                 crate::i18n::gettext(locale, "Could not send the file: {error}")
-                                    .replace("{error}", &error.to_string()),
+                                    .replace("{error}", &failure_text(locale, &error.to_string())),
                             ),
                         });
                     }
@@ -12377,7 +12381,7 @@ impl Worker {
                         id: String::new(),
                         error: Some(
                             crate::i18n::gettext(locale, "Could not send the picture: {error}")
-                                .replace("{error}", &error.to_string()),
+                                .replace("{error}", &failure_text(locale, &error.to_string())),
                         ),
                     });
                 }
@@ -12445,7 +12449,7 @@ impl Worker {
                                 locale,
                                 "Could not send the voice message: {error}",
                             )
-                            .replace("{error}", &error.to_string()),
+                            .replace("{error}", &failure_text(locale, &error.to_string())),
                         ),
                     });
                 }
@@ -12533,7 +12537,7 @@ impl Worker {
                         id: String::new(),
                         error: Some(
                             crate::i18n::gettext(locale, "Could not send the sticker: {error}")
-                                .replace("{error}", &error.to_string()),
+                                .replace("{error}", &failure_text(locale, &error.to_string())),
                         ),
                     });
                 }
@@ -12599,7 +12603,7 @@ impl Worker {
                         id: String::new(),
                         error: Some(
                             crate::i18n::gettext(locale, "Could not send the GIF: {error}")
-                                .replace("{error}", &error.to_string()),
+                                .replace("{error}", &failure_text(locale, &error.to_string())),
                         ),
                     });
                 }
@@ -18327,7 +18331,7 @@ mod tests {
             "error.clone()",
             // Asked for on the line above, or inside a helper that takes the language.
             "saved_words",
-            "self.failure_text(&error)",
+            "failure_text(self.locale,&error)",
             "sticker_failure(self.locale,&error)",
             "group_edit_refusal_text(self.locale)",
             "group_refusal_text(self.locale,&refusal)",
@@ -18462,18 +18466,18 @@ mod tests {
     fn a_failures_own_words_are_said_in_the_workers_language() {
         let (worker, _events, _, _) = receipt_tests::worker();
         assert_eq!(
-            worker.failure_text("Download timed out"),
+            failure_text(worker.locale, "Download timed out"),
             crate::i18n::gettext(worker.locale, "Download timed out")
         );
         assert_eq!(
-            worker.failure_text(ATTACHMENT_LIMIT_ERROR),
+            failure_text(worker.locale, ATTACHMENT_LIMIT_ERROR),
             crate::i18n::gettext(
                 worker.locale,
                 "This attachment is larger than the 64 MiB automatic download limit"
             )
         );
         let written = "No such file or directory (os error 2)";
-        assert_eq!(worker.failure_text(written), written);
+        assert_eq!(failure_text(worker.locale, written), written);
     }
 
     /// An invite link's failure names its kind, never WhatsApp's words, and

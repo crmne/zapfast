@@ -1849,7 +1849,8 @@ pub fn unsupported_kind(locale: crate::i18n::Locale, what: &str) -> std::borrow:
 
 /// `summary` with the content label it starts with, such as "Photo" or
 /// "Voice message", in `locale`. What follows the label (a caption, a file
-/// name, a length) stays as it is. A summary of text must not come here: a
+/// name, a length) stays as it is, except the kind of an unsupported message,
+/// which is said in the language too. A summary of text must not come here: a
 /// message that reads "Location: home" is the sender's words.
 pub fn localized_summary(locale: crate::i18n::Locale, summary: &str) -> std::borrow::Cow<'_, str> {
     // The longest label that fits, so "Video message" is not read as "Video".
@@ -1864,11 +1865,25 @@ pub fn localized_summary(locale: crate::i18n::Locale, summary: &str) -> std::bor
     let Some(label) = label else {
         return std::borrow::Cow::Borrowed(summary);
     };
+    let rest = &summary[label.len()..];
     let translated = summary_label(locale, label);
-    if translated == label {
+    // The kind of an unsupported message is the worker's word, as its label
+    // is, so a stored preview or quote says it in the language too.
+    let kind = (label == "Unsupported message")
+        .then(|| {
+            rest.strip_prefix(" (")
+                .and_then(|kind| kind.strip_suffix(')'))
+        })
+        .flatten()
+        .map(|kind| (kind, unsupported_kind(locale, kind)));
+    if translated == label && kind.as_ref().is_none_or(|(kind, said)| said == kind) {
         return std::borrow::Cow::Borrowed(summary);
     }
-    std::borrow::Cow::Owned(format!("{translated}{}", &summary[label.len()..]))
+    let rest = match kind {
+        Some((_, said)) => format!(" ({said})"),
+        None => rest.to_owned(),
+    };
+    std::borrow::Cow::Owned(format!("{translated}{rest}"))
 }
 
 /// `label: caption` with the caption whole, for a row that wraps it.
@@ -4075,7 +4090,8 @@ mod tests {
 
     /// Each reason a draft is refused is said in the interface's language as
     /// its own message, and is named again from the text the worker sends
-    /// back. No catalog translates these yet, so the lookup answers English.
+    /// back. The expectations are the language's own lookups, so they hold
+    /// once a catalog translates the reasons.
     #[test]
     fn poll_refusals_are_said_in_the_interface_language() {
         use crate::i18n::Locale;
@@ -4084,18 +4100,36 @@ mod tests {
             options: options.iter().map(|option| option.to_string()).collect(),
             multiple: false,
         };
-        for (draft, refusal) in [
-            (draft("", &["Here", "There"]), PollRefusal::Question),
-            (draft("Where?", &["Here"]), PollRefusal::Answers),
-            (draft("Where?", &["", "There"]), PollRefusal::Answers),
-            (draft("Where?", &["Here", "Here"]), PollRefusal::SameAnswers),
+        for (draft, refusal, written) in [
+            (
+                draft("", &["Here", "There"]),
+                PollRefusal::Question,
+                "Enter a question of up to 255 characters.",
+            ),
+            (
+                draft("Where?", &["Here"]),
+                PollRefusal::Answers,
+                "Add 2–12 answers, each with 1–100 characters.",
+            ),
+            (
+                draft("Where?", &["", "There"]),
+                PollRefusal::Answers,
+                "Add 2–12 answers, each with 1–100 characters.",
+            ),
+            (
+                draft("Where?", &["Here", "Here"]),
+                PollRefusal::SameAnswers,
+                "Each answer must be different.",
+            ),
         ] {
             assert_eq!(draft.validated().unwrap_err(), refusal);
-            let written = refusal.to_string();
-            assert_eq!(refusal.said(Locale::Spanish), written, "{refusal:?}");
+            // The worker sends the English text back.
+            assert_eq!(refusal.to_string(), written);
+            let said = crate::i18n::gettext(Locale::Spanish, written);
+            assert_eq!(refusal.said(Locale::Spanish), said, "{refusal:?}");
             assert_eq!(
-                PollRefusal::of_text(Locale::Spanish, &written).as_deref(),
-                Some(written.as_str())
+                PollRefusal::of_text(Locale::Spanish, written).as_deref(),
+                Some(said.as_ref())
             );
         }
         assert_eq!(
@@ -4302,12 +4336,65 @@ mod tests {
         let placeholder = Content::Unsupported {
             what: "group invite".into(),
         };
+        let said = format!(
+            "{} ({})",
+            crate::i18n::gettext(Locale::Spanish, "Unsupported message"),
+            unsupported_kind(Locale::Spanish, "group invite")
+        );
+        assert_eq!(placeholder.summary_in(Locale::Spanish), said);
+    }
+
+    /// A stored preview or quote of an unsupported message says the kind in
+    /// the interface's language too, as the message does; a kind of a later
+    /// build and a text that only reads like the label stay as they are.
+    #[test]
+    fn a_stored_unsupported_summary_says_its_kind_in_the_interface_language() {
+        use crate::i18n::Locale;
+        let label = crate::i18n::gettext(Locale::Spanish, "Unsupported message");
         assert_eq!(
-            placeholder.summary_in(Locale::Spanish),
+            localized_summary(Locale::Spanish, "Unsupported message (group invite)"),
             format!(
-                "{} (group invite)",
-                crate::i18n::gettext(Locale::Spanish, "Unsupported message")
+                "{label} ({})",
+                unsupported_kind(Locale::Spanish, "group invite")
             )
+        );
+        assert_eq!(
+            localized_summary(
+                Locale::Spanish,
+                "Unsupported message (Waiting for this message. Open WhatsApp on your phone)"
+            ),
+            format!(
+                "{label} ({})",
+                unsupported_kind(
+                    Locale::Spanish,
+                    "Waiting for this message. Open WhatsApp on your phone"
+                )
+            )
+        );
+        assert_eq!(
+            localized_summary(
+                Locale::Spanish,
+                "Unsupported message (a later build's word)"
+            ),
+            format!("{label} (a later build's word)")
+        );
+        assert_eq!(
+            localized_summary(Locale::Spanish, "Unsupported message"),
+            label
+        );
+        // A text message that reads like the label is the sender's words.
+        let words = LastMessage {
+            from_me: false,
+            sender: "1@s.whatsapp.net".into(),
+            sender_name: None,
+            summary: "Unsupported message: please call".into(),
+            full: "Unsupported message: please call".into(),
+            labelled: false,
+            status: Delivery::Sent,
+        };
+        assert_eq!(
+            words.summary_in(Locale::Spanish),
+            "Unsupported message: please call"
         );
     }
 

@@ -412,17 +412,21 @@ pub fn lines(
     summary: &str,
     account: Option<&str>,
 ) -> (String, String) {
+    // Filled in one pass: a name that reads like a placeholder of the text
+    // around it is put in as it is.
     let body = if is_group {
-        crate::i18n::gettext(locale, "{sender}: {summary}")
-            .replace("{sender}", sender)
-            .replace("{summary}", summary)
+        crate::a11y::fill(
+            &crate::i18n::gettext(locale, "{sender}: {summary}"),
+            &[("sender", sender), ("summary", summary)],
+        )
     } else {
         summary.to_owned()
     };
     let title = match account {
-        Some(account) => crate::i18n::gettext(locale, "{chat_name} · {account}")
-            .replace("{chat_name}", chat_name)
-            .replace("{account}", account),
+        Some(account) => crate::a11y::fill(
+            &crate::i18n::gettext(locale, "{chat_name} · {account}"),
+            &[("chat_name", chat_name), ("account", account)],
+        ),
         None => chat_name.to_owned(),
     };
     (title, body)
@@ -895,6 +899,23 @@ mod tests {
                 None,
             ),
             ("Ada Lovelace".to_owned(), "Photo".to_owned())
+        );
+    }
+
+    /// A name is put in as it is, even when it reads like a placeholder of
+    /// the text around it.
+    #[test]
+    fn a_name_that_reads_like_a_placeholder_is_put_in_as_it_is() {
+        assert_eq!(
+            lines(
+                crate::i18n::Locale::default(),
+                "{account}",
+                true,
+                "{summary}",
+                "Hello",
+                Some("Work"),
+            ),
+            ("{account} · Work".to_owned(), "{summary}: Hello".to_owned())
         );
     }
 }

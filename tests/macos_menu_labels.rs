@@ -44,13 +44,25 @@ fn every_macos_menu_label_is_asked_for_in_the_readers_language() {
         "Keyboard Shortcuts",
         "ZapFast Help",
     ] {
+        // The two words with two senses are asked for in their context, and
+        // only those: every other word as a plain message.
+        let two_senses = matches!(label, "Edit" | "Zoom");
         let asked = menu.match_indices(&format!("\"{label}\"")).any(|(at, _)| {
             let before = menu[..at].trim_end();
-            before.ends_with("gettext(locale,")
-                || before.ends_with("\"application menu\", ".trim_end())
+            let plain = before.ends_with("gettext(locale,");
+            let in_context = before.ends_with("\"application menu\",");
+            if two_senses { in_context } else { plain }
         });
-        assert!(asked, "{label:?} is not asked for by its own literal");
+        assert!(
+            asked,
+            "{label:?} is not asked for by its own literal{}",
+            if two_senses {
+                " in the application menu's context"
+            } else {
+                ""
+            }
+        );
     }
-    // The two words with two senses take the context, and no other label does.
+    // So exactly two calls take the context.
     assert_eq!(menu.matches("pgettext(").count(), 2, "{menu}");
 }

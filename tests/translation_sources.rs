@@ -45,20 +45,39 @@ fn calls(code: &str, name: &str) -> bool {
 /// is left out: tests may translate without a catalog ever seeing it.
 fn translates(source: &str) -> bool {
     // The shipped code ends at the first test module: `#[cfg(test)]` on a
-    // `mod` of its own.
+    // `mod` with a body of its own. A `mod` declared there and defined in a
+    // file of its own (`mod write_batching;`) ends nothing.
     let shipped = source
         .match_indices("#[cfg(test)]")
         .find_map(|(at, _)| {
             let after = &source[at + "#[cfg(test)]".len()..];
-            after
-                .trim_start()
-                .starts_with("mod ")
-                .then_some(&source[..at])
+            let module = after.trim_start().strip_prefix("mod ")?;
+            let name = module.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+            name.trim_start().starts_with('{').then_some(&source[..at])
         })
         .unwrap_or(source);
     ["gettext", "pgettext", "ngettext", "translated"]
         .iter()
         .any(|name| calls(shipped, name))
+}
+
+#[test]
+fn the_shipped_code_ends_at_a_test_module_and_not_before_it() {
+    let body = "#[cfg(test)]\nmod helper;\n";
+    let asking = "fn f() {\n    gettext(locale, \"Words\");\n}\n";
+    let tests =
+        "#[cfg(test)]\nmod tests {\n    fn t() {\n        gettext(locale, \"Words\");\n    }\n}\n";
+    assert!(
+        translates(&format!("{body}{asking}{tests}")),
+        "a test-only module declared in a file of its own ends nothing"
+    );
+    assert!(translates(&format!("{asking}{tests}")));
+    assert!(
+        !translates(tests),
+        "tests may translate without a catalog seeing it"
+    );
+    assert!(!translates("fn f() {}\n"));
+    assert!(!translates(""));
 }
 
 #[test]

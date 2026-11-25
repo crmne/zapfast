@@ -132,7 +132,7 @@ fn label_chips(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     for (index, (id, name, count, color)) in rows.into_iter().enumerate() {
         let selected = active.as_deref() == Some(id.as_str());
         let chip =
-            widgets::dotted_chip(ui, app.locale, palette, Some(color), &name, count, selected)
+            widgets::unread_chip(ui, app.locale, palette, Some(color), &name, count, selected)
                 .tab_stop(Stop::Label(u8::try_from(index).unwrap_or(u8::MAX)));
         ui.ctx()
             .data_mut(|data| data.insert_temp(chip_id(&id), chip.rect));

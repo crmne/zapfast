@@ -9741,6 +9741,8 @@ impl App {
                 for account in &self.accounts {
                     account.backend.send(Command::SetLocale(self.locale));
                 }
+                // So do the names a group's member list was built with.
+                self.info_members = None;
                 self.mark_settings_dirty();
             }
             Action::SetCustomTheme(filename) => {
@@ -15289,6 +15291,28 @@ mod tests {
                 Command::SetLocale(locale) if locale == crate::i18n::Locale::Dutch
             )),
             "the hidden account's worker is told too"
+        );
+    }
+
+    /// A group's member list keeps the names it was built with, so a change
+    /// of language drops it: the open panel builds it again in the new one.
+    #[test]
+    fn a_change_of_language_drops_the_groups_member_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let group = "120363000000000001@g.us";
+        app.info_members = Some((
+            group.to_owned(),
+            vec![("1@s.whatsapp.net".to_owned(), "You".to_owned())],
+        ));
+        app.apply(
+            Action::SetInterfaceLanguage(Some(crate::i18n::Locale::Dutch)),
+            &ctx,
+        );
+        assert!(
+            app.info_members.is_none(),
+            "built again in the new language"
         );
     }
 

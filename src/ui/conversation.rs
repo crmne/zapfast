@@ -1569,24 +1569,26 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         ui.horizontal(|ui| {
                             let width = 230.0;
                             ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                            theme::text(
-                                ui,
-                                crate::i18n::gettext(app.locale, "Only"),
-                                theme::regular(13.5),
-                                palette.secondary,
+                            // One sentence, so a language puts its words in its
+                            // own order; "admins" keeps the accent.
+                            let sentence = crate::i18n::gettext(
+                                app.locale,
+                                "Only {admins} can send messages",
                             );
-                            theme::text(
-                                ui,
-                                crate::i18n::gettext(app.locale, "admins"),
-                                theme::semibold(13.5),
-                                palette.accent,
+                            let admins = crate::i18n::gettext(app.locale, "admins");
+                            let (before, after) = sentence.split_once("{admins}").map_or(
+                                (sentence.as_ref(), ""),
+                                |(before, after)| (before, after),
                             );
-                            theme::text(
-                                ui,
-                                crate::i18n::gettext(app.locale, "can send messages"),
-                                theme::regular(13.5),
-                                palette.secondary,
-                            );
+                            for (part, font, color) in [
+                                (before.trim_end(), theme::regular(13.5), palette.secondary),
+                                (admins.as_ref(), theme::semibold(13.5), palette.accent),
+                                (after.trim_start(), theme::regular(13.5), palette.secondary),
+                            ] {
+                                if !part.is_empty() {
+                                    theme::text(ui, part, font, color);
+                                }
+                            }
                         });
                     }
                     ui.add_space(8.0);

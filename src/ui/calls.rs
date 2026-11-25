@@ -288,18 +288,12 @@ pub fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
         for filter in CallFilter::EVERY {
             let selected = app.call_filter == filter;
-            let chip = widgets::filter_chip(
-                ui,
-                app.locale,
-                &palette,
-                filter.label(app.locale).as_ref(),
-                0,
-                selected,
-            )
-            .tab_stop(match filter {
-                CallFilter::All => Stop::All,
-                CallFilter::Missed => Stop::Missed,
-            });
+            let chip =
+                widgets::filter_chip(ui, &palette, filter.label(app.locale).as_ref(), 0, selected)
+                    .tab_stop(match filter {
+                        CallFilter::All => Stop::All,
+                        CallFilter::Missed => Stop::Missed,
+                    });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(filter_chip_id(filter), chip.rect));
             if chip.clicked() {

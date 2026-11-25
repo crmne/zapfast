@@ -1987,23 +1987,47 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     response
 }
 
-/// Selectable pill with an optional count, used for the chat-list filters.
+/// Selectable pill with an optional count, used for the chat-list filters. A
+/// screen reader is not told the count: these chips count different things,
+/// and the ones that count unread chats say so (`unread_chip`).
 pub fn filter_chip(
     ui: &mut Ui,
-    locale: crate::i18n::Locale,
     palette: &Palette,
     label: &str,
     count: usize,
     selected: bool,
 ) -> egui::Response {
-    dotted_chip(ui, locale, palette, None, label, count, selected)
+    dotted_chip(ui, palette, None, label, count, selected)
+}
+
+/// A chip that counts unread chats, as the chat list's filters and its labels
+/// do: a screen reader hears its name, then the count.
+pub fn unread_chip(
+    ui: &mut Ui,
+    locale: crate::i18n::Locale,
+    palette: &Palette,
+    dot: Option<Color32>,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> egui::Response {
+    let enabled = ui.is_enabled();
+    let chip = dotted_chip(ui, palette, dot, label, count, selected);
+    chip.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            enabled,
+            selected,
+            unread_chats_label(locale, label, count),
+        )
+    });
+    chip
 }
 
 /// A filter chip led by a coloured dot, for filters the user named and
 /// coloured, such as labels.
 pub fn dotted_chip(
     ui: &mut Ui,
-    locale: crate::i18n::Locale,
     palette: &Palette,
     dot: Option<Color32>,
     label: &str,
@@ -2066,28 +2090,19 @@ pub fn dotted_chip(
             ui.painter().galley(pos, number, color);
         }
     }
-    response.widget_info(|| {
-        // The count takes this language's own plural form.
-        let label = if count > 0 {
-            let unread = crate::i18n::ngettext(
-                locale,
-                "{} unread message",
-                "{} unread messages",
-                count as u32,
-            )
-            .replace("{}", &count.to_string());
-            format!("{label}, {unread}")
-        } else {
-            label.to_owned()
-        };
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            selected,
-            label,
-        )
-    });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// What a screen reader reads for a chip that counts unread chats: its name,
+/// then how many chats under it are unread, in this language's own plural
+/// form. The number is of chats, not of the messages inside them.
+fn unread_chats_label(locale: crate::i18n::Locale, label: &str, count: usize) -> String {
+    if count == 0 {
+        return label.to_owned();
+    }
+    let unread = crate::i18n::ngettext(locale, "{} unread chat", "{} unread chats", count as u32)
+        .replace("{}", &count.to_string());
+    format!("{label}, {unread}")
 }
 
 #[cfg(test)]
@@ -2998,5 +3013,27 @@ mod tests {
         assert!(off_outline > 0.0, "the off track is outlined");
         assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
         assert!(on_knob > off_knob, "the knob grows when on");
+    }
+
+    /// A chip's count is of chats, and a screen reader hears it as such, in
+    /// this language's own plural form. No catalog translates these yet, so
+    /// the lookup answers English.
+    #[test]
+    fn a_chip_count_is_read_as_unread_chats_in_the_interface_language() {
+        use crate::i18n::Locale;
+        assert_eq!(unread_chats_label(Locale::Dutch, "All", 0), "All");
+        for count in [1usize, 3] {
+            let unread = crate::i18n::ngettext(
+                Locale::Dutch,
+                "{} unread chat",
+                "{} unread chats",
+                count as u32,
+            )
+            .replace("{}", &count.to_string());
+            assert_eq!(
+                unread_chats_label(Locale::Dutch, "Unread", count),
+                format!("Unread, {unread}")
+            );
+        }
     }
 }

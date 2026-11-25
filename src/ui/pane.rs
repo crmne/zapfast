@@ -417,7 +417,7 @@ fn keyboard(app: &mut App, ui: &egui::Ui) -> (Option<usize>, bool) {
 fn day_chip(app: &mut App, ui: &mut egui::Ui, palette: &Palette, day: Date) {
     ui.horizontal(|ui| {
         let label = util::short_date(app.locale, day);
-        let chip = widgets::filter_chip(ui, app.locale, palette, &label, 0, true);
+        let chip = widgets::filter_chip(ui, palette, &label, 0, true);
         let change = crate::i18n::gettext(app.locale, "Filter by date");
         chip.widget_info(|| {
             egui::WidgetInfo::labeled(

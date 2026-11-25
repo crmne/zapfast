@@ -1410,7 +1410,7 @@ fn media_view(app: &mut App, ui: &mut egui::Ui, chat: &str, tab: MediaTab, overl
                         MediaTab::Links => media.links.len(),
                     });
                     let label = tab_label(app, choice);
-                    if widgets::filter_chip(ui, app.locale, &palette, &label, count, choice == tab)
+                    if widgets::filter_chip(ui, &palette, &label, count, choice == tab)
                         .tab_stop(Stop::InfoControl(TAB_STOP + index as u8))
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()

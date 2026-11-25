@@ -622,10 +622,11 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     && !app.show_archived
                     && app.label_filter.is_none()
                     && app.chat_filter == filter;
-                let chip = widgets::filter_chip(
+                let chip = widgets::unread_chip(
                     ui,
                     app.locale,
                     &palette,
+                    None,
                     filter.label(app.locale).as_ref(),
                     count,
                     selected,
