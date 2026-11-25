@@ -174,7 +174,11 @@ name or description, in the interface language or in English.
   A matched background reply resets that chat's timeout count, even if late.
   Requests that cannot be sent still back off the whole account. Pages fetched
   this way go into the archive without moving the view. A chat the phone says
-  has nothing older is not asked again.
+  has nothing older is not asked again. When off, ZapFast asks the phone only
+  when you scroll to the top of a chat or click **Load older messages from
+  your phone** above an empty or short one, so opening a chat does not wake
+  the phone (an iPhone shows a "Finished syncing" notification for each
+  request).
 - **Keep chats archived**: on by default. When off, a new message, received or
   sent, brings an archived chat back to the list. Applies to all accounts here
   whose phone has not sent its own **Keep chats archived**; once a phone has,

@@ -6103,10 +6103,17 @@ impl App {
     }
 
     /// Requests older phone history when available and outside the cooldown.
-    /// `explicit` when the reader asked by scrolling to the top; automatic
-    /// requests never report a silent phone.
+    /// `explicit` when the reader asked by scrolling to the top or clicking
+    /// the empty chat's link; automatic requests never report a silent phone,
+    /// and are sent only while the account has Fetch older history on.
     pub fn fetch_older(&mut self, chat: &str, explicit: bool) {
         let account = &mut self.accounts[self.active];
+        // Every request wakes the phone, and an iPhone shows a "Finished
+        // syncing" notification for each one. Without Fetch older history,
+        // only the reader asks: opening an empty or short chat does not.
+        if !explicit && !account.settings.history_prefetch {
+            return;
+        }
         let Some(conversation) = account.conversations.get_mut(chat) else {
             return;
         };
@@ -15915,16 +15922,44 @@ mod tests {
         assert!(!app.settings_dirty, "nothing changed, nothing to save");
     }
 
-    /// A short chat asks the phone by itself; only the reader scrolling to
-    /// the top makes a request theirs, so only then may a silent phone be
-    /// reported (#325). Scrolling up during an automatic request claims it
-    /// once rather than asking twice.
+    /// Without Fetch older history, opening an empty chat or loading a
+    /// short one does not ask the phone: each request makes an iPhone show a
+    /// "Finished syncing" notification (#842). The reader still can.
+    #[test]
+    fn automatic_phone_requests_wait_for_fetch_older_history() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        assert!(!app.account().settings.history_prefetch);
+        let chat = "4915700000004@s.whatsapp.net";
+        app.conversations.entry(chat.into()).or_default().complete = true;
+        let mut asked = || {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::FetchOlder { explicit, .. } => Some(explicit),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        app.fetch_older(chat, false);
+        assert_eq!(asked(), [false; 0], "opening an empty chat stays quiet");
+        app.fetch_older(chat, true);
+        assert_eq!(asked(), [true], "the reader's link still asks");
+    }
+
+    /// With Fetch older history on, a short chat asks the phone by itself;
+    /// only the reader scrolling to the top makes a request theirs, so only
+    /// then may a silent phone be reported (#325). Scrolling up during an
+    /// automatic request claims it once rather than asking twice.
     #[test]
     fn only_the_reader_scrolling_up_asks_the_phone_explicitly() {
         let mut app = app();
         let (backend, mut commands, events) = Backend::recording_with_events();
         app.backend = backend;
         app.link = LinkStatus::Connected;
+        app.account_mut().settings.history_prefetch = true;
         let chat = "4915700000003@s.whatsapp.net";
         let conversation = app.conversations.entry(chat.into()).or_default();
         conversation.merge(vec![message(chat, "m1", 100)], false);

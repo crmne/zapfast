@@ -520,8 +520,10 @@ protocol. These notes are for coding agents and new contributors.
   `placements`.
 - History sync can bring a chat with a name and no messages at all; a
   history request for such a chat is anchored at the present with an
-  empty message id (`worker::fetch_older`), and the app asks the phone
-  as soon as such a chat loads or opens, instead of never.
+  empty message id (`worker::fetch_older`). With Fetch older history on,
+  the app asks the phone as soon as such a chat loads or opens; with it
+  off, the chat offers a link that asks explicitly, since every request
+  makes an iPhone show a "Finished syncing" notification (#842).
 - A Wayland compositor may stop sending frame callbacks to a window it isn't
   showing without saying so (Hyprland does for a window covered by a
   fullscreen or maximized one, #190), and a vsync swap there blocks the event
@@ -666,9 +668,11 @@ protocol. These notes are for coding agents and new contributors.
 - Older history comes from the phone on demand (`Command::FetchOlder` →
   `Client::fetch_message_history` → a `HistorySync` chunk with
   `sync_type == ON_DEMAND`); the archive is paged first, the phone only
-  when it is exhausted. Short and empty chats ask on their own, and a phone
-  with nothing to add often leaves that unanswered, so only an `explicit`
-  request (the reader scrolled to the top) reports a silent phone, once per
+  when it is exhausted. With Fetch older history on, short and empty chats
+  ask on their own (`App::fetch_older` drops automatic requests while it is
+  off), and a phone with nothing to add often leaves that unanswered, so
+  only an `explicit` request (the reader scrolled to the top or clicked the
+  chat's link) reports a silent phone, once per
   chat until it answers or the link reconnects. A chunk saying nothing more
   remains on the phone sets `chats.history_start`, and that chat is not
   asked again.
