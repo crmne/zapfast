@@ -1202,6 +1202,22 @@ mod tests {
     }
 
     #[test]
+    fn search_keys_drop_accents_in_other_scripts() {
+        for (name, typed) in [
+            ("Íñigo Muñoz", "inigo munoz"),
+            ("Begoña Núñez", "BEGONA NUNEZ"),
+            ("François Lefèvre", "francois lefevre"),
+            ("Jürgen Müller", "jurgen muller"),
+            ("Νίκος", "νικος"),
+            ("Алёна", "алена"),
+            ("مُحَمَّد", "محمد"),
+            ("がくと", "かくと"),
+        ] {
+            assert_eq!(search_key(name), search_key(typed), "{name}");
+        }
+    }
+
+    #[test]
     fn the_shipped_icon_draws_without_svg_filters() {
         // Qt's SVG renderer rejects filter primitives such as feFuncA, and a
         // tray that asks for the themed icon then draws a missing-icon
