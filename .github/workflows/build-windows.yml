@@ -25,7 +25,7 @@ jobs:
         with:
           save-if: "true"
       - name: Run unit tests for custom changes
-        run: cargo test --locked --lib -- clean_media_paths save_text_copy location_text_file attachment_name_strips
+        run: cargo test --locked --lib -- clean_media_paths save_text_copy location_text_file attachment_name_strips selection_save_items_combines_text_messages_into_one_txt
       - name: Build release binary
         run: cargo build --locked --release --target x86_64-pc-windows-msvc
       - name: Upload zapfast.exe

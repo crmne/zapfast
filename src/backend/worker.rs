@@ -16021,12 +16021,12 @@ mod tests {
     #[test]
     fn save_text_copy_numbers_collisions_without_overwriting() {
         let dir = tempfile::tempdir().unwrap();
-        let first = save_text_copy(dir.path(), "localizacao.txt", b"primeira").unwrap();
-        let second = save_text_copy(dir.path(), "localizacao.txt", b"segunda").unwrap();
-        assert_eq!(first, dir.path().join("localizacao.txt"));
-        assert_eq!(second, dir.path().join("localizacao (2).txt"));
-        assert_eq!(std::fs::read(&first).unwrap(), b"primeira");
-        assert_eq!(std::fs::read(&second).unwrap(), b"segunda");
+        let first = save_text_copy(dir.path(), "location.txt", b"first").unwrap();
+        let second = save_text_copy(dir.path(), "location.txt", b"second").unwrap();
+        assert_eq!(first, dir.path().join("location.txt"));
+        assert_eq!(second, dir.path().join("location (2).txt"));
+        assert_eq!(std::fs::read(&first).unwrap(), b"first");
+        assert_eq!(std::fs::read(&second).unwrap(), b"second");
     }
 
     #[test]
