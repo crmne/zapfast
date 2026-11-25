@@ -115,15 +115,17 @@ impl ChatKind {
     }
 }
 
-/// A local chat label: a name, a colour, and nothing that leaves this computer.
-/// Not a WhatsApp Business label; ZapFast neither reads nor syncs those.
+/// A chat label: either synced from WhatsApp (custom list / business label)
+/// or created locally on this computer.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     pub id: String,
     pub name: String,
-    /// `#rrggbb`, lower case.
+    /// `#rrggbb`, lower case, or empty when a synced list has no colour.
     pub color_hex: String,
     pub created_at: i64,
+    #[serde(default)]
+    pub synced: bool,
 }
 
 /// Chat-list filter chosen from the chips under the search field.
@@ -3193,10 +3195,16 @@ pub enum Action {
     SetCallFilter(CallFilter),
     /// Picks the label the chat list shows; `None` shows every chat.
     SelectLabel(Option<String>),
-    /// Replaces the labels worn by one chat.
+    /// Replaces the local labels worn by one chat.
     SetChatLabels {
         chat: ChatId,
         labels: Vec<String>,
+    },
+    /// Adds or removes a synced WhatsApp label/list on one chat.
+    SetSyncedChatLabel {
+        chat: ChatId,
+        label_id: String,
+        labeled: bool,
     },
     /// Creates a label from the name and colour in the manager dialog.
     CreateLabel {

@@ -3016,7 +3016,9 @@ impl App {
     /// being renamed, which may keep its own name.
     fn label_name_refusal(&self, name: &str, except: Option<&str>) -> Option<String> {
         let taken = self.labels.iter().any(|label| {
-            Some(label.id.as_str()) != except && label.name.to_lowercase() == name.to_lowercase()
+            !label.synced
+                && Some(label.id.as_str()) != except
+                && label.name.to_lowercase() == name.to_lowercase()
         });
         taken.then(|| {
             crate::i18n::gettext(self.locale, "A label named “{name}” already exists.")
@@ -9333,12 +9335,25 @@ impl App {
             Action::SetChatLabels { chat, labels } => {
                 self.backend.send(Command::SetChatLabels { chat, labels });
             }
+            Action::SetSyncedChatLabel {
+                chat,
+                label_id,
+                labeled,
+            } => {
+                self.backend.send(Command::SetSyncedChatLabel {
+                    chat,
+                    label_id,
+                    labeled,
+                });
+            }
             Action::CreateLabel { name, color_hex } => {
                 let name = name.trim().to_owned();
                 if name.is_empty() {
                     return;
                 }
-                if self.labels.len() >= crate::archive::LABEL_LIMIT {
+                if self.labels.iter().filter(|label| !label.synced).count()
+                    >= crate::archive::LABEL_LIMIT
+                {
                     self.toast_error(
                         crate::i18n::gettext(
                             self.locale,
@@ -18609,6 +18624,7 @@ mod tests {
             name: name.to_owned(),
             color_hex: "#3b82f6".to_owned(),
             created_at: 1,
+            synced: false,
         }
     }
 

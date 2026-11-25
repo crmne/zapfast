@@ -1935,6 +1935,7 @@ fn labels_sample(app: &mut App) {
         name: name.to_owned(),
         color_hex: color_hex.to_owned(),
         created_at,
+        synced: false,
     };
     app.labels = vec![
         label("label-work", "Work", "#3b82f6", 1),

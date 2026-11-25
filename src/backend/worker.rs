@@ -53,6 +53,7 @@ use early_events::WaitingReaction;
 mod favorite_chats;
 mod group_admin;
 mod interactive;
+mod labels;
 mod link_preview;
 mod link_preview_setting;
 mod link_watch;
@@ -983,6 +984,16 @@ pub async fn run(
             && archive
                 .set_meta(star_recovery::STARS_RECOVERED, "complete")
                 .is_ok());
+    let labels_recovered = archive
+        .meta(labels::LABELS_RECOVERED)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("complete")
+        || (archive.chats().is_ok_and(|chats| chats.is_empty())
+            && archive
+                .set_meta(labels::LABELS_RECOVERED, "complete")
+                .is_ok());
     let mut worker = Worker {
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
@@ -1080,6 +1091,8 @@ pub async fn run(
         first_names_recovering: false,
         stars_recovered,
         stars_recovering: false,
+        labels_recovered,
+        labels_recovering: false,
         downloads: HashSet::new(),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
@@ -1282,6 +1295,12 @@ impl Worker {
             } => {
                 self.link_previews_read(generation, complete);
             }
+            RuntimeEvent::LabelsRecovered {
+                generation,
+                complete,
+            } => {
+                self.labels_recovered(generation, complete);
+            }
             RuntimeEvent::PresenceSent {
                 generation,
                 online,
@@ -1321,6 +1340,8 @@ enum RuntimeEvent {
     FavoriteChatsRead { generation: u64, complete: bool },
     /// The one-time read of the phone's link preview setting finished.
     LinkPreviewsRead { generation: u64, complete: bool },
+    /// The one-time read of the phone's labels and lists finished.
+    LabelsRecovered { generation: u64, complete: bool },
 }
 
 /// Renames an archive whose key is gone, with its SQLite side files, and
@@ -1710,6 +1731,10 @@ struct Worker {
     stars_recovered: bool,
     /// That replay is running.
     stars_recovering: bool,
+    /// The phone's labels and lists from before ZapFast followed them were replayed.
+    labels_recovered: bool,
+    /// That replay is running.
+    labels_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
     /// Serial forward in flight. The next send waits for the running one.
@@ -4205,6 +4230,7 @@ impl Worker {
                 self.recover_favorites();
                 self.recover_first_names();
                 self.recover_stars();
+                self.recover_labels();
                 self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
@@ -4516,6 +4542,8 @@ impl Worker {
             E::RemoveRecentStickerUpdate(update) => self.recent_sticker_removed(update),
             E::FavoriteStickerUpdate(update) => self.favorite_sticker_update(update),
             E::FavoritesUpdate(update) => self.favorite_chats_update(update),
+            E::LabelEditUpdate(update) => self.label_edit_update(update),
+            E::LabelAssociationUpdate(update) => self.label_association_update(update),
             E::StarUpdate(update) => self.star_update(update),
             E::LockChatUpdate(update) => {
                 let chat = self.canonical(&update.jid);
@@ -4820,6 +4848,7 @@ impl Worker {
         self.link_previews_disabled = true;
         self.link_previews_unknown = true;
         self.link_previews_reading = false;
+        self.labels_recovering = false;
         self.emit(Event::LinkPreviewsDisabled(true));
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
@@ -8927,6 +8956,11 @@ impl Worker {
                 }
                 self.emit_chat(&chat);
             }
+            Command::SetSyncedChatLabel {
+                chat,
+                label_id,
+                labeled,
+            } => self.set_synced_chat_label(&chat, &label_id, labeled),
             Command::SetLocked(chat, locked) => {
                 let _ = self.archive.set_locked(&chat, locked);
                 self.emit_chat(&chat);
@@ -20462,6 +20496,8 @@ mod receipt_tests {
             first_names_recovering: false,
             stars_recovered: true,
             stars_recovering: false,
+            labels_recovered: true,
+            labels_recovering: false,
             downloads: HashSet::new(),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),

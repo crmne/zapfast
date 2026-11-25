@@ -945,11 +945,13 @@ Leaving the tab, changing the code, or closing the window hides them again.
 
 ## Labels
 
-Labels are yours alone. They stay on this computer, they never reach your phone,
-and nobody else sees them. They are not WhatsApp Business labels, and ZapFast
-does not read or change those. Open **Labels** in any chat's right-click menu
+ZapFast shows both **synced WhatsApp lists and labels** from your phone and
+**local labels** created on this computer. Synced lists and Business labels
+appear automatically in your phone's order, and toggling one in a chat's
+**Labels** submenu syncs back to your phone. Local labels stay on this computer
+only and never reach your phone; open **Labels** in any chat's right-click menu
 and choose **Manage labels…** to make one, with a name and one of the offered
-colours. ZapFast keeps up to twenty.
+colours. ZapFast keeps up to twenty local labels alongside your synced ones.
 
 A chat can wear several labels at once. The **Labels** submenu of a chat's
 right-click menu lists them, with a checkmark beside the ones the chat wears;

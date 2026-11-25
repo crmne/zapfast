@@ -2891,6 +2891,7 @@ mod tests {
                 name: format!("Label {index}"),
                 color_hex: "#25d366".into(),
                 created_at: 0,
+                synced: false,
             })
             .collect();
         let ctx = egui::Context::default();
