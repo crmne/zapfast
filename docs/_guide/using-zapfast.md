@@ -530,8 +530,8 @@ yet.
 ## Voice messages
 
 Voice messages play in the chat with a seekable waveform; audio files show a
-music icon and a seek bar instead. Audio longer than an hour does not play in
-ZapFast. Pausing releases the sound output so it can
+music icon and a seek bar instead. Audio longer than an hour (less for a file with
+more than two channels or above 48 kHz) does not play in ZapFast. Pausing releases the sound output so it can
 sleep; playing again resumes from the same position. The chip beside the waveform or seek bar
 cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered

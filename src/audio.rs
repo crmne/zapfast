@@ -627,11 +627,12 @@ fn decode_file(path: &Path) -> Result<Vec<f32>, String> {
         .map_err(|error| format!("Could not decode the audio: {error}"))?;
     let channels = decoder.channels().get();
     let rate = decoder.sample_rate().get();
-    // As for OGG/Opus, the decoded length is bounded, not the file's.
-    let limit =
-        usize::try_from(u64::from(rate) * u64::from(channels) * voice::LONGEST_CLIP_SECONDS)
-            .unwrap_or(usize::MAX);
-    let interleaved: Vec<f32> = decoder.take(limit.saturating_add(1)).collect();
+    // As for OGG/Opus, the decoded length is bounded, not the file's. The
+    // budget is fixed, an hour of 48 kHz stereo, whatever rate and channels
+    // the file claims: a file at a higher rate or with more channels gets a
+    // shorter time, never more memory.
+    let limit = voice::RATE as usize * 2 * voice::LONGEST_CLIP_SECONDS as usize;
+    let interleaved: Vec<f32> = decoder.take(limit + 1).collect();
     if interleaved.len() > limit {
         return Err("Could not decode the audio: it is too long to play".to_owned());
     }
