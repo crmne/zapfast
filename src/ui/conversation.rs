@@ -11995,26 +11995,33 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn location_text_file_includes_coordinates_maps_link_and_metadata() {
-        let message = Message {
+        let message = super::Message {
             id: "loc-1".into(),
             chat: "5511999999999@s.whatsapp.net".into(),
             sender: "5511999999999@s.whatsapp.net".into(),
             sender_name: Some("Maria".into()),
             from_me: false,
             timestamp: 1_700_000_000,
-            content: Content::Location {
+            content: super::Content::Location {
                 latitude: -23.55052,
                 longitude: -46.63331,
                 name: Some("Praça da Sé".into()),
                 address: Some("Centro, São Paulo - SP".into()),
             },
-            ..with_reactions(Vec::new())
+            status: super::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            history_order: None,
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
         };
-        let (file_name, body) = location_text_file(&message).expect("location txt");
+        let (file_name, body) = super::location_text_file(&message).expect("location txt");
         assert_eq!(file_name, "Praça da Sé.txt");
         assert!(body.contains("Nome: Praça da Sé"));
         assert!(body.contains("Endereço: Centro, São Paulo - SP"));
@@ -12025,7 +12032,7 @@ mod tests {
 
     #[test]
     fn attachment_name_strips_legacy_jid_prefix_for_media() {
-        let photo = Content::Image {
+        let photo = super::Content::Image {
             caption: None,
             media: crate::model::Media {
                 album: None,
@@ -12039,11 +12046,14 @@ mod tests {
             motion: None,
         };
         assert_eq!(
-            attachment_name(&photo, Path::new("/cache/5511999999999_s_whatsapp_net-ABC123.jpg")),
+            super::attachment_name(
+                &photo,
+                super::Path::new("/cache/5511999999999_s_whatsapp_net-ABC123.jpg")
+            ),
             "image.jpg"
         );
         assert_eq!(
-            attachment_name(&photo, Path::new("/downloads/image (2).jpg")),
+            super::attachment_name(&photo, super::Path::new("/downloads/image (2).jpg")),
             "image (2).jpg"
         );
     }
