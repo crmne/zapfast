@@ -627,7 +627,14 @@ fn decode_file(path: &Path) -> Result<Vec<f32>, String> {
         .map_err(|error| format!("Could not decode the audio: {error}"))?;
     let channels = decoder.channels().get();
     let rate = decoder.sample_rate().get();
-    let interleaved: Vec<f32> = decoder.collect();
+    // As for OGG/Opus, the decoded length is bounded, not the file's.
+    let limit =
+        usize::try_from(u64::from(rate) * u64::from(channels) * voice::LONGEST_CLIP_SECONDS)
+            .unwrap_or(usize::MAX);
+    let interleaved: Vec<f32> = decoder.take(limit.saturating_add(1)).collect();
+    if interleaved.len() > limit {
+        return Err("Could not decode the audio: it is too long to play".to_owned());
+    }
     Ok(voice::mono_at_rate(&interleaved, channels, rate))
 }
 

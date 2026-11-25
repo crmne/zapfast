@@ -14,9 +14,18 @@ const LONGEST_PACKET: usize = 5760 * 2;
 pub const BARS: usize = 64;
 /// Target bitrate for speech, similar to the phone.
 const BITRATE: i32 = 32_000;
+/// The longest clip decoded for playing, in seconds: an hour, about 700 MB of
+/// samples. A file of near-empty Opus packets decodes thousands of times
+/// larger than it is, so the decoded length is what has to be bounded.
+pub const LONGEST_CLIP_SECONDS: u64 = 60 * 60;
 
 /// Mono samples at `RATE` from an OGG/Opus file.
 pub fn decode(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    decode_at_most(bytes, RATE as usize * LONGEST_CLIP_SECONDS as usize)
+}
+
+/// [`decode`], refusing a file that decodes to more than `limit` samples.
+fn decode_at_most(bytes: &[u8], limit: usize) -> Result<Vec<f32>, String> {
     let bytes = without_stray_first_pages(bytes);
     let mut reader = ogg::PacketReader::new(Cursor::new(&bytes[..]));
     let mut stream: Option<Stream> = None;
@@ -55,6 +64,9 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<f32>, String> {
         // Remove the encoder lookahead from the decoded output.
         let skip = current.skip.min(mono.len());
         current.skip -= skip;
+        if out.len() + mono.len() - skip > limit {
+            return Err("the audio is too long to play".to_owned());
+        }
         out.extend_from_slice(&mono[skip..]);
     }
     if stream.is_none() {
@@ -306,6 +318,16 @@ mod tests {
         let end = decoded.len().min(original.len());
         let (before, after) = (rms(&original[4800..end]), rms(&decoded[4800..end]));
         assert!((before - after).abs() < 0.08, "{before} in, {after} out");
+    }
+
+    #[test]
+    fn a_clip_longer_than_the_limit_is_refused() {
+        let bytes = encode(&tone(1.0)).expect("encodes");
+        assert!(decode_at_most(&bytes, RATE as usize * 2).is_ok());
+        assert_eq!(
+            decode_at_most(&bytes, RATE as usize / 2),
+            Err("the audio is too long to play".to_owned())
+        );
     }
 
     /// Some phones write a second beginning-of-stream page in the middle of
