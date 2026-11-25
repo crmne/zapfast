@@ -21,6 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
       - name: Run unit tests for custom changes
         run: cargo test --locked --lib -- clean_media_paths save_text_copy location_text_file attachment_name_strips
       - name: Build release binary

@@ -12012,22 +12012,7 @@ mod tests {
                 name: Some("Praça da Sé".into()),
                 address: Some("Centro, São Paulo - SP".into()),
             },
-            status: Delivery::None,
-            starred: false,
-            pinned: false,
-            forwarded: false,
-            forwarded_many: false,
-            edited: false,
-            reply_to: None,
-            reactions: Vec::new(),
-            thumbnail: None,
-            mentions: Vec::new(),
-            album: None,
-            channel_server_id: None,
-            ephemeral_expiration: None,
-            view_once: false,
-            viewed: false,
-            motion: None,
+            ..with_reactions(Vec::new())
         };
         let (file_name, body) = location_text_file(&message).expect("location txt");
         assert_eq!(file_name, "Praça da Sé.txt");
@@ -12041,22 +12026,17 @@ mod tests {
     #[test]
     fn attachment_name_strips_legacy_jid_prefix_for_media() {
         let photo = Content::Image {
-            media: Media {
+            caption: None,
+            media: crate::model::Media {
+                album: None,
                 mime: "image/jpeg".into(),
-                size: None,
+                size: 1,
                 width: None,
                 height: None,
-                duration: None,
                 path: None,
-                state: MediaState::Ready,
-                progress: None,
+                state: crate::model::MediaState::Idle,
             },
-            caption: String::new(),
-            waveform: None,
-            voice: false,
-            file_name: None,
-            gif: false,
-            live_photo: false,
+            motion: None,
         };
         assert_eq!(
             attachment_name(&photo, Path::new("/cache/5511999999999_s_whatsapp_net-ABC123.jpg")),
