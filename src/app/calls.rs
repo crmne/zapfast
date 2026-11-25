@@ -1088,10 +1088,29 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, mut commands) = app(directory.path());
         let ctx = egui::Context::default();
+        // Clicking the link only asks: the microphone stays off until the
+        // reader says to join.
         app.apply(
             Action::OpenUrl("https://call.whatsapp.com/video/AbCdEf1234567890".to_owned()),
             &ctx,
         );
+        assert!(self::sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert_eq!(
+            app.dialog,
+            Some(crate::model::Dialog::ConfirmJoinCallLink {
+                token: "AbCdEf1234567890".to_owned(),
+                video: true,
+            })
+        );
+        app.apply(
+            Action::JoinCallLink {
+                token: "AbCdEf1234567890".to_owned(),
+                video: true,
+            },
+            &ctx,
+        );
+        assert!(app.dialog.is_none());
         let sent = sent(&mut commands);
         assert!(
             matches!(
@@ -1106,7 +1125,10 @@ mod tests {
         assert!(app.call_avatar().is_none());
         // A second link while that call is up is not joined.
         app.apply(
-            Action::OpenUrl("https://call.whatsapp.com/voice/AbCdEf1234567890".to_owned()),
+            Action::JoinCallLink {
+                token: "AbCdEf1234567890".to_owned(),
+                video: false,
+            },
             &ctx,
         );
         assert!(self::sent(&mut commands).is_empty());

@@ -628,8 +628,9 @@ take out and your voice goes out as it is; there is nothing to switch.
 
 Group calls are experimental. A group's header has the same call buttons as
 a person's, a call to one of your groups rings here as any call does, and a
-call link in a message (`call.whatsapp.com/voice/…` or `/video/…`) joins that
-call. Everyone hears everyone, and each person's video gets a tile of its own.
+call link in a message (`call.whatsapp.com/voice/…` or `/video/…`) asks first,
+then joins that call with your microphone on, and your camera too for a
+`/video/` link. Everyone hears everyone, and each person's video gets a tile of its own.
 In testing your own video, as the others see it, still stopped for a moment
 every few seconds: one-to-one calls rebuild lost video from repair packets,
 and group calls do not yet. If WhatsApp has not turned on group calls from a

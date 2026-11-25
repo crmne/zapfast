@@ -2626,6 +2626,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // The call surface itself: the incoming call waiting to be answered, and a call that
             // has been up for a few minutes.
             "call" => call_sample(app, true, false),
+            // A call link from a message asks before joining, voice or video.
+            "call-link-confirm" | "call-link-confirm-video" => {
+                app.dialog = Some(Dialog::ConfirmJoinCallLink {
+                    token: "AbCdEf1234567890".to_owned(),
+                    video: part == "call-link-confirm-video",
+                });
+            }
             "call-active" => call_sample(app, false, false),
             // The other states of a call: dialing, muted with the device
             // pickers open and a headset gone, its farewell, and the strip a
@@ -9863,6 +9870,8 @@ mod tests {
             "call-group-calling",
             "call-group-on-phone",
             "call-link",
+            "call-link-confirm",
+            "call-link-confirm-video",
             "calls-link",
             "call-video",
             "call-video,light",

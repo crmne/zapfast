@@ -73,7 +73,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
                 Dialog::Labels => 460.0,
                 Dialog::AddGroupMembers(_) => 420.0,
-                Dialog::ConfirmResetInviteLink(_) | Dialog::ConfirmRemoveMember { .. } => 380.0,
+                Dialog::ConfirmResetInviteLink(_)
+                | Dialog::ConfirmRemoveMember { .. }
+                | Dialog::ConfirmJoinCallLink { .. } => 380.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
@@ -142,6 +144,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::ConfirmResetInviteLink(chat) => confirm_reset_invite_link(app, ui, &chat),
                 Dialog::ConfirmRemoveMember { chat, member } => {
                     confirm_remove_member(app, ui, &chat, &member)
+                }
+                Dialog::ConfirmJoinCallLink { token, video } => {
+                    confirm_join_call_link(app, ui, token, video)
                 }
             }
         });
@@ -1709,6 +1714,37 @@ fn confirm_reset_invite_link(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         ui,
         crate::i18n::gettext(locale, "Reset link").as_ref(),
         Action::ResetInviteLink(chat.to_owned()),
+    );
+}
+
+/// Asks before joining a call link: the message, button or preview that
+/// held it may have said anything, and joining turns on the microphone.
+fn confirm_join_call_link(app: &mut App, ui: &mut egui::Ui, token: String, video: bool) {
+    let palette = app.palette;
+    let locale = app.locale;
+    title(
+        ui,
+        app,
+        crate::i18n::gettext(locale, "Join the call?").as_ref(),
+    );
+    let said = if video {
+        crate::i18n::gettext(
+            locale,
+            "This link joins a video call. Your microphone and camera turn on as you join.",
+        )
+    } else {
+        crate::i18n::gettext(
+            locale,
+            "This link joins a voice call. Your microphone turns on as you join.",
+        )
+    };
+    theme::paragraph(ui, said, theme::regular(13.5), palette.text);
+    ui.add_space(10.0);
+    confirm_buttons(
+        app,
+        ui,
+        crate::i18n::gettext(locale, "Join").as_ref(),
+        Action::JoinCallLink { token, video },
     );
 }
 
