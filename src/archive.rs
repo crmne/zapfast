@@ -2478,23 +2478,35 @@ impl Archive {
         )?;
         files.sort();
         files.dedup();
-        let mut elsewhere = self.connection.prepare(
-            "SELECT EXISTS (SELECT 1 FROM messages
-                 WHERE NOT (id = ?2 AND chat IN (SELECT value FROM json_each(?1)))
-                   AND (json_extract(content, '$.media.path') = ?3
-                        OR json_extract(content, '$.card.image.path') = ?3
-                        OR json_extract(content, '$.motion.path') = ?3
-                        OR EXISTS (SELECT 1 FROM json_each(content, '$.card.carousel') c
-                                   WHERE json_extract(c.value, '$.image.path') = ?3)))",
-        )?;
         let mut only = Vec::new();
         for file in files {
-            let path = file.to_string_lossy();
-            if !elsewhere.query_row(params![chats, id, path], |row| row.get::<_, bool>(0))? {
+            if !self.file_used_outside(&chats, id, &file)? {
                 only.push(file);
             }
         }
         Ok(only)
+    }
+
+    /// Whether any message points at `file`, such as a forward made here of
+    /// the message a late download belonged to.
+    pub fn file_in_use(&self, file: &Path) -> Result<bool> {
+        self.file_used_outside("[]", "", file)
+    }
+
+    /// Whether a message other than `id` in the JSON list `chats` points at
+    /// `file`, as an attachment, a card or carousel picture, or a motion clip.
+    fn file_used_outside(&self, chats: &str, id: &str, file: &Path) -> Result<bool> {
+        self.connection
+            .prepare_cached(
+                "SELECT EXISTS (SELECT 1 FROM messages
+                     WHERE NOT (id = ?2 AND chat IN (SELECT value FROM json_each(?1)))
+                       AND (json_extract(content, '$.media.path') = ?3
+                            OR json_extract(content, '$.card.image.path') = ?3
+                            OR json_extract(content, '$.motion.path') = ?3
+                            OR EXISTS (SELECT 1 FROM json_each(content, '$.card.carousel') c
+                                       WHERE json_extract(c.value, '$.image.path') = ?3)))",
+            )?
+            .query_row(params![chats, id, file.to_string_lossy()], |row| row.get(0))
     }
 
     /// Attachment paths of the messages matching `filter` (over `messages m`),
@@ -2776,9 +2788,12 @@ impl Archive {
         edited: bool,
     ) -> Result<bool> {
         let revoked = matches!(content, Content::Revoked);
+        // A revoke's writes land together, or a failed one leaves the row
+        // as it was for a retry.
+        let batch = Batch::begin(&self.connection)?;
         // Deleted for everyone, the original protobuf (body, media keys) and
         // the preview picture have nothing left to serve.
-        let changed = self.connection.execute(
+        let changed = batch.execute(
             "UPDATE messages SET content = ?3, edited = ?4,
                  raw = CASE WHEN ?5 THEN NULL ELSE raw END,
                  thumbnail = CASE WHEN ?5 THEN NULL ELSE thumbnail END
@@ -2795,11 +2810,12 @@ impl Archive {
             // Deleted for everyone: the message is gone, so its pin is too,
             // and a motion photo's clip with the keys to fetch it.
             self.delete_pin(chat, id)?;
-            self.connection.execute(
+            batch.execute(
                 "DELETE FROM motion_clips WHERE chat = ?1 AND parent = ?2",
                 params![chat, id],
             )?;
         }
+        batch.commit()?;
         Ok(changed > 0)
     }
 
@@ -4717,6 +4733,8 @@ pub(crate) mod tests {
             )
             .expect("carousel card");
         assert!(archive.files_only_in(&here, "original").unwrap().is_empty());
+        assert!(archive.file_in_use(Path::new("shared.jpg")).unwrap());
+        assert!(!archive.file_in_use(Path::new("own.jpg")).unwrap());
     }
 
     /// Every table keyed by chat besides `chats` itself.

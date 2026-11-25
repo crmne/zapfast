@@ -2203,7 +2203,8 @@ impl Worker {
         path: std::path::PathBuf,
         saved: crate::archive::Result<bool>,
     ) -> Result<std::path::PathBuf, String> {
-        if matches!(saved, Ok(false)) {
+        // A forward made here of the same message can hold the same path.
+        if matches!(saved, Ok(false)) && matches!(self.archive.file_in_use(&path), Ok(false)) {
             self.drop_cached_media(std::slice::from_ref(&path));
         }
         confirmed_download(path, saved)
