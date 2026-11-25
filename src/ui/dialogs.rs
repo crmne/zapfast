@@ -1716,9 +1716,14 @@ fn confirm_reset_invite_link(app: &mut App, ui: &mut egui::Ui, chat: &str) {
 }
 
 /// What a call says while a proxy is set, before it is placed and while it
-/// rings: the English catalog key.
-pub(crate) const PROXY_SKIPPED_BY_CALLS: &str =
-    "Calls don't use your proxy. WhatsApp's call servers will see this computer's address.";
+/// rings. The literal stays inside `gettext` so the catalogs pick it up.
+pub(crate) fn proxy_skipped_by_calls(locale: crate::i18n::Locale) -> String {
+    crate::i18n::gettext(
+        locale,
+        "Calls don't use your proxy. WhatsApp's call servers will see this computer's address.",
+    )
+    .into_owned()
+}
 
 /// Asks before a call while a proxy is set: the call's audio and video go
 /// around it, straight to WhatsApp's call servers.
@@ -1732,7 +1737,7 @@ fn confirm_call_without_proxy(app: &mut App, ui: &mut egui::Ui, call: crate::mod
     );
     theme::paragraph(
         ui,
-        crate::i18n::gettext(locale, PROXY_SKIPPED_BY_CALLS),
+        proxy_skipped_by_calls(locale),
         theme::regular(13.5),
         palette.text,
     );
