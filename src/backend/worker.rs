@@ -984,6 +984,7 @@ pub async fn run(
                 .set_meta(star_recovery::STARS_RECOVERED, "complete")
                 .is_ok());
     let mut worker = Worker {
+        cache_drops_after_commit: Default::default(),
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
         privacy_snapshot,
@@ -1488,6 +1489,9 @@ enum AwaitingAck {
 }
 
 struct Worker {
+    /// Cached files whose removal waits for the open archive batch to
+    /// commit: should it roll back, their messages still point at them.
+    cache_drops_after_commit: std::sync::Mutex<Vec<std::path::PathBuf>>,
     /// Private content may reach the UI.
     privacy_ready: bool,
     /// Phone lock state is known to be mirrored in the archive.
@@ -2174,10 +2178,54 @@ impl Worker {
         }
     }
 
-    /// Deletes attachment files that belonged to a removed chat. Only the
-    /// app's own media cache is touched; anything the user saved elsewhere
-    /// stays where it is.
+    /// Marks a message deleted for everyone and removes the cached files
+    /// only it used; false when the archive has no such message.
+    fn revoke_here(&self, chat: &str, id: &str) -> bool {
+        let files = self
+            .archive
+            .files_only_in(&[chat.to_owned()], id)
+            .unwrap_or_else(|error| {
+                // Keeping the files is the safe side: another message may use them.
+                log::warn!("could not list a revoked message's cached files: {error}");
+                Vec::new()
+            });
+        let revoked = matches!(
+            self.archive.set_content(chat, id, &Content::Revoked, false),
+            Ok(true)
+        );
+        if revoked {
+            self.drop_cached_media(&files);
+        }
+        revoked
+    }
+
+    /// [`confirmed_download`], and a file whose message was deleted or
+    /// revoked while it transferred leaves the media cache: nothing would
+    /// point at it any more.
+    fn record_download(
+        &self,
+        path: std::path::PathBuf,
+        saved: crate::archive::Result<bool>,
+    ) -> Result<std::path::PathBuf, String> {
+        // A forward made here of the same message can hold the same path.
+        if matches!(saved, Ok(false)) && matches!(self.archive.file_in_use(&path), Ok(false)) {
+            self.drop_cached_media(std::slice::from_ref(&path));
+        }
+        confirmed_download(path, saved)
+    }
+
+    /// Deletes attachment files that belonged to a removed chat or message.
+    /// Only the app's own media cache is touched; anything the user saved
+    /// elsewhere stays where it is. Inside an open archive batch the files
+    /// wait for it to commit (`close_batch`).
     fn drop_cached_media(&self, paths: &[std::path::PathBuf]) {
+        if self.archive.in_batch() {
+            self.cache_drops_after_commit
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .extend_from_slice(paths);
+            return;
+        }
         let Ok(cache) = self.dirs.media_cache_dir().canonicalize() else {
             return;
         };
@@ -5281,10 +5329,7 @@ impl Worker {
                     // A late answer to an edit sent from here must not
                     // replace what the phone did since.
                     self.edits.remove(&(chat.clone(), target.clone()));
-                    if let Ok(true) =
-                        self.archive
-                            .set_content(&chat, &target, &Content::Revoked, false)
-                    {
+                    if self.revoke_here(&chat, &target) {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
                         self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
@@ -6364,8 +6409,20 @@ impl Worker {
     }
 
     fn close_batch(&self, batched: bool) {
-        if batched && let Err(error) = self.archive.end_batch() {
-            log::warn!("could not commit a batch of archive writes: {error}");
+        if !batched {
+            return;
+        }
+        let drops = std::mem::take(
+            &mut *self
+                .cache_drops_after_commit
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        match self.archive.end_batch() {
+            Ok(()) => self.drop_cached_media(&drops),
+            Err(error) => {
+                log::warn!("could not commit a batch of archive writes: {error}");
+            }
         }
     }
 
@@ -6788,9 +6845,7 @@ impl Worker {
                 {
                     media_changed_in.insert(id.clone());
                 }
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
+                self.revoke_here(&id, &revoked);
             }
             for clip in chat.clips {
                 let sender = if clip.from_me {
@@ -9084,7 +9139,7 @@ impl Worker {
             Command::MotionDownloaded { chat, id, result } => {
                 let result = result.and_then(|path| {
                     let saved = self.archive.put_motion_path(&chat, &id, Some(&path));
-                    confirmed_download(path, saved)
+                    self.record_download(path, saved)
                 });
                 self.emit(Event::Motion {
                     chat,
@@ -10659,7 +10714,7 @@ impl Worker {
                 .archive
                 .put_media_path_at(&chat, &id, card, Some(&path))
                 .map(|message| message.is_some());
-            confirmed_download(path, saved)
+            self.record_download(path, saved)
         });
         if for_picker && transferred && result.is_err() {
             // A local write failure must not schedule a phone retry or another
@@ -11448,8 +11503,17 @@ impl Worker {
                 revoked |= matches!(old.content, Content::Revoked);
             }
         }
+        let files = self
+            .archive
+            .files_only_in(&aliases, id)
+            .unwrap_or_else(|error| {
+                // Keeping the files is the safe side: another message may use them.
+                log::warn!("could not list a deleted message's cached files: {error}");
+                Vec::new()
+            });
         match self.archive.delete_message_aliases(&aliases, id) {
             Ok(found) => {
+                self.drop_cached_media(&files);
                 for chat in aliases {
                     self.emit(Event::MessageDeleted {
                         chat: chat.clone(),
@@ -11481,10 +11545,7 @@ impl Worker {
             return;
         };
         let old = self.archive.message(&chat, &id).ok().flatten();
-        if let Ok(true) = self
-            .archive
-            .set_content(&chat, &id, &Content::Revoked, false)
-        {
+        if self.revoke_here(&chat, &id) {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
             self.media_changed(&chat, old.as_ref().map(|old| &old.content), None);
@@ -20366,6 +20427,7 @@ mod receipt_tests {
         let root =
             std::env::temp_dir().join(format!("zapfast-worker-test-{}-{n}", std::process::id()));
         let worker = Worker {
+            cache_drops_after_commit: Default::default(),
             privacy_ready: true,
             privacy_confirmed: true,
             privacy_snapshot: false,
@@ -26864,6 +26926,29 @@ mod missing_attachment_tests {
                 .try_iter()
                 .any(|event| matches!(event, Event::MessageUpdated(_)))
         );
+    }
+
+    #[test]
+    fn a_revoke_takes_its_cached_file_once_the_batch_commits() {
+        let (worker, _, _, _) = receipt_tests::worker();
+        let cache = worker.dirs.media_cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let file = cache.join("revoked.jpg");
+        std::fs::write(&file, b"jpeg").unwrap();
+        let row = stored(&worker, &file);
+        let batched = worker.open_batch();
+        assert!(batched);
+        assert!(worker.revoke_here(&row.chat, &row.id));
+        assert!(file.exists(), "a rolled back batch would still point at it");
+        worker.close_batch(batched);
+        assert!(!file.exists());
+        assert_eq!(worker.archive.raw(&row.chat, &row.id).unwrap(), None);
+        // Outside a batch the write has committed, so it goes at once.
+        let other = cache.join("deleted.jpg");
+        std::fs::write(&other, b"jpeg").unwrap();
+        let row = stored(&worker, &other);
+        assert!(worker.revoke_here(&row.chat, &row.id));
+        assert!(!other.exists());
     }
 
     #[test]
