@@ -633,10 +633,18 @@ fn decode_file(path: &Path) -> Result<Vec<f32>, String> {
     // shorter time, never more memory.
     let limit = voice::RATE as usize * 2 * voice::LONGEST_CLIP_SECONDS as usize;
     let interleaved: Vec<f32> = decoder.take(limit + 1).collect();
-    if interleaved.len() > limit {
+    if interleaved.len() > limit || too_long(interleaved.len(), channels, rate) {
         return Err("Could not decode the audio: it is too long to play".to_owned());
     }
     Ok(voice::mono_at_rate(&interleaved, channels, rate))
+}
+
+/// Whether `samples` interleaved over `channels` at `rate` last longer than
+/// `voice::LONGEST_CLIP_SECONDS`. The sample budget alone lets a low-rate
+/// file through, and resampling it to 48 kHz would multiply it.
+fn too_long(samples: usize, channels: u16, rate: u32) -> bool {
+    let frames = samples as u64 / u64::from(channels.max(1));
+    frames > u64::from(rate) * voice::LONGEST_CLIP_SECONDS
 }
 
 type Outcome = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
@@ -1024,6 +1032,17 @@ pub fn recording_path(dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_low_rate_file_is_bounded_by_its_time_not_its_samples() {
+        let hour = voice::LONGEST_CLIP_SECONDS as usize;
+        assert!(!too_long(48_000 * 2 * hour, 2, 48_000));
+        assert!(too_long(48_000 * 2 * hour + 2, 2, 48_000));
+        // Within the sample budget, but four hours at 8 kHz once resampled.
+        assert!(too_long(48_000 * 2 * hour, 2, 8_000));
+        assert!(too_long(48_000, 1, 1));
+        assert!(!too_long(48_000, 1, 48_000));
+    }
 
     /// A stepped recorder keeps recording, but its levels stop asking the
     /// window for frames of their own; unstepped, they ask again.
