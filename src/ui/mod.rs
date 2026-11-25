@@ -121,6 +121,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     image_preview::show(app, ctx);
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
+    call::pip(app, ctx);
     image_editor::show(app, ctx);
     overlay::finish(ctx);
     drop_target(app, ctx);

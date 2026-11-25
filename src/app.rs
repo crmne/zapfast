@@ -867,6 +867,10 @@ pub struct App {
     /// Whether the full call screen is put aside so a chat can be read while
     /// the call runs. The call itself is untouched; a bar offers the way back.
     pub call_surface_hidden: bool,
+    /// How big the small floating window a video call keeps while its screen
+    /// is put aside is. The reader resizes it from its corner; the window
+    /// stays inside the app's own, and the size lasts for the session.
+    pub call_pip_size: egui::Vec2,
     /// Whether the call surface has taken the whole screen. A window state:
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
@@ -1763,6 +1767,10 @@ impl App {
             call_devices: crate::calls::DeviceList::default(),
             call_devices_open: false,
             call_surface_hidden: false,
+            call_pip_size: egui::vec2(
+                crate::ui::call::PIP_DEFAULT.x,
+                crate::ui::call::PIP_DEFAULT.y,
+            ),
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,
@@ -7496,6 +7504,17 @@ impl App {
                 self.apply(Action::Open(page), ctx);
             }
             Action::OpenChat(id) => {
+                // A video call that fills the window steps aside into its
+                // small floating one when another chat is opened, as a phone
+                // does; an audio call only ever kept its bar.
+                if self.call_surface_open()
+                    && self
+                        .call
+                        .as_ref()
+                        .is_some_and(|call| call.video && call.chat.as_str() != id.as_str())
+                {
+                    self.call_surface_hidden = true;
+                }
                 // A chat where someone mentioned us opens at the mention, as
                 // on WhatsApp, rather than at the first unread message.
                 let mention = self

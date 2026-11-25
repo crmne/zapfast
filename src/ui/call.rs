@@ -20,6 +20,21 @@ use crate::ui::widgets;
 
 /// The area's id, so the surface keeps its place in the layer order.
 const SURFACE: &str = "zapfast-call-surface";
+/// The floating window's id, and the size its reader first sees it at.
+const PIP: &str = "zapfast-call-pip";
+pub const PIP_DEFAULT: egui::Vec2 = egui::vec2(320.0, 180.0);
+/// The smallest the floating window may be made, and the largest as a share of
+/// the app's own.
+const PIP_MIN: egui::Vec2 = egui::vec2(200.0, 112.0);
+const PIP_MAX_SHARE: egui::Vec2 = egui::vec2(0.6, 0.5);
+/// The room the gap between the window's edge and the app's own keeps it in.
+const PIP_MARGIN: f32 = 8.0;
+/// Its header, its controls, and the corner that resizes it.
+const PIP_HEADER: f32 = 30.0;
+const PIP_CONTROLS: f32 = 44.0;
+const PIP_BUTTON: f32 = 28.0;
+const PIP_GAP: f32 = 8.0;
+const PIP_GRIP: f32 = 16.0;
 /// Padding between the window edge and everything the surface draws.
 const PADDING: f32 = 24.0;
 /// The round controls along the bottom.
@@ -102,7 +117,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
     let Some(call) = app.call.clone() else {
         return;
     };
-    if !app.call_surface_hidden {
+    if !app.call_surface_hidden || app.call_pip_open() {
         return;
     }
     let palette = app.palette;
@@ -157,6 +172,392 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
         });
+}
+
+/// The small floating window a video call keeps while its screen is put
+/// aside: the peer's picture, or a group's grid, with the same controls as
+/// the full screen and a corner the reader drags to resize it. It floats over
+/// the chats wherever it was left, and the app's own edges keep it inside.
+pub fn pip(app: &mut App, ctx: &egui::Context) {
+    if !app.call_pip_open() {
+        return;
+    }
+    let Some(call) = app.call.clone() else {
+        return;
+    };
+    let bounds = ctx.content_rect().shrink(PIP_MARGIN);
+    let size = clamp_pip_size(app.call_pip_size, bounds);
+    app.call_pip_size = size;
+    let palette = app.palette;
+    let peer = app.call_name();
+    let picture = app.call_avatar();
+    let people = app.call_people();
+    let status = status(app.locale, &call);
+    let who = Who {
+        peer: &peer,
+        picture: picture.as_deref(),
+        caller: None,
+        people: &people,
+        me: None,
+    };
+    egui::Area::new(egui::Id::new(PIP))
+        .order(egui::Order::Foreground)
+        .default_pos(pip_default_pos(size, bounds))
+        .constrain_to(bounds)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let shadow = palette.float_shadow();
+            ui.painter()
+                .add(shadow.as_shape(rect, CornerRadius::same(14)));
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(14), Color32::BLACK);
+            pip_picture(ui, app, &call, &who, &palette, rect);
+            pip_header(ui, app, &peer, &status, rect);
+            pip_controls(ui, app, &call, &palette, rect);
+            pip_grip(ui, app, size, bounds, rect);
+        });
+}
+
+/// Where the floating window first appears: its bottom right corner, a
+/// margin in from the app's own.
+pub(crate) fn pip_default_pos(size: egui::Vec2, bounds: Rect) -> egui::Pos2 {
+    egui::pos2(bounds.right() - size.x, bounds.bottom() - size.y)
+}
+
+/// The smallest and the largest the floating window may be, given the room
+/// the app's own window leaves.
+pub(crate) fn pip_limits(bounds: Rect) -> (egui::Vec2, egui::Vec2) {
+    (
+        PIP_MIN,
+        egui::vec2(
+            (bounds.width() * PIP_MAX_SHARE.x).max(PIP_MIN.x),
+            (bounds.height() * PIP_MAX_SHARE.y).max(PIP_MIN.y),
+        ),
+    )
+}
+
+/// Keeps the floating window's size between its limits, and never larger than
+/// the room it has.
+pub(crate) fn clamp_pip_size(size: egui::Vec2, bounds: Rect) -> egui::Vec2 {
+    let (min, max) = pip_limits(bounds);
+    egui::vec2(
+        size.x.clamp(min.x, max.x).min(bounds.width()),
+        size.y.clamp(min.y, max.y).min(bounds.height()),
+    )
+}
+
+/// What the floating window shows: a group's grid while it has one, else the
+/// peer's picture letterboxed in black, else their face, and our own camera
+/// in the corner.
+fn pip_picture(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    call: &CallUpdate,
+    who: &Who<'_>,
+    palette: &Palette,
+    rect: Rect,
+) {
+    let locale = app.locale;
+    let joined: Vec<&CallPerson> = who
+        .people
+        .iter()
+        .filter(|person| person.joined)
+        .take(4)
+        .collect();
+    if call.group.is_some() && !joined.is_empty() {
+        let rects = tile_grid(joined.len(), rect.shrink(3.0), 3.0);
+        for (person, tile) in joined.into_iter().zip(rects) {
+            match person
+                .video
+                .then(|| app.call_member_frames.get(&person.id).cloned())
+                .flatten()
+            {
+                Some(image) => {
+                    let mut kept = app.call_member_textures.remove(&person.id);
+                    let texture = call_texture(ui, &mut kept, "zapfast-call-member", &image);
+                    if let Some(kept) = kept {
+                        app.call_member_textures.insert(person.id.clone(), kept);
+                    }
+                    video_tile(ui, &person.name, texture, image_size(&image), tile);
+                }
+                None => person_tile(ui, locale, palette, person, tile),
+            }
+        }
+        return;
+    }
+    let remote = (call.video && call.remote_video)
+        .then(|| app.call_remote_frame.clone())
+        .flatten();
+    match &remote {
+        Some(image) => {
+            let texture = call_texture(
+                ui,
+                &mut app.call_remote_texture,
+                "zapfast-call-remote",
+                image,
+            );
+            egui::Image::new((texture, rect.size()))
+                .uv(cover_uv(image_size(image), rect.size()))
+                .corner_radius(CornerRadius::same(14))
+                .paint_at(ui, rect);
+        }
+        None => {
+            let size = (rect.height() * 0.4).clamp(40.0, 72.0);
+            let face = Rect::from_center_size(
+                egui::pos2(rect.center().x, rect.center().y - size * 0.2),
+                egui::Vec2::splat(size),
+            );
+            if call.group.as_ref().is_some_and(|group| group.link) {
+                paint_link_avatar(ui, palette, face);
+            } else {
+                widgets::paint_avatar(ui, palette, face, who.peer, &call.chat, who.picture);
+            }
+        }
+    }
+    // Our own camera, small in the corner under the header.
+    if call.video
+        && call.camera_on
+        && let Some(image) = app.call_local_frame.clone()
+    {
+        let width = (rect.width() * 0.28).clamp(48.0, 96.0);
+        let size = egui::vec2(width, width * 9.0 / 16.0);
+        let at = Rect::from_min_size(
+            egui::pos2(rect.right() - size.x - 8.0, rect.top() + PIP_HEADER + 6.0),
+            size,
+        );
+        let texture = call_texture(
+            ui,
+            &mut app.call_local_texture,
+            "zapfast-call-local",
+            &image,
+        );
+        egui::Image::new((texture, size))
+            .corner_radius(CornerRadius::same(10))
+            .paint_at(ui, at);
+        ui.painter().rect_stroke(
+            at,
+            CornerRadius::same(10),
+            egui::Stroke::new(1.0, palette.outline),
+            egui::StrokeKind::Outside,
+        );
+    }
+}
+
+/// Who is on the call and how long it has been up, on a plate over the
+/// picture. A double click goes back to the full screen.
+fn pip_header(ui: &mut egui::Ui, app: &mut App, peer: &str, status: &str, rect: Rect) {
+    let header = Rect::from_min_size(rect.min, egui::vec2(rect.width(), PIP_HEADER));
+    let response = ui.interact(
+        header,
+        egui::Id::new(PIP).with("header"),
+        egui::Sense::click(),
+    );
+    if response.double_clicked() {
+        app.actions.push(Action::ReturnToCall);
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    ui.painter().rect_filled(
+        header,
+        CornerRadius {
+            nw: 14,
+            ne: 14,
+            sw: 0,
+            se: 0,
+        },
+        VIDEO_SCRIM,
+    );
+    let line = format!("{peer} · {status}");
+    let galley = ui.painter().layout(
+        line,
+        theme::medium(12.0),
+        Color32::WHITE,
+        (rect.width() - 24.0).max(0.0),
+    );
+    let clip = ui
+        .painter()
+        .with_clip_rect(header.shrink2(egui::vec2(12.0, 0.0)));
+    clip.galley(
+        egui::pos2(
+            header.left() + 12.0,
+            header.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        Color32::WHITE,
+    );
+}
+
+/// The controls the full screen has, in a row over the picture: mute, the
+/// camera, full screen, the way back, and hanging up.
+fn pip_controls(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    call: &CallUpdate,
+    palette: &Palette,
+    rect: Rect,
+) {
+    let locale = app.locale;
+    let camera = call.group.is_none() || call.video;
+    let mut buttons = 4.0;
+    if camera {
+        buttons += 1.0;
+    }
+    let width = buttons * PIP_BUTTON + (buttons - 1.0) * PIP_GAP + PIP_GRIP;
+    let row = Rect::from_min_max(
+        egui::pos2(rect.left(), rect.bottom() - PIP_CONTROLS),
+        rect.max,
+    );
+    ui.painter().rect_filled(
+        Rect::from_min_size(row.min, egui::vec2(rect.width(), PIP_CONTROLS)),
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 14,
+            se: 14,
+        },
+        VIDEO_SCRIM,
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(row)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = PIP_GAP;
+            ui.add_space(((rect.width() - width) / 2.0).max(0.0));
+            let (icon, tip, fill, tint) = if call.muted {
+                (
+                    Icon::MicOff,
+                    gettext(locale, "Unmute").into_owned(),
+                    palette.text,
+                    palette.window,
+                )
+            } else {
+                (
+                    Icon::Mic,
+                    gettext(locale, "Mute").into_owned(),
+                    palette.surface_active,
+                    palette.text,
+                )
+            };
+            if pip_button(ui, icon, fill, tint, &tip).clicked() {
+                app.actions.push(Action::SetCallMuted(!call.muted));
+            }
+            if camera {
+                let (icon, tip, fill, tint) = if !call.video {
+                    (
+                        Icon::Video,
+                        gettext(locale, "Start video").into_owned(),
+                        palette.surface_active,
+                        palette.text,
+                    )
+                } else if call.camera_on {
+                    (
+                        Icon::Video,
+                        gettext(locale, "Turn the camera off").into_owned(),
+                        palette.surface_active,
+                        palette.text,
+                    )
+                } else {
+                    (
+                        Icon::VideoOff,
+                        gettext(locale, "Turn the camera on").into_owned(),
+                        palette.text,
+                        palette.window,
+                    )
+                };
+                if pip_button(ui, icon, fill, tint, &tip).clicked() {
+                    app.actions.push(Action::SetCallCamera(!call.camera_on));
+                }
+            }
+            let full = gettext(locale, "Full screen").into_owned();
+            if pip_button(
+                ui,
+                Icon::Maximize,
+                palette.surface_active,
+                palette.text,
+                &full,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::ReturnToCall);
+                app.actions.push(Action::ToggleCallFullscreen);
+            }
+            let back = gettext(locale, "Return to the call").into_owned();
+            if pip_button(
+                ui,
+                Icon::ArrowLeft,
+                palette.surface_active,
+                palette.text,
+                &back,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::ReturnToCall);
+            }
+            let hang_up = gettext(locale, "Hang up").into_owned();
+            if pip_button(ui, Icon::PhoneOff, palette.danger, Color32::WHITE, &hang_up).clicked() {
+                app.actions.push(Action::HangupCall);
+            }
+        },
+    );
+}
+
+/// One round control of the floating window, smaller than the full screen's.
+fn pip_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    fill: Color32,
+    tint: Color32,
+    tooltip: &str,
+) -> egui::Response {
+    theme::circle_button(
+        ui,
+        icon,
+        PIP_BUTTON,
+        fill,
+        theme::blend(fill, tint, 0.12),
+        tint,
+        tooltip,
+    )
+}
+
+/// The corner the reader drags to resize the floating window. Shift keeps the
+/// picture's shape, and a double click puts the size back to its default.
+fn pip_grip(ui: &mut egui::Ui, app: &mut App, size: egui::Vec2, bounds: Rect, rect: Rect) {
+    let grip = Rect::from_min_size(
+        egui::pos2(rect.right() - PIP_GRIP, rect.bottom() - PIP_GRIP),
+        egui::Vec2::splat(PIP_GRIP),
+    );
+    let response = ui.interact(grip, egui::Id::new(PIP).with("resize"), egui::Sense::drag());
+    if response.dragged() {
+        let mut next = size + response.drag_delta();
+        if ui.input(|input| input.modifiers.shift) {
+            next.y = next.x * 9.0 / 16.0;
+        }
+        app.call_pip_size = clamp_pip_size(next, bounds);
+    }
+    if response.double_clicked() {
+        app.call_pip_size = PIP_DEFAULT;
+    }
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+    }
+    let tint = if response.hovered() || response.dragged() {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(120)
+    };
+    let corner = grip.right_bottom() - egui::vec2(4.0, 4.0);
+    for step in [0.0, 5.0] {
+        ui.painter().line_segment(
+            [
+                egui::pos2(corner.x - step - 7.0, corner.y - step),
+                egui::pos2(corner.x - step, corner.y - step - 7.0),
+            ],
+            egui::Stroke::new(1.5, tint),
+        );
+    }
 }
 
 /// A call that is up, coming up, or just over.
@@ -323,6 +724,21 @@ fn corner_buttons(
                 };
                 if theme::icon_button(ui, icon, 18.0, corner_tint, corner_hover, &tip).clicked() {
                     app.actions.push(Action::ToggleCallFullscreen);
+                }
+                if call.phase.is_live() {
+                    let pip = gettext(locale, "Picture in picture").into_owned();
+                    if theme::icon_button(
+                        ui,
+                        Icon::PictureInPicture,
+                        18.0,
+                        corner_tint,
+                        corner_hover,
+                        &pip,
+                    )
+                    .clicked()
+                    {
+                        app.actions.push(Action::LeaveCallSurface);
+                    }
                 }
             });
         });
@@ -1308,6 +1724,26 @@ fn call_texture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_floating_window_stays_inside_the_app() {
+        let bounds = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1200.0, 800.0));
+        let (min, max) = pip_limits(bounds);
+        assert_eq!(min, PIP_MIN);
+        assert_eq!(max, vec2(720.0, 400.0));
+        assert_eq!(clamp_pip_size(vec2(10.0, 10.0), bounds), PIP_MIN);
+        assert_eq!(clamp_pip_size(vec2(5000.0, 5000.0), bounds), max);
+        // A window smaller than the smallest keeps the floating one no larger
+        // than itself.
+        let tiny = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(180.0, 100.0));
+        let size = clamp_pip_size(PIP_DEFAULT, tiny);
+        assert!(size.x <= 180.0 && size.y <= 100.0);
+        // It opens in the bottom right corner, a margin in.
+        assert_eq!(
+            pip_default_pos(PIP_DEFAULT, bounds),
+            egui::pos2(880.0, 620.0)
+        );
+    }
 
     #[test]
     fn tiles_fill_the_room_without_overlapping() {

@@ -57,6 +57,18 @@ impl App {
             && !self.call_surface_hidden
     }
 
+    /// Whether the call is drawn as the small floating window over the chats:
+    /// a video call the reader stepped away from. An audio call keeps the bar
+    /// along the bottom instead, and a locked chat draws nothing.
+    pub fn call_pip_open(&self) -> bool {
+        self.call_surface_hidden
+            && self
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase.is_live() && call.video)
+            && !self.call_is_private()
+    }
+
     /// Whether this chat of the account on screen has the live call, which is
     /// what the chat header's call button reflects. A finished call keeps its
     /// snapshot for the farewell, but that is no call to hang up.
@@ -860,6 +872,43 @@ mod tests {
         app.handle_call_update(update(1, CallPhase::Active));
         assert_eq!(app.call_notified, None);
         assert!(app.call_surface_open(), "the running call is the screen");
+    }
+
+    #[test]
+    fn opening_another_chat_steps_a_video_call_into_its_floating_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        let other = "15550002222@s.whatsapp.net";
+        app.chats.push(Chat::new(other.into(), "Grace".into()));
+        let mut video = update(1, CallPhase::Active);
+        video.video = true;
+        app.handle_call_update(video);
+        assert!(app.call_surface_open());
+        assert!(!app.call_pip_open(), "the full screen has it");
+        // The chat the call is with leaves the screen alone.
+        app.apply(Action::OpenChat(ADA.into()), &ctx);
+        assert!(app.call_surface_open());
+        // Another chat steps it aside into the floating window.
+        app.apply(Action::OpenChat(other.into()), &ctx);
+        assert!(app.call_surface_hidden);
+        assert!(app.call_pip_open());
+        app.apply(Action::LeaveCallSurface, &ctx);
+        assert!(app.call_pip_open(), "the floating window stays");
+        app.apply(Action::ReturnToCall, &ctx);
+        assert!(app.call_surface_open());
+        assert!(!app.call_pip_open());
+    }
+
+    #[test]
+    fn an_audio_call_keeps_its_bar_rather_than_a_floating_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.handle_call_update(update(1, CallPhase::Active));
+        app.apply(Action::LeaveCallSurface, &ctx);
+        assert!(app.call_surface_hidden);
+        assert!(!app.call_pip_open(), "a voice call keeps the strip");
     }
 
     #[test]
