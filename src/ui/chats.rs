@@ -583,6 +583,12 @@ pub fn chat_row_id(chat: &str) -> egui::Id {
     egui::Id::new(("chat-row", chat))
 }
 
+/// Stable id of the menu `App::open_chat_menu` keeps open, for tests.
+#[cfg(any(test, feature = "demo"))]
+pub fn chat_menu_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-menu", chat))
+}
+
 /// Stable filter-chip id used by interaction tests.
 pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
     egui::Id::new(("chat-filter", filter as u8))
@@ -1756,8 +1762,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
     let menu_palette = palette;
-    // The favorite item is translated, so its width counts in the reader's
-    // language.
+    // Every row is measured in the reader's language, so the menu is as wide
+    // as its longest label there. Labels measured in English cut a longer
+    // translation short (#1162).
     let favorite_label = if chat.favorite {
         crate::i18n::gettext(app.locale, "Remove from favorites")
     } else {
@@ -1766,15 +1773,20 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let menu_width = widgets::menu_width(
         ui,
         &[
-            "Mark as read",
-            "Mark as unread",
-            "Pin to top",
+            &crate::i18n::gettext(app.locale, "Mark as read"),
+            &crate::i18n::gettext(app.locale, "Mark as unread"),
+            &crate::i18n::gettext(app.locale, "Pin to top"),
+            &crate::i18n::gettext(app.locale, "Unpin"),
             favorite_label.as_ref(),
-            "Unarchive",
+            &crate::i18n::gettext(app.locale, "Archive"),
+            &crate::i18n::gettext(app.locale, "Unarchive"),
             &crate::i18n::gettext(app.locale, "Leave group"),
             &crate::i18n::gettext(app.locale, "Leave channel"),
-            "Unlock chat",
-            "Copy number",
+            &crate::i18n::gettext(app.locale, "Unmute"),
+            &crate::i18n::gettext(app.locale, "Lock chat"),
+            &crate::i18n::gettext(app.locale, "Unlock chat"),
+            &crate::i18n::gettext(app.locale, "Copy number"),
+            &crate::i18n::gettext(app.locale, "Info"),
             &crate::i18n::gettext(app.locale, "Clear chat"),
             &crate::i18n::gettext(app.locale, "Delete chat"),
             &super::blocking::label(app, &chat.id),
@@ -1787,8 +1799,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             ui,
             &[
                 &crate::i18n::gettext(app.locale, "Mute"),
-                "Notification sound",
-                "Voice message speed",
+                &crate::i18n::gettext(app.locale, "Notification sound"),
+                &crate::i18n::gettext(app.locale, "Voice message speed"),
                 &crate::i18n::gettext(app.locale, "Labels"),
             ],
             true,
@@ -1801,6 +1813,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     #[cfg(any(test, feature = "demo"))]
     let popup = if app.open_chat_menu.as_deref() == Some(chat.id.as_str()) {
         popup
+            .id(chat_menu_id(&chat.id))
             .open_memory(Some(egui::SetOpenCommand::Bool(true)))
             .at_position(response.rect.left_top() + vec2(12.0, 8.0))
     } else {
@@ -2380,26 +2393,20 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
     )
     .collect();
     let items: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
-    widgets::submenu(
-        ui,
-        palette,
-        Icon::Play,
-        "Voice message speed",
-        &items,
-        |ui| {
-            for (speed, label) in &options {
-                let speed = *speed;
-                let checked = chat.voice_speed == speed;
-                if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
-                    app.actions.push(Action::SetChatVoiceSpeed {
-                        chat: chat.id.clone(),
-                        speed,
-                    });
-                    ui.close();
-                }
+    let label = crate::i18n::gettext(app.locale, "Voice message speed");
+    widgets::submenu(ui, palette, Icon::Play, &label, &items, |ui| {
+        for (speed, label) in &options {
+            let speed = *speed;
+            let checked = chat.voice_speed == speed;
+            if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
+                app.actions.push(Action::SetChatVoiceSpeed {
+                    chat: chat.id.clone(),
+                    speed,
+                });
+                ui.close();
             }
-        },
-    );
+        }
+    });
 }
 
 #[cfg(test)]

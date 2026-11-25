@@ -351,6 +351,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         label = format!("{label} ({})", row.len());
     }
     let summary = summary(&entry, locale);
+    let (kind, detail) = summary_parts(&entry, locale);
     let stamp = crate::util::chat_stamp(locale, message.timestamp);
     let spoken = format!("{label}, {summary}, {stamp}");
     response.widget_info(|| {
@@ -465,30 +466,81 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             palette.accent
         },
     );
-    let detail = widgets::line(
+    paint_summary(
         ui,
-        &summary,
-        theme::regular(13.0),
-        palette.secondary,
+        &palette,
+        pos2(left + 21.0, rect.top() + 38.0),
         (right - left - 21.0).max(0.0),
-        1,
+        &summary,
+        &kind,
+        detail.as_deref(),
     );
-    detail.paint(ui, pos2(left + 21.0, rect.top() + 38.0), palette.secondary);
 }
 
 /// What a call was and how it went, on one line: "Video call · 12 min 34 s", with how many
 /// people were on a group call once its record says: "Group video call · 12 min 34 s ·
 /// 4 participants".
 fn summary(entry: &Entry, locale: Locale) -> String {
-    let mut text = match entry.detail(locale) {
-        Some(detail) => format!("{} · {detail}", entry.title(locale)),
-        None => entry.title(locale),
-    };
-    if let Some(count) = entry.participants {
-        text.push_str(" · ");
-        text.push_str(&participants(locale, count));
+    let (title, detail) = summary_parts(entry, locale);
+    match detail {
+        Some(detail) => format!("{title} · {detail}"),
+        None => title,
     }
-    text
+}
+
+/// [`summary`] in its two pieces: the call's kind, and how it went after the
+/// separator, its length or outcome and, for a group call, how many were on it.
+fn summary_parts(entry: &Entry, locale: Locale) -> (String, Option<String>) {
+    let count = entry.participants.map(|count| participants(locale, count));
+    let detail = match (entry.detail(locale), count) {
+        (Some(detail), Some(count)) => Some(format!("{detail} · {count}")),
+        (detail, count) => detail.or(count),
+    };
+    (entry.title(locale), detail)
+}
+
+/// Draws a history row's summary at `at`, in `width`. A row too narrow for
+/// the whole line cuts the kind of call short and keeps what follows it whole:
+/// how long a call was is what its row is read for (#1162).
+fn paint_summary(
+    ui: &egui::Ui,
+    palette: &theme::Palette,
+    at: egui::Pos2,
+    width: f32,
+    summary: &str,
+    kind: &str,
+    detail: Option<&str>,
+) {
+    let font = theme::regular(13.0);
+    let measure = |text: &str| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), palette.secondary)
+            .size()
+            .x
+    };
+    let line =
+        |text: &str, width: f32| widgets::line(ui, text, font.clone(), palette.secondary, width, 1);
+    // Right-to-left text stays one line, laid out in its own order, and so
+    // does a row with no room for the kind but its ellipsis.
+    let split = detail.filter(|detail| {
+        !summary.chars().any(crate::bidi::is_strong_rtl)
+            && measure(summary) > width
+            && measure(&format!("· {detail}")) + measure(" ") + measure("…") <= width
+    });
+    let Some(detail) = split else {
+        line(summary, width).paint(ui, at, palette.secondary);
+        return;
+    };
+    let detail = line(&format!("· {detail}"), width);
+    let space = measure(" ");
+    let room = width - detail.galley.size().x - space;
+    let kind = line(kind, room);
+    kind.paint(ui, at, palette.secondary);
+    detail.paint(
+        ui,
+        pos2(at.x + kind.galley.size().x + space, at.y),
+        palette.secondary,
+    );
 }
 
 /// How many people were on a call, in this language's own plural form.
@@ -953,18 +1005,30 @@ mod tests {
         }
     }
 
-    /// Every word one frame of the history drew.
+    /// Every word one frame of the history drew, in a list 400 points wide.
     fn drawn_rows(app: &mut App, ctx: &egui::Context) -> Vec<String> {
-        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        drawn_lines(app, ctx, 400.0)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect()
+    }
+
+    /// Every line one frame of the history drew, in a list `width` points
+    /// wide, each with the width it was drawn at. A galley keeps its whole
+    /// text when its end is cut off, so a line's width is what tells.
+    fn drawn_lines(app: &mut App, ctx: &egui::Context, width: f32) -> Vec<(String, f32)> {
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, f32)>) {
             match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Text(text) => {
+                    out.push((text.galley.text().to_owned(), text.galley.size().x));
+                }
                 egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
                 _ => {}
             }
         }
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 600.0))),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))),
                 ..Default::default()
             },
             |ui| list(app, ui),
@@ -975,6 +1039,24 @@ mod tests {
             texts(&clipped.shape, &mut out);
         }
         out
+    }
+
+    /// How wide `text` is in a history row's font, laid out whole.
+    fn whole_width(ctx: &egui::Context, text: &str) -> f32 {
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            width = ui
+                .painter()
+                .layout_no_wrap(
+                    text.to_owned(),
+                    crate::theme::regular(13.0),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x;
+        });
+        output.textures_delta.clear();
+        width
     }
 
     fn group_entry(chat: &str, id: &str, count: Option<u32>) -> Message {
@@ -989,8 +1071,9 @@ mod tests {
         message
     }
 
-    /// A group call's history row says how many people were on it, drawn as the rest of the
-    /// summary is, and a one-to-one row says nothing of the kind.
+    /// A group call's history row says how many people were on it, as the rest of the summary
+    /// is, and a one-to-one row says nothing of the kind. The 400-point list has no room for
+    /// the whole line, so the count comes after a kind cut short.
     #[test]
     fn a_groups_history_row_says_how_many_were_on_the_call() {
         let (_directory, mut app, ctx) = calls_app();
@@ -1004,7 +1087,7 @@ mod tests {
             .collect();
         assert_eq!(
             counted,
-            ["Group video call · 12 min 34 s · 4 participants"],
+            ["· 12 min 34 s · 4 participants"],
             "only the group's row is counted: {drawn:?}"
         );
         // The one-to-one rows the same list holds keep to what they said before.
@@ -1013,6 +1096,35 @@ mod tests {
             "{drawn:?}"
         );
         assert!(drawn.iter().any(|text| text == "Voice call"), "{drawn:?}");
+    }
+
+    /// A row too narrow for its whole summary cuts the kind of call short and keeps how long the
+    /// call was, with everyone on it, whole (#1162).
+    #[test]
+    fn a_narrow_history_row_keeps_how_long_the_call_was() {
+        let (_directory, mut app, ctx) = calls_app();
+        let group = "120363000000000009@g.us";
+        app.call_log.insert(0, group_entry(group, "g", Some(4)));
+        frame(&mut app, &ctx, vec![]);
+        let drawn = drawn_lines(&mut app, &ctx, 400.0);
+        let drawn_width = |text: &str| {
+            drawn
+                .iter()
+                .find(|(drawn, _)| drawn == text)
+                .map(|(_, width)| *width)
+        };
+        let rest = "· 12 min 34 s · 4 participants";
+        let rest_width = drawn_width(rest).expect("the length and the count are drawn");
+        assert!(
+            (rest_width - whole_width(&ctx, rest)).abs() < 0.5,
+            "they are drawn whole, {rest_width} of {}: {drawn:?}",
+            whole_width(&ctx, rest)
+        );
+        let kind = drawn_width("Group video call").expect("the kind is drawn");
+        assert!(
+            kind < whole_width(&ctx, "Group video call") - 1.0,
+            "the kind of call gives way: {drawn:?}"
+        );
     }
 
     /// The count is a plural message of its own, so one person reads as one and the rest as many,
