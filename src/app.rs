@@ -5211,6 +5211,8 @@ impl App {
                     self.reply_to = None;
                     self.composer.clear();
                     self.composer_mentions.clear();
+                    // The camera was for one of its chats: it stops too.
+                    self.camera = None;
                     // The viewer, its album and the thumbnails it cached belong
                     // to the account that left: close it and release the clip.
                     self.video.stop();
@@ -6284,6 +6286,8 @@ impl App {
             // A menu asked for in the chat being left is not opened later.
             self.open_message_menu = None;
             self.composer_tools_open = false;
+            // A photo is for the chat the camera was opened in.
+            self.camera = None;
             self.emoji_jump = None;
             self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
@@ -23083,6 +23087,26 @@ mod tests {
             Pending::Picture { width: 4, height: 2, rgba, .. } if rgba[..4] == [255, 0, 0, 255]
         ));
         assert!(app.picture_edit.is_some(), "the cropper opens on the photo");
+    }
+
+    /// Going to another chat closes the camera, so its photo never lands there.
+    #[test]
+    fn opening_another_chat_closes_the_camera() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let (first, second) = ("15550002222@s.whatsapp.net", "15550003333@s.whatsapp.net");
+        app.chats
+            .push(Chat::new(first.into(), "Camera fixture".into()));
+        app.chats
+            .push(Chat::new(second.into(), "Other fixture".into()));
+        app.open_chat = Some(first.into());
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        app.apply(Action::OpenChat(second.into()), &ctx);
+        assert!(app.camera.is_none());
+        app.apply(Action::TakePhoto, &ctx);
+        assert!(app.pending.is_empty());
     }
 
     /// Closing the camera stages nothing.

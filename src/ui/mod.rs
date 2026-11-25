@@ -69,6 +69,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.recording.is_none()
         && app.image_preview.is_none()
         && app.picture_edit.is_none()
+        && app.camera.is_none()
         && app.sticker_view.is_none()
         && app.emoji_start.is_none()
         && app.mention_start.is_none()
