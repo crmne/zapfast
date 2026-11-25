@@ -1102,7 +1102,7 @@ pub async fn run(
     };
     worker.load_state();
     worker.backfill();
-    worker.backfill_lottie_stickers();
+    worker.backfill_wrapped_stickers();
     worker.backfill_media_albums();
     worker.backfill_video_notes();
     worker.backfill_view_once();
@@ -2721,17 +2721,18 @@ impl Worker {
         }
     }
 
-    /// Reclassify previously unsupported Lottie stickers without replaying
-    /// the entire message archive. Raw protobufs retain the media keys.
-    fn backfill_lottie_stickers(&mut self) {
-        const KEY: &str = "lottie_stickers";
+    /// Reclassify previously unsupported Lottie and audio stickers without
+    /// replaying the entire message archive. Raw protobufs retain the media
+    /// keys.
+    fn backfill_wrapped_stickers(&mut self) {
+        const KEY: &str = "wrapped_stickers";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
         let rows = match self.archive.unsupported_with_raw() {
             Ok(rows) => rows,
             Err(error) => {
-                log::warn!("could not read archived Lottie stickers: {error}");
+                log::warn!("could not read archived wrapped stickers: {error}");
                 return;
             }
         };
@@ -2741,7 +2742,8 @@ impl Worker {
             let Ok(message) = wa::Message::decode_from_slice(&raw) else {
                 continue;
             };
-            if !message.get_base_message().lottie_sticker_message.is_set() {
+            let base = message.get_base_message();
+            if !base.lottie_sticker_message.is_set() && !base.audio_sticker_message.is_set() {
                 continue;
             }
             let Some(content @ Content::Sticker { .. }) = classify(&message) else {
@@ -2757,16 +2759,16 @@ impl Worker {
                 Ok(true) => updated += 1,
                 Ok(false) => {}
                 Err(error) => {
-                    log::warn!("could not reclassify archived Lottie sticker: {error}");
+                    log::warn!("could not reclassify archived wrapped sticker: {error}");
                     failed = true;
                 }
             }
         }
         if !failed && let Err(error) = self.archive.set_meta(KEY, "1") {
-            log::warn!("could not mark Lottie archive migration complete: {error}");
+            log::warn!("could not mark wrapped sticker migration complete: {error}");
         }
         if updated > 0 {
-            log::info!("reclassified {updated} archived Lottie stickers");
+            log::info!("reclassified {updated} archived wrapped stickers");
             self.emit_chats();
         }
     }
@@ -10459,12 +10461,19 @@ impl Worker {
                 media.url = None;
                 return Some(Box::new(media.clone()));
             }
-            if let Some(media) = fresh_base
-                .lottie_sticker_message
-                .as_option_mut()
-                .and_then(|wrapper| wrapper.message.as_option_mut())
-                .and_then(|inner| inner.sticker_message.as_option_mut())
-            {
+            if let Some(media) = [
+                &mut fresh_base.lottie_sticker_message,
+                &mut fresh_base.audio_sticker_message,
+            ]
+            .into_iter()
+            .find_map(|wrapper| {
+                wrapper
+                    .as_option_mut()?
+                    .message
+                    .as_option_mut()?
+                    .sticker_message
+                    .as_option_mut()
+            }) {
                 media.direct_path = Some(direct);
                 media.url = None;
                 return Some(Box::new(media.clone()));
@@ -10586,17 +10595,41 @@ impl Worker {
         }
     }
 
-    /// Downloads a motion photo's clip into the cache. It is fetched like any
-    /// attachment: verified, under the size limit, and within the deadline.
+    /// Downloads a motion photo's clip or an audio sticker's sound into the
+    /// cache. It is fetched like any attachment: verified, under the size
+    /// limit, and within the deadline.
     fn download_motion(&mut self, chat: ChatId, id: String) {
         let clip = self.archive.motion_clip(&chat, &id).ok().flatten();
         let video = clip
             .and_then(|raw| wa::Message::decode_from_slice(&raw).ok())
-            .and_then(|message| message.video_message.into_option());
-        let (client, video) = match (self.client.clone(), video) {
-            (Some(client), Some(video)) if !attachment_is_too_large(video.file_length) => {
-                (client, video)
-            }
+            .and_then(|message| message.video_message.into_option())
+            .map(|video| {
+                let size = video.file_length;
+                (
+                    Box::new(video) as Box<dyn Downloadable + Send>,
+                    size,
+                    "motion",
+                    "video/mp4".to_owned(),
+                )
+            })
+            .or_else(|| {
+                let raw = self.archive.raw(&chat, &id).ok().flatten()?;
+                let message = wa::Message::decode_from_slice(&raw).ok()?;
+                let audio = sticker_audio_of(message.get_base_message())?.clone();
+                let mime = audio
+                    .mimetype
+                    .clone()
+                    .unwrap_or_else(|| "audio/ogg".to_owned());
+                let size = audio.file_length;
+                Some((
+                    Box::new(audio) as Box<dyn Downloadable + Send>,
+                    size,
+                    "audio",
+                    mime,
+                ))
+            });
+        let (client, (video, size, suffix, mime)) = match (self.client.clone(), video) {
+            (Some(client), Some(video)) if !attachment_is_too_large(video.1) => (client, video),
             (client, video) => {
                 let error = match (client, video) {
                     (None, _) => "Not connected to WhatsApp",
@@ -10614,10 +10647,10 @@ impl Worker {
         let dir = self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         tokio::spawn(async move {
-            let path = media_path(&dir, &chat, &format!("{id}-motion"), "video/mp4", None);
+            let path = media_path(&dir, &chat, &format!("{id}-{suffix}"), &mime, None);
             let result = with_attachment_deadline(
-                attachment_deadline(video.file_length),
-                download_attachment(&client, &video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
+                attachment_deadline(size),
+                download_attachment(&client, &*video, &dir, &path, ATTACHMENT_DOWNLOAD_LIMIT),
             )
             .await;
             let _ = commands.send(Command::MotionDownloaded { chat, id, result });
@@ -12947,17 +12980,30 @@ fn live_location_newer(share: &Message, incoming: &Content) -> bool {
     }
 }
 
-/// A Lottie sticker's media lives in FutureProofMessage -> Message -> StickerMessage.
-/// Use the same extraction for both classification and downloads.
+/// Lottie and audio stickers keep their media in FutureProofMessage ->
+/// Message -> StickerMessage. Use the same extraction for both
+/// classification and downloads.
 fn sticker_of(base: &wa::Message) -> Option<&wa::message::StickerMessage> {
     base.sticker_message.as_option().or_else(|| {
-        base.lottie_sticker_message
-            .as_option()?
-            .message
-            .as_option()?
-            .sticker_message
-            .as_option()
+        [&base.lottie_sticker_message, &base.audio_sticker_message]
+            .into_iter()
+            .find_map(|wrapper| {
+                wrapper
+                    .as_option()?
+                    .message
+                    .as_option()?
+                    .sticker_message
+                    .as_option()
+            })
     })
+}
+
+/// The sound an audio sticker carries.
+fn sticker_audio_of(base: &wa::Message) -> Option<&wa::message::AudioMessage> {
+    match sticker_of(base)?.audio.as_ref()? {
+        wa::message::sticker_message::Audio::AudioMessage(audio) => Some(audio),
+        _ => None,
+    }
 }
 
 /// Converts a protocol message to visible content, or `None` for internal
@@ -13088,6 +13134,7 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
         return Some(Content::Sticker {
             media: attachment,
             animated: lottie || sticker.is_animated.unwrap_or(false),
+            audio: sticker_audio_of(base).map(|_| Default::default()),
         });
     }
     if let Some(location) = base.location_message.as_option() {
@@ -13880,6 +13927,7 @@ async fn prepare_sticker(client: &Client, bytes: Vec<u8>) -> Result<Prepared, St
                 Some(height),
             ),
             animated,
+            audio: None,
         },
         thumbnail: None,
         bytes,
@@ -27218,6 +27266,7 @@ mod saved_download_tests {
         message.content = Content::Sticker {
             media: message.content.media().unwrap().clone(),
             animated: false,
+            audio: None,
         };
         worker.archive.insert_message(&message, None).unwrap();
         let key = (message.chat.clone(), message.id.clone());
@@ -27790,9 +27839,32 @@ mod lottie_sticker_tests {
         let content = classify(&message).expect("recognized Lottie");
         assert!(matches!(
             content,
-            Content::Sticker { media, animated: true } if media.mime == "application/was"
+            Content::Sticker { media, animated: true, .. } if media.mime == "application/was"
         ));
         assert!(sticker_of(message.get_base_message()).is_some());
+    }
+
+    #[test]
+    fn recognizes_audio_sticker_and_its_sound() {
+        let mut audio = wa::message::AudioMessage::default();
+        audio.mimetype = Some("audio/ogg; codecs=opus".to_owned());
+        let mut sticker = wa::message::StickerMessage::default();
+        sticker.mimetype = Some("image/webp".to_owned());
+        sticker.audio = Some(wa::message::sticker_message::Audio::AudioMessage(Box::new(
+            audio,
+        )));
+        let mut nested = wa::Message::default();
+        nested.sticker_message = MessageField::some(sticker);
+        let mut wrapper = wa::message::FutureProofMessage::default();
+        wrapper.message = MessageField::some(nested);
+        let mut message = wa::Message::default();
+        message.audio_sticker_message = MessageField::some(wrapper);
+        assert!(matches!(
+            classify(&message),
+            Some(Content::Sticker { media, audio: Some(_), .. }) if media.mime == "image/webp"
+        ));
+        let sound = sticker_audio_of(message.get_base_message()).expect("sound");
+        assert_eq!(sound.mimetype.as_deref(), Some("audio/ogg; codecs=opus"));
     }
 
     #[test]
@@ -27803,7 +27875,7 @@ mod lottie_sticker_tests {
         message.sticker_message = MessageField::some(sticker);
         assert!(matches!(
             classify(&message),
-            Some(Content::Sticker { media, animated: false }) if media.mime == "image/webp"
+            Some(Content::Sticker { media, animated: false, .. }) if media.mime == "image/webp"
         ));
     }
 }

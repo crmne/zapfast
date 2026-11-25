@@ -767,6 +767,29 @@ pub fn populate(app: &mut App) {
                         Some(256),
                     ),
                     animated: true,
+                    audio: None,
+                },
+            );
+            if let Content::Sticker { media, .. } = &mut row.content {
+                media.path = Some(sticker.clone());
+            }
+            row
+        },
+        {
+            let mut row = message(
+                ada,
+                "ada-audio-sticker",
+                false,
+                older + 60 * 19 + 30,
+                Content::Sticker {
+                    media: media(
+                        "image/webp",
+                        stock::ANIMATED_STICKER.len() as u64,
+                        Some(256),
+                        Some(256),
+                    ),
+                    animated: false,
+                    audio: Some(Default::default()),
                 },
             );
             if let Content::Sticker { media, .. } = &mut row.content {
@@ -3932,6 +3955,28 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .stickers_received
                     .first()
                     .map(|path| crate::image_preview::StickerPreview::new(path.clone()));
+            }
+            // An audio sticker's bubble, with the speaker in its corner.
+            "sticker-sound-bubble" => {
+                // The chat ends at the sticker, so it is on screen.
+                if let Some(chat) = app.conversations.get_mut(SAMPLES[0].id)
+                    && let Some(at) = chat
+                        .messages
+                        .iter()
+                        .position(|row| row.id == "ada-audio-sticker")
+                {
+                    chat.messages.truncate(at + 1);
+                }
+            }
+            // An audio sticker shown large, with its sound button.
+            "sticker-sound" => {
+                sticker_sample(app, crate::model::StickerShelf::Recent, "");
+                app.picker = None;
+                app.sticker_view = app.stickers_received.first().map(|path| {
+                    let mut view = crate::image_preview::StickerPreview::new(path.clone());
+                    view.sound = Some("ada-audio-sticker".to_owned());
+                    view
+                });
             }
             "sticker-maker" => {
                 let (photo, _) = sample_files(app);
@@ -9789,6 +9834,8 @@ mod tests {
             "sticker-animated",
             "sticker-add",
             "sticker-view",
+            "sticker-sound",
+            "sticker-sound-bubble",
             "sticker-pack-message",
             "sticker-maker",
             "sticker-pack-view",
@@ -13948,6 +13995,7 @@ mod tests {
         if let Content::Sticker {
             media,
             animated: flag,
+            ..
         } = &mut row.content
         {
             media.path = Some(path.clone());

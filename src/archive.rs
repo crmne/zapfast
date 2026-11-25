@@ -1189,17 +1189,22 @@ impl Archive {
         let Some(mut message) = self.message(chat, id)? else {
             return Ok(false);
         };
-        if let Content::Image { motion, .. } = &mut message.content {
-            motion.get_or_insert_default().path = path.map(Path::to_path_buf);
-            return self.set_content(chat, id, &message.content, message.edited);
-        }
-        Ok(false)
+        let clip = match &mut message.content {
+            Content::Image { motion, .. } => motion.get_or_insert_default(),
+            Content::Sticker {
+                audio: Some(audio), ..
+            } => audio,
+            _ => return Ok(false),
+        };
+        clip.path = path.map(Path::to_path_buf);
+        self.set_content(chat, id, &message.content, message.edited)
     }
 
     /// Returns all recorded motion clip paths.
     pub fn motion_paths(&self) -> Result<Vec<(String, String, PathBuf)>> {
         let mut statement = self.connection.prepare(
-            "SELECT chat, id, json_extract(content, '$.motion.path') AS path
+            "SELECT chat, id, coalesce(json_extract(content, '$.motion.path'),
+                json_extract(content, '$.audio.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -2472,6 +2477,8 @@ impl Archive {
                  SELECT json_extract(m.content, '$.card.image.path') FROM messages m WHERE {filter}
                  UNION ALL
                  SELECT json_extract(m.content, '$.motion.path') FROM messages m WHERE {filter}
+                 UNION ALL
+                 SELECT json_extract(m.content, '$.audio.path') FROM messages m WHERE {filter}
                  UNION ALL
                  SELECT json_extract(c.value, '$.image.path')
                  FROM messages m, json_each(m.content, '$.card.carousel') c WHERE {filter}
@@ -6236,6 +6243,7 @@ mod sticker_tests {
                     state: MediaState::Idle,
                 },
                 animated: false,
+                audio: None,
             },
             status: Delivery::None,
             delivered_at: None,
@@ -6690,6 +6698,7 @@ mod media_path_tests {
                 Content::Sticker {
                     media: media(),
                     animated: false,
+                    audio: None,
                 },
             ),
             (

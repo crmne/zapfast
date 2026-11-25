@@ -1317,6 +1317,7 @@ mod tests {
                 state: MediaState::Idle,
             },
             animated: false,
+            audio: None,
         };
         let mut sticker = wa::message::StickerMessage::default();
         sticker.direct_path = Some(format!("/v/t62.15575-24/{id}.enc"));
@@ -1683,6 +1684,7 @@ mod tests {
                 state: MediaState::Idle,
             },
             animated: false,
+            audio: None,
         };
         let raw = {
             let mut proto = wa::Message::default();

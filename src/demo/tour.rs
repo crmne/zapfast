@@ -160,7 +160,9 @@ fn common_setup(app: &mut App) {
         .conversations
         .get_mut(super::SAMPLES[0].id)
         .and_then(|chat| chat.message_mut("ada-sticker"))
-        && let Content::Sticker { media, animated } = &mut row.content
+        && let Content::Sticker {
+            media, animated, ..
+        } = &mut row.content
     {
         media.path = saved_sticker;
         *animated = false;
@@ -2332,7 +2334,7 @@ mod tests {
         assert!(matches!(&sent[0].content, Content::Text { text, .. }
             if text.starts_with("See you tonight! ") && !text.contains(':')));
         assert!(
-            matches!(&sent[1].content, Content::Sticker { animated: false, media }
+            matches!(&sent[1].content, Content::Sticker { animated: false, media, .. }
             if media.path.as_ref().unwrap().is_file())
         );
         for row in &ada.messages {
