@@ -770,6 +770,16 @@ fn ringing(
             theme::medium(15.0),
             palette.secondary,
         );
+        // Answering would go around the proxy, so the prompt says so first.
+        if app.calls_skip_proxy() {
+            ui.add_space(10.0);
+            theme::paragraph(
+                ui,
+                gettext(locale, super::dialogs::PROXY_SKIPPED_BY_CALLS),
+                theme::regular(13.5),
+                palette.secondary,
+            );
+        }
         // Who is on the group call already, by their pictures.
         let joined: Vec<&CallPerson> = who.people.iter().filter(|person| person.joined).collect();
         if !joined.is_empty() {

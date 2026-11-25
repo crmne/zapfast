@@ -2472,6 +2472,14 @@ pub struct InfoPanel {
     pub view: InfoView,
 }
 
+/// A call held back until the reader agrees to it going around the proxy:
+/// call audio and video travel over UDP straight to WhatsApp's relays.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnproxiedCall {
+    Place { chat: ChatId, video: bool },
+    Link { token: String, video: bool },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
     Shortcuts,
@@ -2565,6 +2573,8 @@ pub enum Dialog {
         chat: ChatId,
         member: ChatId,
     },
+    /// Asks before a call while a proxy is set, since the call skips it.
+    ConfirmCallWithoutProxy(UnproxiedCall),
 }
 
 /// One recipient's receipts for one of our group messages.
@@ -2735,6 +2745,8 @@ pub enum Action {
     },
     /// Opens the new-call list over the Calls list, or closes it.
     ShowNewCall(bool),
+    /// Places or joins a call the reader agreed may skip the proxy.
+    CallWithoutProxy(UnproxiedCall),
     /// Answers the ringing incoming call.
     AnswerCall,
     /// Declines the ringing incoming call.

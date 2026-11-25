@@ -634,6 +634,10 @@ pub struct App {
     /// Demo/test: keep the selection bar's delete menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_selection_delete_menu: bool,
+    /// Demo/test: whether a proxy is set, for the call warnings, in place of
+    /// Settings and the environment.
+    #[cfg(any(test, feature = "demo"))]
+    pub proxy_for_calls: Option<bool>,
     /// Emoji-grid header to scroll into view.
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
@@ -1660,6 +1664,8 @@ impl App {
             open_timer_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_selection_delete_menu: false,
+            #[cfg(any(test, feature = "demo"))]
+            proxy_for_calls: None,
             emoji_jump: None,
             pending: Vec::new(),
             pending_view_once: false,
@@ -7509,6 +7515,7 @@ impl App {
             }
             // Applied by `apply_call_action` before anything else.
             Action::StartCall(_)
+            | Action::CallWithoutProxy(_)
             | Action::AnswerCall
             | Action::DeclineCall
             | Action::HangupCall
