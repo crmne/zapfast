@@ -765,7 +765,10 @@ stays at the top of the transcript, and fades away a moment after you stop.
 A shared contact message shows the name from its vCard. When the card names a
 WhatsApp account, **Chat** opens a private conversation with it and, if the
 person is not already in ZapFast's contacts, **Add** saves them, adding them to
-your phone's contacts if you chose that for the last contact you added. A card with only a local number shows the number.
+your phone's contacts if you chose that for the last contact you added. Under the
+name the card shows the WhatsApp number those buttons use, which is the one
+WhatsApp attached to the card even where the card writes another; a card with
+only a local number shows that number.
 
 The contact or group details, opened from the chat header or by right-clicking
 a chat in the list, show a chat's disappearing-messages timer, or **Off** once

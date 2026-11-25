@@ -8058,6 +8058,16 @@ fn vcard_tel_account(property: &str, value: &str) -> Option<String> {
         .filter(|account| account.len() >= 7)
 }
 
+/// The number a contact card shows under its name: the WhatsApp account that
+/// **Chat** and **Add** act on when there is one, even where the card's own
+/// telephone number differs, so the name cannot stand in for someone else.
+fn shared_contact_number(contact: &SharedContact) -> String {
+    contact
+        .account
+        .as_deref()
+        .map_or_else(|| contact.number.clone(), crate::util::phone)
+}
+
 fn shared_contact_details(vcard: &str, fallback_name: &str) -> Option<SharedContact> {
     let mut name = None;
     let mut first_name = None;
@@ -8426,61 +8436,57 @@ fn content(
                         .as_ref()
                         .map_or(display_name.as_str(), |contact| contact.name.as_str());
                     widgets::rich_text(ui, name, theme::medium(14.0), palette.text);
-                    match details.as_ref() {
-                        Some(SharedContact {
-                            account: Some(account),
-                            first_name,
-                            ..
-                        }) => {
-                            let id = format!("{account}@s.whatsapp.net");
-                            ui.horizontal(|ui| {
-                                if theme::pill_button(
+                    if let Some(contact) = details.as_ref() {
+                        theme::text(
+                            ui,
+                            shared_contact_number(contact),
+                            theme::regular(12.5),
+                            palette.secondary,
+                        );
+                    }
+                    if let Some(SharedContact {
+                        account: Some(account),
+                        first_name,
+                        ..
+                    }) = details.as_ref()
+                    {
+                        let id = format!("{account}@s.whatsapp.net");
+                        ui.horizontal(|ui| {
+                            if theme::pill_button(
+                                ui,
+                                &palette,
+                                crate::i18n::gettext(view.locale, "Chat").as_ref(),
+                                true,
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::StartChat {
+                                    id: id.clone(),
+                                    name: name.to_owned(),
+                                    dismiss_dialog: true,
+                                });
+                            }
+                            if !view.contacts.contains_key(&id)
+                                && theme::pill_button(
                                     ui,
                                     &palette,
-                                    crate::i18n::gettext(view.locale, "Chat").as_ref(),
-                                    true,
+                                    crate::i18n::gettext(view.locale, "Add").as_ref(),
+                                    false,
                                 )
                                 .clicked()
-                                {
-                                    actions.push(Action::StartChat {
-                                        id: id.clone(),
-                                        name: name.to_owned(),
-                                        dismiss_dialog: true,
-                                    });
-                                }
-                                if !view.contacts.contains_key(&id)
-                                    && theme::pill_button(
-                                        ui,
-                                        &palette,
-                                        crate::i18n::gettext(view.locale, "Add").as_ref(),
-                                        false,
-                                    )
-                                    .clicked()
-                                {
-                                    // Split where the card's first name ends, so a
-                                    // first name of several words stays whole.
-                                    let (first, last) =
-                                        crate::util::editor_names(name, first_name.as_deref());
-                                    actions.push(Action::NewContact {
-                                        phone: account.clone(),
-                                        first,
-                                        last,
-                                        to_phone: None,
-                                    });
-                                }
-                            });
-                        }
-                        // Without an account there is nothing to open, so
-                        // the number stays readable, as it was.
-                        Some(contact) => {
-                            theme::text(
-                                ui,
-                                &contact.number,
-                                theme::regular(12.5),
-                                palette.secondary,
-                            );
-                        }
-                        None => {}
+                            {
+                                // Split where the card's first name ends, so a
+                                // first name of several words stays whole.
+                                let (first, last) =
+                                    crate::util::editor_names(name, first_name.as_deref());
+                                actions.push(Action::NewContact {
+                                    phone: account.clone(),
+                                    first,
+                                    last,
+                                    to_phone: None,
+                                });
+                            }
+                        });
                     }
                 });
             });
@@ -12096,6 +12102,43 @@ mod tests {
                 "Contact from sender",
             ),
             contact("Alice Example", "+1 (555) 010-1234", Some("15550101234"))
+        );
+    }
+
+    #[test]
+    fn a_contact_card_shows_the_number_its_buttons_use() {
+        let shown = |card: &str| {
+            shared_contact_number(&shared_contact_details(card, "Fallback").expect("a contact"))
+        };
+        // A card whose waid is not its written number shows the waid one,
+        // since Chat and Add go there.
+        assert_eq!(
+            shown(
+                "BEGIN:VCARD
+FN:Bank Support
+TEL;waid=447700900123:+1 800 555 0100
+END:VCARD"
+            ),
+            crate::util::phone("447700900123")
+        );
+        assert_eq!(
+            shown(
+                "BEGIN:VCARD
+FN:Alice
+TEL:+15550101234
+END:VCARD"
+            ),
+            crate::util::phone("15550101234")
+        );
+        // Without an account the card's own number is all there is.
+        assert_eq!(
+            shown(
+                "BEGIN:VCARD
+FN:Local
+TEL:555 0101
+END:VCARD"
+            ),
+            "555 0101"
         );
     }
 
