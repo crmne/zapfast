@@ -8073,8 +8073,9 @@ impl App {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
             }
-            Action::SaveAttachments { files } => {
-                self.backend.send(Command::SaveAttachments { files });
+            Action::SaveAttachments { files, text_files } => {
+                self.backend
+                    .send(Command::SaveAttachments { files, text_files });
             }
             Action::OpenFolder(path) => {
                 if path.is_dir() {

@@ -8985,7 +8985,10 @@ fn album_content(
         )
         .clicked()
     {
-        actions.push(Action::SaveAttachments { files });
+        actions.push(Action::SaveAttachments {
+            files,
+            text_files: Vec::new(),
+        });
     }
     if !missing.is_empty() {
         let downloading = missing.iter().all(|message| {
@@ -11763,20 +11766,205 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                     );
                 });
             app.actions.extend(actions);
+
+            let (files, text_files, missing) = app
+                .conversations
+                .get(chat)
+                .map(|conversation| selection_save_items(&conversation.messages, selected))
+                .unwrap_or_default();
+            if !files.is_empty() || !text_files.is_empty() {
+                if theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(locale, "Save all…"),
+                    false,
+                )
+                .clicked()
+                {
+                    app.actions
+                        .push(Action::SaveAttachments { files, text_files });
+                }
+            }
+            if !missing.is_empty() {
+                let downloading = missing.iter().all(|(_, _, active)| *active);
+                if theme::pill_button(
+                    ui,
+                    &palette,
+                    &crate::i18n::gettext(
+                        locale,
+                        if downloading {
+                            "Downloading…"
+                        } else {
+                            "Download all"
+                        },
+                    ),
+                    false,
+                )
+                .clicked()
+                {
+                    for (msg_chat, msg_id, active) in missing {
+                        if !active {
+                            app.actions.push(Action::Download {
+                                manual: true,
+                                card: None,
+                                chat: msg_chat,
+                                message: msg_id,
+                            });
+                        }
+                    }
+                }
+            }
         });
     });
 }
 
+/// Collects downloaded attachments, location text exports, and undownloaded
+/// media from the currently selected messages in chat order.
+#[allow(clippy::type_complexity)]
+fn selection_save_items(
+    messages: &[Message],
+    selected: &[String],
+) -> (
+    Vec<(PathBuf, String)>,
+    Vec<(String, String)>,
+    Vec<(ChatId, String, bool)>,
+) {
+    let mut files = Vec::new();
+    let mut text_files = Vec::new();
+    let mut missing = Vec::new();
+    for message in messages {
+        if !selected.iter().any(|id| id == &message.id) {
+            continue;
+        }
+        if let Some(media) = message.content.media() {
+            if let Some(path) = media.path.as_ref() {
+                files.push((path.clone(), attachment_name(&message.content, path)));
+            } else {
+                missing.push((
+                    message.chat.clone(),
+                    message.id.clone(),
+                    matches!(media.state, MediaState::Downloading),
+                ));
+            }
+        } else if let Some(location_file) = location_text_file(message) {
+            text_files.push(location_file);
+        }
+    }
+    (files, text_files, missing)
+}
+
+/// Formats a location or live-location message as a `.txt` file (`(name, body)`).
+fn location_text_file(message: &Message) -> Option<(String, String)> {
+    let (latitude, longitude, name, address) = match &message.content {
+        Content::Location {
+            latitude,
+            longitude,
+            name,
+            address,
+        } => (*latitude, *longitude, name.as_deref(), address.as_deref()),
+        Content::LiveLocation {
+            latitude,
+            longitude,
+            ..
+        } => (*latitude, *longitude, None, None),
+        _ => return None,
+    };
+
+    let clean_name = name
+        .map(|raw| {
+            let cleaned: String = raw
+                .trim()
+                .chars()
+                .map(|c| {
+                    if c.is_control()
+                        || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                    {
+                        '_'
+                    } else {
+                        c
+                    }
+                })
+                .take(80)
+                .collect();
+            cleaned
+                .trim_matches(|c: char| c == '.' || c.is_whitespace())
+                .to_owned()
+        })
+        .filter(|s| !s.is_empty());
+
+    let file_name = match &clean_name {
+        Some(stem) => format!("{stem}.txt"),
+        None => "localizacao.txt".to_owned(),
+    };
+
+    let mut lines = Vec::new();
+    if let Some(name) = name.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("Nome: {name}"));
+    }
+    if let Some(address) = address.map(str::trim).filter(|s| !s.is_empty()) {
+        lines.push(format!("Endereço: {address}"));
+    }
+    lines.push(format!("Coordenadas: {latitude:.6}, {longitude:.6}"));
+    lines.push(format!(
+        "Google Maps: https://www.google.com/maps/search/?api=1&query={latitude:.6},{longitude:.6}"
+    ));
+    let stamp = crate::util::copy_stamp(message.timestamp);
+    if !stamp.is_empty() {
+        lines.push(format!("Data: {stamp}"));
+    }
+    let sender = message
+        .sender_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if message.from_me {
+                "Você".to_owned()
+            } else {
+                message.sender.clone()
+            }
+        });
+    if !sender.is_empty() {
+        lines.push(format!("Remetente: {sender}"));
+    }
+    lines.push(String::new());
+    Some((file_name, lines.join("\n")))
+}
+
 /// The file name to suggest when saving an attachment: the sender's name for
-/// documents, the cached file's name otherwise. Path separators are dropped so
-/// a crafted name cannot point the dialog somewhere else.
+/// documents, the cached file's name otherwise (stripping legacy JID prefixes).
+/// Path separators are dropped so a crafted name cannot point the dialog
+/// somewhere else.
 fn attachment_name(content: &Content, path: &Path) -> String {
     let name = match content {
         Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
-        _ => path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "attachment".to_owned()),
+        _ => {
+            let raw = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "attachment".to_owned());
+            let legacy_jid_prefix = raw.contains("_s_whatsapp_net-")
+                || raw.contains("_g_us-")
+                || raw.contains("_lid-")
+                || raw.contains("_broadcast-");
+            if legacy_jid_prefix {
+                let ext = path
+                    .extension()
+                    .map(|e| format!(".{}", e.to_string_lossy()))
+                    .unwrap_or_default();
+                let stem = match content {
+                    Content::Image { .. } => "image",
+                    Content::Video { .. } => "video",
+                    Content::Audio { .. } => "audio",
+                    Content::Sticker { .. } => "sticker",
+                    _ => "file",
+                };
+                format!("{stem}{ext}")
+            } else {
+                raw
+            }
+        }
     };
     name.replace(['/', '\\'], "_")
 }
@@ -11807,6 +11995,79 @@ fn chat_of(chat: &ChatId) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn location_text_file_includes_coordinates_maps_link_and_metadata() {
+        let message = Message {
+            id: "loc-1".into(),
+            chat: "5511999999999@s.whatsapp.net".into(),
+            sender: "5511999999999@s.whatsapp.net".into(),
+            sender_name: Some("Maria".into()),
+            from_me: false,
+            timestamp: 1_700_000_000,
+            content: Content::Location {
+                latitude: -23.55052,
+                longitude: -46.63331,
+                name: Some("Praça da Sé".into()),
+                address: Some("Centro, São Paulo - SP".into()),
+            },
+            status: Delivery::None,
+            starred: false,
+            pinned: false,
+            forwarded: false,
+            forwarded_many: false,
+            edited: false,
+            reply_to: None,
+            reactions: Vec::new(),
+            thumbnail: None,
+            mentions: Vec::new(),
+            album: None,
+            channel_server_id: None,
+            ephemeral_expiration: None,
+            view_once: false,
+            viewed: false,
+            motion: None,
+        };
+        let (file_name, body) = location_text_file(&message).expect("location txt");
+        assert_eq!(file_name, "Praça da Sé.txt");
+        assert!(body.contains("Nome: Praça da Sé"));
+        assert!(body.contains("Endereço: Centro, São Paulo - SP"));
+        assert!(body.contains("Coordenadas: -23.550520, -46.633310"));
+        assert!(body.contains("https://www.google.com/maps/search/?api=1&query=-23.550520,-46.633310"));
+        assert!(body.contains("Remetente: Maria"));
+    }
+
+    #[test]
+    fn attachment_name_strips_legacy_jid_prefix_for_media() {
+        let photo = Content::Image {
+            media: Media {
+                mime: "image/jpeg".into(),
+                size: None,
+                width: None,
+                height: None,
+                duration: None,
+                path: None,
+                state: MediaState::Ready,
+                progress: None,
+            },
+            caption: String::new(),
+            waveform: None,
+            voice: false,
+            file_name: None,
+            gif: false,
+            live_photo: false,
+        };
+        assert_eq!(
+            attachment_name(&photo, Path::new("/cache/5511999999999_s_whatsapp_net-ABC123.jpg")),
+            "image.jpg"
+        );
+        assert_eq!(
+            attachment_name(&photo, Path::new("/downloads/image (2).jpg")),
+            "image (2).jpg"
+        );
+    }
+
     /// Glass buttons leave the name no room in a narrow header (#626).
     #[test]
     fn a_vibrant_header_folds_its_buttons_rather_than_cover_the_name() {

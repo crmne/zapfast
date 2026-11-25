@@ -383,8 +383,9 @@ async fn publish_download(
             tokio::fs::copy(temporary, &staging)
                 .await
                 .map_err(|error| error.to_string())?;
-            publish_attachment(&staging, cache).await?;
-            Ok(cache.to_owned())
+            publish_beside(&staging, cache)
+                .await
+                .map_err(|error| error.to_string())
         }
     }
 }
@@ -8043,11 +8044,11 @@ impl Worker {
                     }
                 });
             }
-            Command::SaveAttachments { files } => {
+            Command::SaveAttachments { files, text_files } => {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
-                    let mut dialog = rfd::FileDialog::new().set_title("Save album");
+                    let mut dialog = rfd::FileDialog::new().set_title("Save attachments");
                     if let Some(downloads) = directories::UserDirs::new()
                         .and_then(|dirs| dirs.download_dir().map(Path::to_path_buf))
                     {
@@ -8064,11 +8065,22 @@ impl Worker {
                             Err(error) => failed.push(format!("{name}: {error}")),
                         }
                     }
+                    for (name, content) in text_files {
+                        match save_text_copy(&folder, &name, content.as_bytes()) {
+                            Ok(_) => saved += 1,
+                            Err(error) => failed.push(format!("{name}: {error}")),
+                        }
+                    }
+                    let label = if saved == 1 {
+                        "attachment"
+                    } else {
+                        "attachments"
+                    };
                     let event = if failed.is_empty() {
-                        Event::Info(format!("Saved {saved} album attachments"))
+                        Event::Info(format!("Saved {saved} {label}"))
                     } else {
                         Event::Error(format!(
-                            "Saved {saved} album attachments; {} could not be saved: {}",
+                            "Saved {saved} {label}; {} could not be saved: {}",
                             failed.len(),
                             failed.join("; ")
                         ))
@@ -10473,9 +10485,6 @@ impl Worker {
         };
         let dir = self.download_dir(&chat);
         let cache = self.dirs.media_cache_dir();
-        // In the reader's own folder a document keeps the name it was sent
-        // with (#363); the cache keeps names unique by message.
-        let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         // A card's picture is small and has no ring of its own.
         let progress = card.is_none().then(|| {
@@ -10491,15 +10500,9 @@ impl Worker {
             )
         });
         tokio::spawn(async move {
-            let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
-            let cache_path = media_path(&cache, &chat, &cache_id, &mime, file_name.as_deref());
-            let named = file_name
-                .as_deref()
-                .filter(|_| own_folder)
-                .and_then(|name| named_media_path(&dir, &mime, name));
-            let keep_others = named.is_some();
-            let path = named
-                .unwrap_or_else(|| media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref()));
+            let cache_path = clean_media_path(&cache, &mime, file_name.as_deref());
+            let path = clean_media_path(&dir, &mime, file_name.as_deref());
+            let keep_others = true;
             let result = with_attachment_deadline(deadline, async {
                 match fetch_attachment(
                     &client,
@@ -12539,6 +12542,29 @@ fn named_media_path(dir: &Path, mime: &str, file_name: &str) -> Option<PathBuf> 
     Some(dir.join(format!("{stem}.{extension}")))
 }
 
+/// A human-readable attachment path without chat JID or message ID prefixes.
+/// Documents keep their sanitized name; other media gets a clean type-based name
+/// (`image.jpg`, `video.mp4`, `audio.ogg`, `sticker.was`, etc.).
+fn clean_media_path(dir: &Path, mime: &str, file_name: Option<&str>) -> PathBuf {
+    if let Some(path) = file_name.and_then(|name| named_media_path(dir, mime, name)) {
+        return path;
+    }
+    let extension = extension_for(mime, file_name);
+    let base_mime = mime.split(';').next().unwrap_or(mime).trim();
+    let stem = if base_mime == "application/was" {
+        "sticker"
+    } else if base_mime.starts_with("image/") {
+        "image"
+    } else if base_mime.starts_with("video/") {
+        "video"
+    } else if base_mime.starts_with("audio/") {
+        "audio"
+    } else {
+        "file"
+    };
+    dir.join(format!("{stem}.{extension}"))
+}
+
 fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&str>) -> PathBuf {
     let extension = extension_for(mime, file_name);
     let stem = match file_name.and_then(|name| Path::new(name).file_stem()?.to_str()) {
@@ -12579,6 +12605,45 @@ fn save_album_copy(source: &Path, folder: &Path, name: &str) -> std::io::Result<
         {
             Ok(mut output) => {
                 if let Err(error) = std::io::copy(&mut input, &mut output) {
+                    drop(output);
+                    let _ = std::fs::remove_file(&target);
+                    return Err(error);
+                }
+                return Ok(target);
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => number += 1,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Writes `bytes` into `folder` under `name`, picking `name (2).ext`, etc. if
+/// the destination already exists, so nothing is ever overwritten.
+fn save_text_copy(folder: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::io::{ErrorKind, Write};
+    let name = Path::new(name)
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "Invalid attachment name"))?;
+    let path = Path::new(name);
+    let stem = path.file_stem().unwrap_or(name).to_string_lossy();
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default();
+    let mut number = 1usize;
+    loop {
+        let target = if number == 1 {
+            folder.join(name)
+        } else {
+            folder.join(format!("{stem} ({number}){extension}"))
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(mut output) => {
+                if let Err(error) = output.write_all(bytes) {
                     drop(output);
                     let _ = std::fs::remove_file(&target);
                     return Err(error);
@@ -14247,21 +14312,24 @@ pub(super) async fn file_outbound(
         };
         None
     } else {
-        let path = media_path(
-            dir,
-            chat,
-            &id,
-            &prepared.mime,
-            prepared.file_name.as_deref(),
-        );
+        let path = clean_media_path(dir, &prepared.mime, prepared.file_name.as_deref());
         tokio::fs::create_dir_all(dir)
             .await
             .map_err(|error| error.to_string())?;
-        tokio::fs::write(&path, &prepared.bytes)
-            .await
-            .map_err(|error| error.to_string())?;
+        let dir_owned = dir.to_path_buf();
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file.bin".to_owned());
+        let bytes = prepared.bytes.clone();
+        let saved = tokio::task::spawn_blocking(move || {
+            save_text_copy(&dir_owned, &file_name, &bytes)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
         if let Some(media) = content.media_mut() {
-            media.path = Some(path);
+            media.path = Some(saved);
         }
         prepared.thumbnail
     };
@@ -15923,6 +15991,42 @@ mod tests {
             let path = named(hostile).unwrap();
             assert_eq!(path.parent(), Some(dir), "{hostile}");
         }
+    }
+
+    #[test]
+    fn clean_media_paths_omit_chat_and_message_prefixes() {
+        let dir = Path::new("/downloads");
+        assert_eq!(
+            clean_media_path(dir, "application/pdf", Some("Relatorio 2026.pdf")),
+            PathBuf::from("/downloads/Relatorio 2026.pdf")
+        );
+        assert_eq!(
+            clean_media_path(dir, "image/jpeg", None),
+            PathBuf::from("/downloads/image.jpg")
+        );
+        assert_eq!(
+            clean_media_path(dir, "video/mp4", None),
+            PathBuf::from("/downloads/video.mp4")
+        );
+        assert_eq!(
+            clean_media_path(dir, "audio/ogg; codecs=opus", None),
+            PathBuf::from("/downloads/audio.ogg")
+        );
+        assert_eq!(
+            clean_media_path(dir, "application/was", None),
+            PathBuf::from("/downloads/sticker.was")
+        );
+    }
+
+    #[test]
+    fn save_text_copy_numbers_collisions_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = save_text_copy(dir.path(), "localizacao.txt", b"primeira").unwrap();
+        let second = save_text_copy(dir.path(), "localizacao.txt", b"segunda").unwrap();
+        assert_eq!(first, dir.path().join("localizacao.txt"));
+        assert_eq!(second, dir.path().join("localizacao (2).txt"));
+        assert_eq!(std::fs::read(&first).unwrap(), b"primeira");
+        assert_eq!(std::fs::read(&second).unwrap(), b"segunda");
     }
 
     #[test]
