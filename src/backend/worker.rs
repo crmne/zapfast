@@ -319,7 +319,7 @@ async fn fetch_attachment(
             drop(writer);
             // The staging file is removed on the way out if it was not
             // published.
-            publish_download(&temporary, &target, keep_others && target == path, cache).await
+            publish_download(&temporary, &target, keep_others, cache).await
         }
         Err(error) => {
             let error = error.to_string();
@@ -413,7 +413,7 @@ async fn publish_attachment(temporary: &Path, path: &Path) -> Result<(), String>
 async fn publish_beside(temporary: &Path, path: &Path) -> io::Result<PathBuf> {
     let (temporary, path) = (temporary.to_path_buf(), path.to_path_buf());
     tokio::task::spawn_blocking(move || {
-        for candidate in (0..1000).map(|n| numbered_path(&path, n)) {
+        for candidate in (0u32..).map(|n| numbered_path(&path, n)) {
             match std::fs::hard_link(&temporary, &candidate) {
                 Ok(()) => {
                     let _ = std::fs::remove_file(&temporary);
@@ -2631,9 +2631,15 @@ impl Worker {
         });
     }
 
-    /// The file of this name in the media cache, if the attachment has one.
-    fn cached_copy(&self, path: &Path) -> Option<PathBuf> {
+    /// The file of this name in the media cache, only when the filename carries
+    /// the message's own sanitized id (legacy cache layout) so clean basenames
+    /// like `image.jpg` never cross-link unrelated messages.
+    fn cached_copy(&self, id: &str, path: &Path) -> Option<PathBuf> {
         let name = path.file_name()?;
+        let safe_id = sanitize(id);
+        if safe_id.is_empty() || !name.to_string_lossy().contains(&safe_id) {
+            return None;
+        }
         Some(self.dirs.media_cache_dir().join(name)).filter(|copy| copy.exists())
     }
 
@@ -2650,7 +2656,7 @@ impl Worker {
         {
             return;
         }
-        let copy = self.cached_copy(path);
+        let copy = self.cached_copy(id, path);
         if matches!(
             self.archive
                 .put_media_path_at(chat, id, card, copy.as_deref()),
@@ -2693,7 +2699,7 @@ impl Worker {
             if path.exists() {
                 continue;
             }
-            match self.cached_copy(&path) {
+            match self.cached_copy(&id, &path) {
                 Some(candidate) => {
                     if self
                         .archive
@@ -14321,13 +14327,12 @@ pub(super) async fn file_outbound(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "file.bin".to_owned());
-        let bytes = prepared.bytes.clone();
-        let saved = tokio::task::spawn_blocking(move || {
-            save_text_copy(&dir_owned, &file_name, &bytes)
-        })
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
+        let bytes = prepared.bytes;
+        let saved =
+            tokio::task::spawn_blocking(move || save_text_copy(&dir_owned, &file_name, &bytes))
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
         if let Some(media) = content.media_mut() {
             media.path = Some(saved);
         }

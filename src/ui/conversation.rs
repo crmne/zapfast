@@ -11767,26 +11767,27 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                 });
             app.actions.extend(actions);
 
-            let (files, text_files, missing) = app
+            let save = app
                 .conversations
                 .get(chat)
                 .map(|conversation| selection_save_items(&conversation.messages, selected))
                 .unwrap_or_default();
-            if !files.is_empty() || !text_files.is_empty() {
-                if theme::pill_button(
+            if (!save.files.is_empty() || !save.text_files.is_empty())
+                && theme::pill_button(
                     ui,
                     &palette,
                     &crate::i18n::gettext(locale, "Save all…"),
                     false,
                 )
                 .clicked()
-                {
-                    app.actions
-                        .push(Action::SaveAttachments { files, text_files });
-                }
+            {
+                app.actions.push(Action::SaveAttachments {
+                    files: save.files,
+                    text_files: save.text_files,
+                });
             }
-            if !missing.is_empty() {
-                let downloading = missing.iter().all(|(_, _, active)| *active);
+            if !save.missing.is_empty() {
+                let downloading = save.missing.iter().all(|item| item.downloading);
                 if theme::pill_button(
                     ui,
                     &palette,
@@ -11802,13 +11803,13 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                 )
                 .clicked()
                 {
-                    for (msg_chat, msg_id, active) in missing {
-                        if !active {
+                    for item in save.missing {
+                        if !item.downloading {
                             app.actions.push(Action::Download {
                                 manual: true,
-                                card: None,
-                                chat: msg_chat,
-                                message: msg_id,
+                                card: item.card,
+                                chat: item.chat,
+                                message: item.message,
                             });
                         }
                     }
@@ -11818,49 +11819,81 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
     });
 }
 
+#[derive(Default)]
+struct SelectionSaveItems {
+    files: Vec<(PathBuf, String)>,
+    text_files: Vec<(String, String)>,
+    missing: Vec<MissingAttachment>,
+}
+
+struct MissingAttachment {
+    chat: ChatId,
+    message: String,
+    card: Option<usize>,
+    downloading: bool,
+}
+
 /// Collects downloaded attachments, location text exports, combined text
 /// messages, and undownloaded media from the currently selected messages in
 /// chat order.
-#[allow(clippy::type_complexity)]
-fn selection_save_items(
-    messages: &[Message],
-    selected: &[String],
-) -> (
-    Vec<(PathBuf, String)>,
-    Vec<(String, String)>,
-    Vec<(ChatId, String, bool)>,
-) {
-    let mut files = Vec::new();
-    let mut text_files = Vec::new();
-    let mut missing = Vec::new();
+fn selection_save_items(messages: &[Message], selected: &[String]) -> SelectionSaveItems {
+    let selected_ids: std::collections::HashSet<&str> =
+        selected.iter().map(String::as_str).collect();
+    let mut items = SelectionSaveItems::default();
     let mut text_entries = Vec::new();
     for message in messages {
-        if !selected.iter().any(|id| id == &message.id) {
+        if !selected_ids.contains(message.id.as_str()) {
             continue;
         }
         if let Some(media) = message.content.media() {
             if let Some(path) = media.path.as_ref() {
-                files.push((path.clone(), attachment_name(&message.content, path)));
+                items
+                    .files
+                    .push((path.clone(), attachment_name(&message.content, path)));
             } else {
-                missing.push((
-                    message.chat.clone(),
-                    message.id.clone(),
-                    matches!(media.state, MediaState::Downloading),
-                ));
+                items.missing.push(MissingAttachment {
+                    chat: message.chat.clone(),
+                    message: message.id.clone(),
+                    card: None,
+                    downloading: matches!(media.state, MediaState::Downloading),
+                });
             }
-        } else if let Some(location_file) = location_text_file(message) {
-            text_files.push(location_file);
-        } else if let Some(entry) = text_message_entry(message) {
+        }
+        if let Content::Interactive {
+            card: Some(card), ..
+        } = &message.content
+        {
+            for (index, child) in card.carousel.iter().enumerate() {
+                if let Some(media) = child.image.as_ref() {
+                    if let Some(path) = media.path.as_ref() {
+                        items
+                            .files
+                            .push((path.clone(), attachment_name(&message.content, path)));
+                    } else {
+                        items.missing.push(MissingAttachment {
+                            chat: message.chat.clone(),
+                            message: message.id.clone(),
+                            card: Some(index),
+                            downloading: matches!(media.state, MediaState::Downloading),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(location_file) = location_text_file(message) {
+            items.text_files.push(location_file);
+        }
+        if let Some(entry) = text_message_entry(message) {
             text_entries.push(entry);
         }
     }
     if !text_entries.is_empty() {
-        text_files.push((
+        items.text_files.push((
             "messages.txt".to_owned(),
             format!("{}\n", text_entries.join("\n")),
         ));
     }
-    (files, text_files, missing)
+    items
 }
 
 /// Formats a text message line for the combined `messages.txt` export.
@@ -11931,9 +11964,21 @@ fn location_text_file(message: &Message) -> Option<(String, String)> {
                 })
                 .take(80)
                 .collect();
-            cleaned
-                .trim_matches(|c: char| c == '.' || c.is_whitespace())
-                .to_owned()
+            let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+            let device = trimmed
+                .split('.')
+                .next()
+                .unwrap_or(trimmed)
+                .to_ascii_uppercase();
+            let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || ((device.starts_with("COM") || device.starts_with("LPT"))
+                    && device.len() == 4
+                    && device[3..].chars().all(|c| c.is_ascii_digit()));
+            if reserved {
+                format!("_{trimmed}")
+            } else {
+                trimmed.to_owned()
+            }
         })
         .filter(|s| !s.is_empty());
 
@@ -12059,7 +12104,9 @@ mod tests {
         assert!(body.contains("Name: Praça da Sé"));
         assert!(body.contains("Address: Centro, São Paulo - SP"));
         assert!(body.contains("Coordinates: -23.550520, -46.633310"));
-        assert!(body.contains("https://www.google.com/maps/search/?api=1&query=-23.550520,-46.633310"));
+        assert!(
+            body.contains("https://www.google.com/maps/search/?api=1&query=-23.550520,-46.633310")
+        );
         assert!(body.contains("Sender: Maria"));
     }
 
@@ -12093,8 +12140,8 @@ mod tests {
 
     #[test]
     fn selection_save_items_combines_text_messages_into_one_txt() {
-        let make = |id: &str, from_me: bool, sender_name: Option<&str>, text: &str| {
-            super::Message {
+        let make =
+            |id: &str, from_me: bool, sender_name: Option<&str>, text: &str| super::Message {
                 id: id.into(),
                 chat: "5511999999999@s.whatsapp.net".into(),
                 sender: "5511999999999@s.whatsapp.net".into(),
@@ -12112,22 +12159,21 @@ mod tests {
                 mentions: Vec::new(),
                 forwarded: false,
                 thumbnail: None,
-            }
-        };
+            };
         let messages = vec![
             make("m1", false, Some("Maria"), "Primeira mensagem"),
             make("m2", true, None, "Segunda mensagem"),
             make("m3", false, Some("Maria"), "Nao selecionada"),
         ];
         let selected = vec!["m1".to_owned(), "m2".to_owned()];
-        let (files, text_files, missing) = super::selection_save_items(&messages, &selected);
-        assert!(files.is_empty());
-        assert!(missing.is_empty());
-        assert_eq!(text_files.len(), 1);
-        assert_eq!(text_files[0].0, "messages.txt");
-        assert!(text_files[0].1.contains("Maria: Primeira mensagem"));
-        assert!(text_files[0].1.contains("You: Segunda mensagem"));
-        assert!(!text_files[0].1.contains("Nao selecionada"));
+        let save = super::selection_save_items(&messages, &selected);
+        assert!(save.files.is_empty());
+        assert!(save.missing.is_empty());
+        assert_eq!(save.text_files.len(), 1);
+        assert_eq!(save.text_files[0].0, "messages.txt");
+        assert!(save.text_files[0].1.contains("Maria: Primeira mensagem"));
+        assert!(save.text_files[0].1.contains("You: Segunda mensagem"));
+        assert!(!save.text_files[0].1.contains("Nao selecionada"));
     }
 
     /// Glass buttons leave the name no room in a narrow header (#626).
