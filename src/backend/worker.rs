@@ -2191,6 +2191,20 @@ impl Worker {
         revoked
     }
 
+    /// [`confirmed_download`], and a file whose message was deleted or
+    /// revoked while it transferred leaves the media cache: nothing would
+    /// point at it any more.
+    fn record_download(
+        &self,
+        path: std::path::PathBuf,
+        saved: crate::archive::Result<bool>,
+    ) -> Result<std::path::PathBuf, String> {
+        if matches!(saved, Ok(false)) {
+            self.drop_cached_media(std::slice::from_ref(&path));
+        }
+        confirmed_download(path, saved)
+    }
+
     /// Deletes attachment files that belonged to a removed chat or message.
     /// Only the app's own media cache is touched; anything the user saved
     /// elsewhere stays where it is.
@@ -9096,7 +9110,7 @@ impl Worker {
             Command::MotionDownloaded { chat, id, result } => {
                 let result = result.and_then(|path| {
                     let saved = self.archive.put_motion_path(&chat, &id, Some(&path));
-                    confirmed_download(path, saved)
+                    self.record_download(path, saved)
                 });
                 self.emit(Event::Motion {
                     chat,
@@ -10671,7 +10685,7 @@ impl Worker {
                 .archive
                 .put_media_path_at(&chat, &id, card, Some(&path))
                 .map(|message| message.is_some());
-            confirmed_download(path, saved)
+            self.record_download(path, saved)
         });
         if for_picker && transferred && result.is_err() {
             // A local write failure must not schedule a phone retry or another

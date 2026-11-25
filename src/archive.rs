@@ -2785,8 +2785,13 @@ impl Archive {
             ],
         )?;
         if revoked {
-            // Deleted for everyone: the message is gone, so its pin is too.
+            // Deleted for everyone: the message is gone, so its pin is too,
+            // and a motion photo's clip with the keys to fetch it.
             self.delete_pin(chat, id)?;
+            self.connection.execute(
+                "DELETE FROM motion_clips WHERE chat = ?1 AND parent = ?2",
+                params![chat, id],
+            )?;
         }
         Ok(changed > 0)
     }
@@ -4646,6 +4651,9 @@ pub(crate) mod tests {
                 .expect("media path");
         };
         image("own", "own.jpg");
+        archive
+            .put_motion_clip(chat, "own", chat, b"clip")
+            .expect("motion clip");
         // A forward made here points at the file its original downloaded.
         image("original", "shared.jpg");
         image("forward", "shared.jpg");
@@ -4662,6 +4670,7 @@ pub(crate) mod tests {
                 .unwrap()
         );
         assert_eq!(archive.raw(chat, "own").unwrap(), None);
+        assert_eq!(archive.motion_clip(chat, "own").unwrap(), None);
         let revoked = archive.message(chat, "own").unwrap().unwrap();
         assert!(matches!(revoked.content, Content::Revoked));
         assert_eq!(revoked.thumbnail, None);
