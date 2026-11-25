@@ -6451,7 +6451,10 @@ impl Worker {
                             first_name: None,
                             push_name: None,
                         });
-                        if contact.full_name.is_none() && !crate::model::is_number_only(&name) {
+                        // A channel may be titled `24-7`; only a direct chat's is a number.
+                        let number_only = ChatKind::from_id(&id) == ChatKind::Direct
+                            && crate::model::is_number_only(&name);
+                        if contact.full_name.is_none() && !number_only {
                             contact.full_name = Some(name.clone());
                             let contact = contact.clone();
                             let _ = self.archive.upsert_contact(&contact);

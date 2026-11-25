@@ -552,8 +552,10 @@ impl Chat {
 /// Whether a name is only a phone number, grouped or as WhatsApp masks it
 /// (`+55∙∙∙∙∙∙∙∙12`) for someone not in the contacts: no saved name.
 pub fn is_number_only(name: &str) -> bool {
-    name.chars()
-        .all(|c| c.is_ascii_digit() || matches!(c, '+' | ' ' | '(' | ')' | '-' | '\u{2219}'))
+    name.chars().any(|c| c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '+' | ' ' | '(' | ')' | '-' | '\u{2219}'))
 }
 
 /// Extracts digits from a `<phone>@s.whatsapp.net` id.

@@ -11934,6 +11934,10 @@ fn compose_name(first: &str, last: &str) -> (Option<String>, Option<String>) {
     } else {
         format!("{first} {last}")
     };
+    // A number-only name would read back as none: see `archive::saved_name`.
+    if crate::model::is_number_only(&full) {
+        return (None, None);
+    }
     let short = (!first.is_empty()).then(|| first.to_owned());
     (Some(full), short)
 }
@@ -26199,6 +26203,8 @@ mod name_tests {
             compose_name("My Dih", ""),
             (Some("My Dih".into()), Some("My Dih".into()))
         );
+        assert_eq!(compose_name("+55 41", "1234"), (None, None));
+        assert_eq!(compose_name("-", ""), (Some("-".into()), Some("-".into())));
     }
 
     #[test]
