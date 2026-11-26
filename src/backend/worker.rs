@@ -2555,7 +2555,7 @@ impl Worker {
     /// Measures the media cache off the runtime, emptying it first when
     /// `clear`, and hands the result back as `Command::StorageMeasured`.
     fn measure_storage(&mut self, token: u64, clear: bool) {
-        let dir = self.media_dir(&chat);
+        let dir = self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         tokio::task::spawn_blocking(move || {
             if clear && clear_media(&dir).is_err() {
