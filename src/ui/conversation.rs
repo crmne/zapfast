@@ -5543,12 +5543,23 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         Margin::ZERO
     } else if palette.bubbles == theme::BubbleStyle::Messages {
         MESSAGES_BUBBLE_MARGIN
-    } else {
+    } else if over_picture {
         Margin {
             left: 10,
             right: 10,
             top: 6,
-            bottom: if over_picture { 6 } else { 5 },
+            bottom: 6,
+        }
+    } else {
+        // As much room below the text as above it. WhatsApp's point more on
+        // top read as top-heavy: with equal room a capital sits in the middle
+        // of the bubble in Segoe UI and half a point low in Inter, where 6
+        // above and 5 below left it a point low (#947).
+        Margin {
+            left: 10,
+            right: 10,
+            top: 5,
+            bottom: 5,
         }
     }
 }
@@ -12278,6 +12289,31 @@ mod tests {
             thumbnail: None,
             history_order: None,
         }
+    }
+
+    /// #947: a capital's ink sits in the middle of a one-line bubble, to
+    /// half a point. With 6 above and 5 below it sat a point low.
+    #[test]
+    fn a_capital_is_centred_in_a_text_bubble() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let margin = bubble_margin(&Palette::dark(), &message(Content::text("H")), false);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            "H",
+            0.0,
+            egui::TextFormat::simple(theme::regular(BODY_SIZE), Color32::WHITE),
+        );
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let galley = ui.painter().layout_job(job.clone());
+            let ink = margin.top as f32 + widgets::cap_middle(&galley).expect("H has ink");
+            let bubble = (margin.top + margin.bottom) as f32 / 2.0 + galley.rect.height() / 2.0;
+            assert!(
+                (ink - bubble).abs() <= 0.5,
+                "the ink centres at {ink}, the bubble at {bubble}"
+            );
+        });
+        output.textures_delta.clear();
     }
 
     /// The unread divider skips the rows the unread count leaves out, so the
