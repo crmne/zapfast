@@ -158,6 +158,16 @@ If you use [Homebrew](https://brew.sh), you can install it with:
 brew install --cask crmne/tap/zapfast
 ```
 
+For an existing Homebrew installation, quit {{ app }} and update it with:
+
+```sh
+brew update
+brew upgrade --cask crmne/tap/zapfast
+```
+
+Open {{ app }} again after the upgrade. Homebrew installations update through
+Homebrew rather than the [in-app updater](/settings-and-files/#updates).
+
 The app is signed with Developer ID and notarized by Apple. The DMG includes
 a validated notarization ticket.
 
