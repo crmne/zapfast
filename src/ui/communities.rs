@@ -9,6 +9,7 @@ use crate::i18n::gettext;
 use crate::model::{Action, Chat, CommunityInfo, CommunitySubgroup};
 use crate::theme::{self, Icon, Palette};
 
+use super::focus::{Stop, TabStop};
 use super::widgets;
 
 /// Accent tint for Announcements badges (emerald/teal).
@@ -17,6 +18,41 @@ pub const ANNOUNCEMENTS_COLOR: Color32 = Color32::from_rgb(20, 184, 166);
 pub const COMMUNITY_COLOR: Color32 = Color32::from_rgb(56, 189, 248);
 /// Extra height added to a chat-list row when it displays a community badge.
 pub const CARD_BADGE_ROW_EXTRA: f32 = 20.0;
+
+/// Whether `id` belongs to a locked chat that must stay hidden outside the locked folder.
+fn is_locked(app: &App, id: &str) -> bool {
+    app.chat(id).is_some_and(|chat| chat.locked)
+}
+
+/// Returns the chat for `id` only when it is not locked.
+fn visible_chat<'a>(app: &'a App, id: &str) -> Option<&'a Chat> {
+    app.chat(id).filter(|chat| !chat.locked)
+}
+
+/// A subgroup counts as joined only while its chat exists, is not locked, and has not been left.
+/// Does not use `can_send`, since read-only joined Announcements groups still count as joined.
+fn is_joined(app: &App, id: &str) -> bool {
+    visible_chat(app, id).is_some_and(|chat| !chat.left)
+}
+
+/// Returns the non-locked subgroups of `community`.
+fn visible_subgroups<'a>(app: &App, community: &'a CommunityInfo) -> Vec<&'a CommunitySubgroup> {
+    community
+        .subgroups
+        .iter()
+        .filter(|sg| !is_locked(app, &sg.id))
+        .collect()
+}
+
+/// Returns the community's Announcements subgroup when it is not locked.
+fn visible_announcements<'a>(
+    app: &App,
+    community: &'a CommunityInfo,
+) -> Option<&'a CommunitySubgroup> {
+    community
+        .announcements()
+        .filter(|sg| !is_locked(app, &sg.id))
+}
 
 /// Returns the community or Announcements badge to display on a chat card, if any.
 pub fn chat_badge(app: &App, chat: &Chat) -> Option<(String, Color32)> {
@@ -130,6 +166,7 @@ pub fn list(app: &mut App, ui: &mut egui::Ui) {
                 || community
                     .subgroups
                     .iter()
+                    .filter(|sg| !is_locked(app, &sg.id))
                     .any(|sg| app.name_matches(&sg.name, &needle))
         })
         .cloned()
@@ -154,12 +191,19 @@ pub fn list(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 10.0;
+                    let mut stop_index: u16 = 0;
                     for community in &communities {
-                        community_card(app, ui, &palette, community, &needle);
+                        community_card(app, ui, &palette, community, &needle, &mut stop_index);
                     }
                     ui.add_space(8.0);
                 });
         });
+}
+
+fn next_stop(counter: &mut u16, make: fn(u16) -> Stop) -> Stop {
+    let idx = *counter;
+    *counter = counter.saturating_add(1);
+    make(idx)
 }
 
 fn community_card(
@@ -168,6 +212,7 @@ fn community_card(
     palette: &Palette,
     community: &CommunityInfo,
     needle: &str,
+    stop_index: &mut u16,
 ) {
     let selected =
         app.selected_community.as_deref() == Some(community.id.as_str()) && app.open_chat.is_none();
@@ -176,6 +221,7 @@ fn community_card(
     } else {
         palette.surface
     };
+    let visible_count = visible_subgroups(app, community).len();
 
     Frame::new()
         .fill(fill)
@@ -188,8 +234,18 @@ fn community_card(
             // Community header row
             let (header_rect, header_resp) =
                 ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
+            let header_resp = header_resp.tab_stop(next_stop(stop_index, Stop::CommunityList));
+            theme::reveal_focus(&header_resp);
+            header_resp.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    selected,
+                    format!("{} ({} groups)", community.name, visible_count),
+                )
+            });
             if ui.is_rect_visible(header_rect) {
-                if header_resp.hovered() {
+                if header_resp.hovered() || header_resp.has_focus() {
                     ui.painter().rect_filled(
                         header_rect,
                         CornerRadius::same(8),
@@ -223,8 +279,7 @@ fn community_card(
                 );
                 title.paint(ui, pos2(text_left, header_rect.top() + 7.0), palette.text);
 
-                let group_count = community.subgroups.len();
-                let meta = match (group_count, community.participant_count) {
+                let meta = match (visible_count, community.participant_count) {
                     (g, Some(m)) if g > 0 => format!("{g} groups · {m} members"),
                     (g, None) if g > 0 => format!("{g} groups"),
                     (_, Some(m)) => format!("{m} members"),
@@ -262,44 +317,56 @@ fn community_card(
             }
 
             // Announcements row pinned right under the community header
-            if let Some(announce) = community.announcements() {
+            if let Some(announce) = visible_announcements(app, community) {
                 ui.add_space(2.0);
-                subgroup_compact_row(app, ui, palette, community, announce, true);
+                let stop = next_stop(stop_index, Stop::CommunityList);
+                subgroup_compact_row(app, ui, palette, community, announce, true, Some(stop));
             }
 
-            // Up to 3 most-recent joined subgroups (or matching search)
+            // Up to 3 most-recent joined subgroups (or matching search), excluding locked and left chats
             let mut joined: Vec<&CommunitySubgroup> = community
                 .subgroups
                 .iter()
                 .filter(|sg| !sg.is_default_sub_group)
-                .filter(|sg| app.chat(&sg.id).is_some())
+                .filter(|sg| is_joined(app, &sg.id))
                 .filter(|sg| needle.is_empty() || app.name_matches(&sg.name, needle))
                 .collect();
             joined.sort_by_key(|sg| {
-                std::cmp::Reverse(app.chat(&sg.id).map_or(0, |chat| chat.last_activity))
+                std::cmp::Reverse(visible_chat(app, &sg.id).map_or(0, |chat| chat.last_activity))
             });
             for sg in joined.iter().take(3) {
-                subgroup_compact_row(app, ui, palette, community, sg, false);
+                let stop = next_stop(stop_index, Stop::CommunityList);
+                subgroup_compact_row(app, ui, palette, community, sg, false, Some(stop));
             }
 
             // "View all" footer button
-            let total = community.subgroups.len();
-            if total > 0 {
+            if visible_count > 0 {
                 ui.add_space(2.0);
                 let (view_rect, view_resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+                let view_resp = view_resp.tab_stop(next_stop(stop_index, Stop::CommunityList));
+                theme::reveal_focus(&view_resp);
+                let view_label = format!("View all ({visible_count})");
+                view_resp.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        format!("{view_label} in {}", community.name),
+                    )
+                });
                 if ui.is_rect_visible(view_rect) {
-                    if view_resp.hovered() {
+                    if view_resp.hovered() || view_resp.has_focus() {
                         ui.painter().rect_filled(
                             view_rect,
                             CornerRadius::same(6),
                             palette.surface_hover,
                         );
                     }
-                    let label = format!("View all ({total})");
-                    let galley =
-                        ui.painter()
-                            .layout_no_wrap(label, theme::medium(12.0), palette.accent);
+                    let galley = ui.painter().layout_no_wrap(
+                        view_label,
+                        theme::medium(12.0),
+                        palette.accent,
+                    );
                     ui.painter().galley(
                         pos2(
                             view_rect.left() + 10.0,
@@ -334,15 +401,38 @@ fn subgroup_compact_row(
     community: &CommunityInfo,
     sg: &CommunitySubgroup,
     is_announcements: bool,
+    stop: Option<Stop>,
 ) {
+    if is_locked(app, &sg.id) {
+        return;
+    }
     let active = app.open_chat.as_deref() == Some(sg.id.as_str());
-    let chat = app.chat(&sg.id).cloned();
+    let chat = visible_chat(app, &sg.id).filter(|c| !c.left).cloned();
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    let resp = if let Some(stop) = stop {
+        resp.tab_stop(stop)
+    } else {
+        resp
+    };
+    theme::reveal_focus(&resp);
+    let title_text = if is_announcements {
+        "Announcements"
+    } else {
+        sg.name.as_str()
+    };
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            active,
+            title_text,
+        )
+    });
     if ui.is_rect_visible(rect) {
         if active {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(8), palette.surface_active);
-        } else if resp.hovered() {
+        } else if resp.hovered() || resp.has_focus() {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(8), palette.surface_hover);
         }
@@ -393,11 +483,6 @@ fn subgroup_compact_row(
             );
         }
 
-        let title_text = if is_announcements {
-            "Announcements"
-        } else {
-            sg.name.as_str()
-        };
         let title_width = (right - stamp_galley.size().x - 6.0 - left).max(40.0);
         let title_font = if unread {
             theme::semibold(13.0)
@@ -489,6 +574,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
 
+    let narrow = super::narrow(ui.ctx());
+    let visible_count = visible_subgroups(app, &community).len();
+    let mut overview_stop: u16 = 0;
+
     egui::ScrollArea::vertical()
         .id_salt(("community-overview", &community.id))
         .auto_shrink([false, false])
@@ -500,6 +589,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.set_width(content_width);
                     ui.set_max_width(content_width);
                     ui.spacing_mut().item_spacing.y = 14.0;
+
+                    // Narrow windows hide the community list while an overview is open,
+                    // so offer an explicit Back control to clear the selection.
+                    if narrow {
+                        ui.horizontal(|ui| {
+                            let back = theme::icon_button(
+                                ui,
+                                Icon::ArrowLeft,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                gettext(app.locale, "Back to communities").as_ref(),
+                            )
+                            .tab_stop(Stop::CommunityBack);
+                            if back.clicked() {
+                                app.actions.push(Action::SelectCommunity(None));
+                            }
+                            theme::text(
+                                ui,
+                                gettext(app.locale, "Communities").as_ref(),
+                                theme::medium(13.5),
+                                palette.secondary,
+                            );
+                        });
+                    }
 
                     // Hero header
                     ui.horizontal(|ui| {
@@ -518,7 +632,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             theme::text(ui, &community.name, theme::bold(20.0), palette.text);
                             let mut meta = vec!["Community".to_owned()];
-                            meta.push(format!("{} groups", community.subgroups.len()));
+                            meta.push(format!("{visible_count} groups"));
                             if let Some(members) = community.participant_count {
                                 meta.push(format!("{members} members"));
                             }
@@ -533,12 +647,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
                     // Action bar
                     ui.horizontal(|ui| {
-                        if let Some(announce) = community.announcements() {
-                            let has_chat = app.chat(&announce.id).is_some();
-                            if theme::pill_button(ui, &palette, "Open Announcements", true)
-                                .clicked()
-                            {
-                                if has_chat {
+                        if let Some(announce) = visible_announcements(app, &community) {
+                            let joined_announce = is_joined(app, &announce.id);
+                            let btn = theme::pill_button(ui, &palette, "Open Announcements", true)
+                                .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
+                            if btn.clicked() {
+                                if joined_announce {
                                     app.actions.push(Action::OpenChat(announce.id.clone()));
                                 } else {
                                     app.actions.push(Action::JoinCommunitySubgroup {
@@ -548,7 +662,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 }
                             }
                         }
-                        if theme::pill_button(
+                        let refresh_btn = theme::pill_button(
                             ui,
                             &palette,
                             if app.communities_loading {
@@ -558,8 +672,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             },
                             false,
                         )
-                        .clicked()
-                        {
+                        .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
+                        if refresh_btn.clicked() {
                             app.actions.push(Action::RefreshCommunities);
                         }
                     });
@@ -581,16 +695,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             });
                     }
 
-                    // Joined groups
+                    // Joined and unjoined groups (locked subgroups excluded, left subgroups offered to join)
                     let joined: Vec<&CommunitySubgroup> = community
                         .subgroups
                         .iter()
-                        .filter(|sg| app.chat(&sg.id).is_some())
+                        .filter(|sg| is_joined(app, &sg.id))
                         .collect();
                     let unjoined: Vec<&CommunitySubgroup> = community
                         .subgroups
                         .iter()
-                        .filter(|sg| app.chat(&sg.id).is_none())
+                        .filter(|sg| !is_locked(app, &sg.id) && !is_joined(app, &sg.id))
                         .collect();
 
                     if !joined.is_empty() {
@@ -607,6 +721,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .inner_margin(Margin::symmetric(8, 6))
                             .show(ui, |ui| {
                                 for sg in joined {
+                                    let stop =
+                                        next_stop(&mut overview_stop, Stop::CommunityOverview);
                                     subgroup_compact_row(
                                         app,
                                         ui,
@@ -614,6 +730,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                         &community,
                                         sg,
                                         sg.is_default_sub_group,
+                                        Some(stop),
                                     );
                                 }
                             });
@@ -634,7 +751,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 6.0;
                                 for sg in unjoined {
-                                    unjoined_subgroup_row(app, ui, &palette, &community, sg);
+                                    let stop =
+                                        next_stop(&mut overview_stop, Stop::CommunityOverview);
+                                    unjoined_subgroup_row(app, ui, &palette, &community, sg, stop);
                                 }
                             });
                     }
@@ -648,6 +767,7 @@ fn unjoined_subgroup_row(
     palette: &Palette,
     community: &CommunityInfo,
     sg: &CommunitySubgroup,
+    stop: Stop,
 ) {
     let joining = app.joining_subgroups.contains(&sg.id);
     ui.horizontal(|ui| {
@@ -671,7 +791,20 @@ fn unjoined_subgroup_row(
                 palette,
                 if joining { "Joining…" } else { "Join" },
                 !joining,
-            );
+            )
+            .tab_stop(stop);
+            theme::reveal_focus(&button);
+            button.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    !joining,
+                    if joining {
+                        format!("Joining {}", sg.name)
+                    } else {
+                        format!("Join {}", sg.name)
+                    },
+                )
+            });
             if !joining && button.clicked() {
                 app.actions.push(Action::JoinCommunitySubgroup {
                     community: community.id.clone(),
@@ -690,6 +823,7 @@ pub fn switcher_popup(
     active_chat_id: &str,
 ) {
     let palette = app.palette;
+    let visible = visible_subgroups(app, community);
     ui.spacing_mut().item_spacing.y = 4.0;
 
     // Header
@@ -717,7 +851,7 @@ pub fn switcher_popup(
             name.paint(ui, rect.min, palette.text);
             theme::text(
                 ui,
-                format!("Community · {} groups", community.subgroups.len()),
+                format!("Community · {} groups", visible.len()),
                 theme::regular(11.0),
                 palette.dim,
             );
@@ -731,11 +865,25 @@ pub fn switcher_popup(
         .max_height(320.0)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            for sg in &community.subgroups {
+            for sg in &visible {
                 let is_active = sg.id == active_chat_id;
-                let joined = app.chat(&sg.id).is_some();
+                let joined = is_joined(app, &sg.id);
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 42.0), Sense::click());
+                theme::reveal_focus(&resp);
+                let title_text = if sg.is_default_sub_group {
+                    "Announcements"
+                } else {
+                    sg.name.as_str()
+                };
+                resp.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        ui.is_enabled(),
+                        is_active,
+                        title_text,
+                    )
+                });
                 if ui.is_rect_visible(rect) {
                     if is_active {
                         ui.painter().rect_filled(
@@ -743,7 +891,7 @@ pub fn switcher_popup(
                             CornerRadius::same(8),
                             palette.surface_active,
                         );
-                    } else if resp.hovered() {
+                    } else if resp.hovered() || resp.has_focus() {
                         ui.painter().rect_filled(
                             rect,
                             CornerRadius::same(8),
@@ -774,7 +922,7 @@ pub fn switcher_popup(
                     }
                     let left = rect.left() + 42.0;
                     let right = rect.right() - 8.0;
-                    let chat = app.chat(&sg.id);
+                    let chat = visible_chat(app, &sg.id).filter(|c| !c.left);
                     let mut badge_right = right;
                     if let Some(c) = chat
                         && c.looks_unread()
@@ -805,11 +953,6 @@ pub fn switcher_popup(
                         badge_right -= tag.size().x + 8.0;
                     }
 
-                    let title_text = if sg.is_default_sub_group {
-                        "Announcements"
-                    } else {
-                        sg.name.as_str()
-                    };
                     let title = widgets::line(
                         ui,
                         title_text,
@@ -881,6 +1024,7 @@ pub fn info_section(
     is_announcements: bool,
 ) {
     let palette = app.palette;
+    let visible = visible_subgroups(app, community);
     ui.add_space(6.0);
     theme::text(ui, "Community", theme::medium(12.5), palette.secondary);
     Frame::new()
@@ -904,8 +1048,8 @@ pub fn info_section(
                 ui.vertical(|ui| {
                     theme::text(ui, &community.name, theme::semibold(13.5), palette.text);
                     let meta = match community.participant_count {
-                        Some(m) => format!("{} groups · {m} members", community.subgroups.len()),
-                        None => format!("{} groups", community.subgroups.len()),
+                        Some(m) => format!("{} groups · {m} members", visible.len()),
+                        None => format!("{} groups", visible.len()),
                     };
                     theme::text(ui, &meta, theme::regular(11.5), palette.dim);
                 });
@@ -916,10 +1060,10 @@ pub fn info_section(
             }
 
             if !is_announcements
-                && let Some(announce) = community.announcements()
+                && let Some(announce) = visible_announcements(app, community)
                 && widgets::menu_item(ui, &palette, Some(Icon::Bell), "Open Announcements")
             {
-                if app.chat(&announce.id).is_some() {
+                if is_joined(app, &announce.id) {
                     app.actions.push(Action::OpenChat(announce.id.clone()));
                 } else {
                     app.actions.push(Action::JoinCommunitySubgroup {
@@ -929,10 +1073,14 @@ pub fn info_section(
                 }
             }
 
-            // Show other groups in this community (up to 6 directly in info panel)
-            let others: Vec<&CommunitySubgroup> = community
-                .subgroups
+            // Show other non-locked groups in this community (up to 6 directly in info panel)
+            let other_total = visible
                 .iter()
+                .filter(|sg| sg.id != current_chat_id && !sg.is_default_sub_group)
+                .count();
+            let others: Vec<&CommunitySubgroup> = visible
+                .iter()
+                .copied()
                 .filter(|sg| sg.id != current_chat_id && !sg.is_default_sub_group)
                 .take(6)
                 .collect();
@@ -940,15 +1088,12 @@ pub fn info_section(
                 widgets::menu_separator(ui, &palette);
                 theme::text(
                     ui,
-                    format!(
-                        "Other groups ({})",
-                        community.subgroups.len().saturating_sub(1)
-                    ),
+                    format!("Other groups ({other_total})"),
                     theme::medium(11.5),
                     palette.dim,
                 );
                 for sg in others {
-                    let joined = app.chat(&sg.id).is_some();
+                    let joined = is_joined(app, &sg.id);
                     let label = if joined {
                         sg.name.clone()
                     } else {
@@ -1057,5 +1202,131 @@ mod tests {
             crate::ui::show(&mut app, ui);
         });
         output.textures_delta.clear();
+        // Verify community controls registered tab stops for keyboard navigation.
+        let stops = crate::ui::focus::stops(&ctx);
+        assert!(
+            stops
+                .iter()
+                .any(|(stop, _)| matches!(stop, Stop::CommunityList(_))),
+            "community list controls must register tab stops"
+        );
+        assert!(
+            stops
+                .iter()
+                .any(|(stop, _)| matches!(stop, Stop::CommunityOverview(_))),
+            "community overview controls must register tab stops"
+        );
+    }
+
+    #[test]
+    fn locked_and_left_subgroups_respect_privacy_and_membership() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+
+        let community = CommunityInfo {
+            id: "comm@g.us".into(),
+            name: "Community".into(),
+            description: None,
+            participant_count: Some(10),
+            subgroups: vec![
+                CommunitySubgroup {
+                    id: "ann@g.us".into(),
+                    name: "Announcements".into(),
+                    participant_count: Some(10),
+                    is_default_sub_group: true,
+                    is_general_chat: false,
+                    is_hidden_group: false,
+                },
+                CommunitySubgroup {
+                    id: "locked@g.us".into(),
+                    name: "Secret Subgroup".into(),
+                    participant_count: Some(3),
+                    is_default_sub_group: false,
+                    is_general_chat: false,
+                    is_hidden_group: false,
+                },
+                CommunitySubgroup {
+                    id: "left@g.us".into(),
+                    name: "Former Subgroup".into(),
+                    participant_count: Some(5),
+                    is_default_sub_group: false,
+                    is_general_chat: false,
+                    is_hidden_group: false,
+                },
+            ],
+        };
+        app.communities = vec![community.clone()];
+
+        let mut ann = Chat::new("ann@g.us".into(), "Announcements".into());
+        ann.is_default_sub_group = true;
+        ann.read_only = true;
+
+        let mut locked = Chat::new("locked@g.us".into(), "Secret Subgroup".into());
+        locked.locked = true;
+        locked.unread = 4;
+
+        let mut left = Chat::new("left@g.us".into(), "Former Subgroup".into());
+        left.left = true;
+        left.unread = 2;
+
+        app.chats = vec![ann, locked, left];
+
+        // Read-only Announcements still counts as joined; locked and left do not.
+        assert!(is_joined(&app, "ann@g.us"));
+        assert!(!is_joined(&app, "locked@g.us"));
+        assert!(!is_joined(&app, "left@g.us"));
+        assert!(is_locked(&app, "locked@g.us"));
+        assert_eq!(visible_subgroups(&app, &community).len(), 2);
+        assert_eq!(app.community_unread(&community), 0);
+
+        // Opening a community overview from an open chat preserves its draft.
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let run_action = |app: &mut App, action: Action| {
+            app.actions.push(action);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 700.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        app.open_chat = Some("ann@g.us".into());
+        app.composer = "Unsent draft".into();
+        run_action(&mut app, Action::OpenCommunity("comm@g.us".into()));
+        assert_eq!(app.open_chat, None);
+        assert_eq!(
+            app.drafts.get("ann@g.us").map(String::as_str),
+            Some("Unsent draft")
+        );
+        assert_eq!(app.page, Page::Communities);
+
+        // Opening a subgroup while on Communities keeps Page::Communities active.
+        run_action(&mut app, Action::OpenChat("ann@g.us".into()));
+        assert_eq!(app.page, Page::Communities);
+        assert_eq!(app.open_chat.as_deref(), Some("ann@g.us"));
+
+        // Narrow overview renders a Back control to return to the community list.
+        run_action(&mut app, Action::CloseChat);
+        app.selected_community = Some("comm@g.us".into());
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(520.0, 640.0))),
+                ..Default::default()
+            },
+            |ui| {
+                crate::ui::show(&mut app, ui);
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            crate::ui::focus::control(&ctx, Stop::CommunityBack).is_some(),
+            "narrow community overview must offer a Back control"
+        );
     }
 }

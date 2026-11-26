@@ -59,6 +59,10 @@ pub enum Stop {
     /// One chip in the label row, by its position among the labels.
     Label(u8),
     ManageLabels,
+    /// Interactive controls inside the Communities list and overview pane.
+    CommunityBack,
+    CommunityList(u16),
+    CommunityOverview(u16),
 }
 
 #[derive(Clone, Copy, Debug)]

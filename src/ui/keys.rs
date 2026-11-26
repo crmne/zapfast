@@ -317,6 +317,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             // A narrow window shows the picked call's chat over the history:
             // Escape goes back to it, as the chat's Back does.
             actions.push(Action::CloseChat);
+        } else if app.page == Page::Communities && app.open_chat.is_some() {
+            actions.push(Action::CloseChat);
+        } else if app.page == Page::Communities && app.selected_community.is_some() {
+            actions.push(Action::SelectCommunity(None));
         } else if app.page == Page::Settings
             || app.page == Page::Calls
             || app.page == Page::Communities

@@ -2333,11 +2333,15 @@ impl Worker {
     /// Fetches participating WhatsApp Communities and their linked subgroups.
     fn refresh_communities(&mut self) {
         let Some(client) = self.client.clone() else {
+            self.emit(Event::CommunitiesRefreshFailed(
+                "Not connected to WhatsApp.".to_owned(),
+            ));
             return;
         };
         let commands = self.commands.clone();
+        let session = self.account_session;
         tokio::spawn(async move {
-            let mut communities: Vec<crate::model::CommunityInfo> = Vec::new();
+            let mut communities: Vec<(crate::model::CommunityInfo, bool)> = Vec::new();
             match client.community().fetch_participating_metadata().await {
                 Ok(map) => {
                     for (jid, meta) in map {
@@ -2346,13 +2350,16 @@ impl Worker {
                             .filter(|s| !s.trim().is_empty())
                             .unwrap_or_else(|| jid.user.to_string());
                         let description = meta.description.filter(|s| !s.trim().is_empty());
-                        communities.push(crate::model::CommunityInfo {
-                            id: jid.to_string(),
-                            name,
-                            description,
-                            participant_count: meta.participant_count,
-                            subgroups: Vec::new(),
-                        });
+                        communities.push((
+                            crate::model::CommunityInfo {
+                                id: jid.to_string(),
+                                name,
+                                description,
+                                participant_count: meta.participant_count,
+                                subgroups: Vec::new(),
+                            },
+                            false,
+                        ));
                     }
                 }
                 Err(error) => {
@@ -2364,26 +2371,33 @@ impl Worker {
                                     .subject
                                     .filter(|s| !s.trim().is_empty())
                                     .unwrap_or_else(|| ov.id.user.to_string());
-                                communities.push(crate::model::CommunityInfo {
-                                    id: ov.id.to_string(),
-                                    name,
-                                    description: None,
-                                    participant_count: ov.participant_count,
-                                    subgroups: Vec::new(),
-                                });
+                                communities.push((
+                                    crate::model::CommunityInfo {
+                                        id: ov.id.to_string(),
+                                        name,
+                                        description: None,
+                                        participant_count: ov.participant_count,
+                                        subgroups: Vec::new(),
+                                    },
+                                    false,
+                                ));
                             }
                         }
                         Err(overview_error) => {
                             log::warn!(
                                 "could not list participating communities: {overview_error}"
                             );
+                            let _ = commands.send(Command::CommunitiesRefreshFailed {
+                                session,
+                                error: overview_error.to_string(),
+                            });
                             return;
                         }
                     }
                 }
             }
 
-            for community in &mut communities {
+            for (community, subgroups_loaded) in &mut communities {
                 let Some(jid) = Self::jid_of(&community.id) else {
                     continue;
                 };
@@ -2415,6 +2429,7 @@ impl Worker {
                                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                         });
                         community.subgroups = mapped;
+                        *subgroups_loaded = true;
                     }
                     Err(error) => {
                         log::warn!(
@@ -2425,8 +2440,11 @@ impl Worker {
                 }
             }
 
-            communities.sort_by_key(|a| a.name.to_lowercase());
-            let _ = commands.send(Command::CommunitiesLoaded(communities));
+            communities.sort_by_key(|(a, _)| a.name.to_lowercase());
+            let _ = commands.send(Command::CommunitiesLoaded {
+                session,
+                communities,
+            });
         });
     }
 
@@ -2445,6 +2463,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
+        let session = self.account_session;
         tokio::spawn(async move {
             let result = client
                 .community()
@@ -2453,6 +2472,7 @@ impl Worker {
                 .map(|_| ())
                 .map_err(|error| error.to_string());
             let _ = commands.send(Command::JoinSubgroupResult {
+                session,
                 community,
                 subgroup,
                 result,
@@ -4172,6 +4192,7 @@ impl Worker {
                     }
                     let _ = commands.send(Command::GroupCommunityMeta {
                         chat: chat.clone(),
+                        request_generation,
                         parent_group_jid: metadata
                             .parent_group_jid
                             .as_ref()
@@ -9271,10 +9292,15 @@ impl Worker {
             Command::RefreshCommunities => self.refresh_communities(),
             Command::GroupCommunityMeta {
                 chat,
+                request_generation,
                 parent_group_jid,
                 is_parent_group,
                 is_default_sub_group,
             } => {
+                if request_generation != self.group_info_generation.get(&chat).copied().unwrap_or(0)
+                {
+                    return;
+                }
                 let _ = self.archive.set_group_community_meta(
                     &chat,
                     parent_group_jid.as_deref(),
@@ -9282,56 +9308,74 @@ impl Worker {
                     is_default_sub_group,
                 );
             }
-            Command::CommunitiesLoaded(communities) => {
+            Command::CommunitiesLoaded {
+                session,
+                communities,
+            } => {
+                if session != self.account_session {
+                    return;
+                }
                 if let Err(error) = self.archive.save_communities(&communities) {
                     log::warn!("could not save communities: {error}");
                 }
                 self.emit_chats();
+            }
+            Command::CommunitiesRefreshFailed { session, error } => {
+                if session != self.account_session {
+                    return;
+                }
+                self.emit(Event::CommunitiesRefreshFailed(error));
             }
             Command::JoinCommunitySubgroup {
                 community,
                 subgroup,
             } => self.join_community_subgroup(community, subgroup),
             Command::JoinSubgroupResult {
+                session,
                 community,
                 subgroup,
                 result,
-            } => match result {
-                Ok(()) => {
-                    let name = self.archive.communities().ok().and_then(|list| {
-                        list.into_iter().find(|c| c.id == community).and_then(|c| {
-                            c.subgroups
-                                .into_iter()
-                                .find(|sg| sg.id == subgroup)
-                                .map(|sg| (sg.name, sg.is_default_sub_group))
-                        })
-                    });
-                    let (label, is_default) = name.unwrap_or_else(|| (subgroup.clone(), false));
-                    let _ = self.archive.ensure_chat(&subgroup, &label);
-                    let _ = self.archive.set_group_community_meta(
-                        &subgroup,
-                        Some(&community),
-                        false,
-                        is_default,
-                    );
-                    self.group_info_requested.remove(&subgroup);
-                    self.query_group_info(&subgroup);
-                    self.emit_chats();
-                    self.refresh_communities();
-                    self.emit(Event::SubgroupJoined {
-                        community,
-                        subgroup,
-                        error: None,
-                    });
+            } => {
+                if session != self.account_session {
+                    return;
                 }
-                Err(error) => {
-                    self.emit(Event::SubgroupJoined {
-                        community,
-                        subgroup,
-                        error: Some(error),
-                    });
+                match result {
+                    Ok(()) => {
+                        let name = self.archive.communities().ok().and_then(|list| {
+                            list.into_iter().find(|c| c.id == community).and_then(|c| {
+                                c.subgroups
+                                    .into_iter()
+                                    .find(|sg| sg.id == subgroup)
+                                    .map(|sg| (sg.name, sg.is_default_sub_group))
+                            })
+                        });
+                        let (label, is_default) = name.unwrap_or_else(|| (subgroup.clone(), false));
+                        let _ = self.archive.ensure_chat(&subgroup, &label);
+                        let _ = self.archive.set_group_community_meta(
+                            &subgroup,
+                            Some(&community),
+                            false,
+                            is_default,
+                        );
+                        self.group_info_requested.remove(&subgroup);
+                        self.query_group_info(&subgroup);
+                        self.emit_chats();
+                        self.refresh_communities();
+                        self.emit(Event::SubgroupJoined {
+                            community,
+                            subgroup,
+                            error: None,
+                        });
+                    }
+                    Err(error) => {
+                        self.emit(Event::SubgroupJoined {
+                            community,
+                            subgroup,
+                            error: Some(error),
+                        });
+                    }
                 }
-            },
+            }
             Command::GroupInfo {
                 chat,
                 name,

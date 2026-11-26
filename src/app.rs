@@ -2969,8 +2969,9 @@ impl App {
             .subgroups
             .iter()
             .filter(|sg| {
-                self.chat(&sg.id)
-                    .is_some_and(|chat| !chat.archived && !chat.locked && chat.looks_unread())
+                self.chat(&sg.id).is_some_and(|chat| {
+                    !chat.archived && !chat.locked && !chat.left && chat.looks_unread()
+                })
             })
             .count()
     }
@@ -3872,17 +3873,25 @@ impl App {
                     self.selected_community = None;
                 }
             }
+            Event::CommunitiesRefreshFailed(error) => {
+                self.communities_loading = false;
+                if live {
+                    self.toast_error(format!("Could not refresh communities: {error}"));
+                }
+            }
             Event::SubgroupJoined {
                 community: _,
                 subgroup,
                 error,
             } => {
                 self.joining_subgroups.remove(&subgroup);
-                if let Some(error) = error {
-                    self.toast_error(error);
-                } else {
-                    self.toast("Joined community group.");
-                    self.actions.push(Action::OpenChat(subgroup));
+                if live {
+                    if let Some(error) = error {
+                        self.toast_error(error);
+                    } else {
+                        self.toast("Joined community group.");
+                        self.actions.push(Action::OpenChat(subgroup));
+                    }
                 }
             }
             Event::Drafts(drafts) => {
@@ -6411,9 +6420,9 @@ impl App {
         self.emoji_start = None;
         self.mention_start = None;
         self.set_open_chat(Some(id.clone()));
-        // The Calls tab keeps its history beside the chat; every other page
-        // gives way to the chat list.
-        if self.page != Page::Calls {
+        // The Calls and Communities tabs keep their lists beside the chat;
+        // every other page gives way to the chat list.
+        if !matches!(self.page, Page::Calls | Page::Communities) {
             self.page = Page::Chats;
         }
         self.scroll_to_bottom = true;
@@ -9416,8 +9425,10 @@ impl App {
                 self.selected_community = id;
             }
             Action::OpenCommunity(id) => {
+                if self.open_chat.is_some() {
+                    self.apply(Action::CloseChat, ctx);
+                }
                 self.selected_community = Some(id);
-                self.open_chat = None;
                 self.show_starred = false;
                 if self.page != Page::Communities {
                     self.apply(Action::Open(Page::Communities), ctx);

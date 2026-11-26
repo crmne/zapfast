@@ -1142,12 +1142,23 @@ pub enum Command {
     /// Internal community hierarchy metadata learned from `fetch_metadata`.
     GroupCommunityMeta {
         chat: ChatId,
+        request_generation: u64,
         parent_group_jid: Option<ChatId>,
         is_parent_group: bool,
         is_default_sub_group: bool,
     },
     /// Internal result of refreshing participating communities and their subgroups.
-    CommunitiesLoaded(Vec<crate::model::CommunityInfo>),
+    CommunitiesLoaded {
+        session: u64,
+        /// Each participating community paired with whether its subgroup list
+        /// was fetched successfully (`false` preserves cached subgroups).
+        communities: Vec<(crate::model::CommunityInfo, bool)>,
+    },
+    /// Internal failure when participating communities could not be refreshed.
+    CommunitiesRefreshFailed {
+        session: u64,
+        error: String,
+    },
     /// Joins a subgroup inside a community.
     JoinCommunitySubgroup {
         community: ChatId,
@@ -1155,6 +1166,7 @@ pub enum Command {
     },
     /// Internal result of joining a community subgroup.
     JoinSubgroupResult {
+        session: u64,
         community: ChatId,
         subgroup: ChatId,
         result: Result<(), String>,
@@ -1276,6 +1288,8 @@ pub enum Event {
     Labels(Vec<crate::model::Label>),
     /// Participating WhatsApp Communities and their linked subgroups.
     Communities(Vec<crate::model::CommunityInfo>),
+    /// Failed attempt to refresh participating WhatsApp Communities.
+    CommunitiesRefreshFailed(String),
     /// Outcome of joining a community subgroup.
     SubgroupJoined {
         community: ChatId,
