@@ -1948,6 +1948,9 @@ struct ParsedMessage {
     /// original's secret (#582). The worker opens it before filing, and the
     /// row's body comes from it; one it cannot open is not filed.
     sealed_edit: Option<SealedEdit>,
+    /// The id the latest edit went out under, when the history entry's own
+    /// key names it rather than the message. Receipts may name only it.
+    edit_id: Option<String>,
 }
 
 /// An encrypted MESSAGE_EDIT from history, still to be opened. Its message
@@ -4931,12 +4934,23 @@ impl Worker {
             _ => return,
         };
         let at = receipt.timestamp.timestamp();
+        // A receipt for an edit is about the message that was edited.
+        let mut message_ids: Vec<String> = Vec::with_capacity(receipt.message_ids.len());
+        for id in &receipt.message_ids {
+            let target = self
+                .archive
+                .receipt_target(&chat, id)
+                .unwrap_or_else(|_| id.to_string());
+            if !message_ids.contains(&target) {
+                message_ids.push(target);
+            }
+        }
         if ChatKind::from_id(&chat) == ChatKind::Group {
             let recipient = self.canonical(&receipt.source.sender);
             if self.is_me(&recipient) {
                 return;
             }
-            for id in &receipt.message_ids {
+            for id in &message_ids {
                 // A receipt for a message we have not archived yet is kept
                 // until the message arrives; see `settle_early_receipts`.
                 if self
@@ -4965,7 +4979,7 @@ impl Worker {
         }
         let mut newest = 0;
         let mut changed = 0;
-        for id in &receipt.message_ids {
+        for id in &message_ids {
             if !receipt.source.chat.is_status_broadcast()
                 && matches!(self.archive.message(&chat, id), Ok(None))
             {
@@ -4989,7 +5003,7 @@ impl Worker {
         }
         log::debug!(
             "receipt moved {changed} of {} messages in {chat} to {status:?}",
-            receipt.message_ids.len()
+            message_ids.len()
         );
         // Read receipts advance all earlier messages.
         if status >= Delivery::Read
@@ -5060,19 +5074,30 @@ impl Worker {
         if !matches!(self.archive.message(chat, id), Ok(Some(_))) {
             return;
         }
-        if ChatKind::from_id(chat) == ChatKind::Group {
-            if !self.archive.has_group_audience(chat, id).unwrap_or(true) {
-                let members = self
-                    .archive
-                    .chat(chat)
-                    .ok()
-                    .flatten()
-                    .map(|chat| chat.participants)
-                    .unwrap_or_default();
-                if !members.is_empty() {
-                    self.save_group_recipients(chat, id, &members);
-                }
+        if ChatKind::from_id(chat) == ChatKind::Group
+            && !self.archive.has_group_audience(chat, id).unwrap_or(true)
+        {
+            let members = self
+                .archive
+                .chat(chat)
+                .ok()
+                .flatten()
+                .map(|chat| chat.participants)
+                .unwrap_or_default();
+            if !members.is_empty() {
+                self.save_group_recipients(chat, id, &members);
             }
+        }
+        self.apply_waiting_receipts(chat, id);
+    }
+
+    /// Applies the receipts waiting for an archived message, against the
+    /// audience already saved for it.
+    fn apply_waiting_receipts(&mut self, chat: &str, id: &str) {
+        if !matches!(self.archive.message(chat, id), Ok(Some(_))) {
+            return;
+        }
+        if ChatKind::from_id(chat) == ChatKind::Group {
             match self.archive.settle_group(chat, id) {
                 Ok(true) => self.emit_message(chat, id),
                 Ok(false) => {}
@@ -5101,6 +5126,17 @@ impl Worker {
             }
             Ok(None) => {}
             Err(error) => log::warn!("could not apply early receipts: {error}"),
+        }
+    }
+
+    /// Files an edit's own id under the message it edited, applying the
+    /// receipts that arrived before the two were known to be one. The message
+    /// may be an old one from history, so this never gives it an audience.
+    fn record_edit_id(&mut self, chat: &str, edit: &str, id: &str) {
+        match self.archive.record_edit_id(chat, edit, id) {
+            Ok(true) => self.apply_waiting_receipts(chat, id),
+            Ok(false) => {}
+            Err(error) => log::warn!("could not keep an edit's id: {error}"),
         }
     }
 
@@ -5291,6 +5327,9 @@ impl Worker {
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
+                    if from_me {
+                        self.record_edit_id(&chat, &info.id, &target);
+                    }
                     self.edits.remove(&(chat.clone(), target.clone()));
                     if let Some(edited) = protocol.edited_message.as_option()
                         && let Some(mut content) = classify(edited)
@@ -6718,6 +6757,12 @@ impl Worker {
                 if group {
                     self.file_history_receipts(&id, &row.id, &message.receipts);
                 }
+                if let Some(edit) = &message.edit_id {
+                    self.record_edit_id(&id, edit, &row.id);
+                    // If the edit's id was already known, a read naming it
+                    // has been waiting under this message.
+                    self.apply_waiting_receipts(&id, &row.id);
+                }
                 if matches!(row.content, Content::Poll { .. }) {
                     if poll_history_received {
                         let _ = self.archive.mark_poll_history(&id, &row.id);
@@ -7613,6 +7658,18 @@ impl Worker {
                 text,
                 mentions,
             } => self.edit_text(chat, id, text, mentions),
+            Command::EditSent {
+                chat,
+                id,
+                edit,
+                session,
+            } => {
+                if session == self.account_session {
+                    // The chat may have moved to its phone number meanwhile.
+                    let chat = self.canonical_str(&chat);
+                    self.record_edit_id(&chat, &edit, &id);
+                }
+            }
             Command::EditSettled {
                 chat,
                 id,
@@ -11172,6 +11229,7 @@ impl Worker {
             };
         let generation = self.begin_edit(&chat, &id);
         let commands = self.commands.clone();
+        let session = self.account_session;
         tokio::spawn(async move {
             let accepted = client
                 .edit_message_raw(
@@ -11181,7 +11239,15 @@ impl Worker {
                     whatsapp_rust::EditOptions::default(),
                 )
                 .await
-                .map(|_| (content, mention_rows))
+                .map(|sent| {
+                    let _ = commands.send(Command::EditSent {
+                        chat: chat.clone(),
+                        id: id.clone(),
+                        edit: sent.message_id.to_string(),
+                        session,
+                    });
+                    (content, mention_rows)
+                })
                 .map_err(|error| format!("Could not send the edit: {error}"));
             let _ = commands.send(Command::EditSettled {
                 chat,
@@ -14416,6 +14482,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                     poll_votes: Vec::new(),
                     receipts: Vec::new(),
                     sealed_edit: None,
+                    edit_id: None,
                 });
                 continue;
             }
@@ -14451,6 +14518,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                         == Some(wa::message::secret_encrypted_message::SecretEncType::MESSAGE_EDIT)
                 }),
         );
+        let envelope_id = id.clone();
         // In history MESSAGE_EDIT is a complete snapshot: the outer key is
         // the latest edit's key, while protocol.key names the original bubble.
         // Keep the history envelope's timestamp/order and use the target id.
@@ -14677,6 +14745,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                 Some((who, from_me, text))
             })
             .collect();
+        let id_changed = id != envelope_id;
         messages.push(ParsedMessage {
             id,
             sender,
@@ -14725,6 +14794,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
                 Vec::new()
             },
             sealed_edit: sealed,
+            edit_id: (from_me && id_changed).then_some(envelope_id),
         });
     }
     let last_activity = conversation
@@ -20768,6 +20838,172 @@ mod receipt_tests {
         );
     }
 
+    #[test]
+    fn a_read_naming_an_edit_made_on_the_phone_counts_for_the_edited_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let now = crate::util::now();
+        worker.archive.ensure_chat(group, "Group").unwrap();
+        let (message, info) = sent_elsewhere(group, "original", now - 10);
+        worker.ingest(&message, &info);
+        worker.save_group_recipients(group, "original", &[PEER.into()]);
+        let (_, edit_info) = sent_elsewhere(group, "edit", now - 5);
+        let edit = {
+            let mut key = wa::MessageKey::default();
+            key.id = Some("original".into());
+            let mut protocol = wa::message::ProtocolMessage::default();
+            protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            protocol.key = MessageField::some(key);
+            protocol.edited_message = MessageField::some(wa::Message::text("edited on the phone"));
+            let mut proto = wa::Message::default();
+            proto.protocol_message = MessageField::some(protocol);
+            proto
+        };
+        worker.ingest(&Arc::new(edit), &edit_info);
+        let mut read = receipt(group, &["edit"], ReceiptType::Read);
+        read.source.sender = PEER.parse().unwrap();
+        read.source.is_group = true;
+        worker.on_receipt(&read);
+        let rows = worker.archive.receipts(group, "original").unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.id == PEER && row.read_at.is_some())
+        );
+        assert!(worker.archive.receipts(group, "edit").unwrap().is_empty());
+        assert_eq!(
+            worker
+                .archive
+                .message(group, "original")
+                .unwrap()
+                .unwrap()
+                .status,
+            Delivery::Read
+        );
+    }
+
+    #[tokio::test]
+    async fn an_edit_sent_from_here_is_kept_for_its_own_session_and_chat() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let sent = |chat: &str, edit: &str, session| Command::EditSent {
+            chat: chat.into(),
+            id: "m".into(),
+            edit: edit.into(),
+            session,
+        };
+        let session = worker.account_session;
+        // The chat moved to its phone number while the edit was being sent.
+        worker.learn_lid("167650256810092", "4917663430455");
+        worker
+            .handle_command(sent("167650256810092@lid", "edit", session))
+            .await;
+        assert_eq!(worker.archive.receipt_target(PEER, "edit").unwrap(), "m");
+        worker
+            .handle_command(sent(PEER, "departed", session.wrapping_add(1)))
+            .await;
+        assert_eq!(
+            worker.archive.receipt_target(PEER, "departed").unwrap(),
+            "departed"
+        );
+    }
+
+    #[test]
+    fn an_edit_from_history_counts_its_reads_without_giving_an_audience() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let now = crate::util::now();
+        worker.archive.ensure_chat(group, "Group").unwrap();
+        worker
+            .archive
+            .set_group_info(group, None, &[ME.into(), PEER.into()], false)
+            .unwrap();
+        // The read arrives before the history that names the edit.
+        let mut read = receipt(group, &["edit"], ReceiptType::Read);
+        read.source.sender = PEER.parse().unwrap();
+        read.source.is_group = true;
+        worker.on_receipt(&read);
+        let snapshot = {
+            let mut protocol = wa::message::ProtocolMessage::default();
+            protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            let mut key = wa::MessageKey::default();
+            key.id = Some("original".into());
+            protocol.key = MessageField::some(key);
+            protocol.edited_message = MessageField::some(wa::Message::text("edited offline"));
+            let mut proto = wa::Message::default();
+            proto.protocol_message = MessageField::some(protocol);
+            proto
+        };
+        let parsed = parse_conversation({
+            let mut proto = wa::Conversation::default();
+            proto.id = group.into();
+            let mut entry = history_entry(group, "edit", true, None, snapshot, Vec::new(), None);
+            entry.message.get_or_insert_default().message_timestamp = Some(now as u64);
+            proto.messages = vec![entry];
+            proto
+        });
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![parsed],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        assert_eq!(
+            worker.archive.receipt_target(group, "edit").unwrap(),
+            "original"
+        );
+        let rows = worker.archive.receipts(group, "original").unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(rows[0].read_at.is_some() && !rows[0].expected);
+        assert!(
+            !worker
+                .archive
+                .has_group_audience(group, "original")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn history_applies_a_read_that_waited_for_an_already_edited_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let now = crate::util::now();
+        // The phone's edit arrives, then a read naming it, then the message.
+        worker.record_edit_id(PEER, "edit", "original");
+        worker.on_receipt(&receipt(PEER, &["edit"], ReceiptType::Read));
+        let snapshot = {
+            let mut protocol = wa::message::ProtocolMessage::default();
+            protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            let mut key = wa::MessageKey::default();
+            key.id = Some("original".into());
+            protocol.key = MessageField::some(key);
+            protocol.edited_message = MessageField::some(wa::Message::text("edited"));
+            let mut proto = wa::Message::default();
+            proto.protocol_message = MessageField::some(protocol);
+            proto
+        };
+        let parsed = parse_conversation({
+            let mut proto = wa::Conversation::default();
+            proto.id = PEER.into();
+            let mut entry = history_entry(PEER, "edit", true, None, snapshot, Vec::new(), None);
+            entry.message.get_or_insert_default().message_timestamp = Some((now - 60) as u64);
+            proto.messages = vec![entry];
+            proto
+        });
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![parsed],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        let stored = worker.archive.message(PEER, "original").unwrap().unwrap();
+        assert_eq!(stored.status, Delivery::Read);
+        assert!(stored.read_at.is_some());
+    }
+
     #[tokio::test]
     async fn a_group_message_sent_elsewhere_takes_the_current_members_as_its_audience() {
         let (mut worker, events, _inbox, _wa) = worker();
@@ -26200,6 +26436,7 @@ mod chat_removal_tests {
                         poll_votes: Vec::new(),
                         receipts: Vec::new(),
                         sealed_edit: None,
+                        edit_id: None,
                     })
                     .collect(),
                 revoked: Vec::new(),
