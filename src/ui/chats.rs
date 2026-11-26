@@ -1225,13 +1225,19 @@ fn row_layout(app: &App, chats: &[Chat]) -> (Vec<f32>, Vec<f32>, f32) {
 
 fn visible_row_range(offsets: &[f32], heights: &[f32], viewport: Rect) -> std::ops::Range<usize> {
     let len = offsets.len();
+    if len == 0 {
+        return 0..0;
+    }
     let start = (0..len)
         .position(|index| offsets[index] + heights[index] > viewport.min.y)
         .unwrap_or(len);
     let end = (start..len)
         .position(|index| offsets[index] >= viewport.max.y)
         .map_or(len, |rel| start + rel);
-    start..end
+    // Lay out one extra row on either side of the viewport (matching
+    // `ScrollArea::show_rows`), so Tab / Shift+Tab can focus the next
+    // off-screen row and scroll it into view.
+    start.saturating_sub(1)..(end + 1).min(len)
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
