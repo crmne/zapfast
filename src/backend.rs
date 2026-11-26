@@ -1150,6 +1150,7 @@ pub enum Command {
     /// Internal result of refreshing participating communities and their subgroups.
     CommunitiesLoaded {
         session: u64,
+        generation: u64,
         /// Each participating community paired with whether its subgroup list
         /// was fetched successfully (`false` preserves cached subgroups).
         communities: Vec<(crate::model::CommunityInfo, bool)>,
@@ -1157,6 +1158,7 @@ pub enum Command {
     /// Internal failure when participating communities could not be refreshed.
     CommunitiesRefreshFailed {
         session: u64,
+        generation: u64,
         error: String,
     },
     /// Joins a subgroup inside a community.

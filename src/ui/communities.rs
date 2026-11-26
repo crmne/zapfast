@@ -35,12 +35,13 @@ fn is_joined(app: &App, id: &str) -> bool {
     visible_chat(app, id).is_some_and(|chat| !chat.left)
 }
 
-/// Returns the non-locked subgroups of `community`.
+/// Returns the non-locked subgroups of `community` visible to the current user.
+/// Hidden subgroups are shown only when the user is a current member.
 fn visible_subgroups<'a>(app: &App, community: &'a CommunityInfo) -> Vec<&'a CommunitySubgroup> {
     community
         .subgroups
         .iter()
-        .filter(|sg| !is_locked(app, &sg.id))
+        .filter(|sg| !is_locked(app, &sg.id) && (!sg.is_hidden_group || is_joined(app, &sg.id)))
         .collect()
 }
 
@@ -163,10 +164,8 @@ pub fn list(app: &mut App, ui: &mut egui::Ui) {
                 return true;
             }
             app.name_matches(&community.name, &needle)
-                || community
-                    .subgroups
-                    .iter()
-                    .filter(|sg| !is_locked(app, &sg.id))
+                || visible_subgroups(app, community)
+                    .into_iter()
                     .any(|sg| app.name_matches(&sg.name, &needle))
         })
         .cloned()
@@ -704,7 +703,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     let unjoined: Vec<&CommunitySubgroup> = community
                         .subgroups
                         .iter()
-                        .filter(|sg| !is_locked(app, &sg.id) && !is_joined(app, &sg.id))
+                        .filter(|sg| {
+                            !is_locked(app, &sg.id)
+                                && !sg.is_hidden_group
+                                && !is_joined(app, &sg.id)
+                        })
                         .collect();
 
                     if !joined.is_empty() {

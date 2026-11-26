@@ -5262,6 +5262,10 @@ impl App {
                 // is discarded, so nothing else would clear this.
                 self.group_saving.clear();
                 self.timer_saving.clear();
+                self.communities.clear();
+                self.selected_community = None;
+                self.communities_loading = false;
+                self.joining_subgroups.clear();
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
                 // went away, but only when that account is the one on screen.

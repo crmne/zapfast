@@ -1001,6 +1001,7 @@ pub async fn run(
         archive_requests: HashMap::new(),
         archive_sequence: 0,
         account_session: 0,
+        communities_refresh_generation: 0,
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
         withheld_pages: Vec::new(),
@@ -1606,6 +1607,9 @@ struct Worker {
     /// group edit's) or ack from the old session is ignored rather than
     /// written to the next one.
     account_session: u64,
+    /// Bumped on every `refresh_communities` call so older snapshots cannot
+    /// overwrite a newer refresh within the same account session.
+    communities_refresh_generation: u64,
     /// Description notices must outlive metadata requested before they arrived.
     description_generation: HashMap<String, u64>,
     /// Superseded metadata operations cannot update the archive or retry queue.
@@ -2032,7 +2036,6 @@ impl Worker {
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
                     | Event::Communities(_)
-                    | Event::SubgroupJoined { .. }
                     | Event::Typing { .. }
                     | Event::Call(_)
                     | Event::PhoneOnlyCall(_)
@@ -2340,6 +2343,8 @@ impl Worker {
         };
         let commands = self.commands.clone();
         let session = self.account_session;
+        self.communities_refresh_generation = self.communities_refresh_generation.wrapping_add(1);
+        let generation = self.communities_refresh_generation;
         tokio::spawn(async move {
             let mut communities: Vec<(crate::model::CommunityInfo, bool)> = Vec::new();
             match client.community().fetch_participating_metadata().await {
@@ -2389,6 +2394,7 @@ impl Worker {
                             );
                             let _ = commands.send(Command::CommunitiesRefreshFailed {
                                 session,
+                                generation,
                                 error: overview_error.to_string(),
                             });
                             return;
@@ -2443,6 +2449,7 @@ impl Worker {
             communities.sort_by_key(|(a, _)| a.name.to_lowercase());
             let _ = commands.send(Command::CommunitiesLoaded {
                 session,
+                generation,
                 communities,
             });
         });
@@ -9310,9 +9317,12 @@ impl Worker {
             }
             Command::CommunitiesLoaded {
                 session,
+                generation,
                 communities,
             } => {
-                if session != self.account_session {
+                if session != self.account_session
+                    || generation != self.communities_refresh_generation
+                {
                     return;
                 }
                 if let Err(error) = self.archive.save_communities(&communities) {
@@ -9320,8 +9330,14 @@ impl Worker {
                 }
                 self.emit_chats();
             }
-            Command::CommunitiesRefreshFailed { session, error } => {
-                if session != self.account_session {
+            Command::CommunitiesRefreshFailed {
+                session,
+                generation,
+                error,
+            } => {
+                if session != self.account_session
+                    || generation != self.communities_refresh_generation
+                {
                     return;
                 }
                 self.emit(Event::CommunitiesRefreshFailed(error));
@@ -20643,6 +20659,7 @@ mod receipt_tests {
             archive_requests: HashMap::new(),
             archive_sequence: 0,
             account_session: 0,
+            communities_refresh_generation: 0,
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
             withheld_pages: Vec::new(),

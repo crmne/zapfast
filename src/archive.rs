@@ -730,7 +730,7 @@ impl Archive {
     /// Replaces cached communities and subgroups inside a nestable savepoint,
     /// propagating links onto existing chat rows.
     ///
-    /// Each entry pairs a [`CommunityInfo`] with `subgroups_loaded`: when
+    /// Each entry pairs a [`crate::model::CommunityInfo`] with `subgroups_loaded`: when
     /// `false` (transient `get_subgroups` error), that community's previously
     /// cached subgroups and chat links are preserved; when `true`, its cached
     /// subgroups and owned chat links are replaced (even if empty).
@@ -826,12 +826,14 @@ impl Archive {
                         subgroup.is_hidden_group,
                     ],
                 )?;
-                self.connection.execute(
-                    "UPDATE chats
-                     SET parent_group_jid = ?2, is_default_sub_group = ?3
-                     WHERE id = ?1",
-                    params![subgroup.id, community.id, subgroup.is_default_sub_group],
-                )?;
+                if *subgroups_loaded {
+                    self.connection.execute(
+                        "UPDATE chats
+                         SET parent_group_jid = ?2, is_default_sub_group = ?3
+                         WHERE id = ?1",
+                        params![subgroup.id, community.id, subgroup.is_default_sub_group],
+                    )?;
+                }
             }
         }
         batch.commit()?;
