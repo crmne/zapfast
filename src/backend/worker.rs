@@ -11187,13 +11187,16 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
+        let community = self.archive.is_community(&id);
         tokio::spawn(async move {
             let fetched = async {
                 let mut picture = None;
                 let mut failed = false;
                 'lookup: for jid in &candidates {
                     for preview in [!full, false] {
-                        let target = if jid.is_group() {
+                        let target = if community {
+                            whatsapp_rust::ProfilePictureTarget::Community(jid)
+                        } else if jid.is_group() {
                             whatsapp_rust::ProfilePictureTarget::Group(jid)
                         } else {
                             whatsapp_rust::ProfilePictureTarget::Contact(jid)

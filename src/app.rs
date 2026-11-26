@@ -2936,6 +2936,9 @@ impl App {
 
     /// The WhatsApp Community that `chat` belongs to, if any.
     pub fn community_of_chat(&self, chat: &Chat) -> Option<&crate::model::CommunityInfo> {
+        if !chat.is_group() {
+            return None;
+        }
         if let Some(parent) = chat.parent_group_jid.as_deref()
             && let Some(community) = self.community(parent)
         {
@@ -2948,6 +2951,9 @@ impl App {
 
     /// Whether `chat` is a community's default Announcements subgroup.
     pub fn is_community_announcements(&self, chat: &Chat) -> bool {
+        if !chat.is_group() {
+            return false;
+        }
         if chat.is_default_sub_group {
             return true;
         }
@@ -3132,6 +3138,17 @@ impl App {
             return self.self_title();
         }
         if chat.is_group() {
+            if self.is_community_announcements(chat)
+                && chat.name.trim().eq_ignore_ascii_case("Announcements")
+                && let Some(community) = self.community_of_chat(chat)
+                && !community.name.trim().is_empty()
+            {
+                return format!(
+                    "{} · {}",
+                    community.name,
+                    crate::i18n::gettext(self.locale, "Announcements")
+                );
+            }
             return chat.name.clone();
         }
         self.person_name_of(&chat.id, None, Some(chat))
@@ -6338,6 +6355,14 @@ impl App {
 
     /// Opens an eligible chat, parking the previous draft and restoring this chat's composer.
     fn open_chat(&mut self, id: ChatId) {
+        // Community parent containers are browsed in Communities, not opened as conversations.
+        if self
+            .chat(&id)
+            .is_some_and(|chat| self.is_community_parent(chat))
+            || self.communities.iter().any(|c| c.id == id)
+        {
+            return;
+        }
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
         if self.chat(&id).is_some_and(|chat| chat.locked) && !self.locked_folder_open() {

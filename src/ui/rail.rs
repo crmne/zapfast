@@ -329,7 +329,11 @@ fn destination_button(
             (
                 Icon::Users,
                 Stop::Communities,
-                gettext(app.locale, "Communities").into_owned(),
+                format!(
+                    "{} ({})",
+                    gettext(app.locale, "Communities"),
+                    super::keys::label("Ctrl+Shift+3")
+                ),
             )
         }
         Destination::Starred => (

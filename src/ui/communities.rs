@@ -55,8 +55,17 @@ fn visible_announcements<'a>(
         .filter(|sg| !is_locked(app, &sg.id))
 }
 
+/// Whether `chat` displays a community or Announcements badge on its chat card, without allocating.
+pub fn has_chat_badge(app: &App, chat: &Chat) -> bool {
+    chat.is_group()
+        && (app.is_community_announcements(chat) || app.community_of_chat(chat).is_some())
+}
+
 /// Returns the community or Announcements badge to display on a chat card, if any.
 pub fn chat_badge(app: &App, chat: &Chat) -> Option<(String, Color32)> {
+    if !chat.is_group() {
+        return None;
+    }
     if app.is_community_announcements(chat) {
         Some((
             gettext(app.locale, "Announcements").into_owned(),
@@ -134,22 +143,27 @@ pub fn paint_card_badge(
 /// Left-pane list of all participating communities and their key groups.
 pub fn list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    let locale = app.locale;
     if app.communities.is_empty() {
         if app.communities_loading {
             widgets::empty_state(
                 ui,
                 &palette,
                 Icon::Users,
-                "Loading communities",
-                "Fetching your WhatsApp Communities and subgroups…",
+                gettext(locale, "Loading communities").as_ref(),
+                gettext(locale, "Fetching your WhatsApp Communities and subgroups…").as_ref(),
             );
         } else {
             widgets::empty_state(
                 ui,
                 &palette,
                 Icon::Users,
-                "No communities yet",
-                "Communities you participate in on WhatsApp appear here.",
+                gettext(locale, "No communities yet").as_ref(),
+                gettext(
+                    locale,
+                    "Communities you participate in on WhatsApp appear here.",
+                )
+                .as_ref(),
             );
         }
         return;
@@ -176,8 +190,8 @@ pub fn list(app: &mut App, ui: &mut egui::Ui) {
             ui,
             &palette,
             Icon::Search,
-            "No matching communities",
-            "Try another community or group name.",
+            gettext(locale, "No matching communities").as_ref(),
+            gettext(locale, "Try another community or group name.").as_ref(),
         );
         return;
     }
@@ -645,11 +659,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     });
 
                     // Action bar
+                    let locale = app.locale;
                     ui.horizontal(|ui| {
                         if let Some(announce) = visible_announcements(app, &community) {
                             let joined_announce = is_joined(app, &announce.id);
-                            let btn = theme::pill_button(ui, &palette, "Open Announcements", true)
-                                .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
+                            let btn = theme::pill_button(
+                                ui,
+                                &palette,
+                                gettext(locale, "Open Announcements").as_ref(),
+                                true,
+                            )
+                            .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
                             if btn.clicked() {
                                 if joined_announce {
                                     app.actions.push(Action::OpenChat(announce.id.clone()));
@@ -661,17 +681,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 }
                             }
                         }
-                        let refresh_btn = theme::pill_button(
-                            ui,
-                            &palette,
-                            if app.communities_loading {
-                                "Refreshing…"
-                            } else {
-                                "Refresh"
-                            },
-                            false,
-                        )
-                        .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
+                        let refresh_label = if app.communities_loading {
+                            gettext(locale, "Refreshing…")
+                        } else {
+                            gettext(locale, "Refresh")
+                        };
+                        let refresh_btn =
+                            theme::pill_button(ui, &palette, refresh_label.as_ref(), false)
+                                .tab_stop(next_stop(&mut overview_stop, Stop::CommunityOverview));
                         if refresh_btn.clicked() {
                             app.actions.push(Action::RefreshCommunities);
                         }
@@ -1283,6 +1300,20 @@ mod tests {
         assert_eq!(visible_subgroups(&app, &community).len(), 2);
         assert_eq!(app.community_unread(&community), 0);
 
+        // Zero-allocation badge check skips private chats and detects community groups.
+        let dm = Chat::new("15550001111@s.whatsapp.net".into(), "Ada".into());
+        assert!(!has_chat_badge(&app, &dm));
+        assert!(has_chat_badge(&app, &app.chats[0]));
+
+        // Disambiguates generic "Announcements" titles with the community name.
+        assert_eq!(app.chat_title(&app.chats[0]), "Community · Announcements");
+
+        // Community parent containers can never be sent to or opened as conversations.
+        let mut parent = Chat::new("comm@g.us".into(), "Community".into());
+        parent.is_parent_group = true;
+        assert!(!parent.can_send());
+        app.chats.push(parent);
+
         // Opening a community overview from an open chat preserves its draft.
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -1301,6 +1332,12 @@ mod tests {
         };
         app.open_chat = Some("ann@g.us".into());
         app.composer = "Unsent draft".into();
+        run_action(&mut app, Action::OpenChat("comm@g.us".into()));
+        assert_eq!(
+            app.open_chat.as_deref(),
+            Some("ann@g.us"),
+            "opening a community parent container is refused"
+        );
         run_action(&mut app, Action::OpenCommunity("comm@g.us".into()));
         assert_eq!(app.open_chat, None);
         assert_eq!(

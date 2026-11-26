@@ -840,6 +840,23 @@ impl Archive {
         Ok(())
     }
 
+    /// Whether `id` is a WhatsApp Community parent JID (cached in `communities`
+    /// or flagged as `is_parent_group` on `chats`). Used to route profile-picture
+    /// lookups through `ProfilePictureTarget::Community`.
+    pub fn is_community(&self, id: &str) -> bool {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM communities WHERE id = ?1
+                    UNION ALL
+                    SELECT 1 FROM chats WHERE id = ?1 AND is_parent_group = 1
+                )",
+                params![id],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap_or(false)
+    }
+
     /// Loads cached communities with their subgroups, announcements first.
     pub fn communities(&self) -> Result<Vec<crate::model::CommunityInfo>> {
         let mut stmt = self.connection.prepare(
@@ -7060,6 +7077,9 @@ mod media_path_tests {
         );
         // Announcements are returned first.
         assert_eq!(loaded[0].subgroups[0].id, "ann-1@g.us");
+        assert!(archive.is_community("comm-1@g.us"));
+        assert!(!archive.is_community("ann-1@g.us"));
+        assert!(!archive.is_community("sub-1@g.us"));
         assert!(
             archive
                 .chat("comm-1@g.us")

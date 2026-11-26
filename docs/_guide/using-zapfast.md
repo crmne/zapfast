@@ -976,11 +976,12 @@ the button under **Calls** brings the full list back.
 
 ## Communities
 
-Open **Communities** from the left rail to browse the WhatsApp Communities you
-participate in, along with their **Announcements** group and linked subgroups.
-ZapFast syncs participating communities and their subgroups from WhatsApp on
-connect and caches them locally in the account archive; use the refresh button
-in the Communities header to update them on demand.
+Open **Communities** from the left rail (`Ctrl+Shift+3`, or `Cmd+Shift+3` on
+macOS) to browse the WhatsApp Communities you participate in, along with their
+**Announcements** group and linked subgroups. ZapFast syncs participating
+communities and their subgroups from WhatsApp on connect and caches them locally
+in the account archive; use the refresh button in the Communities header to
+update them on demand.
 
 - Select **Announcements** or any joined subgroup to open its conversation
   beside the Communities list, or click **Join** on a subgroup you have not
@@ -992,6 +993,7 @@ in the Communities header to update them on demand.
 - Community subgroups and Announcements chats display a compact badge under
   their message preview in the chat list; community parent shells remain in the
   **Communities** tab rather than cluttering the regular chat list.
+
 In a short window, scroll the rail to reach its lower buttons. Tab and
 Shift+Tab bring the focused button into view, too.
 

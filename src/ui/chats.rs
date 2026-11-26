@@ -1239,7 +1239,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn row_height_for(app: &App, chat: &Chat) -> f32 {
-    if super::communities::chat_badge(app, chat).is_some() {
+    if super::communities::has_chat_badge(app, chat) {
         theme::ROW_HEIGHT + super::communities::CARD_BADGE_ROW_EXTRA
     } else {
         theme::ROW_HEIGHT

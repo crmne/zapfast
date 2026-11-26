@@ -150,6 +150,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             match take_destination(input) {
                 Some(1) => actions.extend(super::rail::Destination::Chats.actions(app)),
                 Some(2) => actions.extend(super::rail::Destination::Calls.actions(app)),
+                Some(3) => actions.extend(super::rail::Destination::Communities.actions(app)),
                 _ => {}
             }
         }
@@ -619,9 +620,10 @@ fn take_chat_number(input: &mut egui::InputState) -> Option<usize> {
     number
 }
 
-/// Takes Ctrl+Shift+1 or Ctrl+Shift+2 (Cmd on macOS), the rail's Chats and
-/// Calls, and says which. It goes by the key's place on the keyboard: with
-/// Shift held, each layout reports the digit as a symbol of its own.
+/// Takes Ctrl+Shift+1, Ctrl+Shift+2, or Ctrl+Shift+3 (Cmd on macOS), the
+/// rail's Chats, Calls, and Communities, and says which. It goes by the key's
+/// place on the keyboard: with Shift held, each layout reports the digit as a
+/// symbol of its own.
 fn take_destination(input: &mut egui::InputState) -> Option<u8> {
     let mut destination = None;
     input.events.retain(|event| {
@@ -638,6 +640,7 @@ fn take_destination(input: &mut egui::InputState) -> Option<u8> {
             destination = match physical_key.unwrap_or(*key) {
                 Key::Num1 => Some(1),
                 Key::Num2 => Some(2),
+                Key::Num3 => Some(3),
                 _ => None,
             };
             return destination.is_none();
@@ -1096,6 +1099,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+1..9", "Open a chat by its position in the chat list"),
     ("Ctrl+Shift+1", "Chats"),
     ("Ctrl+Shift+2", "Calls"),
+    ("Ctrl+Shift+3", "Communities"),
     ("↑", "Edit the previous message (when the input is empty)"),
     ("Enter", "Send (Shift+Enter for a new line)"),
     (
@@ -2308,6 +2312,15 @@ mod tests {
         assert!(
             shifted(&mut app, Key::Num2, Key::Num2).is_empty(),
             "Calls is not a toggle"
+        );
+        assert_eq!(
+            shifted(&mut app, Key::Num3, Key::Num3),
+            [Action::Open(Page::Communities)]
+        );
+        app.page = Page::Communities;
+        assert!(
+            shifted(&mut app, Key::Num3, Key::Num3).is_empty(),
+            "Communities is not a toggle"
         );
         assert_eq!(
             shifted(&mut app, Key::Exclamationmark, Key::Num1),
