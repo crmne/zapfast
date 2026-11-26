@@ -1064,6 +1064,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     ui.ctx().data_mut(|data| {
         data.insert_temp(list_offset_id(), output.state.offset.y);
         data.insert_temp(list_offset_id().with("id"), output.id);
+        data.insert_temp(
+            list_offset_id().with("content_height"),
+            output.content_size.y,
+        );
+        data.insert_temp(list_offset_id().with("inner_rect"), output.inner_rect);
     });
 }
 
@@ -1203,7 +1208,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn row_height_for(app: &App, chat: &Chat) -> f32 {
-    if !app.settings.show_label_pills || labels::chat_labels(app, chat).is_empty() {
+    if !app.settings.show_label_pills || !labels::has_chat_labels(app, chat) {
         theme::ROW_HEIGHT
     } else {
         theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA
@@ -3331,5 +3336,87 @@ mod tests {
         let center = compact_badge_center(avatar);
         assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
         assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
+    }
+
+    #[test]
+    fn mixed_height_chat_list_scrolls_to_reveal_offscreen_labeled_row() {
+        let (_directory, mut app, _ids, ctx) = rail_app(0);
+        app.labels = vec![crate::model::Label {
+            id: "label-work".into(),
+            name: "Work".into(),
+            color_hex: "#3b82f6".into(),
+            created_at: 1,
+        }];
+        let mut expected_total = 0.0;
+        for index in 0..16 {
+            let mut chat = Chat::new(
+                format!("1555000{index:04}@s.whatsapp.net"),
+                format!("Chat {index:02}"),
+            );
+            // Newer timestamps first so chat 0 is at the top and chat 15 at the bottom.
+            chat.last_activity = 1_000 - index as i64;
+            if index % 2 == 0 {
+                chat.labels = vec!["label-work".into()];
+                expected_total += theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA;
+            } else {
+                expected_total += theme::ROW_HEIGHT;
+            }
+            app.chats.push(chat);
+        }
+        let target = app.chats[14].id.clone(); // labeled row well below a 360px viewport
+        assert!(labels::has_chat_labels(&app, &app.chats[14]));
+        assert!(!labels::has_chat_labels(&app, &app.chats[13]));
+
+        let draw = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 360.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(app, ui);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        draw(&mut app);
+        draw(&mut app);
+
+        let content_height = ctx
+            .data(|data| data.get_temp::<f32>(list_offset_id().with("content_height")))
+            .expect("content height recorded");
+        assert!(
+            (content_height - expected_total).abs() < 1.0,
+            "total scroll extent {content_height} should match mixed row heights {expected_total}"
+        );
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(chat_row_id(&target)))
+                .is_none(),
+            "deep off-screen labeled row starts virtualized out"
+        );
+
+        app.scroll_chat_into_view = Some(target.clone());
+        draw(&mut app);
+        draw(&mut app);
+
+        let inner_rect = ctx
+            .data(|data| data.get_temp::<Rect>(list_offset_id().with("inner_rect")))
+            .expect("list viewport recorded");
+        let offset = ctx
+            .data(|data| data.get_temp::<f32>(list_offset_id()))
+            .expect("scroll offset recorded");
+        let revealed = ctx
+            .data(|data| data.get_temp::<Rect>(chat_row_id(&target)))
+            .expect("target labeled row is drawn after scrolling into view");
+        assert!(offset > 0.0, "list scrolled down to reveal target row");
+        assert_eq!(
+            revealed.height(),
+            theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA
+        );
+        assert!(
+            revealed.top() >= inner_rect.top() - 1.0
+                && revealed.bottom() <= inner_rect.bottom() + 1.0,
+            "revealed row {revealed:?} must lie within viewport {inner_rect:?}"
+        );
     }
 }

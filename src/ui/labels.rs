@@ -27,6 +27,15 @@ const ROW_HEIGHT: f32 = 34.0;
 /// Extra height added to a chat-list row when it displays label pills.
 pub const CARD_PILL_ROW_EXTRA: f32 = 20.0;
 
+/// Whether `chat` wears at least one existing label, without allocating.
+pub fn has_chat_labels(app: &App, chat: &Chat) -> bool {
+    !chat.labels.is_empty()
+        && app
+            .labels
+            .iter()
+            .any(|label| app.chat_wears(chat, &label.id))
+}
+
 /// Returns the existing labels worn by `chat`, ordered to match the filter bar.
 pub fn chat_labels<'a>(app: &'a App, chat: &Chat) -> Vec<&'a Label> {
     if chat.labels.is_empty() {
