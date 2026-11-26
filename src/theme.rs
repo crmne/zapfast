@@ -169,6 +169,39 @@ impl Palette {
         }
     }
 
+    /// Messages' dark theme as an OLED display shows it: a pure black window
+    /// and conversation, iOS's dark grey for others' bubbles, and the same
+    /// iMessage blue, white text on it.
+    pub fn messages_oled() -> Self {
+        Self {
+            dark: true,
+            window: Color32::BLACK,
+            panel: Color32::from_rgb(0x0a, 0x0a, 0x0b),
+            surface: Color32::from_rgb(0x1c, 0x1c, 0x1e),
+            surface_hover: Color32::from_rgb(0x2c, 0x2c, 0x2e),
+            surface_active: Color32::from_rgb(0x3a, 0x3a, 0x3c),
+            outline: Color32::from_rgb(0x1c, 0x1c, 0x1e),
+            text: Color32::from_rgb(0xf5, 0xf5, 0xf7),
+            secondary: Color32::from_rgb(0xae, 0xae, 0xb2),
+            dim: Color32::from_rgb(0x8e, 0x8e, 0x93),
+            accent: Color32::from_rgb(0x0a, 0x84, 0xff),
+            accent_hover: Color32::from_rgb(0x40, 0x9c, 0xff),
+            on_accent: Color32::WHITE,
+            danger: Color32::from_rgb(0xff, 0x45, 0x3a),
+            warning: Color32::from_rgb(0xff, 0xd6, 0x0a),
+            overlay: Color32::from_rgb(0x1c, 0x1c, 0x1e),
+            shadow: Color32::from_black_alpha(200),
+            chat: Color32::BLACK,
+            // iOS's secondarySystemBackground in dark mode, lighter than
+            // the black behind it as Messages draws incoming balloons.
+            bubble_in: Color32::from_rgb(0x26, 0x26, 0x2a),
+            bubble_out: MESSAGES_BLUE_DARK[0],
+            link: Color32::from_rgb(0x64, 0xd2, 0xff),
+            read: Color32::from_rgb(0x64, 0xd2, 0xff),
+            bubbles: BubbleStyle::Messages,
+        }
+    }
+
     /// The Messages theme in macOS's light greys, with Messages' light grey
     /// and its light iMessage blue, white text on it.
     pub fn messages_light() -> Self {
@@ -1795,6 +1828,20 @@ mod tests {
         assert_eq!(dark.on_accent, Color32::WHITE);
     }
 
+    /// The OLED variant is Messages' shape and blue on a genuinely black
+    /// window and conversation, with a grey that still separates others'
+    /// bubbles from it.
+    #[test]
+    fn messages_oled_is_black_with_blue_bubbles() {
+        let palette = Palette::messages_oled();
+        assert!(palette.dark);
+        assert_eq!(palette.window, Color32::BLACK);
+        assert_eq!(palette.chat, Color32::BLACK);
+        assert_eq!(palette.bubbles, BubbleStyle::Messages);
+        assert_eq!(palette.bubble_out, MESSAGES_BLUE_DARK[0]);
+        assert_ne!(palette.bubble_in, palette.chat);
+    }
+
     /// Your own Messages bubbles follow a default Mac exactly rather than
     /// WCAG: iMessage blue with white text, links and ticks on it, which
     /// Apple accepts at under 4.5:1 (about 1.9:1 at the light gradient's
@@ -1804,6 +1851,7 @@ mod tests {
     fn own_messages_bubbles_follow_apple() {
         for (palette, blue) in [
             (Palette::messages(), MESSAGES_BLUE_DARK),
+            (Palette::messages_oled(), MESSAGES_BLUE_DARK),
             (Palette::messages_light(), MESSAGES_BLUE_LIGHT),
         ] {
             assert_eq!(palette.bubble_out_gradient(), Some((blue[0], blue[1])));

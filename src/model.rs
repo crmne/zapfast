@@ -2038,8 +2038,11 @@ pub enum CallDirection {
 }
 
 /// The tabs of the picker above the composer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PickerTab {
+    /// Where the composer's emoji button opens until another tab is used.
+    #[default]
     Emoji,
     Gifs,
     Stickers,

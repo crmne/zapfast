@@ -1558,6 +1558,7 @@ impl App {
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
                 ThemeChoice::Messages => Palette::messages(),
+                ThemeChoice::MessagesOled => Palette::messages_oled(),
                 _ => Palette::dark(),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -7219,6 +7220,8 @@ impl App {
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
+                // Its OLED variant is black whatever the system does.
+                ThemeChoice::MessagesOled => egui::ThemePreference::Dark,
             },
             |palette| {
                 if palette.dark {
@@ -7261,19 +7264,16 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::Messages {
-                if dark {
-                    Palette::messages()
-                } else {
-                    Palette::messages_light()
-                }
-            } else if dark {
-                Palette::dark()
-            } else {
-                Palette::light()
-            }
-        });
+        let palette = self
+            .settings
+            .cached_palette()
+            .unwrap_or_else(|| match self.settings.theme {
+                ThemeChoice::Messages if dark => Palette::messages(),
+                ThemeChoice::Messages => Palette::messages_light(),
+                ThemeChoice::MessagesOled => Palette::messages_oled(),
+                _ if dark => Palette::dark(),
+                _ => Palette::light(),
+            });
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
         }
@@ -8698,6 +8698,18 @@ impl App {
                     self.picker = None;
                     self.refocus_composer(ctx);
                 } else {
+                    // The composer's emoji button asks for Emoji: reopen
+                    // whichever tab was used last instead, so a sticker or
+                    // GIF user lands back where they left.
+                    let tab = if self.picker.is_none() && tab == PickerTab::Emoji {
+                        self.settings.picker_tab
+                    } else {
+                        tab
+                    };
+                    if self.settings.picker_tab != tab {
+                        self.settings.picker_tab = tab;
+                        self.mark_settings_dirty();
+                    }
                     self.picker = Some(tab);
                     self.picker_search.clear();
                     self.picker_focus = tab == PickerTab::Emoji;
@@ -14760,6 +14772,28 @@ mod tests {
         app.focus_messages = true;
         app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
         assert!(!app.focus_messages);
+    }
+
+    /// The composer's emoji button reopens whichever picker tab was used
+    /// last, and choosing a tab remembers it.
+    #[test]
+    fn the_emoji_button_reopens_the_last_picker_tab() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
+        assert_eq!(app.picker, Some(PickerTab::Emoji));
+        app.apply(Action::TogglePicker(PickerTab::Stickers), &ctx);
+        assert_eq!(app.picker, Some(PickerTab::Stickers));
+        assert_eq!(app.settings.picker_tab, PickerTab::Stickers);
+        app.apply(Action::ClosePicker, &ctx);
+        app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
+        assert_eq!(
+            app.picker,
+            Some(PickerTab::Stickers),
+            "the emoji button opens the tab used last"
+        );
     }
 
     /// A reaction picker the message list opened is not handed back to the

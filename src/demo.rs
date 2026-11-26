@@ -3321,6 +3321,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "messages" => {
                 app.settings.theme = ThemeChoice::Messages;
             }
+            "messages-oled" => {
+                app.settings.theme = ThemeChoice::MessagesOled;
+            }
             // Messages follows the system; this shows its light side anywhere.
             "messages-light" => {
                 app.settings.custom_theme = Some("Messages light.json".into());

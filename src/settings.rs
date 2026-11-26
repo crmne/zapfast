@@ -36,13 +36,23 @@ pub enum ThemeChoice {
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
     Messages,
+    /// Messages' bubbles on an OLED black window, with the same iMessage
+    /// blue for your own messages.
+    #[serde(rename = "messages-oled")]
+    MessagesOled,
 }
 
 impl ThemeChoice {
     /// The choices Settings offers, on every platform. Messages shows the
     /// desktop through its window where the platform can, and is opaque in
     /// its own colours elsewhere (see [`crate::backdrop`]).
-    pub const ALL: &[ThemeChoice] = &[Self::System, Self::Light, Self::Dark, Self::Messages];
+    pub const ALL: &[ThemeChoice] = &[
+        Self::System,
+        Self::Light,
+        Self::Dark,
+        Self::Messages,
+        Self::MessagesOled,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -50,6 +60,7 @@ impl ThemeChoice {
             Self::Light => "Light",
             Self::System => "Follow system",
             Self::Messages => "Messages",
+            Self::MessagesOled => "Messages OLED",
         }
     }
 }
@@ -416,6 +427,10 @@ pub struct Settings {
     /// system instead of rejecting the whole file; this marks the rest.
     #[serde(skip_serializing)]
     pub(crate) messages_theme: bool,
+    /// Whether that Messages mark means its OLED variant. Written beside it,
+    /// so a release without the variant still reads Messages.
+    #[serde(skip_serializing)]
+    pub(crate) messages_oled: bool,
     /// The interface's typeface.
     pub font: FontChoice,
     /// Windows and Linux: draw ZapFast's own title bar and window buttons
@@ -472,6 +487,8 @@ pub struct Settings {
     pub show_shortcut_hints: bool,
     /// Recently used emoji, newest first.
     pub recent_emoji: Vec<String>,
+    /// The tab the composer's emoji button opens: whichever was used last.
+    pub picker_tab: crate::model::PickerTab,
     /// Emoji reaction usage on this device, most-used first (recent breaks ties).
     pub reaction_emoji: Vec<(String, u32)>,
     /// User GIPHY API key. Empty uses the optional built-in key.
@@ -556,6 +573,7 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::System,
             messages_theme: false,
+            messages_oled: false,
             font: FontChoice::System,
             custom_titlebar: false,
             interface_language: None,
@@ -577,6 +595,7 @@ impl Default for Settings {
             last_chat: None,
             show_shortcut_hints: true,
             recent_emoji: Vec::new(),
+            picker_tab: crate::model::PickerTab::Emoji,
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
@@ -724,15 +743,21 @@ impl Settings {
         serde_json::to_string_pretty(&self.to_file()?).map_err(std::io::Error::other)
     }
 
-    /// The settings as the file stores them: Messages is written as Follow
-    /// system plus a mark, so older releases still read the file.
+    /// The settings as the file stores them: Messages and its OLED variant
+    /// are written as Follow system plus a mark, so older releases still read
+    /// the file (the OLED variant as Messages).
     fn to_file(&self) -> std::io::Result<serde_json::Value> {
         let mut value = serde_json::to_value(self).map_err(std::io::Error::other)?;
-        if self.theme == ThemeChoice::Messages
-            && let Some(fields) = value.as_object_mut()
+        if matches!(
+            self.theme,
+            ThemeChoice::Messages | ThemeChoice::MessagesOled
+        ) && let Some(fields) = value.as_object_mut()
         {
             fields.insert("theme".into(), serde_json::to_value(ThemeChoice::System)?);
             fields.insert("messages_theme".into(), true.into());
+            if self.theme == ThemeChoice::MessagesOled {
+                fields.insert("messages_oled".into(), true.into());
+            }
         }
         Ok(value)
     }
@@ -741,8 +766,13 @@ impl Settings {
     /// step runs once: the next save records the version, so a colour chosen
     /// again afterwards is kept.
     fn migrate(&mut self) {
+        let oled = std::mem::take(&mut self.messages_oled);
         if std::mem::take(&mut self.messages_theme) && self.theme == ThemeChoice::System {
-            self.theme = ThemeChoice::Messages;
+            self.theme = if oled {
+                ThemeChoice::MessagesOled
+            } else {
+                ThemeChoice::Messages
+            };
         }
         if self.version < 1 {
             // Old files store every field, so a default colour cannot be told
@@ -997,6 +1027,7 @@ mod tests {
             ThemeChoice::Light,
             ThemeChoice::System,
             ThemeChoice::Messages,
+            ThemeChoice::MessagesOled,
         ] {
             let settings = Settings {
                 theme,
@@ -1005,6 +1036,22 @@ mod tests {
             settings.save(&path).unwrap();
             assert_eq!(Settings::load(&path).theme, theme);
         }
+    }
+
+    /// The picker's last tab survives a save and load, and a settings file
+    /// written before the field existed opens the emoji tab.
+    #[test]
+    fn the_last_picker_tab_is_kept() {
+        let settings = Settings {
+            picker_tab: crate::model::PickerTab::Stickers,
+            ..Settings::default()
+        };
+        let written = serde_json::to_string(&settings).unwrap();
+        assert!(written.contains("\"picker_tab\":\"stickers\""));
+        let loaded: Settings = serde_json::from_str(&written).unwrap();
+        assert_eq!(loaded.picker_tab, crate::model::PickerTab::Stickers);
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.picker_tab, crate::model::PickerTab::Emoji);
     }
 
     #[test]
@@ -1055,6 +1102,19 @@ mod tests {
         assert_eq!(written["theme"], "system");
         assert_eq!(written["messages_theme"], true);
         assert_eq!(Settings::load(&path).theme, ThemeChoice::Messages);
+        // The OLED variant adds its own mark beside the Messages one, so a
+        // release without it still reads Messages.
+        let oled = Settings {
+            theme: ThemeChoice::MessagesOled,
+            ..Settings::default()
+        };
+        oled.save(&path).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["theme"], "system");
+        assert_eq!(written["messages_theme"], true);
+        assert_eq!(written["messages_oled"], true);
+        assert_eq!(Settings::load(&path).theme, ThemeChoice::MessagesOled);
         // Follow system stays Follow system, without the mark.
         let system = Settings {
             theme: ThemeChoice::System,
