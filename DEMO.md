@@ -105,6 +105,9 @@ The editable group includes a multiline description; the locked group has none.
 For deterministic theme screenshots, `--demo-page settings,omarchy` and
 `--demo-page settings,omarchy-light` preview following dark and light Omarchy
 palettes without changing the desktop theme.
+Use `--demo-page communities` for the Communities tab with sample subgroups and
+Announcements, and `--demo-page community-chat` for a linked group with its
+chat-list community badge, header switcher, and info panel community card.
 
 Use `--demo-page preview` for a photo viewer with three pictures, text between
 the second and third picture. Hover over the photo to show the previous/next

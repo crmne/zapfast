@@ -964,8 +964,8 @@ wearing it, channels included. A label is one more chip: picking it lets go of
 the other chips, it does not narrow search or the archive. Click the active
 label chip again, or **All**, to see every chat.
 
-A thin rail runs down the left of the chat list: **Chats** and **Calls**
-(`Ctrl+Shift+1` and `Ctrl+Shift+2`, Command on macOS) at the top;
+A thin rail runs down the left of the chat list: **Chats**, **Calls**, and
+**Communities** at the top;
 **Starred**, **Archived** and **Locked** (while you have archived or locked
 chats), **Settings**, and your own picture (the account switcher) at the
 bottom. The one on screen is lit. The chat list's header keeps its title, **New
@@ -973,6 +973,27 @@ chat**, and the button beside it (`Ctrl+B`), which hides the list: the chats'
 avatars then fill the rail between its top and bottom buttons. Unread chats
 show their badge, hovering names a chat, clicking opens it, and `Ctrl+B` or
 the button under **Calls** brings the full list back.
+
+## Communities
+
+Open **Communities** from the left rail (`Ctrl+Shift+3`, or `Cmd+Shift+3` on
+macOS) to browse the WhatsApp Communities you participate in, along with their
+**Announcements** group and linked subgroups. ZapFast syncs participating
+communities and their subgroups from WhatsApp on connect and caches them locally
+in the account archive; use the refresh button in the Communities header to
+update them on demand.
+
+- Select **Announcements** or any joined subgroup to open its conversation
+  beside the Communities list, or click **Join** on a subgroup you have not
+  joined yet.
+- From any group or Announcements chat belonging to a community, use the
+  **Community** switcher button in the conversation header (or the **Community**
+  card in **Group info** / **Community info**) to jump between Announcements and
+  linked subgroups or open the full community overview.
+- Community subgroups and Announcements chats display a compact badge under
+  their message preview in the chat list; community parent shells remain in the
+  **Communities** tab rather than cluttering the regular chat list.
+
 In a short window, scroll the rail to reach its lower buttons. Tab and
 Shift+Tab bring the focused button into view, too.
 

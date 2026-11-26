@@ -219,6 +219,22 @@ END;
 -- One person can be both a privacy id and a phone number; merging the two
 -- looks receipts up by recipient, and the primary key cannot serve that.
 CREATE INDEX IF NOT EXISTS group_receipts_by_recipient ON group_receipts (recipient);
+CREATE TABLE IF NOT EXISTS communities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    participant_count INTEGER
+);
+CREATE TABLE IF NOT EXISTS community_subgroups (
+    community_id TEXT NOT NULL,
+    subgroup_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    participant_count INTEGER,
+    is_default_sub_group INTEGER NOT NULL DEFAULT 0,
+    is_general_chat INTEGER NOT NULL DEFAULT 0,
+    is_hidden_group INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (community_id, subgroup_id)
+);
 ";
 
 const CHAT_COLUMNS: &str =
@@ -228,7 +244,9 @@ const CHAT_COLUMNS: &str =
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
                     c.info_locked, c.group_admin, c.group_description, c.voice_speed,
-                    c.group_settings";
+                    c.group_settings, c.parent_group_jid,
+                    (c.is_parent_group != 0 OR EXISTS(SELECT 1 FROM communities cm WHERE cm.id = c.id)),
+                    c.is_default_sub_group";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -279,6 +297,14 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
+    // WhatsApp Community hierarchy metadata on group chats.
+    ("chats", "parent_group_jid", "TEXT"),
+    ("chats", "is_parent_group", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "chats",
+        "is_default_sub_group",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
 ];
 
 /// One copy of a message that a merge meets twice, as stored.
@@ -388,6 +414,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         group_settings: row
             .get::<_, Option<String>>(27)?
             .and_then(|settings| serde_json::from_str(&settings).ok()),
+        parent_group_jid: row.get(28)?,
+        is_parent_group: row.get(29)?,
+        is_default_sub_group: row.get(30)?,
     })
 }
 
@@ -599,8 +628,8 @@ impl Archive {
     /// Creates a chat or replaces a phone-number title with a better name.
     pub fn upsert_chat(&self, chat: &Chat) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known, is_parent_group)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, EXISTS(SELECT 1 FROM communities WHERE id = ?1))
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 group_subject_known = excluded.group_subject_known,
@@ -608,7 +637,8 @@ impl Archive {
                 archived = CASE WHEN archive_updated_at IS NULL THEN excluded.archived ELSE archived END,
                 pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
                 pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
-                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
+                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END,
+                is_parent_group = MAX(is_parent_group, excluded.is_parent_group)",
             params![
                 chat.id,
                 chat.name,
@@ -681,6 +711,193 @@ impl Archive {
             params![id, description],
         )?;
         Ok(())
+    }
+
+    /// Records a group's community parent and role flags from group metadata.
+    pub fn set_group_community_meta(
+        &self,
+        id: &str,
+        parent_group_jid: Option<&str>,
+        is_parent_group: bool,
+        is_default_sub_group: bool,
+    ) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats
+             SET parent_group_jid = ?2, is_parent_group = ?3, is_default_sub_group = ?4
+             WHERE id = ?1",
+            params![id, parent_group_jid, is_parent_group, is_default_sub_group],
+        )?;
+        Ok(())
+    }
+
+    /// Replaces cached communities and subgroups inside a nestable savepoint,
+    /// propagating links onto existing chat rows.
+    ///
+    /// Each entry pairs a [`crate::model::CommunityInfo`] with `subgroups_loaded`: when
+    /// `false` (transient `get_subgroups` error), that community's previously
+    /// cached subgroups and chat links are preserved; when `true`, its cached
+    /// subgroups and owned chat links are replaced (even if empty).
+    pub fn save_communities(
+        &self,
+        communities: &[(crate::model::CommunityInfo, bool)],
+    ) -> Result<()> {
+        let batch = Batch::begin(&self.connection)?;
+
+        // Snapshot previously cached communities and subgroups so failed
+        // subgroup lookups can preserve their prior rows and removed/refreshed
+        // communities can clean up stale links in `chats` without disturbing
+        // group-metadata links for communities outside this snapshot.
+        let prev_communities = self.communities()?;
+        let prev_ids: std::collections::HashSet<String> =
+            prev_communities.iter().map(|c| c.id.clone()).collect();
+        let prev_subgroups: std::collections::HashMap<
+            String,
+            Vec<crate::model::CommunitySubgroup>,
+        > = prev_communities
+            .into_iter()
+            .map(|c| (c.id, c.subgroups))
+            .collect();
+        let next_ids: std::collections::HashSet<&str> =
+            communities.iter().map(|(c, _)| c.id.as_str()).collect();
+
+        // Clear links for communities no longer present in the participating snapshot.
+        for old_id in &prev_ids {
+            if !next_ids.contains(old_id.as_str()) {
+                self.connection.execute(
+                    "UPDATE chats SET is_parent_group = 0 WHERE id = ?1",
+                    params![old_id],
+                )?;
+                self.connection.execute(
+                    "UPDATE chats
+                     SET parent_group_jid = NULL, is_default_sub_group = 0
+                     WHERE parent_group_jid = ?1",
+                    params![old_id],
+                )?;
+            }
+        }
+        // Reset chat links for communities whose subgroup list was freshly loaded.
+        for (community, subgroups_loaded) in communities {
+            if *subgroups_loaded {
+                self.connection.execute(
+                    "UPDATE chats
+                     SET parent_group_jid = NULL, is_default_sub_group = 0
+                     WHERE parent_group_jid = ?1",
+                    params![community.id],
+                )?;
+            }
+        }
+
+        self.connection
+            .execute("DELETE FROM community_subgroups", [])?;
+        self.connection.execute("DELETE FROM communities", [])?;
+        for (community, subgroups_loaded) in communities {
+            self.connection.execute(
+                "INSERT INTO communities (id, name, description, participant_count)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    community.id,
+                    community.name,
+                    community.description,
+                    community.participant_count,
+                ],
+            )?;
+            self.connection.execute(
+                "UPDATE chats SET is_parent_group = 1 WHERE id = ?1",
+                params![community.id],
+            )?;
+            let effective_subgroups: &[crate::model::CommunitySubgroup] = if *subgroups_loaded {
+                &community.subgroups
+            } else {
+                prev_subgroups
+                    .get(&community.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+            };
+            for subgroup in effective_subgroups {
+                self.connection.execute(
+                    "INSERT INTO community_subgroups (
+                        community_id, subgroup_id, name, participant_count,
+                        is_default_sub_group, is_general_chat, is_hidden_group
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        community.id,
+                        subgroup.id,
+                        subgroup.name,
+                        subgroup.participant_count,
+                        subgroup.is_default_sub_group,
+                        subgroup.is_general_chat,
+                        subgroup.is_hidden_group,
+                    ],
+                )?;
+                if *subgroups_loaded {
+                    self.connection.execute(
+                        "UPDATE chats
+                         SET parent_group_jid = ?2, is_default_sub_group = ?3
+                         WHERE id = ?1",
+                        params![subgroup.id, community.id, subgroup.is_default_sub_group],
+                    )?;
+                }
+            }
+        }
+        batch.commit()?;
+        Ok(())
+    }
+
+    /// Whether `id` is a WhatsApp Community parent JID (cached in `communities`
+    /// or flagged as `is_parent_group` on `chats`). Used to route profile-picture
+    /// lookups through `ProfilePictureTarget::Community`.
+    pub fn is_community(&self, id: &str) -> bool {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM communities WHERE id = ?1
+                    UNION ALL
+                    SELECT 1 FROM chats WHERE id = ?1 AND is_parent_group = 1
+                )",
+                params![id],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap_or(false)
+    }
+
+    /// Loads cached communities with their subgroups, announcements first.
+    pub fn communities(&self) -> Result<Vec<crate::model::CommunityInfo>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT id, name, description, participant_count FROM communities ORDER BY name COLLATE NOCASE",
+        )?;
+        let mut communities: Vec<crate::model::CommunityInfo> = stmt
+            .query_map([], |row| {
+                Ok(crate::model::CommunityInfo {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    participant_count: row.get(3)?,
+                    subgroups: Vec::new(),
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut sub_stmt = self.connection.prepare(
+            "SELECT subgroup_id, name, participant_count, is_default_sub_group, is_general_chat, is_hidden_group
+             FROM community_subgroups
+             WHERE community_id = ?1
+             ORDER BY is_default_sub_group DESC, is_general_chat DESC, name COLLATE NOCASE",
+        )?;
+        for community in &mut communities {
+            community.subgroups = sub_stmt
+                .query_map(params![community.id], |row| {
+                    Ok(crate::model::CommunitySubgroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        participant_count: row.get(2)?,
+                        is_default_sub_group: row.get(3)?,
+                        is_general_chat: row.get(4)?,
+                        is_hidden_group: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>>>()?;
+        }
+        Ok(communities)
     }
 
     /// Records a group's permissions and admins, from its metadata or a
@@ -2958,7 +3175,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM community_subgroups; DELETE FROM communities; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -6811,5 +7028,123 @@ mod media_path_tests {
             ids(archive.media_docs_links(chat, 2).expect("rows")),
             ["link"]
         );
+    }
+
+    #[test]
+    fn communities_round_trip_nest_preserve_failed_lookups_and_clear_on_unlink() {
+        let archive = Archive::in_memory().expect("opens");
+        archive.ensure_chat("comm-1@g.us", "Rust Berlin").unwrap();
+        archive.ensure_chat("ann-1@g.us", "Announcements").unwrap();
+        archive.ensure_chat("sub-1@g.us", "Async WG").unwrap();
+        archive.ensure_chat("sub-2@g.us", "GUI WG").unwrap();
+        archive
+            .ensure_chat("external-sub@g.us", "Outside Snapshot")
+            .unwrap();
+        archive
+            .set_group_community_meta("external-sub@g.us", Some("comm-ext@g.us"), false, false)
+            .unwrap();
+
+        let make_sg = |id: &str, name: &str, is_default: bool| crate::model::CommunitySubgroup {
+            id: id.into(),
+            name: name.into(),
+            participant_count: Some(12),
+            is_default_sub_group: is_default,
+            is_general_chat: false,
+            is_hidden_group: false,
+        };
+        let initial = crate::model::CommunityInfo {
+            id: "comm-1@g.us".into(),
+            name: "Rust Berlin".into(),
+            description: Some("Systems programming".into()),
+            participant_count: Some(42),
+            subgroups: vec![
+                make_sg("sub-1@g.us", "Async WG", false),
+                make_sg("ann-1@g.us", "Announcements", true),
+                make_sg("sub-2@g.us", "GUI WG", false),
+            ],
+        };
+
+        // Must nest inside an outer worker batch without failing on transactions.
+        archive.begin_batch().unwrap();
+        archive
+            .save_communities(&[(initial.clone(), true)])
+            .unwrap();
+        archive.end_batch().unwrap();
+
+        let loaded = archive.communities().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Rust Berlin");
+        assert_eq!(
+            loaded[0].description.as_deref(),
+            Some("Systems programming")
+        );
+        // Announcements are returned first.
+        assert_eq!(loaded[0].subgroups[0].id, "ann-1@g.us");
+        assert!(archive.is_community("comm-1@g.us"));
+        assert!(!archive.is_community("ann-1@g.us"));
+        assert!(!archive.is_community("sub-1@g.us"));
+        assert!(
+            archive
+                .chat("comm-1@g.us")
+                .unwrap()
+                .unwrap()
+                .is_parent_group
+        );
+        let ann = archive.chat("ann-1@g.us").unwrap().unwrap();
+        assert_eq!(ann.parent_group_jid.as_deref(), Some("comm-1@g.us"));
+        assert!(ann.is_default_sub_group);
+
+        // A transient `get_subgroups` failure (`subgroups_loaded = false`) preserves
+        // cached subgroups and chat links instead of wiping them.
+        let mut failed_lookup = initial.clone();
+        failed_lookup.subgroups.clear();
+        archive.save_communities(&[(failed_lookup, false)]).unwrap();
+        let after_failed = archive.communities().unwrap();
+        assert_eq!(after_failed[0].subgroups.len(), 3);
+        assert_eq!(
+            archive
+                .chat("sub-2@g.us")
+                .unwrap()
+                .unwrap()
+                .parent_group_jid
+                .as_deref(),
+            Some("comm-1@g.us")
+        );
+
+        // A successful refresh removing `sub-2@g.us` clears its stale link in `chats`
+        // without disturbing links for communities outside the snapshot.
+        let mut pruned = initial.clone();
+        pruned.subgroups.retain(|sg| sg.id != "sub-2@g.us");
+        archive.save_communities(&[(pruned, true)]).unwrap();
+        let sub2 = archive.chat("sub-2@g.us").unwrap().unwrap();
+        assert_eq!(sub2.parent_group_jid, None);
+        assert!(!sub2.is_default_sub_group);
+        let external = archive.chat("external-sub@g.us").unwrap().unwrap();
+        assert_eq!(external.parent_group_jid.as_deref(), Some("comm-ext@g.us"));
+
+        // Inserting a community parent chat row AFTER `save_communities` still marks it
+        // as a non-sendable parent container regardless of insertion order.
+        let late_parent = crate::model::CommunityInfo {
+            id: "comm-late@g.us".into(),
+            name: "Late Parent".into(),
+            description: None,
+            participant_count: Some(5),
+            subgroups: Vec::new(),
+        };
+        archive.save_communities(&[(late_parent, true)]).unwrap();
+        let late_chat = Chat::new("comm-late@g.us".into(), "Late Parent".into());
+        archive.upsert_chat(&late_chat).unwrap();
+        let loaded_late = archive.chat("comm-late@g.us").unwrap().unwrap();
+        assert!(loaded_late.is_parent_group);
+        assert!(!loaded_late.can_send());
+
+        // Unlinking clears both community tables completely.
+        archive.clear().unwrap();
+        assert!(archive.communities().unwrap().is_empty());
+        let remaining_subgroups: i64 = archive
+            .connection
+            .query_row("SELECT COUNT(*) FROM community_subgroups", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining_subgroups, 0);
     }
 }

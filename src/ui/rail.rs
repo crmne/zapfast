@@ -64,6 +64,7 @@ pub fn lights_overhang(ctx: &egui::Context) -> f32 {
 pub enum Destination {
     Chats,
     Calls,
+    Communities,
     Starred,
     Archived,
     Locked,
@@ -77,6 +78,7 @@ impl Destination {
         match self {
             Self::Chats => chats && !app.show_archived && !app.locked_folder_open(),
             Self::Calls => app.page == Page::Calls,
+            Self::Communities => app.page == Page::Communities,
             Self::Starred => app.page == Page::Chats && app.show_starred,
             Self::Archived => chats && app.show_archived,
             Self::Locked => chats && app.locked_folder_open(),
@@ -119,6 +121,11 @@ impl Destination {
             Self::Calls => {
                 if app.page != Page::Calls {
                     actions.push(Action::Open(Page::Calls));
+                }
+            }
+            Self::Communities => {
+                if app.page != Page::Communities {
+                    actions.push(Action::Open(Page::Communities));
                 }
             }
             Self::Starred => {
@@ -193,7 +200,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         .filter(|destination| destination.offered(app))
         .collect();
         let foot = bottom.len() as f32 * (PLATE + GAP) + GAP + AVATAR + GAP;
-        let minimum = 2.0 * CELL
+        let minimum = 3.0 * CELL
             + foot
             + if hidden {
                 CELL + GAP + MIN_AVATARS
@@ -210,7 +217,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 // the content keeps its minimum height and scrolls instead
                 // of leaving the bottom buttons beyond the window.
                 ui.set_height(height);
-                for destination in [Destination::Chats, Destination::Calls] {
+                for destination in [
+                    Destination::Chats,
+                    Destination::Calls,
+                    Destination::Communities,
+                ] {
                     destination_button(app, ui, &palette, destination, CELL);
                 }
                 if hidden {
@@ -309,6 +320,22 @@ fn destination_button(
                 super::keys::label("Ctrl+Shift+2")
             ),
         ),
+        Destination::Communities => {
+            badge = app
+                .communities
+                .iter()
+                .map(|c| app.community_unread(c))
+                .sum::<usize>() as u32;
+            (
+                Icon::Users,
+                Stop::Communities,
+                format!(
+                    "{} ({})",
+                    gettext(app.locale, "Communities"),
+                    super::keys::label("Ctrl+Shift+3")
+                ),
+            )
+        }
         Destination::Starred => (
             Icon::Star,
             Stop::Starred,

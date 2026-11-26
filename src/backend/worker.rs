@@ -1001,6 +1001,7 @@ pub async fn run(
         archive_requests: HashMap::new(),
         archive_sequence: 0,
         account_session: 0,
+        communities_refresh_generation: 0,
         early_acks: HashMap::new(),
         pin_generation: HashMap::new(),
         withheld_pages: Vec::new(),
@@ -1606,6 +1607,9 @@ struct Worker {
     /// group edit's) or ack from the old session is ignored rather than
     /// written to the next one.
     account_session: u64,
+    /// Bumped on every `refresh_communities` call so older snapshots cannot
+    /// overwrite a newer refresh within the same account session.
+    communities_refresh_generation: u64,
     /// Description notices must outlive metadata requested before they arrived.
     description_generation: HashMap<String, u64>,
     /// Superseded metadata operations cannot update the archive or retry queue.
@@ -2031,6 +2035,7 @@ impl Worker {
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
+                    | Event::Communities(_)
                     | Event::Typing { .. }
                     | Event::Call(_)
                     | Event::PhoneOnlyCall(_)
@@ -2313,10 +2318,173 @@ impl Worker {
                     None => Event::Chats(chats),
                 });
                 self.emit_labels();
+                self.emit_communities();
                 self.emit(Event::Drafts(self.archive.drafts().unwrap_or_default()));
             }
             Err(error) => log::warn!("could not list chats: {error}"),
         }
+    }
+
+    /// Cached WhatsApp Communities and their linked subgroups.
+    fn emit_communities(&self) {
+        match self.archive.communities() {
+            Ok(communities) => self.emit(Event::Communities(communities)),
+            Err(error) => log::warn!("could not list communities: {error}"),
+        }
+    }
+
+    /// Fetches participating WhatsApp Communities and their linked subgroups.
+    fn refresh_communities(&mut self) {
+        let Some(client) = self.client.clone() else {
+            self.emit(Event::CommunitiesRefreshFailed(
+                "Not connected to WhatsApp.".to_owned(),
+            ));
+            return;
+        };
+        let commands = self.commands.clone();
+        let session = self.account_session;
+        self.communities_refresh_generation = self.communities_refresh_generation.wrapping_add(1);
+        let generation = self.communities_refresh_generation;
+        tokio::spawn(async move {
+            let mut communities: Vec<(crate::model::CommunityInfo, bool)> = Vec::new();
+            match client.community().fetch_participating_metadata().await {
+                Ok(map) => {
+                    for (jid, meta) in map {
+                        let name = meta
+                            .subject
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| jid.user.to_string());
+                        let description = meta.description.filter(|s| !s.trim().is_empty());
+                        communities.push((
+                            crate::model::CommunityInfo {
+                                id: jid.to_string(),
+                                name,
+                                description,
+                                participant_count: meta.participant_count,
+                                subgroups: Vec::new(),
+                            },
+                            false,
+                        ));
+                    }
+                }
+                Err(error) => {
+                    log::warn!("could not fetch participating community metadata: {error}");
+                    match client.community().list_participating().await {
+                        Ok(overviews) => {
+                            for ov in overviews {
+                                let name = ov
+                                    .subject
+                                    .filter(|s| !s.trim().is_empty())
+                                    .unwrap_or_else(|| ov.id.user.to_string());
+                                communities.push((
+                                    crate::model::CommunityInfo {
+                                        id: ov.id.to_string(),
+                                        name,
+                                        description: None,
+                                        participant_count: ov.participant_count,
+                                        subgroups: Vec::new(),
+                                    },
+                                    false,
+                                ));
+                            }
+                        }
+                        Err(overview_error) => {
+                            log::warn!(
+                                "could not list participating communities: {overview_error}"
+                            );
+                            let _ = commands.send(Command::CommunitiesRefreshFailed {
+                                session,
+                                generation,
+                                error: overview_error.to_string(),
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
+
+            for (community, subgroups_loaded) in &mut communities {
+                let Some(jid) = Self::jid_of(&community.id) else {
+                    continue;
+                };
+                match client.community().get_subgroups(&jid).await {
+                    Ok(subgroups) => {
+                        let mut mapped: Vec<crate::model::CommunitySubgroup> = subgroups
+                            .into_iter()
+                            .map(|sg| crate::model::CommunitySubgroup {
+                                id: sg.id.to_string(),
+                                name: if sg.subject.trim().is_empty() {
+                                    if sg.is_default_sub_group {
+                                        "Announcements".to_owned()
+                                    } else {
+                                        sg.id.user.to_string()
+                                    }
+                                } else {
+                                    sg.subject
+                                },
+                                participant_count: sg.participant_count,
+                                is_default_sub_group: sg.is_default_sub_group,
+                                is_general_chat: sg.is_general_chat,
+                                is_hidden_group: sg.is_hidden_group,
+                            })
+                            .collect();
+                        mapped.sort_by(|a, b| {
+                            b.is_default_sub_group
+                                .cmp(&a.is_default_sub_group)
+                                .then_with(|| b.is_general_chat.cmp(&a.is_general_chat))
+                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        });
+                        community.subgroups = mapped;
+                        *subgroups_loaded = true;
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "could not fetch subgroups for community {}: {error}",
+                            community.id
+                        );
+                    }
+                }
+            }
+
+            communities.sort_by_key(|(a, _)| a.name.to_lowercase());
+            let _ = commands.send(Command::CommunitiesLoaded {
+                session,
+                generation,
+                communities,
+            });
+        });
+    }
+
+    /// Joins a subgroup inside a WhatsApp Community.
+    fn join_community_subgroup(&mut self, community: ChatId, subgroup: ChatId) {
+        let (Some(client), Some(community_jid), Some(subgroup_jid)) = (
+            self.client.clone(),
+            Self::jid_of(&community),
+            Self::jid_of(&subgroup),
+        ) else {
+            self.emit(Event::SubgroupJoined {
+                community,
+                subgroup,
+                error: Some("Not connected to WhatsApp.".to_owned()),
+            });
+            return;
+        };
+        let commands = self.commands.clone();
+        let session = self.account_session;
+        tokio::spawn(async move {
+            let result = client
+                .community()
+                .join_subgroup(&community_jid, &subgroup_jid)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let _ = commands.send(Command::JoinSubgroupResult {
+                session,
+                community,
+                subgroup,
+                result,
+            });
+        });
     }
 
     /// Every label in creation order, so the UI can draw tabs and menus.
@@ -4029,6 +4197,16 @@ impl Worker {
                     if !numbers.is_empty() {
                         let _ = commands.send(Command::LearnNumbers(numbers));
                     }
+                    let _ = commands.send(Command::GroupCommunityMeta {
+                        chat: chat.clone(),
+                        request_generation,
+                        parent_group_jid: metadata
+                            .parent_group_jid
+                            .as_ref()
+                            .map(ToString::to_string),
+                        is_parent_group: metadata.is_parent_group,
+                        is_default_sub_group: metadata.is_default_sub_group,
+                    });
                     let _ = commands.send(Command::GroupInfo {
                         leave_generation,
                         chat,
@@ -4193,6 +4371,7 @@ impl Worker {
                 self.set_status(LinkStatus::Connected);
                 self.fetch_blocklist();
                 self.retry_message_removals();
+                self.refresh_communities();
                 // A new connection may reach a phone that was away before.
                 self.older_warned.clear();
                 self.refresh_legacy_preferences();
@@ -4810,6 +4989,7 @@ impl Worker {
         let _ = std::fs::remove_dir_all(self.dirs.media_cache_dir());
         self.emit(Event::Chats(Vec::new()));
         self.emit_labels();
+        self.emit_communities();
         self.emit(Event::Drafts(Vec::new()));
         self.privacy_ready = false;
         self.privacy_confirmed = false;
@@ -9116,6 +9296,102 @@ impl Worker {
                 let saved = self.save_group_recipients(&chat, &id, &recipients);
                 let _ = stored.send(saved);
             }
+            Command::RefreshCommunities => self.refresh_communities(),
+            Command::GroupCommunityMeta {
+                chat,
+                request_generation,
+                parent_group_jid,
+                is_parent_group,
+                is_default_sub_group,
+            } => {
+                if request_generation != self.group_info_generation.get(&chat).copied().unwrap_or(0)
+                {
+                    return;
+                }
+                let _ = self.archive.set_group_community_meta(
+                    &chat,
+                    parent_group_jid.as_deref(),
+                    is_parent_group,
+                    is_default_sub_group,
+                );
+            }
+            Command::CommunitiesLoaded {
+                session,
+                generation,
+                communities,
+            } => {
+                if session != self.account_session
+                    || generation != self.communities_refresh_generation
+                {
+                    return;
+                }
+                if let Err(error) = self.archive.save_communities(&communities) {
+                    log::warn!("could not save communities: {error}");
+                }
+                self.emit_chats();
+            }
+            Command::CommunitiesRefreshFailed {
+                session,
+                generation,
+                error,
+            } => {
+                if session != self.account_session
+                    || generation != self.communities_refresh_generation
+                {
+                    return;
+                }
+                self.emit(Event::CommunitiesRefreshFailed(error));
+            }
+            Command::JoinCommunitySubgroup {
+                community,
+                subgroup,
+            } => self.join_community_subgroup(community, subgroup),
+            Command::JoinSubgroupResult {
+                session,
+                community,
+                subgroup,
+                result,
+            } => {
+                if session != self.account_session {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        let name = self.archive.communities().ok().and_then(|list| {
+                            list.into_iter().find(|c| c.id == community).and_then(|c| {
+                                c.subgroups
+                                    .into_iter()
+                                    .find(|sg| sg.id == subgroup)
+                                    .map(|sg| (sg.name, sg.is_default_sub_group))
+                            })
+                        });
+                        let (label, is_default) = name.unwrap_or_else(|| (subgroup.clone(), false));
+                        let _ = self.archive.ensure_chat(&subgroup, &label);
+                        let _ = self.archive.set_group_community_meta(
+                            &subgroup,
+                            Some(&community),
+                            false,
+                            is_default,
+                        );
+                        self.group_info_requested.remove(&subgroup);
+                        self.query_group_info(&subgroup);
+                        self.emit_chats();
+                        self.refresh_communities();
+                        self.emit(Event::SubgroupJoined {
+                            community,
+                            subgroup,
+                            error: None,
+                        });
+                    }
+                    Err(error) => {
+                        self.emit(Event::SubgroupJoined {
+                            community,
+                            subgroup,
+                            error: Some(error),
+                        });
+                    }
+                }
+            }
             Command::GroupInfo {
                 chat,
                 name,
@@ -10911,13 +11187,16 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
+        let community = self.archive.is_community(&id);
         tokio::spawn(async move {
             let fetched = async {
                 let mut picture = None;
                 let mut failed = false;
                 'lookup: for jid in &candidates {
                     for preview in [!full, false] {
-                        let target = if jid.is_group() {
+                        let target = if community {
+                            whatsapp_rust::ProfilePictureTarget::Community(jid)
+                        } else if jid.is_group() {
                             whatsapp_rust::ProfilePictureTarget::Group(jid)
                         } else {
                             whatsapp_rust::ProfilePictureTarget::Contact(jid)
@@ -20383,6 +20662,7 @@ mod receipt_tests {
             archive_requests: HashMap::new(),
             archive_sequence: 0,
             account_session: 0,
+            communities_refresh_generation: 0,
             early_acks: HashMap::new(),
             pin_generation: HashMap::new(),
             withheld_pages: Vec::new(),

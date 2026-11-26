@@ -2907,7 +2907,7 @@ impl App {
     /// Whether the main pane can show the open chat: on the chat list's
     /// page, and on the Calls tab beside its history.
     pub fn chat_view(&self) -> bool {
-        matches!(self.page, Page::Chats | Page::Calls)
+        matches!(self.page, Page::Chats | Page::Calls | Page::Communities)
     }
 
     /// Whether the open chat is the one picked from the Calls tab's history.
@@ -2927,6 +2927,59 @@ impl App {
     /// The label with this id, when it still exists.
     pub fn label(&self, id: &str) -> Option<&Label> {
         self.labels.iter().find(|label| label.id == id)
+    }
+
+    /// The WhatsApp Community with this id, when known.
+    pub fn community(&self, id: &str) -> Option<&crate::model::CommunityInfo> {
+        self.communities.iter().find(|c| c.id == id)
+    }
+
+    /// The WhatsApp Community that `chat` belongs to, if any.
+    pub fn community_of_chat(&self, chat: &Chat) -> Option<&crate::model::CommunityInfo> {
+        if !chat.is_group() {
+            return None;
+        }
+        if let Some(parent) = chat.parent_group_jid.as_deref()
+            && let Some(community) = self.community(parent)
+        {
+            return Some(community);
+        }
+        self.communities
+            .iter()
+            .find(|c| c.subgroups.iter().any(|sg| sg.id == chat.id))
+    }
+
+    /// Whether `chat` is a community's default Announcements subgroup.
+    pub fn is_community_announcements(&self, chat: &Chat) -> bool {
+        if !chat.is_group() {
+            return false;
+        }
+        if chat.is_default_sub_group {
+            return true;
+        }
+        self.communities.iter().any(|c| {
+            c.subgroups
+                .iter()
+                .any(|sg| sg.id == chat.id && sg.is_default_sub_group)
+        })
+    }
+
+    /// Whether `chat` is a WhatsApp Community parent shell (hidden from regular Chats).
+    pub fn is_community_parent(&self, chat: &Chat) -> bool {
+        chat.is_parent_group || self.communities.iter().any(|c| c.id == chat.id)
+    }
+
+    /// Total unread chats inside a community (Announcements + joined subgroups).
+    pub fn community_unread(&self, community: &crate::model::CommunityInfo) -> usize {
+        community
+            .subgroups
+            .iter()
+            .filter(|sg| {
+                self.chat(&sg.id).is_some_and(|chat| {
+                    !chat.archived && !chat.locked && !chat.left && chat.looks_unread()
+                })
+            })
+            .count()
     }
 
     /// Whether a chat wears a label id.
@@ -3085,6 +3138,17 @@ impl App {
             return self.self_title();
         }
         if chat.is_group() {
+            if self.is_community_announcements(chat)
+                && chat.name.trim().eq_ignore_ascii_case("Announcements")
+                && let Some(community) = self.community_of_chat(chat)
+                && !community.name.trim().is_empty()
+            {
+                return format!(
+                    "{} · {}",
+                    community.name,
+                    crate::i18n::gettext(self.locale, "Announcements")
+                );
+            }
             return chat.name.clone();
         }
         self.person_name_of(&chat.id, None, Some(chat))
@@ -3425,6 +3489,7 @@ impl App {
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
+            .filter(|chat| !self.is_community_parent(chat))
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
             // Searching still finds people never written to, and one being
@@ -3816,6 +3881,44 @@ impl App {
                 self.labels = labels;
                 self.prune_labels();
             }
+            Event::Communities(communities) => {
+                self.communities = communities;
+                self.communities_loading = false;
+                if let Some(selected) = &self.selected_community
+                    && !self.communities.iter().any(|c| c.id == *selected)
+                {
+                    self.selected_community = None;
+                }
+                if let Some(open) = self
+                    .open_chat
+                    .as_deref()
+                    .filter(|open| self.communities.iter().any(|c| c.id == *open))
+                    .map(str::to_owned)
+                {
+                    self.close_parent_chat(&open, live);
+                }
+            }
+            Event::CommunitiesRefreshFailed(error) => {
+                self.communities_loading = false;
+                if live {
+                    self.toast_error(format!("Could not refresh communities: {error}"));
+                }
+            }
+            Event::SubgroupJoined {
+                community: _,
+                subgroup,
+                error,
+            } => {
+                self.joining_subgroups.remove(&subgroup);
+                if live {
+                    if let Some(error) = error {
+                        self.toast_error(error);
+                    } else {
+                        self.toast("Joined community group.");
+                        self.actions.push(Action::OpenChat(subgroup));
+                    }
+                }
+            }
             Event::Drafts(drafts) => {
                 // Unsent text stored by an earlier session. Text typed in
                 // this session wins over the stored copy.
@@ -3934,6 +4037,11 @@ impl App {
                             self.invalidate_composer_undo();
                         }
                         self.open_chat = None;
+                    } else if self
+                        .chat(&open)
+                        .is_some_and(|chat| self.is_community_parent(chat))
+                    {
+                        self.close_parent_chat(&open, live);
                     } else {
                         // Show archived messages immediately, including offline.
                         self.ensure_loaded(&open);
@@ -5184,6 +5292,10 @@ impl App {
                 // is discarded, so nothing else would clear this.
                 self.group_saving.clear();
                 self.timer_saving.clear();
+                self.communities.clear();
+                self.selected_community = None;
+                self.communities_loading = false;
+                self.joining_subgroups.clear();
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
                 // went away, but only when that account is the one on screen.
@@ -5253,14 +5365,16 @@ impl App {
         if chat.locked && !self.locked_folder_open() {
             self.hide_locked_chat(&chat.id);
         }
-        // Leaving with "and archive" archives the chat once the phone agreed,
-        // so this is where the open conversation closes, not before. Only a
-        // chat that just became archived: a message arriving in one that was
-        // already archived does not close it.
-        if (is_open || (!live && remembered))
+        if remembered && self.is_community_parent(&chat) {
+            self.close_parent_chat(&chat.id, live);
+        } else if (is_open || (!live && remembered))
             && chat.archived
             && self.chat(&chat.id).is_none_or(|known| !known.archived)
         {
+            // Leaving with "and archive" archives the chat once the phone agreed,
+            // so this is where the open conversation closes, not before. Only a
+            // chat that just became archived: a message arriving in one that was
+            // already archived does not close it.
             if live {
                 self.actions.push(Action::CloseChat);
             } else {
@@ -5526,6 +5640,53 @@ impl App {
         self.open_chat = id;
     }
 
+    /// Closes the currently open conversation, parking any unsent draft and
+    /// attachments before clearing transient reply and composer UI state.
+    fn close_open_chat(&mut self) {
+        self.close_info();
+        self.open_message_menu = None;
+        if let Some(chat) = self.open_chat.take() {
+            self.invalidate_composer_undo();
+            self.save_attachment_draft(&chat);
+            self.stop_composing(&chat);
+            let draft = std::mem::take(&mut self.composer);
+            if self.is_untouched_prefill(&chat, &draft) {
+                // A link's text is not the reader's; theirs stays.
+                self.composer_mentions.clear();
+            } else if self.editing.take().is_none() && !draft.trim().is_empty() {
+                self.drafts.insert(chat.clone(), draft);
+                let mentions = std::mem::take(&mut self.composer_mentions);
+                self.draft_mentions.insert(chat.clone(), mentions);
+            } else {
+                self.composer_mentions.clear();
+            }
+            self.store_draft(&chat, self.drafts.get(&chat).map_or("", String::as_str));
+        }
+        self.reply_to = None;
+        // A pending quote belongs to the chat being left, like the
+        // quote it would start.
+        self.reply_when_loaded = None;
+        self.emoji_start = None;
+        self.mention_start = None;
+        self.reaction_target = None;
+        self.reaction_anchor = None;
+        self.emoji_jump = None;
+    }
+
+    /// Closes a community parent container if it is currently open or
+    /// remembered as the active chat, without disturbing unrelated chats or a
+    /// background account's window-owned composer state.
+    fn close_parent_chat(&mut self, id: &str, live: bool) {
+        if self.open_chat.as_deref() != Some(id) {
+            return;
+        }
+        if live {
+            self.close_open_chat();
+        } else {
+            self.open_chat = None;
+        }
+    }
+
     /// Whether the panel may list its chat's media: a locked chat's stays
     /// in the locked folder, so a member's panel opened from an unlocked
     /// group shows who they are and nothing shared with them.
@@ -5615,7 +5776,7 @@ impl App {
 
     /// Whether a name finds `needle` as the whole text or word by word (see
     /// `util::search_matches`), sharing `text_matches`' cache.
-    fn name_matches(&self, name: &str, needle: &str) -> bool {
+    pub(crate) fn name_matches(&self, name: &str, needle: &str) -> bool {
         self.cached_key(name, |key| crate::util::search_matches(key, needle))
     }
 
@@ -6256,6 +6417,14 @@ impl App {
 
     /// Opens an eligible chat, parking the previous draft and restoring this chat's composer.
     fn open_chat(&mut self, id: ChatId) {
+        // Community parent containers are browsed in Communities, not opened as conversations.
+        if self
+            .chat(&id)
+            .is_some_and(|chat| self.is_community_parent(chat))
+            || self.communities.iter().any(|c| c.id == id)
+        {
+            return;
+        }
         // Notifications and stale actions must not open a locked chat from
         // outside the authenticated folder.
         if self.chat(&id).is_some_and(|chat| chat.locked) && !self.locked_folder_open() {
@@ -6342,9 +6511,9 @@ impl App {
         self.emoji_start = None;
         self.mention_start = None;
         self.set_open_chat(Some(id.clone()));
-        // The Calls tab keeps its history beside the chat; every other page
-        // gives way to the chat list.
-        if self.page != Page::Calls {
+        // The Calls and Communities tabs keep their lists beside the chat;
+        // every other page gives way to the chat list.
+        if !matches!(self.page, Page::Calls | Page::Communities) {
             self.page = Page::Chats;
         }
         self.scroll_to_bottom = true;
@@ -7463,6 +7632,13 @@ impl App {
                     // starred messages as it replaces the chats.
                     self.show_starred = false;
                 }
+                if page == Page::Communities {
+                    if self.page != Page::Communities && self.is_connected() {
+                        self.communities_loading = true;
+                        self.backend.send(Command::RefreshCommunities);
+                    }
+                    self.show_starred = false;
+                }
                 // Typed passwords do not wait in a form nobody sees.
                 if page != Page::Settings && !self.app_lock.checking() {
                     self.app_lock.form = None;
@@ -7650,37 +7826,10 @@ impl App {
                 }
             }
             Action::CloseChat => {
-                self.close_info();
                 // A narrow window's Back from a picked call returns to the
                 // call history.
                 self.picked_call = None;
-                self.open_message_menu = None;
-                if let Some(chat) = self.open_chat.take() {
-                    self.invalidate_composer_undo();
-                    self.save_attachment_draft(&chat);
-                    self.stop_composing(&chat);
-                    let draft = std::mem::take(&mut self.composer);
-                    if self.is_untouched_prefill(&chat, &draft) {
-                        // A link's text is not the reader's; theirs stays.
-                        self.composer_mentions.clear();
-                    } else if self.editing.take().is_none() && !draft.trim().is_empty() {
-                        self.drafts.insert(chat.clone(), draft);
-                        let mentions = std::mem::take(&mut self.composer_mentions);
-                        self.draft_mentions.insert(chat.clone(), mentions);
-                    } else {
-                        self.composer_mentions.clear();
-                    }
-                    self.store_draft(&chat, self.drafts.get(&chat).map_or("", String::as_str));
-                }
-                self.reply_to = None;
-                // A pending quote belongs to the chat being left, like the
-                // quote it would start.
-                self.reply_when_loaded = None;
-                self.emoji_start = None;
-                self.mention_start = None;
-                self.reaction_target = None;
-                self.reaction_anchor = None;
-                self.emoji_jump = None;
+                self.close_open_chat();
             }
             Action::SendText {
                 chat,
@@ -9330,6 +9479,36 @@ impl App {
                 }
             }
             Action::SelectLabel(label) => self.select_label(label),
+            Action::RefreshCommunities => {
+                if self.is_connected() {
+                    self.communities_loading = true;
+                    self.backend.send(Command::RefreshCommunities);
+                }
+            }
+            Action::SelectCommunity(id) => {
+                self.selected_community = id;
+            }
+            Action::OpenCommunity(id) => {
+                if self.open_chat.is_some() {
+                    self.apply(Action::CloseChat, ctx);
+                }
+                self.selected_community = Some(id);
+                self.show_starred = false;
+                if self.page != Page::Communities {
+                    self.apply(Action::Open(Page::Communities), ctx);
+                }
+            }
+            Action::JoinCommunitySubgroup {
+                community,
+                subgroup,
+            } => {
+                if self.is_connected() && self.joining_subgroups.insert(subgroup.clone()) {
+                    self.backend.send(Command::JoinCommunitySubgroup {
+                        community,
+                        subgroup,
+                    });
+                }
+            }
             Action::SetChatLabels { chat, labels } => {
                 self.backend.send(Command::SetChatLabels { chat, labels });
             }
@@ -26044,6 +26223,79 @@ mod tests {
         assert_eq!(app.display_name("42@lid"), "+1 555 123 4567");
         app.chats.push(Chat::new("43@lid".into(), "43".into()));
         assert_eq!(app.display_name("43@lid"), "Unknown");
+    }
+
+    #[test]
+    fn closing_a_community_parent_preserves_draft_and_later_open_chat() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let parent_id = "community-parent@g.us";
+        let subgroup_id = "community-sub@g.us";
+        let mut parent = Chat::new(parent_id.into(), "Neighborhood".into());
+        parent.is_parent_group = true;
+        let subgroup = Chat::new(subgroup_id.into(), "General".into());
+        app.chats = vec![parent, subgroup];
+        app.open_chat = Some(parent_id.into());
+        app.composer = "remembered draft".into();
+
+        // A queued subgroup open in the same event batch must survive closing
+        // the previously open community parent container.
+        app.apply_backend_event(
+            Event::SubgroupJoined {
+                community: parent_id.into(),
+                subgroup: subgroup_id.into(),
+                error: None,
+            },
+            true,
+        );
+        app.apply_backend_event(
+            Event::Communities(vec![crate::model::CommunityInfo {
+                id: parent_id.into(),
+                name: "Neighborhood".into(),
+                description: None,
+                participant_count: None,
+                subgroups: Vec::new(),
+            }]),
+            true,
+        );
+
+        assert_eq!(app.open_chat, None);
+        assert_eq!(
+            app.drafts.get(parent_id).map(String::as_str),
+            Some("remembered draft")
+        );
+        assert!(app.composer.is_empty());
+
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(subgroup_id));
+    }
+
+    #[test]
+    fn community_parent_chat_update_closes_remembered_parent_on_other_pages() {
+        let mut app = app();
+        let parent_id = "community-parent@g.us";
+        let mut parent = Chat::new(parent_id.into(), "Neighborhood".into());
+        parent.is_parent_group = true;
+        app.chats.push(parent.clone());
+        app.open_chat = Some(parent_id.into());
+        app.composer = "parked while in settings".into();
+        app.page = Page::Settings;
+
+        app.handle_chat_updated(parent, true);
+        assert_eq!(app.open_chat, None);
+        assert_eq!(
+            app.drafts.get(parent_id).map(String::as_str),
+            Some("parked while in settings")
+        );
+        assert!(app.composer.is_empty());
+
+        let mut background_parent = Chat::new("community-bg@g.us".into(), "Hidden".into());
+        background_parent.is_parent_group = true;
+        app.open_chat = Some(background_parent.id.clone());
+        app.composer = "active account text".into();
+        app.handle_chat_updated(background_parent, false);
+        assert_eq!(app.open_chat, None);
+        assert_eq!(app.composer, "active account text");
     }
 }
 
