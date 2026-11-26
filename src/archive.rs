@@ -219,6 +219,16 @@ END;
 -- One person can be both a privacy id and a phone number; merging the two
 -- looks receipts up by recipient, and the primary key cannot serve that.
 CREATE INDEX IF NOT EXISTS group_receipts_by_recipient ON group_receipts (recipient);
+-- An edit goes out under an id of its own, which its receipts may name.
+CREATE TABLE IF NOT EXISTS edit_ids (
+    chat TEXT NOT NULL,
+    edit TEXT NOT NULL,
+    id TEXT NOT NULL,
+    PRIMARY KEY (chat, edit)
+);
+CREATE TRIGGER IF NOT EXISTS delete_edit_ids AFTER DELETE ON messages BEGIN
+    DELETE FROM edit_ids WHERE chat = OLD.chat AND id = OLD.id;
+END;
 ";
 
 const CHAT_COLUMNS: &str =
@@ -2311,6 +2321,7 @@ impl Archive {
             "messages",
             "motion_clips",
             "group_receipts",
+            "edit_ids",
             "polls",
             "poll_history",
             "local_chat_labels",
@@ -2958,7 +2969,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM edit_ids; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }

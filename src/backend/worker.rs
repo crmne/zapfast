@@ -4931,12 +4931,23 @@ impl Worker {
             _ => return,
         };
         let at = receipt.timestamp.timestamp();
+        // A receipt for an edit is about the message that was edited.
+        let mut message_ids: Vec<String> = Vec::with_capacity(receipt.message_ids.len());
+        for id in &receipt.message_ids {
+            let target = self
+                .archive
+                .receipt_target(&chat, id)
+                .unwrap_or_else(|_| id.to_string());
+            if !message_ids.contains(&target) {
+                message_ids.push(target);
+            }
+        }
         if ChatKind::from_id(&chat) == ChatKind::Group {
             let recipient = self.canonical(&receipt.source.sender);
             if self.is_me(&recipient) {
                 return;
             }
-            for id in &receipt.message_ids {
+            for id in &message_ids {
                 // A receipt for a message we have not archived yet is kept
                 // until the message arrives; see `settle_early_receipts`.
                 if self
@@ -4965,7 +4976,7 @@ impl Worker {
         }
         let mut newest = 0;
         let mut changed = 0;
-        for id in &receipt.message_ids {
+        for id in &message_ids {
             if !receipt.source.chat.is_status_broadcast()
                 && matches!(self.archive.message(&chat, id), Ok(None))
             {
@@ -4989,7 +5000,7 @@ impl Worker {
         }
         log::debug!(
             "receipt moved {changed} of {} messages in {chat} to {status:?}",
-            receipt.message_ids.len()
+            message_ids.len()
         );
         // Read receipts advance all earlier messages.
         if status >= Delivery::Read
@@ -5101,6 +5112,16 @@ impl Worker {
             }
             Ok(None) => {}
             Err(error) => log::warn!("could not apply early receipts: {error}"),
+        }
+    }
+
+    /// Files an edit's own id under the message it edited, applying the
+    /// receipts that arrived before the two were known to be one.
+    fn record_edit_id(&mut self, chat: &str, edit: &str, id: &str) {
+        match self.archive.record_edit_id(chat, edit, id) {
+            Ok(true) => self.settle_early_receipts(chat, id),
+            Ok(false) => {}
+            Err(error) => log::warn!("could not keep an edit's id: {error}"),
         }
     }
 
@@ -5291,6 +5312,9 @@ impl Worker {
                     }
                 }
                 Some(Type::MESSAGE_EDIT) => {
+                    if from_me {
+                        self.record_edit_id(&chat, &info.id, &target);
+                    }
                     self.edits.remove(&(chat.clone(), target.clone()));
                     if let Some(edited) = protocol.edited_message.as_option()
                         && let Some(mut content) = classify(edited)
@@ -7613,6 +7637,7 @@ impl Worker {
                 text,
                 mentions,
             } => self.edit_text(chat, id, text, mentions),
+            Command::EditSent { chat, id, edit } => self.record_edit_id(&chat, &edit, &id),
             Command::EditSettled {
                 chat,
                 id,
@@ -11181,7 +11206,14 @@ impl Worker {
                     whatsapp_rust::EditOptions::default(),
                 )
                 .await
-                .map(|_| (content, mention_rows))
+                .map(|sent| {
+                    let _ = commands.send(Command::EditSent {
+                        chat: chat.clone(),
+                        id: id.clone(),
+                        edit: sent.message_id.to_string(),
+                    });
+                    (content, mention_rows)
+                })
                 .map_err(|error| format!("Could not send the edit: {error}"));
             let _ = commands.send(Command::EditSettled {
                 chat,
@@ -20761,6 +20793,49 @@ mod receipt_tests {
             worker
                 .archive
                 .message(PEER, "before")
+                .unwrap()
+                .unwrap()
+                .status,
+            Delivery::Read
+        );
+    }
+
+    #[test]
+    fn a_read_naming_an_edit_made_on_the_phone_counts_for_the_edited_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        let now = crate::util::now();
+        worker.archive.ensure_chat(group, "Group").unwrap();
+        let (message, info) = sent_elsewhere(group, "original", now - 10);
+        worker.ingest(&message, &info);
+        worker.save_group_recipients(group, "original", &[PEER.into()]);
+        let (_, edit_info) = sent_elsewhere(group, "edit", now - 5);
+        let edit = {
+            let mut key = wa::MessageKey::default();
+            key.id = Some("original".into());
+            let mut protocol = wa::message::ProtocolMessage::default();
+            protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            protocol.key = MessageField::some(key);
+            protocol.edited_message = MessageField::some(wa::Message::text("edited on the phone"));
+            let mut proto = wa::Message::default();
+            proto.protocol_message = MessageField::some(protocol);
+            proto
+        };
+        worker.ingest(&Arc::new(edit), &edit_info);
+        let mut read = receipt(group, &["edit"], ReceiptType::Read);
+        read.source.sender = PEER.parse().unwrap();
+        read.source.is_group = true;
+        worker.on_receipt(&read);
+        let rows = worker.archive.receipts(group, "original").unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.id == PEER && row.read_at.is_some())
+        );
+        assert!(worker.archive.receipts(group, "edit").unwrap().is_empty());
+        assert_eq!(
+            worker
+                .archive
+                .message(group, "original")
                 .unwrap()
                 .unwrap()
                 .status,

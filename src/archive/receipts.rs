@@ -219,6 +219,53 @@ impl Archive {
             .collect()
     }
 
+    /// Remembers that `edit` is the id an edit of message `id` went out under,
+    /// and moves to the message any receipts that already named the edit.
+    /// Returns whether there were any.
+    pub fn record_edit_id(&self, chat: &str, edit: &str, id: &str) -> Result<bool> {
+        if edit == id {
+            return Ok(false);
+        }
+        let transaction = super::Batch::begin(&self.connection)?;
+        transaction.execute(
+            "INSERT OR REPLACE INTO edit_ids (chat, edit, id) VALUES (?1, ?2, ?3)",
+            params![chat, edit, id],
+        )?;
+        transaction.execute(
+            "INSERT INTO group_receipts (chat, id, recipient, expected, status, delivered_at, read_at, played_at)
+             SELECT chat, ?3, recipient, expected, status, delivered_at, read_at, played_at
+             FROM group_receipts WHERE chat = ?1 AND id = ?2
+             ON CONFLICT(chat, id, recipient) DO UPDATE SET
+                expected = MAX(expected, excluded.expected),
+                status = MAX(status, excluded.status),
+                delivered_at = COALESCE(MIN(delivered_at, excluded.delivered_at), delivered_at, excluded.delivered_at),
+                read_at = COALESCE(MIN(read_at, excluded.read_at), read_at, excluded.read_at),
+                played_at = COALESCE(MIN(played_at, excluded.played_at), played_at, excluded.played_at)",
+            params![chat, edit, id],
+        )?;
+        let moved = transaction.execute(
+            "DELETE FROM group_receipts WHERE chat = ?1 AND id = ?2",
+            params![chat, edit],
+        )?;
+        transaction.commit()?;
+        Ok(moved > 0)
+    }
+
+    /// The message a receipt naming `id` is about: the edited message when
+    /// `id` belongs to one of its edits, otherwise `id` itself.
+    pub fn receipt_target(&self, chat: &str, id: &str) -> Result<String> {
+        use rusqlite::OptionalExtension as _;
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT id FROM edit_ids WHERE chat = ?1 AND edit = ?2",
+                params![chat, id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| id.to_owned()))
+    }
+
     /// Drops receipts whose message has not arrived within a day. It is not
     /// coming: receipts also name our reactions, edits, and votes, which are
     /// never archived as messages, and messages deleted here.
@@ -265,6 +312,12 @@ impl Archive {
             params![lid, pn],
         )?;
         transaction.execute("DELETE FROM group_receipts WHERE chat = ?1", [lid])?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO edit_ids (chat, edit, id)
+             SELECT ?2, edit, id FROM edit_ids WHERE chat = ?1",
+            params![lid, pn],
+        )?;
+        transaction.execute("DELETE FROM edit_ids WHERE chat = ?1", [lid])?;
         Ok(())
     }
 }
@@ -349,6 +402,38 @@ mod tests {
         );
         drop(archive);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn receipts_naming_an_edit_count_for_the_edited_message() {
+        let archive = Archive::in_memory().unwrap();
+        let group = "123-456@g.us";
+        let now = crate::util::now();
+        archive.ensure_chat(group, "Group").unwrap();
+        archive
+            .insert_message(&super::super::tests::message(group, "m", now, true), None)
+            .unwrap();
+        archive.set_status(group, "m", Delivery::Sent, now).unwrap();
+        archive
+            .snapshot_group_recipients(group, "m", &["a@lid".into(), "b@lid".into()])
+            .unwrap();
+        archive
+            .group_receipt(group, "m", "a@lid", Delivery::Delivered, now + 1)
+            .unwrap();
+        // This one outruns the record of the edit's id.
+        archive
+            .file_receipt(group, "edit", "a@lid", Delivery::Read, now + 5)
+            .unwrap();
+        assert!(archive.record_edit_id(group, "edit", "m").unwrap());
+        assert_eq!(archive.receipt_target(group, "edit").unwrap(), "m");
+        assert_eq!(archive.receipt_target(group, "m").unwrap(), "m");
+        assert!(archive.receipts(group, "edit").unwrap().is_empty());
+        let rows = archive.receipts(group, "m").unwrap();
+        assert_eq!(rows[0].read_at, Some(now + 5));
+        assert_eq!(rows[0].delivered_at, Some(now + 1));
+        assert!(rows[0].expected);
+        archive.delete_message(group, "m").unwrap();
+        assert_eq!(archive.receipt_target(group, "edit").unwrap(), "edit");
     }
 
     #[test]

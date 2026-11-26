@@ -435,6 +435,12 @@ pub enum Command {
         text: String,
         mentions: Vec<String>,
     },
+    /// Internal: the id an edit sent from here went out under.
+    EditSent {
+        chat: ChatId,
+        id: String,
+        edit: String,
+    },
     /// Internal: WhatsApp's answer to an edit sent from here. The archive
     /// takes the new text only once WhatsApp accepts it.
     EditSettled {
