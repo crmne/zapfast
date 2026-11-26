@@ -440,6 +440,7 @@ pub enum Command {
         chat: ChatId,
         id: String,
         edit: String,
+        session: u64,
     },
     /// Internal: WhatsApp's answer to an edit sent from here. The archive
     /// takes the new text only once WhatsApp accepts it.

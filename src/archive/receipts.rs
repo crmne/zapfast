@@ -231,6 +231,19 @@ impl Archive {
             "INSERT OR REPLACE INTO edit_ids (chat, edit, id) VALUES (?1, ?2, ?3)",
             params![chat, edit, id],
         )?;
+        let moved = Self::move_receipts(&transaction, chat, edit, id)?;
+        transaction.commit()?;
+        Ok(moved)
+    }
+
+    /// Refiles the receipts kept under `edit` under message `id`. Returns
+    /// whether there were any.
+    fn move_receipts(
+        transaction: &super::Batch<'_>,
+        chat: &str,
+        edit: &str,
+        id: &str,
+    ) -> Result<bool> {
         transaction.execute(
             "INSERT INTO group_receipts (chat, id, recipient, expected, status, delivered_at, read_at, played_at)
              SELECT chat, ?3, recipient, expected, status, delivered_at, read_at, played_at
@@ -247,7 +260,6 @@ impl Archive {
             "DELETE FROM group_receipts WHERE chat = ?1 AND id = ?2",
             params![chat, edit],
         )?;
-        transaction.commit()?;
         Ok(moved > 0)
     }
 
@@ -318,6 +330,18 @@ impl Archive {
             params![lid, pn],
         )?;
         transaction.execute("DELETE FROM edit_ids WHERE chat = ?1", [lid])?;
+        // One name may have held the edit's id and the other its receipts.
+        let waiting = transaction
+            .prepare(
+                "SELECT edit, id FROM edit_ids e WHERE chat = ?1 AND EXISTS (
+                     SELECT 1 FROM group_receipts r WHERE r.chat = e.chat AND r.id = e.edit
+                 )",
+            )?
+            .query_map([pn], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<(String, String)>>>()?;
+        for (edit, id) in waiting {
+            Self::move_receipts(transaction, pn, &edit, &id)?;
+        }
         Ok(())
     }
 }
@@ -434,6 +458,44 @@ mod tests {
         assert!(rows[0].expected);
         archive.delete_message(group, "m").unwrap();
         assert_eq!(archive.receipt_target(group, "edit").unwrap(), "edit");
+    }
+
+    #[test]
+    fn merging_chats_moves_receipts_that_waited_under_an_edit() {
+        let lid = "167650256810092@lid";
+        let pn = "4917663430455@s.whatsapp.net";
+        // The edit's id and its receipt may each be under either name.
+        for (mapped, filed) in [(lid, pn), (pn, lid)] {
+            let archive = Archive::in_memory().unwrap();
+            archive.ensure_chat(pn, "Peer").unwrap();
+            let mut row = super::super::tests::message(pn, "m", 10, true);
+            row.status = Delivery::Sent;
+            archive.insert_message(&row, None).unwrap();
+            archive.record_edit_id(mapped, "edit", "m").unwrap();
+            archive
+                .file_receipt(filed, "edit", filed, Delivery::Read, 20)
+                .unwrap();
+            archive.put_lid("167650256810092", "4917663430455").unwrap();
+            assert_eq!(archive.waiting_receipts(pn).unwrap(), ["m"]);
+            assert_eq!(
+                archive.settle_direct(pn, "m").unwrap(),
+                Some((Delivery::Read, 20))
+            );
+        }
+    }
+
+    #[test]
+    fn a_messages_edits_are_found_by_an_index() {
+        let archive = Archive::in_memory().unwrap();
+        let plan: String = archive
+            .connection
+            .query_row(
+                "EXPLAIN QUERY PLAN DELETE FROM edit_ids WHERE chat = 'c' AND id = 'm'",
+                [],
+                |row| row.get(3),
+            )
+            .unwrap();
+        assert!(plan.contains("edit_ids_by_message"), "{plan}");
     }
 
     #[test]

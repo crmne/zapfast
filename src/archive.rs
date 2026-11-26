@@ -226,6 +226,8 @@ CREATE TABLE IF NOT EXISTS edit_ids (
     id TEXT NOT NULL,
     PRIMARY KEY (chat, edit)
 );
+-- Deleting a message looks its edits up by the message.
+CREATE INDEX IF NOT EXISTS edit_ids_by_message ON edit_ids (chat, id);
 CREATE TRIGGER IF NOT EXISTS delete_edit_ids AFTER DELETE ON messages BEGIN
     DELETE FROM edit_ids WHERE chat = OLD.chat AND id = OLD.id;
 END;

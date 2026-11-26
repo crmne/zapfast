@@ -648,7 +648,8 @@ protocol. These notes are for coding agents and new contributors.
   trusts the phone's aggregate status, not a partial `user_receipt` list.
   An edit goes out under a stanza id of its own, and receipts may name only
   that id: `edit_ids` maps it to the edited message, for edits made here or
-  on another of our devices, and moves any receipts that arrived first.
+  on another of our devices (live or from history), and moves any receipts
+  that arrived first. Learning an edit's id never gives a message an audience.
 - The app lock (`src/app_lock.rs`, `ui/lock.rs`) is a local screen lock, not
   encryption, and independent of the locked-chats code. Settings keep only a
   salted PBKDF2 verifier, checked and made on a thread. While locked,
