@@ -90,6 +90,10 @@ pub struct Palette {
     /// WhatsApp's: only the built-in Messages palettes choose another.
     #[serde(skip)]
     pub bubbles: BubbleStyle,
+    /// Whether the Messages glass may show the desktop through the window and
+    /// tint its chrome. Off for the OLED palette, which stays opaque.
+    #[serde(skip)]
+    pub frosted: bool,
 }
 
 /// The shape of message bubbles.
@@ -132,6 +136,7 @@ impl Palette {
             link: Color32::from_rgb(0x53, 0xbd, 0xeb),
             read: Color32::from_rgb(0x53, 0xbd, 0xeb),
             bubbles: BubbleStyle::WhatsApp,
+            frosted: false,
         }
     }
 
@@ -166,6 +171,7 @@ impl Palette {
             link: Color32::from_rgb(0x64, 0xd2, 0xff),
             read: Color32::from_rgb(0x64, 0xd2, 0xff),
             bubbles: BubbleStyle::Messages,
+            frosted: true,
         }
     }
 
@@ -199,6 +205,7 @@ impl Palette {
             link: Color32::from_rgb(0x64, 0xd2, 0xff),
             read: Color32::from_rgb(0x64, 0xd2, 0xff),
             bubbles: BubbleStyle::Messages,
+            frosted: false,
         }
     }
 
@@ -231,6 +238,7 @@ impl Palette {
             link: Color32::from_rgb(0x00, 0x66, 0xcc),
             read: Color32::from_rgb(0x00, 0x66, 0xcc),
             bubbles: BubbleStyle::Messages,
+            frosted: true,
         }
     }
 
@@ -264,6 +272,7 @@ impl Palette {
             // The lighter blue vanished on the green outgoing bubble.
             read: Color32::from_rgb(0x02, 0x7e, 0xb5),
             bubbles: BubbleStyle::WhatsApp,
+            frosted: false,
         }
     }
 
@@ -285,9 +294,11 @@ impl Palette {
 
     /// Whether this is the Messages theme's glass: a frosted header, glass
     /// pills and tints, on every platform. Whether the desktop also shows
-    /// through the window is [`crate::backdrop::active`].
+    /// through the window is [`crate::backdrop::active`]. The OLED palette
+    /// keeps the Messages bubbles but not the glass, so its window stays
+    /// truly black.
     pub fn vibrant(&self) -> bool {
-        self.bubbles == BubbleStyle::Messages
+        self.frosted
     }
 
     /// The chat list's background. Over a window's material it only darkens
@@ -1838,6 +1849,7 @@ mod tests {
         assert_eq!(palette.window, Color32::BLACK);
         assert_eq!(palette.chat, Color32::BLACK);
         assert_eq!(palette.bubbles, BubbleStyle::Messages);
+        assert!(!palette.vibrant(), "the OLED window stays opaque");
         assert_eq!(palette.bubble_out, MESSAGES_BLUE_DARK[0]);
         assert_ne!(palette.bubble_in, palette.chat);
     }

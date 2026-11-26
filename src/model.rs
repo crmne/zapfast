@@ -3061,6 +3061,8 @@ pub enum Action {
     },
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
+    /// Opens the picker on its last tab, or closes it when it is open.
+    ToggleComposerPicker,
     ClosePicker,
     /// Opens the full emoji picker to react to a message. `beside_menu` keeps
     /// the message's context menu open next to it, as when the picker comes

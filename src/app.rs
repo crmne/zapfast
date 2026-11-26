@@ -8698,14 +8698,6 @@ impl App {
                     self.picker = None;
                     self.refocus_composer(ctx);
                 } else {
-                    // The composer's emoji button asks for Emoji: reopen
-                    // whichever tab was used last instead, so a sticker or
-                    // GIF user lands back where they left.
-                    let tab = if self.picker.is_none() && tab == PickerTab::Emoji {
-                        self.settings.picker_tab
-                    } else {
-                        tab
-                    };
                     if self.settings.picker_tab != tab {
                         self.settings.picker_tab = tab;
                         self.mark_settings_dirty();
@@ -8731,6 +8723,12 @@ impl App {
                         self.actions.push(Action::SearchGifs(String::new()));
                     }
                 }
+            }
+            Action::ToggleComposerPicker => {
+                // A second click closes the picker, whichever tab is open;
+                // the first opens the tab last used.
+                let tab = self.picker.unwrap_or(self.settings.picker_tab);
+                self.apply(Action::TogglePicker(tab), ctx);
             }
             Action::ClosePicker => {
                 let was_reaction = self.reaction_target.is_some();
@@ -14778,22 +14776,34 @@ mod tests {
     /// last, and choosing a tab remembers it.
     #[test]
     fn the_emoji_button_reopens_the_last_picker_tab() {
-        let directory = tempfile::tempdir().unwrap();
-        let (mut app, _events) =
-            App::headless(AppDirs::under(directory.path()), Settings::default());
-        let ctx = egui::Context::default();
-        app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
-        assert_eq!(app.picker, Some(PickerTab::Emoji));
-        app.apply(Action::TogglePicker(PickerTab::Stickers), &ctx);
-        assert_eq!(app.picker, Some(PickerTab::Stickers));
-        assert_eq!(app.settings.picker_tab, PickerTab::Stickers);
-        app.apply(Action::ClosePicker, &ctx);
-        app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
-        assert_eq!(
-            app.picker,
-            Some(PickerTab::Stickers),
-            "the emoji button opens the tab used last"
-        );
+        for remembered in [PickerTab::Stickers, PickerTab::Gifs] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _events) =
+                App::headless(AppDirs::under(directory.path()), Settings::default());
+            let ctx = egui::Context::default();
+            app.settings.picker_tab = remembered;
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(
+                app.picker,
+                Some(remembered),
+                "the button opens the last tab"
+            );
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(app.picker, None, "a second click closes the picker");
+            assert_eq!(
+                app.settings.picker_tab, remembered,
+                "closing does not forget the tab"
+            );
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(app.picker, Some(remembered), "it opens the same tab again");
+            app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
+            assert_eq!(
+                app.picker,
+                Some(PickerTab::Emoji),
+                "an explicit tab click switches to it"
+            );
+            assert_eq!(app.settings.picker_tab, PickerTab::Emoji);
+        }
     }
 
     /// A reaction picker the message list opened is not handed back to the
