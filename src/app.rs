@@ -871,6 +871,9 @@ pub struct App {
     /// is put aside is. The reader resizes it from its corner; the window
     /// stays inside the app's own, and the size lasts for the session.
     pub call_pip_size: egui::Vec2,
+    /// Where that floating window was left, in the app's own points. `None`
+    /// opens it in the bottom right corner of the app.
+    pub call_pip_pos: Option<egui::Pos2>,
     /// Whether the call surface has taken the whole screen. A window state:
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
@@ -1771,6 +1774,7 @@ impl App {
                 crate::ui::call::PIP_DEFAULT.x,
                 crate::ui::call::PIP_DEFAULT.y,
             ),
+            call_pip_pos: None,
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,

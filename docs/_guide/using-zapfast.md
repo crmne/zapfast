@@ -577,13 +577,19 @@ you open the locked chats with their code.
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
 microphone and speaker pickers, and hang up. Mute tells the other side, as on
-the phone. The arrow in the top corner puts the call screen aside: the call
+the phone. The arrow in the top corner puts the call screen aside. A voice call
 keeps running in a strip at the bottom of the window with **Return to the
-call** and a hang-up button, and you can read and write in any chat meanwhile.
-Escape does the same, and leaves full screen first. Only hanging up ends a
-call; closing the window to the tray keeps it running. A call you hang up or
-decline leaves the screen at once; one the other side ends, declines, or
-misses, or one that could not connect, says so for a second and a half.
+call** and a hang-up button; a video call becomes a small floating window over
+the chat with the same controls and the other side's picture, or a group's grid.
+Opening another chat from the list does the same for a video call. Drag the
+floating window's picture to move it anywhere inside the app, drag its bottom
+right corner to resize it (hold Shift to keep 16:9, double click the corner for
+the default size), and double click its header to go back to the full call
+screen. Escape works as the arrow does, and leaves full screen first. Only
+hanging up ends a call; closing the window to the tray keeps it running. A call
+you hang up or decline leaves the screen at once; one the other side ends,
+declines, or misses, or one that could not connect, says so for a second and a
+half.
 
 In a video call the other side's picture fills the window and yours sits in the
 top corner. The camera button turns your camera off and on; in a voice call it

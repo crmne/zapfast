@@ -188,6 +188,13 @@ pub fn pip(app: &mut App, ctx: &egui::Context) {
     let bounds = ctx.content_rect().shrink(PIP_MARGIN);
     let size = clamp_pip_size(app.call_pip_size, bounds);
     app.call_pip_size = size;
+    let pos = clamp_pip_pos(
+        app.call_pip_pos
+            .unwrap_or_else(|| pip_default_pos(size, bounds)),
+        size,
+        bounds,
+    );
+    app.call_pip_pos = Some(pos);
     let palette = app.palette;
     let peer = app.call_name();
     let picture = app.call_avatar();
@@ -202,7 +209,7 @@ pub fn pip(app: &mut App, ctx: &egui::Context) {
     };
     egui::Area::new(egui::Id::new(PIP))
         .order(egui::Order::Foreground)
-        .default_pos(pip_default_pos(size, bounds))
+        .fixed_pos(pos)
         .constrain_to(bounds)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -211,6 +218,7 @@ pub fn pip(app: &mut App, ctx: &egui::Context) {
                 .add(shadow.as_shape(rect, CornerRadius::same(14)));
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(14), Color32::BLACK);
+            pip_drag(ui, app, pos, size, bounds, rect);
             pip_picture(ui, app, &call, &who, &palette, rect);
             pip_header(ui, app, &peer, &status, rect);
             pip_controls(ui, app, &call, &palette, rect);
@@ -246,6 +254,40 @@ pub(crate) fn clamp_pip_size(size: egui::Vec2, bounds: Rect) -> egui::Vec2 {
     )
 }
 
+/// Keeps the whole floating window inside the room the app leaves it, however
+/// the app's own window was resized since it was left there.
+pub(crate) fn clamp_pip_pos(pos: egui::Pos2, size: egui::Vec2, bounds: Rect) -> egui::Pos2 {
+    egui::pos2(
+        pos.x
+            .clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left())),
+        pos.y
+            .clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top())),
+    )
+}
+
+/// The picture is the handle: a drag on it takes the floating window along,
+/// clear of the app's edges. The header and the controls keep their clicks.
+fn pip_drag(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    pos: egui::Pos2,
+    size: egui::Vec2,
+    bounds: Rect,
+    rect: Rect,
+) {
+    let body = Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + PIP_HEADER),
+        egui::pos2(rect.right(), rect.bottom() - PIP_CONTROLS),
+    );
+    let response = ui.interact(body, egui::Id::new(PIP).with("body"), egui::Sense::drag());
+    if response.dragged() {
+        app.call_pip_pos = Some(clamp_pip_pos(pos + response.drag_delta(), size, bounds));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+}
+
 /// What the floating window shows: a group's grid while it has one, else the
 /// peer's picture letterboxed in black, else their face, and our own camera
 /// in the corner.
@@ -265,7 +307,13 @@ fn pip_picture(
         .take(4)
         .collect();
     if call.group.is_some() && !joined.is_empty() {
-        let rects = tile_grid(joined.len(), rect.shrink(3.0), 3.0);
+        // The band under the picture holds the controls, so everyone keeps
+        // their whole tile above it, as on the full screen.
+        let room = Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + PIP_HEADER),
+            egui::pos2(rect.right(), rect.bottom() - PIP_CONTROLS),
+        );
+        let rects = tile_grid(joined.len(), room.shrink(3.0), 3.0);
         for (person, tile) in joined.into_iter().zip(rects) {
             match person
                 .video
@@ -710,9 +758,14 @@ fn corner_buttons(
         ui.horizontal(|ui| {
             if call.phase.is_live() {
                 let back = gettext(locale, "Hide the call screen").into_owned();
-                if theme::icon_button(ui, Icon::ArrowLeft, 20.0, corner_tint, corner_hover, &back)
-                    .clicked()
-                {
+                // A video call steps into its floating window, so the way
+                // aside wears that icon; a voice call only has the bar.
+                let icon = if call.video {
+                    Icon::PictureInPicture
+                } else {
+                    Icon::ArrowLeft
+                };
+                if theme::icon_button(ui, icon, 20.0, corner_tint, corner_hover, &back).clicked() {
                     app.actions.push(Action::LeaveCallSurface);
                 }
             }
@@ -724,21 +777,6 @@ fn corner_buttons(
                 };
                 if theme::icon_button(ui, icon, 18.0, corner_tint, corner_hover, &tip).clicked() {
                     app.actions.push(Action::ToggleCallFullscreen);
-                }
-                if call.phase.is_live() {
-                    let pip = gettext(locale, "Picture in picture").into_owned();
-                    if theme::icon_button(
-                        ui,
-                        Icon::PictureInPicture,
-                        18.0,
-                        corner_tint,
-                        corner_hover,
-                        &pip,
-                    )
-                    .clicked()
-                    {
-                        app.actions.push(Action::LeaveCallSurface);
-                    }
                 }
             });
         });
@@ -1742,6 +1780,20 @@ mod tests {
         assert_eq!(
             pip_default_pos(PIP_DEFAULT, bounds),
             egui::pos2(880.0, 620.0)
+        );
+        // And however it was dragged, it stays wholly inside the app.
+        assert_eq!(
+            clamp_pip_pos(egui::pos2(-50.0, -50.0), PIP_DEFAULT, bounds),
+            egui::pos2(0.0, 0.0)
+        );
+        assert_eq!(
+            clamp_pip_pos(egui::pos2(5000.0, 5000.0), PIP_DEFAULT, bounds),
+            egui::pos2(880.0, 620.0)
+        );
+        // A window too large to fit rests against the top left corner.
+        assert_eq!(
+            clamp_pip_pos(egui::pos2(5000.0, 5000.0), vec2(2000.0, 2000.0), bounds),
+            egui::pos2(0.0, 0.0)
         );
     }
 
