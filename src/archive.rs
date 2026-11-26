@@ -244,7 +244,9 @@ const CHAT_COLUMNS: &str =
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
                     c.info_locked, c.group_admin, c.group_description, c.voice_speed,
-                    c.group_settings, c.parent_group_jid, c.is_parent_group, c.is_default_sub_group";
+                    c.group_settings, c.parent_group_jid,
+                    (c.is_parent_group != 0 OR EXISTS(SELECT 1 FROM communities cm WHERE cm.id = c.id)),
+                    c.is_default_sub_group";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -626,8 +628,8 @@ impl Archive {
     /// Creates a chat or replaces a phone-number title with a better name.
     pub fn upsert_chat(&self, chat: &Chat) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO chats (id, name, kind, last_activity, unread, archived, pinned, muted_until, pinned_at, group_subject_known, is_parent_group)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, EXISTS(SELECT 1 FROM communities WHERE id = ?1))
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 group_subject_known = excluded.group_subject_known,
@@ -635,7 +637,8 @@ impl Archive {
                 archived = CASE WHEN archive_updated_at IS NULL THEN excluded.archived ELSE archived END,
                 pinned = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned ELSE pinned END,
                 pinned_at = CASE WHEN pin_updated_at IS NULL THEN excluded.pinned_at ELSE pinned_at END,
-                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END",
+                muted_until = CASE WHEN mute_updated_at IS NULL THEN excluded.muted_until ELSE muted_until END,
+                is_parent_group = MAX(is_parent_group, excluded.is_parent_group)",
             params![
                 chat.id,
                 chat.name,
@@ -7118,6 +7121,22 @@ mod media_path_tests {
         assert!(!sub2.is_default_sub_group);
         let external = archive.chat("external-sub@g.us").unwrap().unwrap();
         assert_eq!(external.parent_group_jid.as_deref(), Some("comm-ext@g.us"));
+
+        // Inserting a community parent chat row AFTER `save_communities` still marks it
+        // as a non-sendable parent container regardless of insertion order.
+        let late_parent = crate::model::CommunityInfo {
+            id: "comm-late@g.us".into(),
+            name: "Late Parent".into(),
+            description: None,
+            participant_count: Some(5),
+            subgroups: Vec::new(),
+        };
+        archive.save_communities(&[(late_parent, true)]).unwrap();
+        let late_chat = Chat::new("comm-late@g.us".into(), "Late Parent".into());
+        archive.upsert_chat(&late_chat).unwrap();
+        let loaded_late = archive.chat("comm-late@g.us").unwrap().unwrap();
+        assert!(loaded_late.is_parent_group);
+        assert!(!loaded_late.can_send());
 
         // Unlinking clears both community tables completely.
         archive.clear().unwrap();

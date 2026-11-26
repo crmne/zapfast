@@ -3889,6 +3889,17 @@ impl App {
                 {
                     self.selected_community = None;
                 }
+                if self
+                    .open_chat
+                    .as_deref()
+                    .is_some_and(|open| self.communities.iter().any(|c| c.id == open))
+                {
+                    if live {
+                        self.actions.push(Action::CloseChat);
+                    } else {
+                        self.open_chat = None;
+                    }
+                }
             }
             Event::CommunitiesRefreshFailed(error) => {
                 self.communities_loading = false;
@@ -4024,7 +4035,10 @@ impl App {
                     self.image_preview = None;
                 }
                 if let Some(open) = self.open_chat.clone() {
-                    if self.chat(&open).is_none_or(|chat| chat.locked) {
+                    if self
+                        .chat(&open)
+                        .is_none_or(|chat| chat.locked || self.is_community_parent(chat))
+                    {
                         if live {
                             self.invalidate_composer_undo();
                         }
