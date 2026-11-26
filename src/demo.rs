@@ -3494,6 +3494,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.composer_tools_open = true;
                 app.focus_composer = true;
             }
+            "camera" => {
+                app.open_chat = Some(SAMPLES[0].id.to_owned());
+                // A stock picture stands in for the camera, as in calls.
+                app.camera_chat = app.open_chat.clone();
+                app.camera = Some(crate::camera::Viewfinder::showing(stock_frame(
+                    stock::DUSK,
+                    720,
+                )));
+            }
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
@@ -9794,6 +9803,7 @@ mod tests {
             "sticker-pack-view",
             "typing",
             "composer-tools",
+            "camera",
             "link-preview",
             "link-preview,light",
             "link-preview-loading",
@@ -19514,6 +19524,40 @@ mod tests {
         );
     }
 
+    /// The camera covers the window: a picture pasted there is not staged
+    /// behind it, where the photo would join it unseen.
+    #[test]
+    fn a_paste_under_the_camera_stages_nothing() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.camera_chat = app.open_chat.clone();
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        render(&mut app, &ctx);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-image"),
+                (2_usize, 2_usize, vec![200_u8; 16]),
+            )
+        });
+        let v = egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND), v],
+        );
+        assert!(app.camera.is_some(), "the camera stays open");
+        assert!(app.pending.is_empty(), "nothing staged behind the camera");
+    }
+
     /// Platforms deliver only the Ctrl+V release for a picture paste, and a
     /// quick tap lets go of Ctrl before V (#494). A typed V is never a paste.
     #[test]
@@ -21792,7 +21836,7 @@ mod tests {
         render(&mut app, &ctx);
         let bubble = crate::ui::conversation::bubble_id(&group, "plain-group-message");
         assert!(!ctx.read_response(bubble).unwrap().sense.is_focusable());
-        for _ in 0..2 {
+        for _ in 0..3 {
             frame_sized(&mut app, &ctx, 780.0, tab());
             render(&mut app, &ctx);
         }
@@ -22812,7 +22856,7 @@ mod tests {
             }
             // The same on macOS: the rail carries Settings there too, beside
             // the app menu.
-            let expected = vec![
+            let mut expected = vec![
                 Stop::Composer,
                 Stop::Send,
                 Stop::Attach,
@@ -22836,6 +22880,10 @@ mod tests {
                 Stop::Groups,
                 Stop::Channels,
             ];
+            // An empty composer has the camera beside Record.
+            if !ready {
+                expected.insert(2, Stop::Camera);
+            }
             assert_eq!(
                 crate::ui::focus::stops(&ctx)
                     .iter()
@@ -22932,6 +22980,7 @@ mod tests {
                     [
                         Stop::Composer,
                         Stop::Send,
+                        Stop::Camera,
                         Stop::Attach,
                         Stop::Emoji,
                         Stop::ChatSearch,

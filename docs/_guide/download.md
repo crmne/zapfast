@@ -109,7 +109,7 @@ release is out and you install the new package the same way.
 
 On any distribution with [Flatpak](https://flatpak.org), install the bundle.
 It runs in Flatpak's sandbox: it reaches the network, sound, your devices
-(the camera and microphone for calls), the keyring and notifications, but not
+(the camera and microphone for calls and photos), the keyring and notifications, but not
 your files, which you attach through the system's file picker:
 
 ```sh

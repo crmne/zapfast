@@ -339,6 +339,15 @@ parts of it. Opening the cropper again
 starts from your original with the crop you chose, so you can widen it back out
 without a second pass over the picture.
 
+To send a photo from your camera, click the camera beside the microphone (it
+shows while the message field is empty). The camera opens over the window; click
+the round button or press Enter to take the photo, or press Escape or the close
+button to leave without one. The camera shows you as a mirror does, and the
+photo is taken just as shown. The photo goes to the review area and the cropper
+opens on it, so you can crop or turn it, then add a caption and send it as any
+other picture. ZapFast uses the first camera it finds, and the camera turns off
+once the photo is taken, the camera is closed, or you leave the chat.
+
 Pictures and videos sent as a WhatsApp album appear together in a grid, and so
 do four or more photos in a row from one person on one day, without captions.
 Otherwise only

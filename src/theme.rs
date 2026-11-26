@@ -893,6 +893,7 @@ fastframe_icons::icons! {
         Bell => "bell",
         BellOff => "bell-off",
         Calendar => "calendar",
+        Camera => "camera",
         Check => lucide "check",
         CheckCheck => "check-check",
         ChevronDown => lucide "chevron-down",

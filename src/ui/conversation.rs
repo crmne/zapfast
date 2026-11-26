@@ -1697,10 +1697,30 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
             let line = (line_height + COMPOSER_PADDING)
                 .round()
                 .max(COMPOSER_CONTROL);
-            let button_width = if review_send.is_some() { 0.0 } else { line };
             let view_once = app.editing.is_none()
                 && (app.pending_supports_view_once() || app.pending_view_once);
             let view_once_width = if view_once { COMPOSER_CONTROL + ui.spacing().item_spacing.x } else { 0.0 };
+            // A camera sits beside the microphone, which an empty composer shows.
+            let camera = review_send.is_none()
+                && app.editing.is_none()
+                && app.composer.trim().is_empty()
+                && app.pending.is_empty()
+                && unsent_voice.is_none();
+            // Camera and microphone sit as close together as plus and
+            // emoji, the microphone centred in the field's rounded right end
+            // as the plus is in the left one.
+            let camera_width = if camera {
+                CAMERA_ICON + theme::ICON_BUTTON_PAD + COMPOSER_PAIR_GAP
+            } else {
+                0.0
+            };
+            let button_width = if review_send.is_some() {
+                0.0
+            } else if camera {
+                (PLUS_EDGE + (line / 2.0 - PLUS_EDGE / 2.0).max(0.0)).round()
+            } else {
+                line
+            };
             let field_margin = ((line - line_height) / 2.0).round().max(0.0);
             // Measure this frame's draft at the text column's width, so the
             // field and the panel holding it grow on the keystroke that wraps
@@ -1771,7 +1791,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 }
                 // The send button closes the row, flush with the field's end.
                 let field_width =
-                    (ui.available_width() - button_width - view_once_width - ui.spacing().item_spacing.x).max(0.0);
+                    (ui.available_width() - button_width - view_once_width - camera_width - ui.spacing().item_spacing.x).max(0.0);
                 // The ink is centred on the controls, not the line box: the
                 // span from a capital's top to a descender's bottom sits as far
                 // from the field's top as from its bottom. Inter's box leaves
@@ -2057,20 +2077,41 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                     (palette.surface, palette.surface_hover, palette.dim)
                 };
                 if review_send.is_none() {
+                if camera
+                    && last_line(ui, line, |ui| {
+                        theme::icon_button(
+                            ui,
+                            Icon::Camera,
+                            CAMERA_ICON,
+                            palette.secondary,
+                            palette.text,
+                            &crate::i18n::gettext(app.locale, "Take a photo"),
+                        )
+                    })
+                    .tab_stop(Stop::Camera)
+                    .clicked()
+                {
+                    app.actions.push(Action::OpenCamera);
+                }
+                if camera {
+                    ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
+                }
                 last_line(ui, line, |ui| if !ready && app.editing.is_none() {
-                    // An empty composer changes the send button to record.
-                    if theme::circle_button(
+                    // An empty composer changes the send button to record,
+                    // an icon like the plus, emoji and camera, its slot kept
+                    // whole so the field ends where it does with Send.
+                    ui.set_min_width(button_width);
+                    let record = theme::icon_button(
                         ui,
                         Icon::Mic,
-                        button_width,
-                        fill,
-                        hover,
+                        CAMERA_ICON,
                         palette.secondary,
+                        palette.text,
                         "Record a voice message",
-                    )
-                    .tab_stop(Stop::Send)
-                    .clicked()
-                    {
+                    );
+                    // Keyboard focus still rings Record in a circle.
+                    theme::focus_outline(ui, record.id, record.rect, record.rect.width() / 2.0);
+                    if record.tab_stop(Stop::Send).clicked() {
                         app.actions.push(Action::StartRecording);
                     }
                 } else {
@@ -2199,6 +2240,8 @@ const COMPOSER_PAIR_GAP: f32 = -4.0;
 pub(crate) const COMPOSER_TEXT_GAP: f32 = 6.0;
 /// Width of the plus button: its 22-point icon and `icon_button`'s padding.
 const PLUS_EDGE: f32 = 34.0;
+/// The camera beside the microphone, drawn as large as the plus and emoji.
+const CAMERA_ICON: f32 = 22.0;
 
 /// The message field.
 pub(crate) fn composer_id() -> egui::Id {

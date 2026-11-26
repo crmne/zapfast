@@ -11,10 +11,27 @@ fn jump_keys_reach_chat(editing_text: bool, composer_focused: bool, composer_emp
     !editing_text || (composer_focused && composer_empty)
 }
 
+/// The camera covers the window: Escape closes it, and Enter takes the
+/// photo unless a button has the focus, which Enter presses instead.
+fn camera_keys(app: &mut App, ctx: &egui::Context) {
+    let on_button = on_overlay_button(ctx, super::viewfinder::area_id());
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            app.actions.push(Action::CloseCamera);
+        } else if !on_button && input.consume_key(Modifiers::NONE, Key::Enter) {
+            app.actions.push(Action::TakePhoto);
+        }
+    });
+}
+
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
     // A focused menu takes what is typed before any shortcut sees it.
     super::widgets::menu_letters(ctx);
+    if app.camera.is_some() {
+        camera_keys(app, ctx);
+        return;
+    }
     if app.picture_edit.is_some() {
         editor_keys(app, ctx);
         return;
@@ -887,28 +904,7 @@ fn drop_shortcut_text(ctx: &egui::Context) {
 /// the crop, also in the cropper's first frame, before egui knows it covers
 /// that control.
 fn editor_keys(app: &mut App, ctx: &egui::Context) {
-    let focused = ctx.memory(|memory| memory.focused()).and_then(|focused| {
-        ctx.viewport(|viewport| {
-            viewport
-                .prev_pass
-                .widgets
-                .get(focused)
-                .map(|widget| (widget.layer_id, widget.sense.senses_click()))
-        })
-    });
-    let cropper = egui::LayerId::new(egui::Order::Foreground, super::image_editor::area_id());
-    let on_button = focused.is_some_and(|(layer, clicks)| {
-        clicks
-            && ctx.memory(|memory| {
-                // The cropper is the modal layer from the pass after its
-                // first: until then everything takes the pointer and the
-                // keys, the message field under it too, so only a layer
-                // drawn above every Foreground one is surely above it.
-                memory.allows_interaction(layer)
-                    && (memory.top_modal_layer() == Some(cropper)
-                        || layer.order > egui::Order::Foreground)
-            })
-    });
+    let on_button = on_overlay_button(ctx, super::image_editor::area_id());
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::NONE, Key::Escape) {
@@ -919,6 +915,33 @@ fn editor_keys(app: &mut App, ctx: &egui::Context) {
         }
     });
     app.actions.extend(actions);
+}
+
+/// Whether the focus is on a button of the full-window overlay `area`, which
+/// Enter then presses rather than the overlay's own Enter.
+fn on_overlay_button(ctx: &egui::Context, area: egui::Id) -> bool {
+    let focused = ctx.memory(|memory| memory.focused()).and_then(|focused| {
+        ctx.viewport(|viewport| {
+            viewport
+                .prev_pass
+                .widgets
+                .get(focused)
+                .map(|widget| (widget.layer_id, widget.sense.senses_click()))
+        })
+    });
+    let overlay = egui::LayerId::new(egui::Order::Foreground, area);
+    focused.is_some_and(|(layer, clicks)| {
+        clicks
+            && ctx.memory(|memory| {
+                // The overlay is the modal layer from the pass after its
+                // first: until then everything takes the pointer and the
+                // keys, the message field under it too, so only a layer
+                // drawn above every Foreground one is surely above it.
+                memory.allows_interaction(layer)
+                    && (memory.top_modal_layer() == Some(overlay)
+                        || layer.order > egui::Order::Foreground)
+            })
+    })
 }
 
 /// Handles a playing clip's keys while the viewer shows it: Space plays or

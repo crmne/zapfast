@@ -3047,6 +3047,13 @@ pub enum Action {
     Attach {
         documents: bool,
     },
+    /// Opens the camera to take a photo for the open chat.
+    OpenCamera,
+    /// Closes the camera without taking a photo.
+    CloseCamera,
+    /// Stages the camera's current frame as a photo and opens the cropper
+    /// on it, closing the camera.
+    TakePhoto,
     /// Opens or closes the composer tools menu.
     SetComposerTools(bool),
     SendFiles(Vec<PathBuf>),
