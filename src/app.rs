@@ -2709,6 +2709,7 @@ impl App {
         self.call_local_texture = None;
         self.call_remote_texture = None;
         self.call_member_textures.clear();
+        self.camera_texture = None;
         self.picture_texture = None;
         for staged in self.pending.iter_mut().chain(
             self.accounts
@@ -11538,7 +11539,12 @@ impl App {
             self.scrolling.apply(ctx);
             self.route_scroll(ctx);
             Self::paste_shift_insert(ctx);
-            self.take_drops_and_pastes(ctx);
+            // The camera covers the window: nothing is staged behind it.
+            if self.camera.is_none() {
+                self.take_drops_and_pastes(ctx);
+            } else {
+                self.dropping = false;
+            }
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);

@@ -19524,6 +19524,40 @@ mod tests {
         );
     }
 
+    /// The camera covers the window: a picture pasted there is not staged
+    /// behind it, where the photo would join it unseen.
+    #[test]
+    fn a_paste_under_the_camera_stages_nothing() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.camera_chat = app.open_chat.clone();
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        render(&mut app, &ctx);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("fixture-clipboard-image"),
+                (2_usize, 2_usize, vec![200_u8; 16]),
+            )
+        });
+        let v = egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND), v],
+        );
+        assert!(app.camera.is_some(), "the camera stays open");
+        assert!(app.pending.is_empty(), "nothing staged behind the camera");
+    }
+
     /// Platforms deliver only the Ctrl+V release for a picture paste, and a
     /// quick tap lets go of Ctrl before V (#494). A typed V is never a paste.
     #[test]
