@@ -1702,6 +1702,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 && (app.pending_supports_view_once() || app.pending_view_once);
             let view_once_width = if view_once { COMPOSER_CONTROL + ui.spacing().item_spacing.x } else { 0.0 };
             let field_margin = ((line - line_height) / 2.0).round().max(0.0);
+            // The text edit is at least one unrounded font row tall, a
+            // fraction above the galley's rounded line. Measured in those rows,
+            // the scroll area shows its bar only past six lines.
+            let min_text_height =
+                ui.fonts_mut(|fonts| fonts.row_height(&theme::regular(BODY_SIZE))).max(line_height);
             // Measure this frame's draft at the text column's width, so the
             // field and the panel holding it grow on the keystroke that wraps
             // a line rather than a frame later, which made them jump.
@@ -1719,7 +1724,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                 })
                 .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
                 .unwrap_or(line_height)
-                .clamp(line_height, line_height * 6.0);
+                .clamp(min_text_height, min_text_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
@@ -1913,7 +1918,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                 .0
                                 .size()
                                 .y
-                                .clamp(line_height, line_height * 6.0);
+                                .clamp(min_text_height, min_text_height * 6.0);
                                 ui.ctx().data_mut(|data| {
                                     data.insert_temp(composer_text_id(), painted);
                                 });
