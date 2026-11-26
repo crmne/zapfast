@@ -27,6 +27,10 @@ On Linux:
 Back up the archive if you need its history. WhatsApp sends only recent
 history to a new device, although ZapFast can request some older messages from
 the phone. Clearing the media cache makes ZapFast download attachments again.
+Cached attachments sit in one folder per chat and per day inside the account's
+cache, `media/<phone number>/<YYYY-MM-DD>/`, dated by the message in local time;
+a group, which has no number, uses its chat id. Files cached before this layout
+keep the paths they were given.
 Expired attachments may still be available through the phone.
 If a downloaded file has gone when you try to open it, ZapFast says so and its
 message offers the download again, without a restart.

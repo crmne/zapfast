@@ -568,6 +568,10 @@ fn is_staging(path: &Path) -> bool {
 
 /// Removes incomplete, unreferenced downloads left by an interrupted process.
 fn discard_attachment_staging(dir: &Path) {
+    discard_attachment_staging_below(dir, 0);
+}
+
+fn discard_attachment_staging_below(dir: &Path, depth: u8) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return,
@@ -585,6 +589,8 @@ fn discard_attachment_staging(dir: &Path) {
             && let Err(_) = std::fs::remove_file(entry.path())
         {
             log::warn!("could not remove incomplete attachment");
+        } else if depth < 2 && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            discard_attachment_staging_below(&entry.path(), depth + 1);
         }
     }
 }
@@ -2631,9 +2637,16 @@ impl Worker {
     }
 
     /// The file of this name in the media cache, if the attachment has one.
-    fn cached_copy(&self, path: &Path) -> Option<PathBuf> {
+    fn cached_copy(&self, chat: &str, path: &Path) -> Option<PathBuf> {
         let name = path.file_name()?;
-        Some(self.dirs.media_cache_dir().join(name)).filter(|copy| copy.exists())
+        let flat = self.dirs.media_cache_dir().join(name);
+        if flat.exists() {
+            return Some(flat);
+        }
+        let days = std::fs::read_dir(self.media_folder(chat)).ok()?;
+        days.flatten()
+            .map(|day| day.path().join(name))
+            .find(|copy| copy.exists())
     }
 
     /// Mends one attachment the reader failed to open, as `relocate_media`
@@ -2649,7 +2662,7 @@ impl Worker {
         {
             return;
         }
-        let copy = self.cached_copy(path);
+        let copy = self.cached_copy(chat, path);
         if matches!(
             self.archive
                 .put_media_path_at(chat, id, card, copy.as_deref()),
@@ -2692,7 +2705,7 @@ impl Worker {
             if path.exists() {
                 continue;
             }
-            match self.cached_copy(&path) {
+            match self.cached_copy(&chat, &path) {
                 Some(candidate) => {
                     if self
                         .archive
@@ -3254,6 +3267,22 @@ impl Worker {
             log::warn!("the download folder is unavailable; using the cache");
         }
         self.dirs.media_cache_dir()
+    }
+
+    /// Cached media is grouped per chat and per day: a contact's phone number,
+    /// or the chat id for a group, then the day the message was sent.
+    fn media_folder(&self, chat: &str) -> PathBuf {
+        let chat = self.canonical_str(chat);
+        self.dirs.media_cache_dir().join(media_folder_name(&chat))
+    }
+
+    /// Where one chat's media for today goes: the chat's cache folder and the
+    /// day, or the download folder when one is chosen.
+    fn media_dir(&self, chat: &str) -> PathBuf {
+        let day = crate::util::day_key(crate::util::now())
+            .map(|date| date.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        self.media_folder(chat).join(day)
     }
 
     fn set_online(&mut self, online: bool) {
@@ -10472,10 +10501,18 @@ impl Worker {
             None
         };
         let dir = self.download_dir(&chat);
-        let cache = self.dirs.media_cache_dir();
+        let own_folder = dir != self.dirs.media_cache_dir();
+        // The cache groups each chat's media under the chat and the day the
+        // message was sent, so one folder never holds every chat's files.
+        let day = row
+            .as_ref()
+            .and_then(|row| crate::util::day_key(row.timestamp))
+            .map(|date| date.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        let cache = self.media_folder(&chat).join(day);
+        let dir = if own_folder { dir } else { cache.clone() };
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
-        let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
         // A card's picture is small and has no ring of its own.
         let progress = card.is_none().then(|| {
@@ -10611,7 +10648,7 @@ impl Worker {
                 return;
             }
         };
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &format!("{id}-motion"), "video/mp4", None);
@@ -11575,7 +11612,7 @@ impl Worker {
             let quote = quote.take();
             let commands = self.commands.clone();
             let chat = chat.clone();
-            let dir = self.dirs.media_cache_dir();
+            let dir = self.media_dir(&chat);
             let me = self.me();
             // Attach the caption to the first file.
             let caption = if index == 0 { caption.clone() } else { None };
@@ -11709,7 +11746,7 @@ impl Worker {
         }
         let (previous, turn) = self.send_turn(&chat);
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         // A pasted picture has no name; the strip calls it a picture.
         let uploading = Uploading::new(
@@ -11796,7 +11833,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -11888,7 +11925,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -11933,7 +11970,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -12449,6 +12486,12 @@ fn seconds(timestamp: i64) -> i64 {
     } else {
         timestamp.max(0)
     }
+}
+
+/// The folder a chat's cached media goes in: its phone number, or the chat id
+/// when it has none, as in a group or a contact not yet mapped to a number.
+fn media_folder_name(chat: &str) -> String {
+    crate::model::phone_of(chat).map_or_else(|| sanitize(chat), |digits| format!("+{digits}"))
 }
 
 fn sanitize(id: &str) -> String {
@@ -15859,6 +15902,39 @@ mod tests {
             b"complete attachment"
         );
         std::fs::remove_dir_all(&directory).expect("removes staging directory");
+    }
+
+    #[test]
+    fn cached_media_lookup_finds_both_layouts() {
+        let (worker, _events, _, _) = receipt_tests::worker();
+        let chat = "200@s.whatsapp.net";
+        let cache = worker.dirs.media_cache_dir();
+        std::fs::create_dir_all(&cache).unwrap();
+        let flat = cache.join("photo.jpg");
+        std::fs::write(&flat, b"flat").unwrap();
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/photo.jpg")),
+            Some(flat.clone())
+        );
+        std::fs::remove_file(&flat).unwrap();
+        let day = worker.media_folder(chat).join("2026-11-16");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(day.join("photo.jpg"), b"nested").unwrap();
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/photo.jpg")),
+            Some(day.join("photo.jpg"))
+        );
+        assert_eq!(
+            worker.cached_copy(chat, Path::new("somewhere/missing.jpg")),
+            None
+        );
+    }
+
+    #[test]
+    fn cached_media_folders_name_contacts_by_number() {
+        assert_eq!(media_folder_name("200@s.whatsapp.net"), "+200");
+        assert_eq!(media_folder_name("120363@g.us"), "120363_g_us");
+        assert_eq!(media_folder_name("../x"), "___x");
     }
 
     #[test]
