@@ -2555,7 +2555,7 @@ impl Worker {
     /// Measures the media cache off the runtime, emptying it first when
     /// `clear`, and hands the result back as `Command::StorageMeasured`.
     fn measure_storage(&mut self, token: u64, clear: bool) {
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let commands = self.commands.clone();
         tokio::task::spawn_blocking(move || {
             if clear && clear_media(&dir).is_err() {
@@ -3214,6 +3214,15 @@ impl Worker {
     fn media_folder(&self, chat: &str) -> PathBuf {
         let chat = self.canonical_str(chat);
         self.dirs.media_cache_dir().join(media_folder_name(&chat))
+    }
+
+    /// Where one chat's media for today goes: the chat's cache folder and the
+    /// day, or the download folder when one is chosen.
+    fn media_dir(&self, chat: &str) -> PathBuf {
+        let day = crate::util::day_key(crate::util::now())
+            .map(|date| date.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        self.media_folder(chat).join(day)
     }
 
     fn set_online(&mut self, online: bool) {
@@ -10494,7 +10503,7 @@ impl Worker {
                 return;
             }
         };
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let path = media_path(&dir, &chat, &format!("{id}-motion"), "video/mp4", None);
@@ -11458,7 +11467,7 @@ impl Worker {
             let quote = quote.take();
             let commands = self.commands.clone();
             let chat = chat.clone();
-            let dir = self.dirs.media_cache_dir();
+            let dir = self.media_dir(&chat);
             let me = self.me();
             // Attach the caption to the first file.
             let caption = if index == 0 { caption.clone() } else { None };
@@ -11592,7 +11601,7 @@ impl Worker {
         }
         let (previous, turn) = self.send_turn(&chat);
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         // A pasted picture has no name; the strip calls it a picture.
         let uploading = Uploading::new(
@@ -11679,7 +11688,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -11771,7 +11780,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
@@ -11816,7 +11825,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
-        let dir = self.dirs.media_cache_dir();
+        let dir = self.media_dir(&chat);
         let me = self.me();
         tokio::spawn(async move {
             let outcome = async {
