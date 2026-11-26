@@ -961,12 +961,12 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     }
     // Rows touch: one clickable surface from top to bottom, no gaps or rules.
     ui.spacing_mut().item_spacing.y = 0.0;
-    let row_height = theme::ROW_HEIGHT;
-    let total = chats.len();
+    let (offsets, heights, total_height) = row_layout(app, &chats);
+    let first_row_height = heights.first().copied().unwrap_or(theme::ROW_HEIGHT);
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
-    if to_top && near_top(ui, "chat-list", row_height) {
+    if to_top && near_top(ui, "chat-list", first_row_height) {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
     let target_row = app
@@ -994,12 +994,12 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             .unwrap_or_default()
             .offset
             .y;
-        let offset = row_scroll_offset(
+        let offset = row_scroll_offset_var(
             current,
             ui.available_height(),
             target_row,
-            row_height,
-            ui.spacing().item_spacing.y,
+            &offsets,
+            &heights,
         );
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
@@ -1010,14 +1010,23 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     } else {
         0.0
     };
-    let output = scroll_area.show_rows(ui, row_height, total, |ui, range| {
+    let output = scroll_area.show_viewport(ui, |ui, viewport| {
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
                 vec2(0.0, carried),
                 egui::style::ScrollAnimation::none(),
             );
         }
-        for index in range {
+        let range = visible_row_range(&offsets, &heights, viewport);
+        let top_space = if range.start < offsets.len() {
+            offsets[range.start]
+        } else {
+            total_height
+        };
+        if top_space > 0.0 {
+            ui.allocate_space(vec2(ui.available_width(), top_space));
+        }
+        for index in range.clone() {
             let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
             let response = ui
@@ -1034,6 +1043,16 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
                 app.actions.push(Action::KeepUnread(chat.id.clone()));
             }
         }
+        let drawn_bottom = if range.is_empty() {
+            top_space
+        } else {
+            let last = range.end - 1;
+            offsets[last] + heights[last]
+        };
+        let bottom_space = (total_height - drawn_bottom).max(0.0);
+        if bottom_space > 0.0 {
+            ui.allocate_space(vec2(ui.available_width(), bottom_space));
+        }
     });
     if !copy {
         ui.ctx()
@@ -1045,6 +1064,11 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     ui.ctx().data_mut(|data| {
         data.insert_temp(list_offset_id(), output.state.offset.y);
         data.insert_temp(list_offset_id().with("id"), output.id);
+        data.insert_temp(
+            list_offset_id().with("content_height"),
+            output.content_size.y,
+        );
+        data.insert_temp(list_offset_id().with("inner_rect"), output.inner_rect);
     });
 }
 
@@ -1133,6 +1157,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     }
     let chats: Vec<Chat> = chats.into_iter().cloned().collect();
     ui.spacing_mut().item_spacing.y = 0.0;
+    let (offsets, heights, total_height) = row_layout(app, &chats);
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("locked-chats")
         .auto_shrink([false, false]);
@@ -1146,21 +1171,78 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
             .unwrap_or_default()
             .offset
             .y;
-        let offset = row_scroll_offset(
+        let offset = row_scroll_offset_var(
             current,
             ui.available_height(),
             target_row,
-            theme::ROW_HEIGHT,
-            ui.spacing().item_spacing.y,
+            &offsets,
+            &heights,
         );
         scroll_area = scroll_area.vertical_scroll_offset(offset);
         app.scroll_chat_into_view = None;
     }
-    scroll_area.show_rows(ui, theme::ROW_HEIGHT, chats.len(), |ui, range| {
-        for chat in &chats[range] {
+    scroll_area.show_viewport(ui, |ui, viewport| {
+        let range = visible_row_range(&offsets, &heights, viewport);
+        let top_space = if range.start < offsets.len() {
+            offsets[range.start]
+        } else {
+            total_height
+        };
+        if top_space > 0.0 {
+            ui.allocate_space(vec2(ui.available_width(), top_space));
+        }
+        for chat in &chats[range.clone()] {
             ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
         }
+        let drawn_bottom = if range.is_empty() {
+            top_space
+        } else {
+            let last = range.end - 1;
+            offsets[last] + heights[last]
+        };
+        let bottom_space = (total_height - drawn_bottom).max(0.0);
+        if bottom_space > 0.0 {
+            ui.allocate_space(vec2(ui.available_width(), bottom_space));
+        }
     });
+}
+
+fn row_height_for(app: &App, chat: &Chat) -> f32 {
+    if !app.settings.show_label_pills || !labels::has_chat_labels(app, chat) {
+        theme::ROW_HEIGHT
+    } else {
+        theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA
+    }
+}
+
+fn row_layout(app: &App, chats: &[Chat]) -> (Vec<f32>, Vec<f32>, f32) {
+    let mut offsets = Vec::with_capacity(chats.len());
+    let mut heights = Vec::with_capacity(chats.len());
+    let mut cursor = 0.0;
+    for chat in chats {
+        let height = row_height_for(app, chat);
+        offsets.push(cursor);
+        heights.push(height);
+        cursor += height;
+    }
+    (offsets, heights, cursor)
+}
+
+fn visible_row_range(offsets: &[f32], heights: &[f32], viewport: Rect) -> std::ops::Range<usize> {
+    let len = offsets.len();
+    if len == 0 {
+        return 0..0;
+    }
+    let start = (0..len)
+        .position(|index| offsets[index] + heights[index] > viewport.min.y)
+        .unwrap_or(len);
+    let end = (start..len)
+        .position(|index| offsets[index] >= viewport.max.y)
+        .map_or(len, |rel| start + rel);
+    // Lay out one extra row on either side of the viewport (matching
+    // `ScrollArea::show_rows`), so Tab / Shift+Tab can focus the next
+    // off-screen row and scroll it into view.
+    start.saturating_sub(1)..(end + 1).min(len)
 }
 
 /// Returns the smallest offset that fully reveals a fixed-height row.
@@ -1173,6 +1255,25 @@ fn row_scroll_offset(
 ) -> f32 {
     let top = row as f32 * (row_height + spacing);
     let bottom = top + row_height;
+    if top < current {
+        top
+    } else if bottom > current + viewport_height {
+        (bottom - viewport_height).max(0.0)
+    } else {
+        current
+    }
+}
+
+/// Returns the smallest offset that fully reveals a variable-height row.
+fn row_scroll_offset_var(
+    current: f32,
+    viewport_height: f32,
+    row: usize,
+    offsets: &[f32],
+    heights: &[f32],
+) -> f32 {
+    let top = offsets[row];
+    let bottom = top + heights[row];
     if top < current {
         top
     } else if bottom > current + viewport_height {
@@ -1219,14 +1320,15 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                     // open, so a row nothing would show keeps its height and
                     // nothing else. The row reached with the arrows is always
                     // laid out, so it can ask to be scrolled to.
-                    if !reveal && offscreen(ui, theme::ROW_HEIGHT) {
+                    let height = row_height_for(app, chat);
+                    if !reveal && offscreen(ui, height) {
                         // Out of the layout, like the virtualized chat list,
                         // but still announced: a screen reader keeps reading
                         // the results as it does everywhere else.
                         let title = app.chat_title(chat);
                         ui.push_id(("chat", &chat.id), |ui| {
                             let (_, placed) = ui.allocate_exact_size(
-                                vec2(ui.available_width(), theme::ROW_HEIGHT),
+                                vec2(ui.available_width(), height),
                                 Sense::click(),
                             );
                             placed.widget_info(|| {
@@ -1539,10 +1641,22 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         .is_some_and(|selected| *selected == chat.id);
     let now = crate::util::now();
     let muted = chat.muted(now);
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), theme::ROW_HEIGHT),
-        Sense::click(),
-    );
+    let worn_labels: Vec<crate::model::Label> = if app.settings.show_label_pills {
+        labels::chat_labels(app, chat)
+            .into_iter()
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let has_labels = !worn_labels.is_empty();
+    let row_height = if has_labels {
+        theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA
+    } else {
+        theme::ROW_HEIGHT
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
     theme::reveal_focus(&response);
     // The preview area and the whole last message, when the row cuts it short.
     let mut full_preview: Option<(Rect, String, String)> = None;
@@ -1591,7 +1705,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let stamp_galley = ui
             .painter()
             .layout_no_wrap(stamp, theme::regular(11.5), stamp_color);
-        let name_top = rect.top() + 14.0;
+        let name_top = rect.top() + if has_labels { 11.0 } else { 14.0 };
         ui.painter().galley(
             pos2(right - stamp_galley.size().x, name_top + 1.0),
             stamp_galley.clone(),
@@ -1608,7 +1722,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;
-        let line_y = rect.top() + 38.0;
+        let line_y = rect.top() + if has_labels { 34.0 } else { 38.0 };
         if unread {
             let width = widgets::unread_indicator(
                 ui,
@@ -1747,6 +1861,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(ui, "", theme::regular(13.0), preview_color, 1.0, 1)
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
+        if has_labels {
+            let label_refs: Vec<&crate::model::Label> = worn_labels.iter().collect();
+            labels::paint_card_pills(ui, &palette, &label_refs, left, right, rect.top() + 58.0);
+        }
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if let Some((area, prefix, full)) = full_preview {
@@ -3218,5 +3336,87 @@ mod tests {
         let center = compact_badge_center(avatar);
         assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
         assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
+    }
+
+    #[test]
+    fn mixed_height_chat_list_scrolls_to_reveal_offscreen_labeled_row() {
+        let (_directory, mut app, _ids, ctx) = rail_app(0);
+        app.labels = vec![crate::model::Label {
+            id: "label-work".into(),
+            name: "Work".into(),
+            color_hex: "#3b82f6".into(),
+            created_at: 1,
+        }];
+        let mut expected_total = 0.0;
+        for index in 0..16 {
+            let mut chat = Chat::new(
+                format!("1555000{index:04}@s.whatsapp.net"),
+                format!("Chat {index:02}"),
+            );
+            // Newer timestamps first so chat 0 is at the top and chat 15 at the bottom.
+            chat.last_activity = 1_000 - index as i64;
+            if index % 2 == 0 {
+                chat.labels = vec!["label-work".into()];
+                expected_total += theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA;
+            } else {
+                expected_total += theme::ROW_HEIGHT;
+            }
+            app.chats.push(chat);
+        }
+        let target = app.chats[14].id.clone(); // labeled row well below a 360px viewport
+        assert!(labels::has_chat_labels(&app, &app.chats[14]));
+        assert!(!labels::has_chat_labels(&app, &app.chats[13]));
+
+        let draw = |app: &mut App| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 360.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(app, ui);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        draw(&mut app);
+        draw(&mut app);
+
+        let content_height = ctx
+            .data(|data| data.get_temp::<f32>(list_offset_id().with("content_height")))
+            .expect("content height recorded");
+        assert!(
+            (content_height - expected_total).abs() < 1.0,
+            "total scroll extent {content_height} should match mixed row heights {expected_total}"
+        );
+        assert!(
+            ctx.data(|data| data.get_temp::<Rect>(chat_row_id(&target)))
+                .is_none(),
+            "deep off-screen labeled row starts virtualized out"
+        );
+
+        app.scroll_chat_into_view = Some(target.clone());
+        draw(&mut app);
+        draw(&mut app);
+
+        let inner_rect = ctx
+            .data(|data| data.get_temp::<Rect>(list_offset_id().with("inner_rect")))
+            .expect("list viewport recorded");
+        let offset = ctx
+            .data(|data| data.get_temp::<f32>(list_offset_id()))
+            .expect("scroll offset recorded");
+        let revealed = ctx
+            .data(|data| data.get_temp::<Rect>(chat_row_id(&target)))
+            .expect("target labeled row is drawn after scrolling into view");
+        assert!(offset > 0.0, "list scrolled down to reveal target row");
+        assert_eq!(
+            revealed.height(),
+            theme::ROW_HEIGHT + labels::CARD_PILL_ROW_EXTRA
+        );
+        assert!(
+            revealed.top() >= inner_rect.top() - 1.0
+                && revealed.bottom() <= inner_rect.bottom() + 1.0,
+            "revealed row {revealed:?} must lie within viewport {inner_rect:?}"
+        );
     }
 }

@@ -24,6 +24,141 @@ pub const PRESET_COLORS: [&str; 10] = [
 
 const ROW_HEIGHT: f32 = 34.0;
 
+/// Extra height added to a chat-list row when it displays label pills.
+pub const CARD_PILL_ROW_EXTRA: f32 = 20.0;
+
+/// Whether `chat` wears at least one existing label, without allocating.
+pub fn has_chat_labels(app: &App, chat: &Chat) -> bool {
+    !chat.labels.is_empty()
+        && app
+            .labels
+            .iter()
+            .any(|label| app.chat_wears(chat, &label.id))
+}
+
+/// Returns the existing labels worn by `chat`, ordered to match the filter bar.
+pub fn chat_labels<'a>(app: &'a App, chat: &Chat) -> Vec<&'a Label> {
+    if chat.labels.is_empty() {
+        return Vec::new();
+    }
+    app.labels
+        .iter()
+        .filter(|label| app.chat_wears(chat, &label.id))
+        .collect()
+}
+
+/// Paints compact coloured mini-pill badges for a chat card's labels.
+pub fn paint_card_pills(
+    ui: &egui::Ui,
+    palette: &Palette,
+    labels: &[&Label],
+    left: f32,
+    right: f32,
+    top: f32,
+) {
+    if labels.is_empty() || right <= left {
+        return;
+    }
+    const PILL_HEIGHT: f32 = 18.0;
+    const PILL_RADIUS: f32 = PILL_HEIGHT / 2.0;
+    const PILL_GAP: f32 = 4.5;
+    const PAD_LEFT: f32 = 6.0;
+    const PAD_RIGHT: f32 = 7.0;
+    const DOT_RADIUS: f32 = 2.8;
+    const DOT_GAP: f32 = 4.5;
+    const OVERFLOW_RESERVE: f32 = 30.0;
+
+    let painter = ui.painter();
+    let font = theme::medium(10.5);
+    let chrome = PAD_LEFT + DOT_RADIUS * 2.0 + DOT_GAP + PAD_RIGHT;
+    let mut x = left;
+    let mut drawn = 0usize;
+
+    for (index, label) in labels.iter().enumerate() {
+        let remaining_after = labels.len() - index - 1;
+        let reserve = if remaining_after > 0 {
+            PILL_GAP + OVERFLOW_RESERVE
+        } else {
+            0.0
+        };
+        let available = right - x;
+        let max_pill_width = (available - reserve).max(0.0);
+        let natural = painter.layout_no_wrap(label.name.clone(), font.clone(), palette.text);
+        let natural_pill_width = chrome + natural.size().x;
+
+        if index > 0 && natural_pill_width > max_pill_width {
+            break;
+        }
+
+        let max_text_width = (max_pill_width - chrome).max(0.0);
+        if index == 0 && max_text_width < 8.0 {
+            break;
+        }
+
+        let text = widgets::line(
+            ui,
+            &label.name,
+            font.clone(),
+            palette.text,
+            max_text_width,
+            1,
+        );
+        let pill_width = (chrome + text.size().x).min(available).max(chrome);
+        let pill_rect = Rect::from_min_size(pos2(x, top), vec2(pill_width, PILL_HEIGHT));
+        let color = color_of(palette, &label.color_hex);
+
+        painter.rect_filled(pill_rect, PILL_RADIUS, color.gamma_multiply(0.16));
+        painter.rect_stroke(
+            pill_rect,
+            PILL_RADIUS,
+            Stroke::new(1.0, color.gamma_multiply(0.38)),
+            egui::StrokeKind::Inside,
+        );
+        painter.circle_filled(
+            pos2(
+                pill_rect.left() + PAD_LEFT + DOT_RADIUS,
+                pill_rect.center().y,
+            ),
+            DOT_RADIUS,
+            color,
+        );
+        text.paint(
+            ui,
+            pos2(
+                pill_rect.left() + PAD_LEFT + DOT_RADIUS * 2.0 + DOT_GAP,
+                pill_rect.center().y - text.size().y / 2.0,
+            ),
+            palette.text,
+        );
+
+        x += pill_width + PILL_GAP;
+        drawn += 1;
+    }
+
+    let hidden = labels.len() - drawn;
+    if hidden > 0 && right - x >= 22.0 {
+        let more = format!("+{hidden}");
+        let more_galley = painter.layout_no_wrap(more, font, palette.secondary);
+        let more_width = (more_galley.size().x + 12.0).min(right - x);
+        let more_rect = Rect::from_min_size(pos2(x, top), vec2(more_width, PILL_HEIGHT));
+        painter.rect_filled(more_rect, PILL_RADIUS, palette.surface);
+        painter.rect_stroke(
+            more_rect,
+            PILL_RADIUS,
+            Stroke::new(1.0, palette.outline),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(
+            pos2(
+                more_rect.center().x - more_galley.size().x / 2.0,
+                more_rect.center().y - more_galley.size().y / 2.0,
+            ),
+            more_galley,
+            palette.secondary,
+        );
+    }
+}
+
 /// Stable label-chip id used by interaction tests.
 pub fn chip_id(label: &str) -> egui::Id {
     egui::Id::new(("label-chip", label))
@@ -658,5 +793,67 @@ mod tests {
         for hex in PRESET_COLORS {
             assert_ne!(color_name(Locale::English, hex), "Colour", "{hex}");
         }
+    }
+
+    #[test]
+    fn labeled_chat_row_expands_for_mini_pills() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        app.labels = vec![
+            label("label-1", "ICN"),
+            label("label-2", "[Kuliah]"),
+            label("label-3", "Kelas"),
+        ];
+        let mut plain = Chat::new("100@s.whatsapp.net".into(), "Plain".into());
+        plain.last_activity = 100;
+        let mut tagged = Chat::new("200@s.whatsapp.net".into(), "Tagged".into());
+        tagged.last_activity = 200;
+        tagged.labels = vec!["label-2".into(), "label-1".into(), "missing-label".into()];
+        app.chats = vec![tagged.clone(), plain.clone()];
+
+        let resolved: Vec<&str> = chat_labels(&app, &tagged)
+            .into_iter()
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(resolved, vec!["ICN", "[Kuliah]"]);
+
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(420.0, 480.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            crate::ui::chats::show(&mut app, ui);
+        });
+        output.textures_delta.clear();
+
+        let plain_rect = ctx
+            .data(|data| data.get_temp::<Rect>(crate::ui::chats::chat_row_id(&plain.id)))
+            .expect("plain chat row is drawn");
+        let tagged_rect = ctx
+            .data(|data| data.get_temp::<Rect>(crate::ui::chats::chat_row_id(&tagged.id)))
+            .expect("tagged chat row is drawn");
+        assert_eq!(plain_rect.height(), theme::ROW_HEIGHT);
+        assert_eq!(
+            tagged_rect.height(),
+            theme::ROW_HEIGHT + CARD_PILL_ROW_EXTRA
+        );
+
+        // Turning off `show_label_pills` hides the pill row and restores the compact row height.
+        app.settings.show_label_pills = false;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(420.0, 480.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            crate::ui::chats::show(&mut app, ui);
+        });
+        output.textures_delta.clear();
+        let tagged_hidden_rect = ctx
+            .data(|data| data.get_temp::<Rect>(crate::ui::chats::chat_row_id(&tagged.id)))
+            .expect("tagged chat row is drawn when pills are disabled");
+        assert_eq!(tagged_hidden_rect.height(), theme::ROW_HEIGHT);
     }
 }

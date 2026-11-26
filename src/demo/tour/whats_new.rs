@@ -217,7 +217,7 @@ pub(super) fn script() -> Vec<Cue> {
     // Favorites and label chips, and a chat's menu.
     add(47.4, Move(Label("Favorites")));
     add(47.8, Click(left));
-    add(49.0, Move(Label("Work")));
+    add(49.0, Move(Stop(Control::Label(0))));
     add(49.4, Click(left));
     add(50.6, Move(Label("All")));
     add(51.0, Click(left));
