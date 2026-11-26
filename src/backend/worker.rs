@@ -6759,6 +6759,9 @@ impl Worker {
                 }
                 if let Some(edit) = &message.edit_id {
                     self.record_edit_id(&id, edit, &row.id);
+                    // If the edit's id was already known, a read naming it
+                    // has been waiting under this message.
+                    self.apply_waiting_receipts(&id, &row.id);
                 }
                 if matches!(row.content, Content::Poll { .. }) {
                     if poll_history_received {
@@ -20959,6 +20962,46 @@ mod receipt_tests {
                 .has_group_audience(group, "original")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn history_applies_a_read_that_waited_for_an_already_edited_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let now = crate::util::now();
+        // The phone's edit arrives, then a read naming it, then the message.
+        worker.record_edit_id(PEER, "edit", "original");
+        worker.on_receipt(&receipt(PEER, &["edit"], ReceiptType::Read));
+        let snapshot = {
+            let mut protocol = wa::message::ProtocolMessage::default();
+            protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+            let mut key = wa::MessageKey::default();
+            key.id = Some("original".into());
+            protocol.key = MessageField::some(key);
+            protocol.edited_message = MessageField::some(wa::Message::text("edited"));
+            let mut proto = wa::Message::default();
+            proto.protocol_message = MessageField::some(protocol);
+            proto
+        };
+        let parsed = parse_conversation({
+            let mut proto = wa::Conversation::default();
+            proto.id = PEER.into();
+            let mut entry = history_entry(PEER, "edit", true, None, snapshot, Vec::new(), None);
+            entry.message.get_or_insert_default().message_timestamp = Some((now - 60) as u64);
+            proto.messages = vec![entry];
+            proto
+        });
+        worker.apply_history(
+            ParsedHistory {
+                chats: vec![parsed],
+                push_names: Vec::new(),
+                lids: Vec::new(),
+                stickers: Vec::new(),
+            },
+            true,
+        );
+        let stored = worker.archive.message(PEER, "original").unwrap().unwrap();
+        assert_eq!(stored.status, Delivery::Read);
+        assert!(stored.read_at.is_some());
     }
 
     #[tokio::test]
