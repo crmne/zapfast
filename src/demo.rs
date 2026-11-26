@@ -18055,9 +18055,19 @@ mod tests {
                 .map(|(_, node)| node)
                 .collect();
         }
-        let bells: Vec<_> = nodes
+        // `accesskit_update.nodes` is not guaranteed to be in visual order, so
+        // sort the bells top-to-bottom to match `app.accounts`.
+        let mut bell_nodes: Vec<_> = nodes
             .iter()
             .filter(|node| node.label() == Some("Mute notifications"))
+            .collect();
+        bell_nodes.sort_by(|a, b| {
+            let y =
+                |node: &&egui::accesskit::Node| node.bounds().map_or(f64::MAX, |bounds| bounds.y0);
+            y(a).total_cmp(&y(b))
+        });
+        let bells: Vec<_> = bell_nodes
+            .into_iter()
             .map(|node| node.toggled() == Some(egui::accesskit::Toggled::True))
             .collect();
         assert_eq!(bells, [false, true], "one bell per account, the second on");
@@ -22887,6 +22897,7 @@ mod tests {
                 Stop::Messages,
                 Stop::Chats,
                 Stop::Calls,
+                Stop::Communities,
                 Stop::Starred,
                 Stop::Archived,
                 Stop::Locked,
@@ -23004,6 +23015,7 @@ mod tests {
                         Stop::Messages,
                         Stop::Chats,
                         Stop::Calls,
+                        Stop::Communities,
                         Stop::Starred,
                         Stop::Archived,
                         Stop::Locked,
