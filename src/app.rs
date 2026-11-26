@@ -4035,14 +4035,20 @@ impl App {
                     self.image_preview = None;
                 }
                 if let Some(open) = self.open_chat.clone() {
-                    if self
-                        .chat(&open)
-                        .is_none_or(|chat| chat.locked || self.is_community_parent(chat))
-                    {
+                    if self.chat(&open).is_none_or(|chat| chat.locked) {
                         if live {
                             self.invalidate_composer_undo();
                         }
                         self.open_chat = None;
+                    } else if self
+                        .chat(&open)
+                        .is_some_and(|chat| self.is_community_parent(chat))
+                    {
+                        if live {
+                            self.actions.push(Action::CloseChat);
+                        } else {
+                            self.open_chat = None;
+                        }
                     } else {
                         // Show archived messages immediately, including offline.
                         self.ensure_loaded(&open);
@@ -5374,6 +5380,13 @@ impl App {
             && chat.archived
             && self.chat(&chat.id).is_none_or(|known| !known.archived)
         {
+            if live {
+                self.actions.push(Action::CloseChat);
+            } else {
+                self.open_chat = None;
+            }
+        }
+        if (is_open || (!live && remembered)) && self.is_community_parent(&chat) {
             if live {
                 self.actions.push(Action::CloseChat);
             } else {
