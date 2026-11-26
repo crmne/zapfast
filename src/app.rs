@@ -3889,16 +3889,13 @@ impl App {
                 {
                     self.selected_community = None;
                 }
-                if self
+                if let Some(open) = self
                     .open_chat
                     .as_deref()
-                    .is_some_and(|open| self.communities.iter().any(|c| c.id == open))
+                    .filter(|open| self.communities.iter().any(|c| c.id == *open))
+                    .map(str::to_owned)
                 {
-                    if live {
-                        self.actions.push(Action::CloseChat);
-                    } else {
-                        self.open_chat = None;
-                    }
+                    self.close_parent_chat(&open, live);
                 }
             }
             Event::CommunitiesRefreshFailed(error) => {
@@ -4044,11 +4041,7 @@ impl App {
                         .chat(&open)
                         .is_some_and(|chat| self.is_community_parent(chat))
                     {
-                        if live {
-                            self.actions.push(Action::CloseChat);
-                        } else {
-                            self.open_chat = None;
-                        }
+                        self.close_parent_chat(&open, live);
                     } else {
                         // Show archived messages immediately, including offline.
                         self.ensure_loaded(&open);
@@ -5372,21 +5365,16 @@ impl App {
         if chat.locked && !self.locked_folder_open() {
             self.hide_locked_chat(&chat.id);
         }
-        // Leaving with "and archive" archives the chat once the phone agreed,
-        // so this is where the open conversation closes, not before. Only a
-        // chat that just became archived: a message arriving in one that was
-        // already archived does not close it.
-        if (is_open || (!live && remembered))
+        if remembered && self.is_community_parent(&chat) {
+            self.close_parent_chat(&chat.id, live);
+        } else if (is_open || (!live && remembered))
             && chat.archived
             && self.chat(&chat.id).is_none_or(|known| !known.archived)
         {
-            if live {
-                self.actions.push(Action::CloseChat);
-            } else {
-                self.open_chat = None;
-            }
-        }
-        if (is_open || (!live && remembered)) && self.is_community_parent(&chat) {
+            // Leaving with "and archive" archives the chat once the phone agreed,
+            // so this is where the open conversation closes, not before. Only a
+            // chat that just became archived: a message arriving in one that was
+            // already archived does not close it.
             if live {
                 self.actions.push(Action::CloseChat);
             } else {
@@ -5650,6 +5638,53 @@ impl App {
             self.close_info();
         }
         self.open_chat = id;
+    }
+
+    /// Closes the currently open conversation, parking any unsent draft and
+    /// attachments before clearing transient reply and composer UI state.
+    fn close_open_chat(&mut self) {
+        self.close_info();
+        self.open_message_menu = None;
+        if let Some(chat) = self.open_chat.take() {
+            self.invalidate_composer_undo();
+            self.save_attachment_draft(&chat);
+            self.stop_composing(&chat);
+            let draft = std::mem::take(&mut self.composer);
+            if self.is_untouched_prefill(&chat, &draft) {
+                // A link's text is not the reader's; theirs stays.
+                self.composer_mentions.clear();
+            } else if self.editing.take().is_none() && !draft.trim().is_empty() {
+                self.drafts.insert(chat.clone(), draft);
+                let mentions = std::mem::take(&mut self.composer_mentions);
+                self.draft_mentions.insert(chat.clone(), mentions);
+            } else {
+                self.composer_mentions.clear();
+            }
+            self.store_draft(&chat, self.drafts.get(&chat).map_or("", String::as_str));
+        }
+        self.reply_to = None;
+        // A pending quote belongs to the chat being left, like the
+        // quote it would start.
+        self.reply_when_loaded = None;
+        self.emoji_start = None;
+        self.mention_start = None;
+        self.reaction_target = None;
+        self.reaction_anchor = None;
+        self.emoji_jump = None;
+    }
+
+    /// Closes a community parent container if it is currently open or
+    /// remembered as the active chat, without disturbing unrelated chats or a
+    /// background account's window-owned composer state.
+    fn close_parent_chat(&mut self, id: &str, live: bool) {
+        if self.open_chat.as_deref() != Some(id) {
+            return;
+        }
+        if live {
+            self.close_open_chat();
+        } else {
+            self.open_chat = None;
+        }
     }
 
     /// Whether the panel may list its chat's media: a locked chat's stays
@@ -7791,37 +7826,10 @@ impl App {
                 }
             }
             Action::CloseChat => {
-                self.close_info();
                 // A narrow window's Back from a picked call returns to the
                 // call history.
                 self.picked_call = None;
-                self.open_message_menu = None;
-                if let Some(chat) = self.open_chat.take() {
-                    self.invalidate_composer_undo();
-                    self.save_attachment_draft(&chat);
-                    self.stop_composing(&chat);
-                    let draft = std::mem::take(&mut self.composer);
-                    if self.is_untouched_prefill(&chat, &draft) {
-                        // A link's text is not the reader's; theirs stays.
-                        self.composer_mentions.clear();
-                    } else if self.editing.take().is_none() && !draft.trim().is_empty() {
-                        self.drafts.insert(chat.clone(), draft);
-                        let mentions = std::mem::take(&mut self.composer_mentions);
-                        self.draft_mentions.insert(chat.clone(), mentions);
-                    } else {
-                        self.composer_mentions.clear();
-                    }
-                    self.store_draft(&chat, self.drafts.get(&chat).map_or("", String::as_str));
-                }
-                self.reply_to = None;
-                // A pending quote belongs to the chat being left, like the
-                // quote it would start.
-                self.reply_when_loaded = None;
-                self.emoji_start = None;
-                self.mention_start = None;
-                self.reaction_target = None;
-                self.reaction_anchor = None;
-                self.emoji_jump = None;
+                self.close_open_chat();
             }
             Action::SendText {
                 chat,
@@ -26215,6 +26223,79 @@ mod tests {
         assert_eq!(app.display_name("42@lid"), "+1 555 123 4567");
         app.chats.push(Chat::new("43@lid".into(), "43".into()));
         assert_eq!(app.display_name("43@lid"), "Unknown");
+    }
+
+    #[test]
+    fn closing_a_community_parent_preserves_draft_and_later_open_chat() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let parent_id = "community-parent@g.us";
+        let subgroup_id = "community-sub@g.us";
+        let mut parent = Chat::new(parent_id.into(), "Neighborhood".into());
+        parent.is_parent_group = true;
+        let subgroup = Chat::new(subgroup_id.into(), "General".into());
+        app.chats = vec![parent, subgroup];
+        app.open_chat = Some(parent_id.into());
+        app.composer = "remembered draft".into();
+
+        // A queued subgroup open in the same event batch must survive closing
+        // the previously open community parent container.
+        app.apply_backend_event(
+            Event::SubgroupJoined {
+                community: parent_id.into(),
+                subgroup: subgroup_id.into(),
+                error: None,
+            },
+            true,
+        );
+        app.apply_backend_event(
+            Event::Communities(vec![crate::model::CommunityInfo {
+                id: parent_id.into(),
+                name: "Neighborhood".into(),
+                description: None,
+                participant_count: None,
+                subgroups: Vec::new(),
+            }]),
+            true,
+        );
+
+        assert_eq!(app.open_chat, None);
+        assert_eq!(
+            app.drafts.get(parent_id).map(String::as_str),
+            Some("remembered draft")
+        );
+        assert!(app.composer.is_empty());
+
+        app.apply_actions(&ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(subgroup_id));
+    }
+
+    #[test]
+    fn community_parent_chat_update_closes_remembered_parent_on_other_pages() {
+        let mut app = app();
+        let parent_id = "community-parent@g.us";
+        let mut parent = Chat::new(parent_id.into(), "Neighborhood".into());
+        parent.is_parent_group = true;
+        app.chats.push(parent.clone());
+        app.open_chat = Some(parent_id.into());
+        app.composer = "parked while in settings".into();
+        app.page = Page::Settings;
+
+        app.handle_chat_updated(parent, true);
+        assert_eq!(app.open_chat, None);
+        assert_eq!(
+            app.drafts.get(parent_id).map(String::as_str),
+            Some("parked while in settings")
+        );
+        assert!(app.composer.is_empty());
+
+        let mut background_parent = Chat::new("community-bg@g.us".into(), "Hidden".into());
+        background_parent.is_parent_group = true;
+        app.open_chat = Some(background_parent.id.clone());
+        app.composer = "active account text".into();
+        app.handle_chat_updated(background_parent, false);
+        assert_eq!(app.open_chat, None);
+        assert_eq!(app.composer, "active account text");
     }
 }
 
