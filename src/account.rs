@@ -152,6 +152,16 @@ pub struct Account {
     pub calls_search: String,
     /// What the new-call list's search field holds.
     pub new_call_search: String,
+    /// Participating WhatsApp Communities and their linked subgroups.
+    pub communities: Vec<crate::model::CommunityInfo>,
+    /// Whether a community refresh is currently in flight.
+    pub communities_loading: bool,
+    /// The community currently selected in the Communities tab.
+    pub selected_community: Option<ChatId>,
+    /// Search text in the Communities tab.
+    pub communities_search: String,
+    /// Subgroups whose join request is currently in flight.
+    pub joining_subgroups: HashSet<ChatId>,
 }
 
 impl Account {
@@ -263,6 +273,11 @@ impl Account {
             new_call: false,
             calls_search: String::new(),
             new_call_search: String::new(),
+            communities: Vec::new(),
+            communities_loading: false,
+            selected_community: None,
+            communities_search: String::new(),
+            joining_subgroups: HashSet::new(),
         }
     }
 

@@ -1959,6 +1959,59 @@ fn labels_sample(app: &mut App) {
     }
 }
 
+/// Synthetic WhatsApp Community linking two sample groups plus an unjoined subgroup.
+fn communities_sample(app: &mut App) {
+    let community_id = "120363055566677788@g.us".to_owned();
+    let announce_id = "120363011122233344@g.us".to_owned();
+    let rust_id = "120363012345678901@g.us".to_owned();
+    let workshops_id = "120363055566677799@g.us".to_owned();
+
+    app.communities = vec![crate::model::CommunityInfo {
+        id: community_id.clone(),
+        name: "Berlin Tech Community".into(),
+        description: Some(
+            "Meetups, study groups, and announcements for Rust and systems engineers in Berlin."
+                .into(),
+        ),
+        participant_count: Some(84),
+        subgroups: vec![
+            crate::model::CommunitySubgroup {
+                id: announce_id.clone(),
+                name: "Announcements".into(),
+                participant_count: Some(84),
+                is_default_sub_group: true,
+                is_general_chat: false,
+                is_hidden_group: false,
+            },
+            crate::model::CommunitySubgroup {
+                id: rust_id.clone(),
+                name: "Rust Berlin".into(),
+                participant_count: Some(42),
+                is_default_sub_group: false,
+                is_general_chat: false,
+                is_hidden_group: false,
+            },
+            crate::model::CommunitySubgroup {
+                id: workshops_id,
+                name: "Weekend Workshops".into(),
+                participant_count: Some(24),
+                is_default_sub_group: false,
+                is_general_chat: false,
+                is_hidden_group: false,
+            },
+        ],
+    }];
+
+    for chat in &mut app.chats {
+        if chat.id == announce_id {
+            chat.parent_group_jid = Some(community_id.clone());
+            chat.is_default_sub_group = true;
+        } else if chat.id == rust_id {
+            chat.parent_group_jid = Some(community_id.clone());
+        }
+    }
+}
+
 /// A synthetic dusk gradient as the wallpaper image, shown at once. The file
 /// is never written: the sample hands the decoded image over directly.
 /// Sets the demo password ("demo-password") and locks.
@@ -3890,6 +3943,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "labels-dialog" => {
                 labels_sample(app);
                 app.dialog = Some(Dialog::Labels);
+            }
+            "communities" => {
+                communities_sample(app);
+                app.page = Page::Communities;
+                app.open_chat = None;
+                app.selected_community = Some("120363055566677788@g.us".into());
+            }
+            "community-chat" => {
+                communities_sample(app);
+                app.page = Page::Chats;
+                let group = "120363012345678901@g.us";
+                app.open_chat = Some(group.to_owned());
+                info_sample(app, group, InfoView::Overview);
             }
             "chat-search" => chat_search_sample(app, "engine"),
             // Right-to-left previews with emoji.

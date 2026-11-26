@@ -2907,7 +2907,7 @@ impl App {
     /// Whether the main pane can show the open chat: on the chat list's
     /// page, and on the Calls tab beside its history.
     pub fn chat_view(&self) -> bool {
-        matches!(self.page, Page::Chats | Page::Calls)
+        matches!(self.page, Page::Chats | Page::Calls | Page::Communities)
     }
 
     /// Whether the open chat is the one picked from the Calls tab's history.
@@ -2927,6 +2927,52 @@ impl App {
     /// The label with this id, when it still exists.
     pub fn label(&self, id: &str) -> Option<&Label> {
         self.labels.iter().find(|label| label.id == id)
+    }
+
+    /// The WhatsApp Community with this id, when known.
+    pub fn community(&self, id: &str) -> Option<&crate::model::CommunityInfo> {
+        self.communities.iter().find(|c| c.id == id)
+    }
+
+    /// The WhatsApp Community that `chat` belongs to, if any.
+    pub fn community_of_chat(&self, chat: &Chat) -> Option<&crate::model::CommunityInfo> {
+        if let Some(parent) = chat.parent_group_jid.as_deref()
+            && let Some(community) = self.community(parent)
+        {
+            return Some(community);
+        }
+        self.communities
+            .iter()
+            .find(|c| c.subgroups.iter().any(|sg| sg.id == chat.id))
+    }
+
+    /// Whether `chat` is a community's default Announcements subgroup.
+    pub fn is_community_announcements(&self, chat: &Chat) -> bool {
+        if chat.is_default_sub_group {
+            return true;
+        }
+        self.communities.iter().any(|c| {
+            c.subgroups
+                .iter()
+                .any(|sg| sg.id == chat.id && sg.is_default_sub_group)
+        })
+    }
+
+    /// Whether `chat` is a WhatsApp Community parent shell (hidden from regular Chats).
+    pub fn is_community_parent(&self, chat: &Chat) -> bool {
+        chat.is_parent_group || self.communities.iter().any(|c| c.id == chat.id)
+    }
+
+    /// Total unread chats inside a community (Announcements + joined subgroups).
+    pub fn community_unread(&self, community: &crate::model::CommunityInfo) -> usize {
+        community
+            .subgroups
+            .iter()
+            .filter(|sg| {
+                self.chat(&sg.id)
+                    .is_some_and(|chat| !chat.archived && !chat.locked && chat.looks_unread())
+            })
+            .count()
     }
 
     /// Whether a chat wears a label id.
@@ -3425,6 +3471,7 @@ impl App {
         let mut chats: Vec<&Chat> = self
             .chats
             .iter()
+            .filter(|chat| !self.is_community_parent(chat))
             .filter(|chat| chat.locked == locked)
             .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
             // Searching still finds people never written to, and one being
@@ -3815,6 +3862,28 @@ impl App {
             Event::Labels(labels) => {
                 self.labels = labels;
                 self.prune_labels();
+            }
+            Event::Communities(communities) => {
+                self.communities = communities;
+                self.communities_loading = false;
+                if let Some(selected) = &self.selected_community
+                    && !self.communities.iter().any(|c| c.id == *selected)
+                {
+                    self.selected_community = None;
+                }
+            }
+            Event::SubgroupJoined {
+                community: _,
+                subgroup,
+                error,
+            } => {
+                self.joining_subgroups.remove(&subgroup);
+                if let Some(error) = error {
+                    self.toast_error(error);
+                } else {
+                    self.toast("Joined community group.");
+                    self.actions.push(Action::OpenChat(subgroup));
+                }
             }
             Event::Drafts(drafts) => {
                 // Unsent text stored by an earlier session. Text typed in
@@ -5615,7 +5684,7 @@ impl App {
 
     /// Whether a name finds `needle` as the whole text or word by word (see
     /// `util::search_matches`), sharing `text_matches`' cache.
-    fn name_matches(&self, name: &str, needle: &str) -> bool {
+    pub(crate) fn name_matches(&self, name: &str, needle: &str) -> bool {
         self.cached_key(name, |key| crate::util::search_matches(key, needle))
     }
 
@@ -7461,6 +7530,13 @@ impl App {
                     }
                     // The rail's destinations take turns: Calls replaces the
                     // starred messages as it replaces the chats.
+                    self.show_starred = false;
+                }
+                if page == Page::Communities {
+                    if self.page != Page::Communities && self.is_connected() {
+                        self.communities_loading = true;
+                        self.backend.send(Command::RefreshCommunities);
+                    }
                     self.show_starred = false;
                 }
                 // Typed passwords do not wait in a form nobody sees.
@@ -9330,6 +9406,34 @@ impl App {
                 }
             }
             Action::SelectLabel(label) => self.select_label(label),
+            Action::RefreshCommunities => {
+                if self.is_connected() {
+                    self.communities_loading = true;
+                    self.backend.send(Command::RefreshCommunities);
+                }
+            }
+            Action::SelectCommunity(id) => {
+                self.selected_community = id;
+            }
+            Action::OpenCommunity(id) => {
+                self.selected_community = Some(id);
+                self.open_chat = None;
+                self.show_starred = false;
+                if self.page != Page::Communities {
+                    self.apply(Action::Open(Page::Communities), ctx);
+                }
+            }
+            Action::JoinCommunitySubgroup {
+                community,
+                subgroup,
+            } => {
+                if self.is_connected() && self.joining_subgroups.insert(subgroup.clone()) {
+                    self.backend.send(Command::JoinCommunitySubgroup {
+                        community,
+                        subgroup,
+                    });
+                }
+            }
             Action::SetChatLabels { chat, labels } => {
                 self.backend.send(Command::SetChatLabels { chat, labels });
             }

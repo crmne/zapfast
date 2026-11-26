@@ -126,6 +126,37 @@ pub struct Label {
     pub created_at: i64,
 }
 
+/// A subgroup linked to a WhatsApp Community.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunitySubgroup {
+    pub id: ChatId,
+    pub name: String,
+    pub participant_count: Option<u32>,
+    /// Whether this is the community's default Announcements group.
+    pub is_default_sub_group: bool,
+    /// Whether this is the community's General chat subgroup.
+    pub is_general_chat: bool,
+    /// Whether this subgroup is hidden from non-members.
+    pub is_hidden_group: bool,
+}
+
+/// A WhatsApp Community parent group and its linked subgroups.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunityInfo {
+    pub id: ChatId,
+    pub name: String,
+    pub description: Option<String>,
+    pub participant_count: Option<u32>,
+    pub subgroups: Vec<CommunitySubgroup>,
+}
+
+impl CommunityInfo {
+    /// Returns the community's default Announcements subgroup, when present.
+    pub fn announcements(&self) -> Option<&CommunitySubgroup> {
+        self.subgroups.iter().find(|sg| sg.is_default_sub_group)
+    }
+}
+
 /// Chat-list filter chosen from the chips under the search field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChatFilter {
@@ -321,6 +352,12 @@ pub struct Chat {
     pub unread_mention: Option<String>,
     /// This chat's own voice message speed; `None` follows Settings.
     pub voice_speed: Option<f32>,
+    /// Parent WhatsApp Community JID when this group belongs to a community.
+    pub parent_group_jid: Option<ChatId>,
+    /// Whether this JID is a WhatsApp Community parent shell itself.
+    pub is_parent_group: bool,
+    /// Whether this group is a community's default Announcements channel.
+    pub is_default_sub_group: bool,
 }
 
 /// A group's permissions and admins, as its metadata says. Kept in the
@@ -413,6 +450,9 @@ impl Chat {
             notification_sound: None,
             unread_mention: None,
             voice_speed: None,
+            parent_group_jid: None,
+            is_parent_group: false,
+            is_default_sub_group: false,
         }
     }
 
@@ -2026,6 +2066,8 @@ pub enum Page {
     Chats,
     /// Every call of the account, newest first.
     Calls,
+    /// WhatsApp Communities and their linked subgroups.
+    Communities,
     Settings,
     Wallpaper,
 }
@@ -3193,6 +3235,17 @@ pub enum Action {
     SetCallFilter(CallFilter),
     /// Picks the label the chat list shows; `None` shows every chat.
     SelectLabel(Option<String>),
+    /// Refreshes WhatsApp Communities and their linked subgroups from the server.
+    RefreshCommunities,
+    /// Selects a community in the Communities tab, or clears the selection.
+    SelectCommunity(Option<ChatId>),
+    /// Opens the Communities tab focused on a specific community.
+    OpenCommunity(ChatId),
+    /// Joins a subgroup inside a community.
+    JoinCommunitySubgroup {
+        community: ChatId,
+        subgroup: ChatId,
+    },
     /// Replaces the labels worn by one chat.
     SetChatLabels {
         chat: ChatId,

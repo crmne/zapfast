@@ -482,15 +482,17 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 } else {
                     0.0
                 };
+                let community = app.community_of_chat(chat).cloned();
+                let community_button = if community.is_some() { 1.0 } else { 0.0 };
                 let extra = room.right + caption_gap(room.right);
-                let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
+                let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons + community_button;
                 // In a narrow pane, or on vibrant glass, which takes more room,
                 // Search and the call buttons go into More rather than push
                 // the name under them.
                 let folded = !header_fits(ui.available_width(), buttons, extra, palette.vibrant())
                     && !call_here;
                 let (buttons, call_buttons) = if folded {
-                    (buttons - call_buttons - 1.0, 0.0)
+                    (buttons - call_buttons - community_button - 1.0, 0.0)
                 } else {
                     (buttons, call_buttons)
                 };
@@ -747,6 +749,16 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                         app.actions.push(Action::StartVideoCall(chat.id.clone()));
                                     }
                                 }
+                                if let Some(ref comm) = community
+                                    && widgets::menu_item(
+                                        ui,
+                                        &palette,
+                                        Some(Icon::Users),
+                                        crate::i18n::gettext(app.locale, "View community").as_ref(),
+                                    )
+                                {
+                                    app.actions.push(Action::OpenCommunity(comm.id.clone()));
+                                }
                                 widgets::menu_separator(ui, &palette);
                             }
                             if widgets::menu_item(
@@ -938,6 +950,31 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 Action::OpenChatSearch
                             });
                         }
+                        if let Some(ref comm) = community {
+                            if palette.vibrant() {
+                                ui.add_space(BUTTON_GAP);
+                            }
+                            let comm_glass = ui.painter().add(egui::Shape::Noop);
+                            let comm_tip = format!("Community: {}", comm.name);
+                            let comm_btn = theme::icon_button(
+                                ui,
+                                Icon::Users,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                &comm_tip,
+                            );
+                            if palette.vibrant() {
+                                ui.painter()
+                                    .set(comm_glass, glass_button(&palette, comm_btn.rect));
+                            }
+                            egui::Popup::menu(&comm_btn)
+                                .width(290.0)
+                                .frame(widgets::menu_frame(&palette))
+                                .show(|ui| {
+                                    super::communities::switcher_popup(app, ui, comm, &chat.id);
+                                });
+                        }
                     }
                     // A narrow window shows the list or the chat, not both;
                     // this is the way back to the list.
@@ -1043,7 +1080,21 @@ fn subtitle(app: &App, chat: &Chat) -> (String, Color32) {
         return (text, palette.accent);
     }
     if chat.is_group() {
+        if app.is_community_announcements(chat) {
+            return (
+                crate::i18n::gettext(app.locale, "Announcements").into_owned(),
+                palette.secondary,
+            );
+        }
         let names = app.participant_names(chat);
+        if let Some(community) = app.community_of_chat(chat) {
+            let line = if names.is_empty() {
+                community.name.clone()
+            } else {
+                format!("{} · {names}", community.name)
+            };
+            return (line, palette.secondary);
+        }
         return (
             if names.is_empty() {
                 "Group".to_owned()

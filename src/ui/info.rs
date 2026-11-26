@@ -297,7 +297,12 @@ impl Shown {
 /// The chat's picture, name, details, actions and members.
 fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
     let shown = Shown::of(app, id);
-    let title = if shown.group {
+    let is_announcements = app
+        .chat(id)
+        .is_some_and(|chat| app.is_community_announcements(chat));
+    let title = if is_announcements {
+        crate::i18n::gettext(app.locale, "Community info")
+    } else if shown.group {
         crate::i18n::gettext(app.locale, "Group info")
     } else if shown.channel {
         crate::i18n::gettext(app.locale, "Channel info")
@@ -753,6 +758,12 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     // A locked chat's media stays in the locked folder: the section is not
     // there, rather than empty.
+    if let Some(chat_snapshot) = app.chat(id).cloned()
+        && let Some(community) = app.community_of_chat(&chat_snapshot).cloned()
+    {
+        let is_announcements = app.is_community_announcements(&chat_snapshot);
+        super::communities::info_section(app, ui, &community, id, is_announcements);
+    }
     if app.info_media_allowed() {
         ui.add_space(8.0);
         media_row(app, ui, id, overlay);

@@ -219,6 +219,22 @@ END;
 -- One person can be both a privacy id and a phone number; merging the two
 -- looks receipts up by recipient, and the primary key cannot serve that.
 CREATE INDEX IF NOT EXISTS group_receipts_by_recipient ON group_receipts (recipient);
+CREATE TABLE IF NOT EXISTS communities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    participant_count INTEGER
+);
+CREATE TABLE IF NOT EXISTS community_subgroups (
+    community_id TEXT NOT NULL,
+    subgroup_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    participant_count INTEGER,
+    is_default_sub_group INTEGER NOT NULL DEFAULT 0,
+    is_general_chat INTEGER NOT NULL DEFAULT 0,
+    is_hidden_group INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (community_id, subgroup_id)
+);
 ";
 
 const CHAT_COLUMNS: &str =
@@ -228,7 +244,7 @@ const CHAT_COLUMNS: &str =
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
                     c.info_locked, c.group_admin, c.group_description, c.voice_speed,
-                    c.group_settings";
+                    c.group_settings, c.parent_group_jid, c.is_parent_group, c.is_default_sub_group";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -279,6 +295,14 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("contacts", "first_name", "TEXT"),
     // The broadcast list a received message came through, for its receipts.
     ("messages", "broadcast_list", "TEXT"),
+    // WhatsApp Community hierarchy metadata on group chats.
+    ("chats", "parent_group_jid", "TEXT"),
+    ("chats", "is_parent_group", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "chats",
+        "is_default_sub_group",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
 ];
 
 /// One copy of a message that a merge meets twice, as stored.
@@ -388,6 +412,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         group_settings: row
             .get::<_, Option<String>>(27)?
             .and_then(|settings| serde_json::from_str(&settings).ok()),
+        parent_group_jid: row.get(28)?,
+        is_parent_group: row.get(29)?,
+        is_default_sub_group: row.get(30)?,
     })
 }
 
@@ -681,6 +708,111 @@ impl Archive {
             params![id, description],
         )?;
         Ok(())
+    }
+
+    /// Records a group's community parent and role flags from group metadata.
+    pub fn set_group_community_meta(
+        &self,
+        id: &str,
+        parent_group_jid: Option<&str>,
+        is_parent_group: bool,
+        is_default_sub_group: bool,
+    ) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats
+             SET parent_group_jid = ?2, is_parent_group = ?3, is_default_sub_group = ?4
+             WHERE id = ?1",
+            params![id, parent_group_jid, is_parent_group, is_default_sub_group],
+        )?;
+        Ok(())
+    }
+
+    /// Replaces cached communities and subgroups, and propagates links onto existing chat rows.
+    pub fn save_communities(&self, communities: &[crate::model::CommunityInfo]) -> Result<()> {
+        let tx = self.connection.unchecked_transaction()?;
+        tx.execute("DELETE FROM community_subgroups", [])?;
+        tx.execute("DELETE FROM communities", [])?;
+        for community in communities {
+            tx.execute(
+                "INSERT INTO communities (id, name, description, participant_count)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    community.id,
+                    community.name,
+                    community.description,
+                    community.participant_count,
+                ],
+            )?;
+            tx.execute(
+                "UPDATE chats SET is_parent_group = 1 WHERE id = ?1",
+                params![community.id],
+            )?;
+            for subgroup in &community.subgroups {
+                tx.execute(
+                    "INSERT INTO community_subgroups (
+                        community_id, subgroup_id, name, participant_count,
+                        is_default_sub_group, is_general_chat, is_hidden_group
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        community.id,
+                        subgroup.id,
+                        subgroup.name,
+                        subgroup.participant_count,
+                        subgroup.is_default_sub_group,
+                        subgroup.is_general_chat,
+                        subgroup.is_hidden_group,
+                    ],
+                )?;
+                tx.execute(
+                    "UPDATE chats
+                     SET parent_group_jid = ?2, is_default_sub_group = ?3
+                     WHERE id = ?1",
+                    params![subgroup.id, community.id, subgroup.is_default_sub_group],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Loads cached communities with their subgroups, announcements first.
+    pub fn communities(&self) -> Result<Vec<crate::model::CommunityInfo>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT id, name, description, participant_count FROM communities ORDER BY name COLLATE NOCASE",
+        )?;
+        let mut communities: Vec<crate::model::CommunityInfo> = stmt
+            .query_map([], |row| {
+                Ok(crate::model::CommunityInfo {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    participant_count: row.get(3)?,
+                    subgroups: Vec::new(),
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut sub_stmt = self.connection.prepare(
+            "SELECT subgroup_id, name, participant_count, is_default_sub_group, is_general_chat, is_hidden_group
+             FROM community_subgroups
+             WHERE community_id = ?1
+             ORDER BY is_default_sub_group DESC, is_general_chat DESC, name COLLATE NOCASE",
+        )?;
+        for community in &mut communities {
+            community.subgroups = sub_stmt
+                .query_map(params![community.id], |row| {
+                    Ok(crate::model::CommunitySubgroup {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        participant_count: row.get(2)?,
+                        is_default_sub_group: row.get(3)?,
+                        is_general_chat: row.get(4)?,
+                        is_hidden_group: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>>>()?;
+        }
+        Ok(communities)
     }
 
     /// Records a group's permissions and admins, from its metadata or a

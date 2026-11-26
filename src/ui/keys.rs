@@ -317,7 +317,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             // A narrow window shows the picked call's chat over the history:
             // Escape goes back to it, as the chat's Back does.
             actions.push(Action::CloseChat);
-        } else if app.page == Page::Settings || app.page == Page::Calls {
+        } else if app.page == Page::Settings
+            || app.page == Page::Calls
+            || app.page == Page::Communities
+        {
             actions.push(Action::Open(Page::Chats));
         } else if search_focused || !app.search.is_empty() {
             if !app.search.is_empty() {
@@ -996,7 +999,9 @@ fn sticker_view_keys(app: &mut App, ctx: &egui::Context) {
 fn find_action(app: &App) -> Action {
     match app.page {
         Page::Settings => Action::FocusSettingsSearch,
-        Page::Chats | Page::Calls if app.open_chat.is_some() => Action::OpenChatSearch,
+        Page::Chats | Page::Calls | Page::Communities if app.open_chat.is_some() => {
+            Action::OpenChatSearch
+        }
         _ => Action::FocusSearch,
     }
 }

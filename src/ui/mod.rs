@@ -7,6 +7,7 @@ pub mod call;
 pub mod calls;
 mod chat_export;
 pub mod chats;
+pub mod communities;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
@@ -137,6 +138,7 @@ fn list_pane_only(app: &App) -> bool {
     match app.page {
         Page::Chats => app.current_chat().is_none(),
         Page::Calls => app.current_chat().is_none() || !app.call_picked(),
+        Page::Communities => app.current_chat().is_none() && app.selected_community.is_none(),
         Page::Settings | Page::Wallpaper => false,
     }
 }
@@ -160,7 +162,8 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // too little room for it and the conversation, the list and the rail
     // step aside while the panel is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
-    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
+    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded
+        || matches!(app.page, Page::Calls | Page::Communities);
     let mut list_width = chats::compact_width(ui.ctx());
     if full_list {
         list_width += app.settings.sidebar_width;
@@ -196,6 +199,11 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 Page::Calls => {
                     banner(app, ui);
                     calls::show(app, ui);
+                }
+                Page::Communities if app.current_chat().is_some() => conversation::show(app, ui),
+                Page::Communities => {
+                    banner(app, ui);
+                    communities::show(app, ui);
                 }
                 Page::Wallpaper => settings::wallpaper_show(app, ui),
             }
@@ -319,8 +327,8 @@ pub(crate) fn narrow(ctx: &egui::Context) -> bool {
 
 fn central_background(app: &App) -> egui::Color32 {
     // The Calls tab shows the open chat beside its history, or its own pane.
-    let conversation =
-        app.page == Page::Chats || (app.page == Page::Calls && app.current_chat().is_some());
+    let conversation = app.page == Page::Chats
+        || (matches!(app.page, Page::Calls | Page::Communities) && app.current_chat().is_some());
     if conversation && app.palette.vibrant() {
         // The conversation paints its own translucent background.
         egui::Color32::TRANSPARENT
@@ -852,7 +860,8 @@ pub fn macos_title_strip(app: &App, ctx: &egui::Context) -> bool {
     {
         return false;
     }
-    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
+    let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded
+        || matches!(app.page, Page::Calls | Page::Communities);
     // The info panel can push the rail aside, as `main_view` decides.
     let crowded = app.info_visible()
         && ctx.content_rect().width() - chats::compact_width(ctx)
