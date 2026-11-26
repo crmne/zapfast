@@ -3497,6 +3497,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "camera" => {
                 app.open_chat = Some(SAMPLES[0].id.to_owned());
                 // A stock picture stands in for the camera, as in calls.
+                app.camera_chat = app.open_chat.clone();
                 app.camera = Some(crate::camera::Viewfinder::showing(stock_frame(
                     stock::DUSK,
                     720,

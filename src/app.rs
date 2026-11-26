@@ -714,6 +714,8 @@ pub struct App {
     pub sticker_draft: Option<crate::model::StickerDraft>,
     /// The camera, while it is open to take a photo.
     pub camera: Option<crate::camera::Viewfinder>,
+    /// The chat the camera was opened for, the only one its photo goes to.
+    pub camera_chat: Option<ChatId>,
     /// The viewfinder's picture on the GPU.
     pub camera_texture: Option<CallTexture>,
     /// The staged picture being cropped, while the cropper is open.
@@ -1704,6 +1706,7 @@ impl App {
             sticker_preview_pending: false,
             sticker_draft: None,
             camera: None,
+            camera_chat: None,
             camera_texture: None,
             picture_edit: None,
             picture_inspecting: None,
@@ -8494,6 +8497,7 @@ impl App {
                     // The composer would keep Enter from taking the photo.
                     ctx.memory_mut(|memory| memory.stop_text_input());
                     self.camera = Some(crate::camera::Viewfinder::open(ctx.clone()));
+                    self.camera_chat = self.open_chat.clone();
                 }
             }
             Action::CloseCamera => {
@@ -8509,6 +8513,7 @@ impl App {
                     .and_then(crate::camera::Viewfinder::frame);
                 if let Some(frame) = frame
                     && self.open_chat.is_some()
+                    && self.open_chat == self.camera_chat
                 {
                     self.camera = None;
                     let [width, height] = frame.size;
@@ -10516,8 +10521,9 @@ impl App {
             self.window_focused = false;
         }
         self.tick_app_lock(ctx);
-        // Nobody sees a viewfinder without a window: the camera goes too.
-        if self.window_hidden {
+        // Nobody sees a viewfinder without a window, and its photo is for
+        // the chat it was opened in: leaving either, however, ends the camera.
+        if self.window_hidden || self.open_chat != self.camera_chat {
             self.camera = None;
         }
         self.tick_login_item();
@@ -23080,6 +23086,7 @@ mod tests {
             .push(Chat::new(chat.into(), "Camera fixture".into()));
         app.open_chat = Some(chat.into());
         // Red on the left of the camera's frame, blue on the right.
+        app.camera_chat = app.open_chat.clone();
         app.camera = Some(crate::camera::Viewfinder::showing(egui::ColorImage::new(
             [2, 1],
             vec![egui::Color32::RED, egui::Color32::BLUE],
@@ -23106,6 +23113,7 @@ mod tests {
         app.chats
             .push(Chat::new(second.into(), "Other fixture".into()));
         app.open_chat = Some(first.into());
+        app.camera_chat = app.open_chat.clone();
         app.camera = Some(crate::camera::Viewfinder::showing(
             egui::ColorImage::filled([4, 2], egui::Color32::RED),
         ));
@@ -23113,6 +23121,27 @@ mod tests {
         assert!(app.camera.is_none());
         app.apply(Action::TakePhoto, &ctx);
         assert!(app.pending.is_empty());
+    }
+
+    /// Closing the chat, as when the phone archives it, ends the camera
+    /// with the next frame, and no photo is taken for no chat.
+    #[test]
+    fn closing_the_chat_closes_the_camera() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let chat = "15550002222@s.whatsapp.net";
+        app.chats
+            .push(Chat::new(chat.into(), "Camera fixture".into()));
+        app.open_chat = Some(chat.into());
+        app.camera_chat = Some(chat.into());
+        app.camera = Some(crate::camera::Viewfinder::showing(
+            egui::ColorImage::filled([4, 2], egui::Color32::RED),
+        ));
+        app.apply(Action::CloseChat, &ctx);
+        app.apply(Action::TakePhoto, &ctx);
+        assert!(app.pending.is_empty());
+        app.background_frame(&ctx);
+        assert!(app.camera.is_none());
     }
 
     /// Closing the camera stages nothing.
@@ -23124,6 +23153,7 @@ mod tests {
         app.chats
             .push(Chat::new(chat.into(), "Camera fixture".into()));
         app.open_chat = Some(chat.into());
+        app.camera_chat = app.open_chat.clone();
         app.camera = Some(crate::camera::Viewfinder::showing(
             egui::ColorImage::filled([4, 2], egui::Color32::RED),
         ));
