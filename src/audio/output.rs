@@ -339,8 +339,10 @@ fn run_shared(requests: &mpsc::Receiver<Message>, generation: &AtomicU64) {
             retarget = false;
             if output.take().is_some() {
                 // A place held while nothing played points at the old device: it reads as
-                // failed and opens again, here, on the new one.
+                // failed and opens again, here, on the new one. Whoever holds one is told, as
+                // when the device is lost.
                 generation.fetch_add(1, Ordering::AcqRel);
+                wake_all(&mut wakers);
             }
             released = false;
         }
@@ -406,15 +408,21 @@ fn run_shared(requests: &mpsc::Receiver<Message>, generation: &AtomicU64) {
         released |= kept.released;
         if kept.lost {
             generation.fetch_add(1, Ordering::AcqRel);
-            wakers.retain(|wake| match wake.upgrade() {
-                Some(wake) => {
-                    wake();
-                    true
-                }
-                None => false,
-            });
+            wake_all(&mut wakers);
         }
     }
+}
+
+/// Tells every holder of a place on the shared output that it no longer plays, forgetting those
+/// that have gone.
+fn wake_all(wakers: &mut Vec<Weak<dyn Fn() + Send + Sync>>) {
+    wakers.retain(|wake| match wake.upgrade() {
+        Some(wake) => {
+            wake();
+            true
+        }
+        None => false,
+    });
 }
 
 #[cfg(test)]

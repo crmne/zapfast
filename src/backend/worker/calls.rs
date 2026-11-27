@@ -1557,7 +1557,11 @@ mod tests {
         let (microphone, speaker, camera) = call.selections();
         assert_eq!(microphone.as_deref(), Some("usb-mic"));
         assert_eq!(speaker.as_deref(), Some("headset"));
-        assert_eq!(camera, None, "a voice call keeps no camera");
+        assert_eq!(
+            camera.as_deref(),
+            Some("1"),
+            "a voice call keeps the picked camera, which turning video on opens"
+        );
     }
 
     /// A call that rang here and whose end never arrived must not keep the account busy: the next

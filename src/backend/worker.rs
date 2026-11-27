@@ -876,6 +876,10 @@ pub async fn run(
     mut inbox: mpsc::UnboundedReceiver<Command>,
     waker: Waker,
 ) {
+    // The devices picked in Settings can arrive while the archive is still locked; the newest is
+    // kept for the worker built once it opens, since the window sends it only at start and on a
+    // change.
+    let mut preferred_devices = crate::settings::DevicePreferences::default();
     let archive = loop {
         let path = dirs.archive_db();
         let opened = tokio::task::spawn_blocking(move || Archive::open(&path)).await;
@@ -912,6 +916,7 @@ pub async fn run(
                             break;
                         }
                         Some(Command::Shutdown) | None => return,
+                        Some(Command::SetPreferredDevices(devices)) => preferred_devices = devices,
                         _ => {}
                     }
                 }
@@ -1014,7 +1019,7 @@ pub async fn run(
         call: None,
         phone_only_calls: Vec::new(),
         call_devices: crate::calls::DeviceList::default(),
-        preferred_devices: crate::settings::DevicePreferences::default(),
+        preferred_devices,
         wa_sender,
         me_pn: None,
         me_lid: None,

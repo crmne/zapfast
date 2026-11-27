@@ -2539,16 +2539,18 @@ impl Call {
     }
 
     /// Starts a ringing call's selections from the devices picked in Settings, so answering opens
-    /// those unless others are picked while it rings. A call whose media is up keeps its own.
+    /// those, and turning video on in an answered voice call opens the picked camera. A call whose
+    /// media is up keeps its own.
     pub fn prefer_devices(&mut self, preferred: &crate::settings::DevicePreferences) {
         if self.mic.is_some() || self.speaker.is_some() || self.video_pipe.is_some() {
             return;
         }
         self.microphone.clone_from(&preferred.microphone);
         self.speaker_device.clone_from(&preferred.speaker);
-        if self.video {
-            self.camera.clone_from(&preferred.camera);
-        }
+        // A voice call takes the camera too: answering resolves an unset camera to the first one
+        // the machine reports and keeps it, so turning video on later would open that one rather
+        // than the camera picked in Settings.
+        self.camera.clone_from(&preferred.camera);
     }
 
     /// The devices picked so far: what a call that has not started media yet should bind to, so a

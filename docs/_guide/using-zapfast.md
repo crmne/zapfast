@@ -607,9 +607,9 @@ connection.
 
 Calls open the microphone, speaker and camera picked in **Settings > Audio and
 video**, or the system's default microphone and speaker and the first camera
-when nothing is picked there. A call that rings here starts on the same
-devices, and choosing others while it rings changes what answering opens. The
-arrows' menus move a call to another device while it runs, without changing Settings
+when nothing is picked there. A call that rings here is answered on the devices
+picked when it began to ring, and turning video on in a voice call opens the
+picked camera. The arrows' menus move a call to another device while it runs, without changing Settings
 or your system's defaults; a device that goes away falls back to the default,
 and the call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The

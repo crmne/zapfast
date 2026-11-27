@@ -215,8 +215,9 @@ name or description, in the interface language or in English.
 - **Microphone**: what voice messages record from and calls send. **System
   default** follows the system's own default microphone as it changes.
 - **Speaker**: what voice messages, videos, notification sounds and calls
-  play through. A sound already playing finishes on the speaker it started on;
-  the next one plays through the new choice.
+  play through. The change waits until nothing plays: a sound already playing,
+  or a video left paused, keeps the previous speaker until it ends or is
+  closed, and the sounds after it use the new one. The next call starts on it.
 - **Camera**: what video calls send. **First camera** is the first camera the
   machine reports, since cameras have no system default.
 

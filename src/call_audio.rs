@@ -500,6 +500,15 @@ impl Sink {
         }
     }
 
+    /// Plays at full volume, or at none while the person has silenced the speaker.
+    fn set_silenced(&self, silenced: bool) {
+        match self {
+            Sink::Real { player, .. } => player.set_volume(if silenced { 0.0 } else { 1.0 }),
+            #[cfg(test)]
+            Sink::Fake(_) => {}
+        }
+    }
+
     fn append(&self, samples: Vec<f32>) {
         match self {
             Sink::Real { player, layout, .. } => {
@@ -1030,7 +1039,12 @@ async fn play_pump(
     // counts a device that is not there rather than a busy one.
     let mut unplayed = 0_usize;
     loop {
-        let writer = match SpkWriter::start(target.as_deref(), Arc::clone(&relink), &far_end) {
+        let writer = match SpkWriter::start(
+            target.as_deref(),
+            Arc::clone(&relink),
+            Arc::clone(&muted),
+            &far_end,
+        ) {
             Ok(writer) => {
                 opens.fetch_add(1, Ordering::Relaxed);
                 writer
@@ -1158,6 +1172,7 @@ impl SpkWriter {
     fn start(
         device: Option<&str>,
         relink: Arc<Mutex<Option<Instant>>>,
+        muted: Arc<AtomicBool>,
         far_end: &FarEnd,
     ) -> Result<Self, String> {
         let (tx, rx) = async_channel::bounded::<Vec<i16>>(SPEAKER_QUEUE);
@@ -1184,6 +1199,7 @@ impl SpkWriter {
                             accepted: &accepted,
                             stalled: &stalled,
                             played: &played,
+                            muted: &muted,
                         },
                         &relink,
                         &ready,
@@ -1237,6 +1253,8 @@ struct SpeakerFlags<'a> {
     /// Set once the stream has played, which is what tells a stream that never started from one
     /// that was playing and stopped.
     played: &'a AtomicBool,
+    /// Set while the person has silenced the speaker.
+    muted: &'a AtomicBool,
 }
 
 fn write_speaker(
@@ -1252,6 +1270,7 @@ fn write_speaker(
         accepted,
         stalled,
         played,
+        muted,
     } = flags;
     let mut sink = match open_sink(device, far_end) {
         Ok(sink) => {
@@ -1274,6 +1293,8 @@ fn write_speaker(
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        // Silencing reaches what the player already holds too, not only the frames still to come.
+        sink.set_silenced(muted.load(Ordering::Relaxed));
         sink.append(sink.layout().convert(&frame));
         accepted.store(true, Ordering::Relaxed);
         if sink.failed() {
