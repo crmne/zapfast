@@ -269,7 +269,8 @@ Some choices are made where they are used and remembered in `settings.json`:
 the shortcut hints bar under the composer (its × hides it, and **Show shortcut
 hints under the message box** in the Keyboard shortcuts dialog brings it back),
 **Also save to your phone's contacts** in the new-contact dialog, voice
-playback speed, and the chat list and search pane widths.
+playback speed, the skin tone picked for an emoji, and the chat list and
+search pane widths.
 
 Development builds also remember the window's size, position, and maximized
 state in `settings.json`, including when reopening from the tray or a

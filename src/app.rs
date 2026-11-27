@@ -8689,6 +8689,7 @@ impl App {
                 self.backend.send(Command::SetLocked(chat, locked));
             }
             Action::TogglePicker(tab) => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 self.composer_tools_open = false;
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -8731,6 +8732,7 @@ impl App {
                 self.apply(Action::TogglePicker(tab), ctx);
             }
             Action::ClosePicker => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 let was_reaction = self.reaction_target.is_some();
                 if let Some((chat, message)) = &self.reaction_target {
                     egui::Popup::close_id(
@@ -8753,6 +8755,7 @@ impl App {
                 beside_menu,
                 from_list,
             } => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 self.reaction_from_list = from_list;
                 self.focus_composer = false;
                 self.emoji_start = None;
@@ -8786,6 +8789,18 @@ impl App {
                 self.insert_in_composer(ctx, &emoji);
                 self.remember_emoji(&emoji);
                 self.focus_composer = true;
+            }
+            Action::SetSkinTone { base, variant } => {
+                let valid = crate::emoji::skin_tones(&base)
+                    .is_some_and(|mut tones| tones.any(|emoji| emoji.as_str() == variant));
+                if valid {
+                    if variant == base {
+                        self.settings.skin_tones.remove(&base);
+                    } else {
+                        self.settings.skin_tones.insert(base, variant);
+                    }
+                    self.mark_settings_dirty();
+                }
             }
             Action::InsertEmojiCompletion { emoji, start, end } => {
                 let starts_with_colon = start
@@ -14804,6 +14819,46 @@ mod tests {
             );
             assert_eq!(app.settings.picker_tab, PickerTab::Emoji);
         }
+    }
+
+    /// A chosen skin tone is saved by its default emoji, and choosing the
+    /// yellow default again forgets the choice.
+    #[test]
+    fn choosing_a_skin_tone_is_saved_and_can_be_undone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "👍🏽".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.skin_tones.get("👍").map(String::as_str),
+            Some("👍🏽")
+        );
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "👍".into(),
+            },
+            &ctx,
+        );
+        assert!(!app.settings.skin_tones.contains_key("👍"));
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "😀".into(),
+            },
+            &ctx,
+        );
+        assert!(
+            !app.settings.skin_tones.contains_key("👍"),
+            "a tone that is not the emoji's own is ignored"
+        );
     }
 
     /// A reaction picker the message list opened is not handed back to the

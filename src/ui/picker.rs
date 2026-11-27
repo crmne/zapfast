@@ -34,6 +34,119 @@ enum Row {
     },
 }
 
+/// The little skin-tone popup a person or hand emoji opened.
+#[derive(Clone, Copy)]
+struct SkinMenu {
+    /// The emoji's default (yellow) form.
+    base: &'static str,
+    /// The cell the popup points at.
+    anchor: Rect,
+    /// The frame it opened in, so its opening click does not dismiss it.
+    frame: u64,
+}
+
+impl Default for SkinMenu {
+    fn default() -> Self {
+        Self {
+            base: "",
+            anchor: Rect::NOTHING,
+            frame: 0,
+        }
+    }
+}
+
+fn skin_menu_id(scroll_salt: &str) -> egui::Id {
+    egui::Id::new(("skin-tone-menu", scroll_salt))
+}
+
+fn held_skin_id(scroll_salt: &str) -> egui::Id {
+    egui::Id::new(("skin-tone-held", scroll_salt))
+}
+
+fn skin_rect_id(scroll_salt: &str) -> egui::Id {
+    egui::Id::new(("skin-tone-rect", scroll_salt))
+}
+
+/// Whether a point is over an open skin-tone popup, so a click in it is not
+/// also an outside click that closes the picker.
+pub(crate) fn over_skin_popup(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    ctx.data(|data| {
+        ["emoji-grid", "reaction-emoji-grid"].iter().any(|salt| {
+            data.get_temp::<Option<Rect>>(skin_rect_id(salt))
+                .flatten()
+                .is_some_and(|rect| rect.contains(pos))
+        })
+    })
+}
+
+/// Forgets a closed popup's rect, once its click has been read. The rect
+/// outlives the popup by one frame, so the click that chose a tone is not
+/// also read as a click outside the picker.
+pub(crate) fn clear_stale_skin_rects(ctx: &egui::Context) {
+    let open = ctx.data(|data| {
+        ["emoji-grid", "reaction-emoji-grid"]
+            .iter()
+            .any(|salt| data.get_temp::<SkinMenu>(skin_menu_id(salt)).is_some())
+    });
+    if open {
+        return;
+    }
+    ctx.data_mut(|data| {
+        for salt in ["emoji-grid", "reaction-emoji-grid"] {
+            data.remove_temp::<Option<Rect>>(skin_rect_id(salt));
+        }
+    });
+}
+
+/// Closes a skin-tone popup when the picker goes away.
+pub(crate) fn dismiss_skin_tones(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        for salt in ["emoji-grid", "reaction-emoji-grid"] {
+            data.remove_temp::<SkinMenu>(skin_menu_id(salt));
+            data.remove_temp::<(&'static str, f64)>(held_skin_id(salt));
+            data.remove_temp::<Option<Rect>>(skin_rect_id(salt));
+        }
+    });
+}
+
+fn open_skin_menu(ctx: &egui::Context, scroll_salt: &str, base: &'static str, anchor: Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            skin_menu_id(scroll_salt),
+            SkinMenu {
+                base,
+                anchor,
+                frame,
+            },
+        );
+    });
+}
+
+fn menu_is_open(ctx: &egui::Context, scroll_salt: &str, base: &str) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<SkinMenu>(skin_menu_id(scroll_salt))
+            .is_some_and(|menu| menu.base == base)
+    })
+}
+
+fn suppress_click(ctx: &egui::Context, scroll_salt: &str, emoji: &'static str) {
+    let time = ctx.input(|input| input.time);
+    ctx.data_mut(|data| {
+        data.insert_temp(held_skin_id(scroll_salt), (emoji, time));
+    });
+}
+
+fn take_suppressed_click(ctx: &egui::Context, scroll_salt: &str, emoji: &'static str) -> bool {
+    let id = held_skin_id(scroll_salt);
+    let now = ctx.input(|input| input.time);
+    let held = ctx.data(|data| data.get_temp::<(&'static str, f64)>(id));
+    ctx.data_mut(|data| {
+        data.remove_temp::<(&'static str, f64)>(id);
+    });
+    held.is_some_and(|(held, at)| held == emoji && now - at < 2.0)
+}
+
 /// The picker's `Area`, the layer it is drawn on.
 pub(crate) fn area_id() -> egui::Id {
     egui::Id::new("picker")
@@ -66,6 +179,7 @@ pub fn release_gif_animations(app: &App, ctx: &egui::Context) {
 }
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    clear_stale_skin_rects(ctx);
     if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
         if app.picker_recent.is_none() {
             app.picker_recent = Some(app.settings.recent_emoji.clone());
@@ -122,14 +236,19 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // Close on outside clicks, except on the toggle button, a sticker menu, or
     // a dialog the picker opened.
     let rect = area.response.rect;
+    // `ctx.input` takes the context's write lock, so the popup check (a
+    // read) must stay outside it.
+    let pressed = ctx.input(|input| {
+        input
+            .pointer
+            .any_pressed()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    });
     let clicked_outside = !egui::Popup::is_any_open(ctx)
         && app.dialog.is_none()
-        && ctx.input(|input| {
-            input.pointer.any_pressed()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|pos| !rect.contains(pos) && !anchor.contains(pos))
+        && pressed.is_some_and(|pos| {
+            !rect.contains(pos) && !anchor.contains(pos) && !over_skin_popup(ctx, pos)
         });
     if clicked_outside {
         app.actions.push(Action::ClosePicker);
@@ -560,11 +679,17 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         });
     let rect = area.response.rect;
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
-    let clicked_outside = ctx.input(|input| {
-        input.pointer.any_pressed()
-            && input.pointer.interact_pos().is_some_and(|pos| {
-                !rect.contains(pos) && !menu.is_some_and(|menu| menu.contains(pos))
-            })
+    let pressed = ctx.input(|input| {
+        input
+            .pointer
+            .any_pressed()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    });
+    let clicked_outside = pressed.is_some_and(|pos| {
+        !rect.contains(pos)
+            && !menu.is_some_and(|menu| menu.contains(pos))
+            && !over_skin_popup(ctx, pos)
     });
     if clicked_outside {
         app.actions.push(Action::ClosePicker);
@@ -714,7 +839,8 @@ fn emoji_grid(
     }
     let row_height = CELL;
     let mut picked = (submit && emoji_count > 0).then(|| {
-        rows.iter()
+        let base = rows
+            .iter()
             .filter_map(|row| match row {
                 Row::Header(_) => None,
                 Row::Emoji { values, .. } => Some(values.as_slice()),
@@ -722,8 +848,13 @@ fn emoji_grid(
             .flatten()
             .nth(app.emoji_selected)
             .copied()
-            .expect("emoji selection is in range")
-            .to_owned()
+            .expect("emoji selection is in range");
+        app.settings
+            .skin_tones
+            .get(base)
+            .filter(|text| emoji::lookup(text).is_some())
+            .cloned()
+            .unwrap_or_else(|| base.to_owned())
     });
     // `show_rows` must use the same zero spacing as the grid.
     ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -794,6 +925,24 @@ fn emoji_grid(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::ZERO;
                         for (offset, emoji) in values.iter().enumerate() {
+                            let family: Vec<&'static emojis::Emoji> = emoji::skin_tones(emoji)
+                                .map(|tones| tones.collect())
+                                .unwrap_or_default();
+                            let base = family.first().map(|emoji| emoji.as_str()).unwrap_or(*emoji);
+                            let saved = app
+                                .settings
+                                .skin_tones
+                                .get(base)
+                                .and_then(|text| emojis::get(text.as_str()))
+                                .filter(|emoji| emoji::offered(emoji))
+                                .map(|emoji| emoji.as_str());
+                            let on_base = *emoji == base;
+                            let shown = if on_base {
+                                saved.unwrap_or(*emoji)
+                            } else {
+                                *emoji
+                            };
+                            let has_tones = family.len() > 1;
                             let selected = *first + offset == app.emoji_selected;
                             let (rect, response) =
                                 ui.allocate_exact_size(vec2(cell, row_height), Sense::click());
@@ -819,7 +968,7 @@ fn emoji_grid(
                                 }
                                 let line = widgets::line(
                                     ui,
-                                    emoji,
+                                    shown,
                                     theme::regular(24.0),
                                     palette.text,
                                     cell,
@@ -827,12 +976,36 @@ fn emoji_grid(
                                 );
                                 line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
                             }
+                            let held = has_tones
+                                && (response.long_touched()
+                                    || (response.is_pointer_button_down_on()
+                                        && ui.input(|input| {
+                                            input
+                                                .pointer
+                                                .press_start_time()
+                                                .is_some_and(|start| input.time - start >= 0.5)
+                                        })));
+                            if held {
+                                if !menu_is_open(ui.ctx(), scroll_salt, base) {
+                                    open_skin_menu(ui.ctx(), scroll_salt, base, rect);
+                                }
+                                // Refreshed every frame of the press, so the
+                                // click that comes on release is swallowed
+                                // however long the hold was.
+                                suppress_click(ui.ctx(), scroll_salt, shown);
+                            }
                             if response
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             {
                                 app.emoji_selected = *first + offset;
-                                picked = Some((*emoji).to_owned());
+                                if !take_suppressed_click(ui.ctx(), scroll_salt, shown) {
+                                    if has_tones && on_base && saved.is_none() {
+                                        open_skin_menu(ui.ctx(), scroll_salt, base, rect);
+                                    } else {
+                                        picked = Some(shown.to_owned());
+                                    }
+                                }
                             }
                         }
                     });
@@ -840,7 +1013,138 @@ fn emoji_grid(
             }
         }
     });
+    skin_tone_popup(app, ui, palette, scroll_salt);
     picked
+}
+
+/// Draws the skin-tone popup. A chosen tone becomes the emoji's default; it
+/// is not inserted here, so the next click on the emoji inserts it.
+fn skin_tone_popup(app: &mut App, ui: &egui::Ui, palette: &Palette, scroll_salt: &str) {
+    let id = skin_menu_id(scroll_salt);
+    let Some(menu) = ui.ctx().data(|data| data.get_temp::<SkinMenu>(id)) else {
+        return;
+    };
+    let variants: Vec<&'static emojis::Emoji> = emoji::skin_tones(menu.base)
+        .map(|tones| tones.filter(|emoji| emoji::offered(emoji)).collect())
+        .unwrap_or_default();
+    if variants.len() <= 1 {
+        dismiss_skin_tones(ui.ctx());
+        return;
+    }
+    let columns = variants.len().min(6);
+    let cell = 30.0;
+    let gap = 4.0;
+    let rows = variants.len().div_ceil(columns);
+    let grid_width = columns as f32 * cell + columns.saturating_sub(1) as f32 * gap;
+    let grid_height = rows as f32 * cell + rows.saturating_sub(1) as f32 * gap;
+    let width = grid_width + 12.0;
+    let height = grid_height + 30.0;
+    let screen = ui.ctx().content_rect();
+    let mut pos = pos2(menu.anchor.left(), menu.anchor.bottom() + 6.0);
+    if pos.y + height > screen.bottom() - 8.0 {
+        pos.y = (menu.anchor.top() - height - 6.0).max(screen.top() + 8.0);
+    }
+    let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
+    pos.x = pos.x.min(max_x).max(screen.left() + 8.0);
+    let locale = app.locale;
+    let selected = app
+        .settings
+        .skin_tones
+        .get(menu.base)
+        .map(String::as_str)
+        .unwrap_or(menu.base)
+        .to_owned();
+    let mut chosen = None;
+    let area = egui::Area::new(id.with("area"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
+            Frame::new()
+                .fill(palette.overlay)
+                .stroke(Stroke::new(1.0, palette.outline))
+                .corner_radius(CornerRadius::same(theme::RADIUS + 2))
+                .inner_margin(Margin::same(6))
+                .shadow(palette.float_shadow())
+                .show(ui, |ui| {
+                    ui.set_width(grid_width);
+                    theme::text(
+                        ui,
+                        gettext(locale, "Skin tone"),
+                        theme::semibold(12.0),
+                        palette.secondary,
+                    );
+                    ui.add_space(4.0);
+                    egui::Grid::new(id.with("grid"))
+                        .spacing(vec2(gap, gap))
+                        .show(ui, |ui| {
+                            for (index, variant) in variants.iter().enumerate() {
+                                let (rect, response) =
+                                    ui.allocate_exact_size(vec2(cell, cell), Sense::click());
+                                if variant.as_str() == selected.as_str() {
+                                    ui.painter().rect_filled(
+                                        rect.shrink(1.0),
+                                        5.0,
+                                        palette.accent.gamma_multiply(0.22),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        rect.shrink(1.0),
+                                        5.0,
+                                        Stroke::new(1.0, palette.accent),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                } else if response.hovered() {
+                                    ui.painter().rect_filled(
+                                        rect.shrink(1.0),
+                                        5.0,
+                                        palette.surface_hover,
+                                    );
+                                }
+                                let line = widgets::line(
+                                    ui,
+                                    variant.as_str(),
+                                    theme::regular(22.0),
+                                    palette.text,
+                                    cell,
+                                    1,
+                                );
+                                line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+                                if response
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    chosen = Some(variant.as_str().to_owned());
+                                }
+                                if (index + 1) % columns == 0 && index + 1 < variants.len() {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                });
+        });
+    if let Some(variant) = &chosen {
+        app.actions.push(Action::SetSkinTone {
+            base: menu.base.to_owned(),
+            variant: variant.clone(),
+        });
+    }
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(skin_rect_id(scroll_salt), Some(area.response.rect));
+    });
+    let opened_this_frame = menu.frame == ui.ctx().cumulative_frame_nr();
+    let dismissed = ui.ctx().input(|input| input.key_pressed(Key::Escape))
+        || (!opened_this_frame && area.response.clicked_elsewhere());
+    if chosen.is_some() || dismissed {
+        ui.ctx().data_mut(|data| {
+            data.remove_temp::<SkinMenu>(id);
+            data.remove_temp::<(&'static str, f64)>(held_skin_id(scroll_salt));
+            // A chosen tone keeps its rect for this frame, so the picker
+            // does not read the same click as an outside click; the next
+            // frame forgets it.
+            if chosen.is_none() {
+                data.remove_temp::<Option<Rect>>(skin_rect_id(scroll_salt));
+            }
+        });
+    }
 }
 
 #[cfg(test)]

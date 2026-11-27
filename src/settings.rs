@@ -491,6 +491,10 @@ pub struct Settings {
     pub picker_tab: crate::model::PickerTab,
     /// Emoji reaction usage on this device, most-used first (recent breaks ties).
     pub reaction_emoji: Vec<(String, u32)>,
+    /// Skin tone chosen for an emoji, keyed by its default (yellow) form.
+    /// Emoji without an entry are sent in the default tone.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub skin_tones: std::collections::BTreeMap<String, String>,
     /// User GIPHY API key. Empty uses the optional built-in key.
     pub giphy_key: String,
     /// Keep the app linked in the tray when the window closes. On macOS,
@@ -597,6 +601,7 @@ impl Default for Settings {
             recent_emoji: Vec::new(),
             picker_tab: crate::model::PickerTab::Emoji,
             reaction_emoji: Vec::new(),
+            skin_tones: std::collections::BTreeMap::new(),
             giphy_key: String::new(),
             keep_running_in_background: true,
             notifications: true,
@@ -1052,6 +1057,20 @@ mod tests {
         assert_eq!(loaded.picker_tab, crate::model::PickerTab::Stickers);
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(old.picker_tab, crate::model::PickerTab::Emoji);
+    }
+
+    /// The skin tone chosen for an emoji survives a save and load, and files
+    /// written before the choice existed keep the default tone.
+    #[test]
+    fn chosen_skin_tones_are_kept() {
+        let mut settings = Settings::default();
+        settings.skin_tones.insert("👍".to_owned(), "👍🏽".to_owned());
+        let written = serde_json::to_string(&settings).unwrap();
+        assert!(written.contains("\"skin_tones\""));
+        let loaded: Settings = serde_json::from_str(&written).unwrap();
+        assert_eq!(loaded.skin_tones.get("👍").map(String::as_str), Some("👍🏽"));
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(old.skin_tones.is_empty());
     }
 
     #[test]

@@ -3077,6 +3077,13 @@ pub enum Action {
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
+    /// Remembers the skin tone chosen for an emoji from its tone picker.
+    SetSkinTone {
+        /// The emoji's default (yellow) form.
+        base: String,
+        /// The variant to send from now on, or `base` for the default.
+        variant: String,
+    },
     /// Replaces an active `:query` with its selected emoji.
     InsertEmojiCompletion {
         emoji: String,

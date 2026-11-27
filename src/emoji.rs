@@ -42,6 +42,12 @@ pub fn lookup(text: &str) -> Option<&'static emojis::Emoji> {
     emojis::get(text).filter(|emoji| offered(emoji))
 }
 
+/// The default (yellow) emoji and its skin tone variants, when it has any.
+/// The default comes first, as the `emojis` list orders them.
+pub fn skin_tones(text: &str) -> Option<impl Iterator<Item = &'static emojis::Emoji> + Clone> {
+    emojis::get(text)?.skin_tones()
+}
+
 fn setup() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
@@ -146,6 +152,31 @@ mod tests {
                 "{sequence} fell back to its first part"
             );
         }
+    }
+
+    /// The tone list a popup draws starts with the yellow default, so its
+    /// grid cell stands for the emoji itself and a saved tone is found by
+    /// that first entry.
+    #[test]
+    fn the_skin_tone_list_starts_with_the_default() {
+        for text in ["👍", "👋", "🧑", "🙋"] {
+            let first = skin_tones(text)
+                .and_then(|mut tones| tones.next())
+                .unwrap_or_else(|| panic!("{text} has skin tones"));
+            assert_eq!(first.as_str(), text);
+        }
+        assert!(skin_tones("😀").is_none(), "a smile has no skin tones");
+    }
+
+    /// Every tone a person or hand has is offered, so its popup shows all
+    /// six.
+    #[test]
+    fn a_thumb_has_every_skin_tone() {
+        let count = skin_tones("👍")
+            .expect("the thumb has tones")
+            .filter(|emoji| offered(emoji))
+            .count();
+        assert_eq!(count, 6);
     }
 
     /// Every emoji a picker offers has the bundled font's own picture: not
