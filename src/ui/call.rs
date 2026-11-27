@@ -28,7 +28,7 @@ const PIP_VIEWPORT: &str = "zapfast-call-pip-window";
 pub const PIP_DEFAULT: egui::Vec2 = egui::vec2(320.0, 180.0);
 /// The smallest the floating window may be made, and the largest as a share of
 /// the app's own.
-pub(crate) const PIP_MIN: egui::Vec2 = egui::vec2(200.0, 112.0);
+pub const PIP_MIN: egui::Vec2 = egui::vec2(200.0, 112.0);
 const PIP_MAX_SHARE: egui::Vec2 = egui::vec2(0.6, 0.5);
 /// The room the gap between the window's edge and the app's own keeps it in.
 const PIP_MARGIN: f32 = 8.0;
@@ -43,7 +43,7 @@ const PIP_GAP: f32 = 8.0;
 const PIP_GRIP: f32 = 16.0;
 /// A new window may not be mapped on the frame it is asked to open, so asking
 /// it to take the focus is retried for a moment before giving up.
-const PIP_FOCUS_FOR: Duration = Duration::from_secs(5);
+pub(crate) const PIP_FOCUS_FOR: Duration = Duration::from_secs(5);
 /// Padding between the window edge and everything the surface draws.
 const PADDING: f32 = 24.0;
 /// The round controls along the bottom.
@@ -192,9 +192,9 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
 /// A backend that cannot make a second window draws it over the app instead,
 /// as the demo's single-window snapshots do.
 pub fn pip(app: &mut App, ctx: &egui::Context) {
-    // Closing the chat turns the root window itself into the call, so there
-    // is no second viewport to draw while that is so.
-    if app.root_is_pip {
+    // A call session has the whole window to itself. It never draws a child
+    // viewport over the chat, because the chat window is gone.
+    if app.window_kind == crate::app::WindowKind::Call {
         return;
     }
     if !app.call_pip_open() {
@@ -263,19 +263,10 @@ fn pip_screen_pos(ctx: &egui::Context, size: Vec2) -> Option<egui::Pos2> {
     ))
 }
 
-/// Draws the call in the chat window that became its floating window. The
-/// first frame still carries the close request that turned the chat into the
-/// call, so it is ignored here; the next close is the reader leaving the call.
+/// Draws the call session's own window. Nothing from the chat is painted in
+/// it, and closing or full-screening it cannot reach the chat window.
 pub(crate) fn pip_root(app: &mut App, ui: &mut egui::Ui) {
     if !app.call_pip_open() {
-        app.restore_chat_window_from_pip(ui.ctx());
-        return;
-    }
-    if std::mem::take(&mut app.pip_root_ignore_close) {
-        // The chat's close request was used to become this window.
-    } else if ui.input(|input| input.viewport().close_requested()) {
-        app.call_surface_hidden = false;
-        app.restore_chat_window_from_pip(ui.ctx());
         return;
     }
     pip_window_content(ui, app);
@@ -284,10 +275,11 @@ pub(crate) fn pip_root(app: &mut App, ui: &mut egui::Ui) {
 /// Draws the floating window inside the window of its own: square corners,
 /// because the window itself is opaque, and the picture and controls over it.
 fn pip_window(ui: &mut egui::Ui, app: &mut App) {
-    // Closing the floating window puts the call back in the chat.
+    // Closing the child window puts the call back in the chat; it does not
+    // touch the chat window itself.
     if ui.input(|input| input.viewport().close_requested()) {
         app.call_surface_hidden = false;
-        app.restore_chat_window_from_pip(ui.ctx());
+        app.close_call_pip_window();
         return;
     }
     pip_window_content(ui, app);
@@ -636,7 +628,7 @@ fn pip_header(
     if native && response.drag_started_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
-    if response.double_clicked() {
+    if response.double_clicked() && app.window_kind == crate::app::WindowKind::Chat {
         app.actions.push(Action::ReturnToCall);
     }
     if response.hovered() {
@@ -789,29 +781,47 @@ fn pip_controls(
                     app.actions.push(Action::SetCallCamera(!call.camera_on));
                 }
             }
-            let full = gettext(locale, "Full screen").into_owned();
+            let (full_icon, full_tip) =
+                if app.window_kind == crate::app::WindowKind::Call && app.call_fullscreen {
+                    (
+                        Icon::Minimize,
+                        gettext(locale, "Exit full screen").into_owned(),
+                    )
+                } else {
+                    (Icon::Maximize, gettext(locale, "Full screen").into_owned())
+                };
             if pip_button(
                 ui,
-                Icon::Maximize,
+                full_icon,
                 palette.surface_active,
                 palette.text,
-                &full,
+                &full_tip,
             )
             .clicked()
             {
                 push_fullscreen_actions(app);
             }
-            let back = gettext(locale, "Return to the call").into_owned();
-            if pip_button(
-                ui,
-                Icon::ArrowLeft,
-                palette.surface_active,
-                palette.text,
-                &back,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ReturnToCall);
+            // The child window's arrow returns to the call in the chat. The
+            // call's own window has no chat behind it, so that control closes
+            // it and leaves ZapFast in the tray.
+            if app.window_kind == crate::app::WindowKind::Call {
+                let close = gettext(locale, "Close the window").into_owned();
+                if pip_button(ui, Icon::X, palette.surface_active, palette.text, &close).clicked() {
+                    app.actions.push(Action::CloseWindow);
+                }
+            } else {
+                let back = gettext(locale, "Return to the call").into_owned();
+                if pip_button(
+                    ui,
+                    Icon::ArrowLeft,
+                    palette.surface_active,
+                    palette.text,
+                    &back,
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::ReturnToCall);
+                }
             }
             let hang_up = gettext(locale, "Hang up").into_owned();
             if pip_button(ui, Icon::PhoneOff, palette.danger, Color32::WHITE, &hang_up).clicked() {
@@ -821,11 +831,11 @@ fn pip_controls(
     );
 }
 
-/// Full screen from a floating window usually returns to the call screen in
-/// the chat. When the chat's window has become the call, it is already the
-/// call screen, so only the window changes. The tray is what opens the chat.
+/// Full screen from the child window also returns to the call in the chat.
+/// The call's own window is already the call, so only it changes: the chat
+/// stays closed until the tray opens it.
 fn push_fullscreen_actions(app: &mut App) {
-    if !app.root_is_pip {
+    if app.window_kind == crate::app::WindowKind::Chat {
         app.actions.push(Action::ReturnToCall);
     }
     app.actions.push(Action::ToggleCallFullscreen);
@@ -2060,12 +2070,12 @@ mod tests {
     #[test]
     fn full_screen_in_the_call_window_keeps_the_chat_closed() {
         let (mut app, _root) = app();
-        app.root_is_pip = true;
+        app.window_kind = crate::app::WindowKind::Call;
         push_fullscreen_actions(&mut app);
         assert_eq!(app.actions, [Action::ToggleCallFullscreen]);
 
         app.actions.clear();
-        app.root_is_pip = false;
+        app.window_kind = crate::app::WindowKind::Chat;
         push_fullscreen_actions(&mut app);
         assert_eq!(
             app.actions,

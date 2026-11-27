@@ -441,14 +441,23 @@ fn run() -> eframe::Result<()> {
             // with. Demo runs keep their fixed screenshot size.
             // Decided as each window is made: it cannot become transparent
             // later.
-            let transparent = lease.peek(|app: &app::App| {
-                zapfast::backdrop::transparent_window(
-                    app.palette.vibrant(),
-                    app.palette.window.a() < 255,
-                )
-            });
+            let call_window =
+                lease.peek(|app: &app::App| app.window_kind == zapfast::app::WindowKind::Call);
+            let transparent = if call_window {
+                false
+            } else {
+                lease.peek(|app: &app::App| {
+                    zapfast::backdrop::transparent_window(
+                        app.palette.vibrant(),
+                        app.palette.window.a() < 255,
+                    )
+                })
+            };
             zapfast::backdrop::set_window_transparent(transparent);
-            let geometry = if demo_persistence.is_some() {
+            let call_size = lease.peek(|app: &app::App| app.call_pip_size);
+            let call_position = lease.peek(|app: &app::App| app.call_pip_screen_pos);
+            let call_on_top = lease.peek(|app: &app::App| app.call_pip_on_top);
+            let geometry = if demo_persistence.is_some() || call_window {
                 fastframe_shell::window::Geometry::default()
             } else {
                 lease.peek(|app: &app::App| app.settings.window_geometry())
@@ -469,9 +478,18 @@ fn run() -> eframe::Result<()> {
                         }),
                 )
             });
+            let options = if call_window {
+                call_native_options(call_size, call_position, call_on_top)
+            } else {
+                native_options(demo_persistence.clone(), geometry, transparent)
+            };
             eframe::run_native(
-                "ZapFast",
-                native_options(demo_persistence.clone(), geometry, transparent),
+                if call_window {
+                    "ZapFast call"
+                } else {
+                    "ZapFast"
+                },
+                options,
                 Box::new(move |cc| {
                     // A screenshot and the tour photograph one window. Draw
                     // the floating call window over it, as a backend without
@@ -500,6 +518,7 @@ fn run() -> eframe::Result<()> {
                     }
                     Ok(Box::new(Shell {
                         app,
+                        call_window,
                         window_recovery_checked: false,
                         stalls: Default::default(),
                         transparent,
@@ -616,6 +635,38 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
     zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
+/// The floating call gets a window of its own. It is deliberately not the
+/// chat window: full screen, resizing and closing it cannot reach the chat,
+/// which opens again from the tray when asked.
+fn call_native_options(
+    size: egui::Vec2,
+    position: Option<egui::Pos2>,
+    on_top: bool,
+) -> eframe::NativeOptions {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("ZapFast call")
+        .with_app_id(fastframe_desktop::desktop_entry("zapfast"))
+        .with_decorations(false)
+        .with_resizable(true)
+        .with_min_inner_size(zapfast::ui::call::PIP_MIN)
+        .with_inner_size(size.max(zapfast::ui::call::PIP_MIN))
+        .with_icon(app_icon())
+        .with_window_level(if on_top {
+            egui::viewport::WindowLevel::AlwaysOnTop
+        } else {
+            egui::viewport::WindowLevel::Normal
+        });
+    if let Some(position) = position {
+        viewport = viewport.with_position(position);
+    }
+    eframe::NativeOptions {
+        viewport,
+        persistence_path: None,
+        persist_window: false,
+        ..Default::default()
+    }
+}
+
 fn native_options(
     demo_persistence: Option<std::path::PathBuf>,
     geometry: fastframe_shell::window::Geometry,
@@ -669,6 +720,8 @@ fn native_options(
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes
 /// back to the shell when the window closes.
 struct Shell {
+    /// Whether this window is the call's own window rather than the chat.
+    call_window: bool,
     /// Whether this window's first frame checked that a monitor shows it.
     window_recovery_checked: bool,
     /// Logs an update that froze the window for a moment.
@@ -741,7 +794,9 @@ impl eframe::App for Shell {
     /// What shows where the interface paints nothing: the window colour, or
     /// nothing while the window has a material, so it shows.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if zapfast::backdrop::active() {
+        if self.call_window {
+            [0.0, 0.0, 0.0, 1.0]
+        } else if zapfast::backdrop::active() {
             [0.0; 4]
         } else {
             zapfast::backdrop::clear_color(self.app.palette.window).to_normalized_gamma_f32()
@@ -790,16 +845,21 @@ impl eframe::App for Shell {
 
 impl Shell {
     fn window_logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !std::mem::replace(&mut self.window_recovery_checked, true) {
+        if !self.call_window && !std::mem::replace(&mut self.window_recovery_checked, true) {
             fastframe_shell::window::recover_offscreen(ctx, frame);
         }
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
-        if let Some(tour) = self.tour.as_mut() {
+        if !self.call_window
+            && let Some(tour) = self.tour.as_mut()
+        {
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);
         app.window_logic(ctx);
+        if self.call_window {
+            return;
+        }
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
             && let Some(at) = self.taskbar.show(
@@ -840,12 +900,14 @@ impl Shell {
     fn window_ui(&mut self, ui: &mut egui::Ui) {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
-        if std::mem::take(&mut self.open_phone_menu) {
+        if !self.call_window && std::mem::take(&mut self.open_phone_menu) {
             egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
         #[cfg(target_os = "macos")]
-        app.match_window_transparency(ui.ctx(), self.transparent);
+        if !self.call_window {
+            app.match_window_transparency(ui.ctx(), self.transparent);
+        }
         let startups: Vec<_> = app
             .accounts
             .iter_mut()

@@ -42,9 +42,9 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
-    // Closing the chat while a native call floats turns this very window into
-    // the call. Nothing else, including the lock screen, covers it.
-    if app.root_is_pip {
+    // A call window is its own eframe session. It paints only the call, so a
+    // full screen or a close in it cannot reach the chat window.
+    if app.window_kind == crate::app::WindowKind::Call {
         call::pip_root(app, ui);
         return;
     }

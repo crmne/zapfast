@@ -690,9 +690,12 @@ impl App {
         }
         // Full screen belongs to the call surface while the reader is looking
         // at it: however the surface was put aside, the window comes back.
-        // The root window can be the call itself, with the chat closed. It
-        // stays full screen even though the chat's call surface is aside.
-        if self.call_fullscreen && !self.call_surface_open() && !self.root_is_pip {
+        // The call's own window is already the call, so its full screen stays
+        // while the chat's call surface is aside.
+        if self.call_fullscreen
+            && !self.call_surface_open()
+            && self.window_kind != crate::app::WindowKind::Call
+        {
             self.set_call_fullscreen(ctx, false);
         }
         self.sync_call_tone();
@@ -754,9 +757,13 @@ impl App {
             // Returning to a locked chat's call cannot lift the lock on its
             // own: it asks for the code instead.
             Action::ReturnToCall if self.call.is_some() => {
-                if !self.call_is_private() {
+                if self.window_kind == crate::app::WindowKind::Call {
+                    // Returning from the call's own window opens the chat
+                    // window; it does not resurrect the chat inside the call.
                     self.call_surface_hidden = false;
-                    self.restore_chat_window_from_pip(ctx);
+                    self.close_call_window(ctx, true);
+                } else if !self.call_is_private() {
+                    self.call_surface_hidden = false;
                 } else if self.call_account.as_ref() == Some(&self.account().id) {
                     self.apply(Action::OpenLockedFolder, ctx);
                 }
@@ -1023,7 +1030,7 @@ mod tests {
         video.video = true;
         app.handle_call_update(video);
         app.call_surface_hidden = true;
-        app.root_is_pip = true;
+        app.window_kind = crate::app::WindowKind::Call;
         assert!(app.call_pip_open());
 
         app.apply(Action::ToggleCallFullscreen, &ctx);
@@ -1033,12 +1040,12 @@ mod tests {
             app.call_fullscreen,
             "the call window is the full screen, not the chat's surface"
         );
-        assert!(app.root_is_pip && app.call_surface_hidden);
+        assert!(app.window_kind == crate::app::WindowKind::Call && app.call_surface_hidden);
 
         app.apply(Action::ToggleCallFullscreen, &ctx);
         assert!(!app.call_fullscreen);
         assert!(
-            app.root_is_pip,
+            app.window_kind == crate::app::WindowKind::Call,
             "windowed again, the call is still its own window"
         );
     }

@@ -593,10 +593,12 @@ screen. Escape works as the arrow does, and leaves full screen first. Where a
 desktop cannot make a second window, the floating call stays over the chat
 instead; there Shift keeps the picture at 16:9 while it is resized. Only
 hanging up ends a call. Closing the chat window during a floating video call
-turns that window into the call: the chat and its frame go away, and the call
-stays on screen. Full screen and windowed then apply to that call window while
-the chat stays closed. Closing the call window, using the tray, or waiting for
-the call to end brings the chat window back. A call
+opens a separate call window instead: the chat and its frame go away, and the
+call stays on screen. Full screen and windowed then apply only to that call
+window, and it can be resized and closed without changing the chat's size or
+opening the chat. Its arrow closes that window rather than returning to the
+chat. Closing the call window, or waiting for the call to end, leaves ZapFast
+in the tray with the chat still closed; the tray opens the chat again. A call
 you hang up or decline leaves the screen at once; one the other side ends,
 declines, or misses, or one that could not connect, says so for a second and a
 half.
