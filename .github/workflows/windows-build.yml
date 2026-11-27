@@ -3,6 +3,8 @@ name: Windows build
 # Builds only the Windows executable of this fork and keeps it as a
 # downloadable artifact. Started by hand from the Actions tab.
 on:
+  push:
+    branches: [kisisel-duzenlemeler]
   workflow_dispatch:
 
 permissions:
