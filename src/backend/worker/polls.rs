@@ -21,6 +21,58 @@ pub(super) fn definition(message: &wa::Message) -> Option<&wa::message::PollCrea
         .or(message.poll_creation_message_v6.as_option())
 }
 
+impl Worker {
+    /// Reclassify polls archived as unsupported before V5 and V6 were read.
+    /// Raw protobufs are kept, so no phone history is needed.
+    pub(super) fn backfill_extended_polls(&mut self) {
+        const KEY: &str = "extended_polls";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let result = (|| -> anyhow::Result<usize> {
+            let mut updated = 0;
+            for (chat, id, raw) in self.archive.unsupported_with_raw()? {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                let Some(content @ Content::Poll { .. }) = classify(base) else {
+                    continue;
+                };
+                let Some(old) = self.archive.message(&chat, &id)? else {
+                    continue;
+                };
+                if old.edited {
+                    continue;
+                }
+                let mut reclassified = old;
+                reclassified.content = content.clone();
+                self.archive.set_derived(
+                    &chat,
+                    &id,
+                    &content,
+                    &self.mentions_of(&recorded_mention_ids(base)),
+                    thumbnail_of(base).as_deref(),
+                    forwarded_of(base),
+                )?;
+                let creator = reclassified.sender.clone();
+                self.remember_poll(&reclassified, base, &creator, None);
+                updated += 1;
+            }
+            self.archive.set_meta(KEY, "1")?;
+            Ok(updated)
+        })();
+        match result {
+            Ok(updated) if updated > 0 => {
+                log::info!("reclassified {updated} archived extended polls");
+                self.emit_chats();
+            }
+            Err(_) => log::warn!("could not reclassify extended polls; will retry at next startup"),
+            _ => {}
+        }
+    }
+}
+
 fn secret(message: &wa::Message) -> Option<&[u8]> {
     let base = message.get_base_message();
     message
@@ -1256,5 +1308,50 @@ mod tests {
             assert_eq!(found.hide_participant_name, Some(true));
         }
         assert!(definition(&wa::Message::default()).is_none());
+    }
+
+    #[test]
+    fn backfill_recovers_a_poll_archived_as_unsupported() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut raw = wa::Message::default();
+        raw.message_context_info = MessageField::some({
+            let mut context = wa::MessageContextInfo::default();
+            context.message_secret = Some(vec![7; 32]);
+            context
+        });
+        raw.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Where?".into());
+            poll.hide_participant_name = Some(true);
+            poll.end_time = Some(1_800_000_000_000);
+            poll.options = vec![{
+                let mut option = wa::message::poll_creation_message::Option::default();
+                option.option_name = Some("Here".into());
+                option
+            }];
+            poll.selectable_options_count = Some(1);
+            poll
+        });
+        let mut row = crate::archive::tests::message(chat, "v6-poll", 100, false);
+        row.content = Content::Unsupported {
+            what: "message".into(),
+        };
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+
+        worker.backfill_extended_polls();
+
+        let stored = worker.archive.message(chat, "v6-poll").unwrap().unwrap();
+        assert!(matches!(stored.content, Content::Poll { .. }));
+        assert!(worker.archive.poll_key(chat, "v6-poll").unwrap().is_some());
+        assert_eq!(
+            worker.archive.meta("extended_polls").unwrap().as_deref(),
+            Some("1")
+        );
+        // A second run is a no-op, including for rows archived later.
+        worker.backfill_extended_polls();
     }
 }

@@ -1103,6 +1103,7 @@ pub async fn run(
     worker.load_state();
     worker.backfill();
     worker.backfill_lottie_stickers();
+    worker.backfill_extended_polls();
     worker.backfill_media_albums();
     worker.backfill_video_notes();
     worker.backfill_view_once();
