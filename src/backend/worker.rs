@@ -90,6 +90,21 @@ const PHONE_PATIENCE: Duration = Duration::from_secs(30);
 const PHONE_BATCH: i32 = 50;
 /// `HistorySync.sync_type` for on-demand history responses.
 const ON_DEMAND: i32 = 6;
+
+/// Whether a history chunk of `sync_type` is the chat history a fresh link
+/// waits for, and so earns the "Loading chat history" banner.
+///
+/// Only the bootstrap, recent and full chunks carry it. The phone also sends
+/// status, push-name and non-blocking chunks (`INITIAL_STATUS_V3`,
+/// `PUSH_NAME`, `NON_BLOCKING_DATA`) after an ordinary reconnect, and none
+/// has a progress figure, so each one held the banner up for the whole
+/// [`SYNC_QUIET`] and kept notifications quiet on every start. They are
+/// still filed; they just do not say history is loading.
+fn loads_chat_history(sync_type: i32) -> bool {
+    /// `INITIAL_BOOTSTRAP`, `FULL` and `RECENT` in `HistorySync.HistorySyncType`.
+    const CHAT_HISTORY: [i32; 3] = [0, 2, 3];
+    CHAT_HISTORY.contains(&sync_type)
+}
 /// Maximum attachment-preview dimension.
 const THUMBNAIL_SIDE: u32 = 96;
 /// WhatsApp's profile pictures are 640 pixels square.
@@ -6272,7 +6287,10 @@ impl Worker {
         let session = lazy.peer_data_request_session_id().map(str::to_owned);
         let on_demand =
             lazy.sync_type() == ON_DEMAND || lazy.peer_data_request_session_id().is_some();
-        if !on_demand {
+        // Background chunks are filed like any other but leave the banner, and
+        // a history sync already running, as they were.
+        let history = !on_demand && loads_chat_history(lazy.sync_type());
+        if history {
             self.sync_deadline = Some(Instant::now() + SYNC_QUIET);
             self.set_syncing(true);
             if let Some(progress) = lazy.progress() {
@@ -6322,7 +6340,7 @@ impl Worker {
             }
             Err(_error) => log::warn!("history parsing worker failed"),
         }
-        if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
+        if history && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
         }
         self.emit_chats();
@@ -14844,6 +14862,20 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn only_chat_history_chunks_say_history_is_loading() {
+        // INITIAL_BOOTSTRAP, FULL and RECENT are the history a new link waits for.
+        for sync_type in [0, 2, 3] {
+            assert!(loads_chat_history(sync_type), "{sync_type}");
+        }
+        // INITIAL_STATUS_V3, PUSH_NAME and NON_BLOCKING_DATA arrive after an
+        // ordinary reconnect; ON_DEMAND and RECENT_CONVERSATIONS_ON_DEMAND
+        // answer a request; a type added later says nothing about it either.
+        for sync_type in [1, 4, 5, ON_DEMAND, 9, 7, -1] {
+            assert!(!loads_chat_history(sync_type), "{sync_type}");
+        }
+    }
 
     #[tokio::test]
     async fn a_lost_socket_without_a_disconnect_event_starts_reconnecting() {
