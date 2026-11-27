@@ -185,7 +185,12 @@ fn mlow_summary(message: &str) -> Option<Cow<'static, str>> {
         .into_iter()
         .find_map(|name| Some((name, rest.strip_prefix(name)?.strip_prefix('=')?)))?;
     let (value, rest) = leading_number(rest)?;
-    let toc = rest.strip_prefix(", TOC 0x")?.get(..2)?;
+    // Exactly two hex digits closing the parenthesis, or the line is not the one recognised.
+    let rest = rest.strip_prefix(", TOC 0x")?;
+    let (toc, rest) = (rest.get(..2)?, rest.get(2..)?);
+    if !toc.bytes().all(|byte| byte.is_ascii_hexdigit()) || !rest.starts_with(')') {
+        return None;
+    }
     let toc = u8::from_str_radix(toc, 16).ok()?;
     Some(
         format!(
@@ -327,6 +332,9 @@ mod tests {
             "mlow: dropping out-of-operating-point frame #1 (jid=12345, TOC 0x5c)",
             "mlow: dropping out-of-operating-point frame #1 (rate=abc, TOC 0x5c)",
             "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0xzz)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x5c0)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x5c",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x+5)",
         ] {
             assert_eq!(
                 protocol_summary(unknown),
