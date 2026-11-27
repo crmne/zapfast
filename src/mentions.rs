@@ -297,6 +297,7 @@ mod tests {
     fn aliases_come_from_the_catalog() {
         assert_eq!(everyone_alias(Locale::English), "all");
         assert_eq!(everyone_alias(Locale::PortugueseBrazil), "todos");
+        assert_eq!(everyone_alias(Locale::PortuguesePortugal), "todos");
         assert_eq!(everyone_alias(Locale::German), "alle");
         assert_eq!(everyone_alias(Locale::Spanish), "todos");
         assert_eq!(everyone_alias(Locale::Italian), "tutti");

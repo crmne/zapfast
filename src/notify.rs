@@ -837,6 +837,7 @@ mod tests {
         for (locale, body) in [
             (Locale::English, "New message"),
             (Locale::PortugueseBrazil, "Nova mensagem"),
+            (Locale::PortuguesePortugal, "Nova mensagem"),
             (Locale::German, "Neue Nachricht"),
             (Locale::Spanish, "Mensaje nuevo"),
             (Locale::Italian, "Nuovo messaggio"),
