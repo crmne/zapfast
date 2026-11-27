@@ -2038,8 +2038,11 @@ pub enum CallDirection {
 }
 
 /// The tabs of the picker above the composer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PickerTab {
+    /// Where the composer's emoji button opens until another tab is used.
+    #[default]
     Emoji,
     Gifs,
     Stickers,
@@ -3058,6 +3061,8 @@ pub enum Action {
     },
     /// Toggles a picker tab.
     TogglePicker(PickerTab),
+    /// Opens the picker on its last tab, or closes it when it is open.
+    ToggleComposerPicker,
     ClosePicker,
     /// Opens the full emoji picker to react to a message. `beside_menu` keeps
     /// the message's context menu open next to it, as when the picker comes
@@ -3072,6 +3077,13 @@ pub enum Action {
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
+    /// Remembers the skin tone chosen for an emoji from its tone picker.
+    SetSkinTone {
+        /// The emoji's default (yellow) form.
+        base: String,
+        /// The variant to send from now on, or `base` for the default.
+        variant: String,
+    },
     /// Replaces an active `:query` with its selected emoji.
     InsertEmojiCompletion {
         emoji: String,

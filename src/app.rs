@@ -1558,6 +1558,7 @@ impl App {
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
                 ThemeChoice::Messages => Palette::messages(),
+                ThemeChoice::MessagesOled => Palette::messages_oled(),
                 _ => Palette::dark(),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -7219,6 +7220,8 @@ impl App {
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
+                // Its OLED variant is black whatever the system does.
+                ThemeChoice::MessagesOled => egui::ThemePreference::Dark,
             },
             |palette| {
                 if palette.dark {
@@ -7261,19 +7264,16 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::Messages {
-                if dark {
-                    Palette::messages()
-                } else {
-                    Palette::messages_light()
-                }
-            } else if dark {
-                Palette::dark()
-            } else {
-                Palette::light()
-            }
-        });
+        let palette = self
+            .settings
+            .cached_palette()
+            .unwrap_or_else(|| match self.settings.theme {
+                ThemeChoice::Messages if dark => Palette::messages(),
+                ThemeChoice::Messages => Palette::messages_light(),
+                ThemeChoice::MessagesOled => Palette::messages_oled(),
+                _ if dark => Palette::dark(),
+                _ => Palette::light(),
+            });
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
         }
@@ -8689,6 +8689,7 @@ impl App {
                 self.backend.send(Command::SetLocked(chat, locked));
             }
             Action::TogglePicker(tab) => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 self.composer_tools_open = false;
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -8698,6 +8699,10 @@ impl App {
                     self.picker = None;
                     self.refocus_composer(ctx);
                 } else {
+                    if self.settings.picker_tab != tab {
+                        self.settings.picker_tab = tab;
+                        self.mark_settings_dirty();
+                    }
                     self.picker = Some(tab);
                     self.picker_search.clear();
                     self.picker_focus = tab == PickerTab::Emoji;
@@ -8720,7 +8725,14 @@ impl App {
                     }
                 }
             }
+            Action::ToggleComposerPicker => {
+                // A second click closes the picker, whichever tab is open;
+                // the first opens the tab last used.
+                let tab = self.picker.unwrap_or(self.settings.picker_tab);
+                self.apply(Action::TogglePicker(tab), ctx);
+            }
             Action::ClosePicker => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 let was_reaction = self.reaction_target.is_some();
                 if let Some((chat, message)) = &self.reaction_target {
                     egui::Popup::close_id(
@@ -8743,6 +8755,7 @@ impl App {
                 beside_menu,
                 from_list,
             } => {
+                crate::ui::picker::dismiss_skin_tones(ctx);
                 self.reaction_from_list = from_list;
                 self.focus_composer = false;
                 self.emoji_start = None;
@@ -8776,6 +8789,18 @@ impl App {
                 self.insert_in_composer(ctx, &emoji);
                 self.remember_emoji(&emoji);
                 self.focus_composer = true;
+            }
+            Action::SetSkinTone { base, variant } => {
+                let valid = crate::emoji::skin_tones(&base)
+                    .is_some_and(|mut tones| tones.any(|emoji| emoji.as_str() == variant));
+                if valid {
+                    if variant == base {
+                        self.settings.skin_tones.remove(&base);
+                    } else {
+                        self.settings.skin_tones.insert(base, variant);
+                    }
+                    self.mark_settings_dirty();
+                }
             }
             Action::InsertEmojiCompletion { emoji, start, end } => {
                 let starts_with_colon = start
@@ -14760,6 +14785,80 @@ mod tests {
         app.focus_messages = true;
         app.apply(Action::SwitchAccount(AccountId::parse("2").unwrap()), &ctx);
         assert!(!app.focus_messages);
+    }
+
+    /// The composer's emoji button reopens whichever picker tab was used
+    /// last, and choosing a tab remembers it.
+    #[test]
+    fn the_emoji_button_reopens_the_last_picker_tab() {
+        for remembered in [PickerTab::Stickers, PickerTab::Gifs] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _events) =
+                App::headless(AppDirs::under(directory.path()), Settings::default());
+            let ctx = egui::Context::default();
+            app.settings.picker_tab = remembered;
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(
+                app.picker,
+                Some(remembered),
+                "the button opens the last tab"
+            );
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(app.picker, None, "a second click closes the picker");
+            assert_eq!(
+                app.settings.picker_tab, remembered,
+                "closing does not forget the tab"
+            );
+            app.apply(Action::ToggleComposerPicker, &ctx);
+            assert_eq!(app.picker, Some(remembered), "it opens the same tab again");
+            app.apply(Action::TogglePicker(PickerTab::Emoji), &ctx);
+            assert_eq!(
+                app.picker,
+                Some(PickerTab::Emoji),
+                "an explicit tab click switches to it"
+            );
+            assert_eq!(app.settings.picker_tab, PickerTab::Emoji);
+        }
+    }
+
+    /// A chosen skin tone is saved by its default emoji, and choosing the
+    /// yellow default again forgets the choice.
+    #[test]
+    fn choosing_a_skin_tone_is_saved_and_can_be_undone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "👍🏽".into(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.settings.skin_tones.get("👍").map(String::as_str),
+            Some("👍🏽")
+        );
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "👍".into(),
+            },
+            &ctx,
+        );
+        assert!(!app.settings.skin_tones.contains_key("👍"));
+        app.apply(
+            Action::SetSkinTone {
+                base: "👍".into(),
+                variant: "😀".into(),
+            },
+            &ctx,
+        );
+        assert!(
+            !app.settings.skin_tones.contains_key("👍"),
+            "a tone that is not the emoji's own is ignored"
+        );
     }
 
     /// A reaction picker the message list opened is not handed back to the

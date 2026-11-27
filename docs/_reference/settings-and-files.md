@@ -119,8 +119,9 @@ name or description, in the interface language or in English.
 
 **Appearance**
 
-- **Theme**: dark, light, follow the system, Messages, or a local JSON
-  palette from the themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
+- **Theme**: dark, light, follow the system, Messages, Messages OLED, or a
+  local JSON palette from the themes folder. See
+  [Making a theme]({{ '/themes/' | relative_url }}).
   **Messages** follows the system's light or dark appearance in macOS's
   greys, with bubbles shaped, spaced and coloured as Messages on the Mac
   draws them (yours in iMessage blue, shading deeper down the window), the
@@ -134,6 +135,9 @@ name or description, in the interface language or in English.
   the window is opaque in the theme's colours; it turns translucent from
   the next window. On macOS, changing between an opaque and translucent
   theme replaces the window while keeping the current chat and connection.
+  **Messages OLED** keeps those bubble shapes and colours on a pure black
+  window and conversation, with iOS's dark grey for other people's messages
+  and the same iMessage blue for yours.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
@@ -265,7 +269,8 @@ Some choices are made where they are used and remembered in `settings.json`:
 the shortcut hints bar under the composer (its × hides it, and **Show shortcut
 hints under the message box** in the Keyboard shortcuts dialog brings it back),
 **Also save to your phone's contacts** in the new-contact dialog, voice
-playback speed, and the chat list and search pane widths.
+playback speed, the skin tone picked for an emoji, and the chat list and
+search pane widths.
 
 Development builds also remember the window's size, position, and maximized
 state in `settings.json`, including when reopening from the tray or a

@@ -4,6 +4,15 @@ description: Write a JSON palette to colour ZapFast your way.
 nav_order: 5
 ---
 
+## Built-in themes
+
+**Settings → Appearance → Theme** offers **Follow system**, **Light**,
+**Dark**, **Messages**, and **Messages OLED**. Messages uses macOS's greys,
+bubble shapes, and iMessage blue, following the system's light or dark
+appearance. Messages OLED keeps those bubbles on a pure black window and
+conversation, with iOS's dark grey for other people's messages and the same
+iMessage blue for yours.
+
 ## Where themes live
 
 A theme is a small JSON file in the `themes` folder beside `settings.json`:

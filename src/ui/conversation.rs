@@ -15,7 +15,7 @@ use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
     Action, Chat, ChatActivity, ChatId, Content, Delivery, Dialog, LinkPreview, Media, MediaState,
-    Message, PickerTab, Scroll,
+    Message, Scroll,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
@@ -1763,7 +1763,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                         if app.composer_tools_open {
                             app.actions.push(Action::SetComposerTools(false));
                         }
-                        app.actions.push(Action::TogglePicker(PickerTab::Emoji));
+                        app.actions.push(Action::ToggleComposerPicker);
                     }
                     // The text follows the pair as closely as the emoji
                     // follows the plus (the field's own left margin included).
