@@ -1304,7 +1304,9 @@ mod tests {
             poll.selectable_options_count = Some(1);
             poll
         });
-        // The secret lives on the outer wrapper, as with device-sent polls.
+        // The secret lives on the outer wrapper, as with ephemeral polls.
+        // get_base_message unwraps ephemeral_message, so definition(base)
+        // resolves; a V4 wrapper would not be unwrapped here.
         let mut wrapper = wa::message::FutureProofMessage::default();
         wrapper.message = MessageField::some(inner);
         let mut outer = wa::Message::default();
@@ -1313,8 +1315,20 @@ mod tests {
             context.message_secret = Some(vec![9; 32]);
             context
         });
-        outer.poll_creation_message_v4 = MessageField::some(wrapper);
-        worker.store_message(row, Some(outer.encode_to_vec()), None);
+        outer.ephemeral_message = MessageField::some(wrapper);
+        // Insert directly: store_message would polish the poll and save the
+        // key before the backfill runs, making the assertion meaningless.
+        worker
+            .archive
+            .insert_message(&row, Some(&outer.encode_to_vec()))
+            .unwrap();
+        assert!(
+            worker
+                .archive
+                .poll_key(chat, "reclassified")
+                .unwrap()
+                .is_none()
+        );
 
         worker.backfill_extended_polls();
 
