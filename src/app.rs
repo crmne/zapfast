@@ -12008,6 +12008,8 @@ struct PasteKeys {
     /// This shortcut's `Paste` event was handled, so its release must not
     /// read the clipboard again, including after a plain-text paste.
     handled: bool,
+    /// When a `Paste` event last arrived with Ctrl/Cmd held.
+    held_paste_at: Option<f64>,
 }
 
 impl PasteKeys {
@@ -12041,6 +12043,7 @@ impl PasteKeys {
                     // A menu paste has no key release to wait for. The Edit
                     // menu's Cmd+V may arrive after Cmd is already up.
                     self.handled = recent(self.command_at);
+                    self.held_paste_at = self.command.then_some(now);
                 }
                 egui::Event::Key {
                     key,
@@ -12079,8 +12082,16 @@ impl PasteKeys {
         if down {
             if !self.command {
                 // A new press starts another shortcut, including after a
-                // menu paste that had no V release.
-                self.handled = false;
+                // menu paste that had no V release. One right after a paste
+                // with Ctrl/Cmd held is still that shortcut: Omarchy's
+                // Super+V sends V down and up apart, with Control up in
+                // between.
+                let same_shortcut = self
+                    .held_paste_at
+                    .is_some_and(|at| now - at <= PASTE_RELEASE_GRACE);
+                if !same_shortcut {
+                    self.handled = false;
+                }
                 self.plain_at = None;
             }
             self.command_at = Some(now);
@@ -16351,6 +16362,36 @@ mod tests {
         assert_eq!(app.pending.len(), 1);
         clipboard_frame(&mut app, &ctx, vec![paste_release()], true);
         assert_eq!(app.pending.len(), 2);
+    }
+
+    /// Omarchy's Super+V sends Ctrl+V with Hyprland's `send_key_state`, V down
+    /// and V up 50 ms apart. Control goes up in between and comes back for the
+    /// release, which must not paste the same file again (#1144).
+    #[test]
+    fn a_synthetic_paste_that_presses_control_twice_stages_once() {
+        let (mut app, ctx) = clipboard_app();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clip.mp4");
+        std::fs::write(&path, b"fixture").unwrap();
+        let file = Some(vec![path]);
+        let up = || egui::Event::ModifiersChanged(egui::Modifiers::NONE);
+        let down = || egui::Event::ModifiersChanged(egui::Modifiers::COMMAND);
+        clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![down(), egui::Event::Paste("file:///clip.mp4".into()), up()],
+            file.clone(),
+            false,
+        );
+        clipboard_frame_with_files(
+            &mut app,
+            &ctx,
+            vec![down(), paste_release(), up()],
+            file.clone(),
+            false,
+        );
+        assert_eq!(app.pending.len(), 1);
+        assert_eq!(app.composer, "caption");
     }
 
     /// A keyboard paste remains owned until V-up even if Control went up first.
