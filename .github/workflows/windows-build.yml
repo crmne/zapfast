@@ -1,0 +1,31 @@
+name: Windows build
+
+# Builds only the Windows executable of this fork and keeps it as a
+# downloadable artifact. Started by hand from the Actions tab.
+on:
+  push:
+    branches: [kisisel-duzenlemeler]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --locked --release
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/zapfast.exe dist/
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zapfast-windows
+          path: dist

@@ -2541,7 +2541,7 @@ impl App {
             return;
         };
         let now = crate::util::now();
-        if !notification_eligible(chat, now, message.timestamp) {
+        if !notification_eligible(chat, now, message.timestamp, self.settings.notify_channels) {
             return;
         }
         let reading = !self.events_hidden
@@ -3921,9 +3921,12 @@ impl App {
                         .image_preview
                         .as_ref()
                         .map(PreviewState::chat)
+                        // A profile picture belongs to no chat (empty id).
                         .is_some_and(|id| {
-                            self.chat(id)
-                                .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                            !id.is_empty()
+                                && self
+                                    .chat(id)
+                                    .is_none_or(|chat| chat.locked && !self.locked_folder_open())
                         })
                 {
                     self.image_preview = None;
@@ -8007,9 +8010,10 @@ impl App {
                 };
                 // A chat that is gone, or locked outside the open folder,
                 // shows nothing more of its album: the viewer closes instead.
-                if self
-                    .chat(preview.chat())
-                    .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                if !preview.chat().is_empty()
+                    && self
+                        .chat(preview.chat())
+                        .is_none_or(|chat| chat.locked && !self.locked_folder_open())
                 {
                     self.apply(Action::CloseImagePreview, ctx);
                     return;
@@ -12388,8 +12392,14 @@ fn hyprland(signature: bool, desktop: Option<&str>) -> bool {
         })
 }
 
-fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
-    if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
+fn notification_eligible(chat: &Chat, now: i64, message_at: i64, channels: bool) -> bool {
+    // Followed channels notify only when the setting allows it.
+    if chat.archived
+        || chat.unread == 0
+        || chat.muted(now)
+        || chat.locked
+        || (chat.is_channel() && !channels)
+    {
         return false;
     }
     now - message_at <= 60
@@ -16970,11 +16980,26 @@ mod tests {
             chat.unread = 1;
 
             chat.archived = true;
-            assert!(!notification_eligible(&chat, now, now), "{id} archived");
+            assert!(
+                !notification_eligible(&chat, now, now, false),
+                "{id} archived"
+            );
 
             chat.archived = false;
-            assert!(notification_eligible(&chat, now, now), "{id} unarchived");
+            assert!(
+                notification_eligible(&chat, now, now, false),
+                "{id} unarchived"
+            );
         }
+    }
+
+    #[test]
+    fn a_channel_notifies_only_when_the_setting_allows_it() {
+        let now = crate::util::now();
+        let mut channel = Chat::new("1@newsletter".into(), "News".into());
+        channel.unread = 1;
+        assert!(!notification_eligible(&channel, now, now, false));
+        assert!(notification_eligible(&channel, now, now, true));
     }
 
     /// A chat whose album holds `count` pictures.
@@ -17468,6 +17493,23 @@ mod tests {
             .unwrap();
         app.handle_events();
         assert!(app.viewer_media.is_empty());
+    }
+
+    /// A profile picture belongs to no chat, so a refreshed chat list must not
+    /// close the viewer that shows it.
+    #[test]
+    fn a_profile_picture_stays_open_when_the_chat_list_refreshes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        app.image_preview = Some(crate::image_preview::PreviewState::new(
+            None,
+            String::new(),
+            String::new(),
+        ));
+        events.send(Event::Chats(Vec::new())).unwrap();
+        app.handle_events();
+        assert!(app.image_preview.is_some());
     }
 
     /// The viewer belongs to the window. Another linked account may use the

@@ -493,6 +493,9 @@ pub struct Settings {
     /// Play the message sound for ordinary group messages. Mentions and
     /// replies to us sound either way.
     pub group_sounds: bool,
+    /// Whether followed channels may show desktop notifications. Off by
+    /// default: a channel's posts are not conversations.
+    pub notify_channels: bool,
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
@@ -585,6 +588,7 @@ impl Default for Settings {
             message_sound: NotificationSound::Receive,
             mention_sound: NotificationSound::Alert,
             group_sounds: true,
+            notify_channels: false,
             download_folder: None,
             keep_chats_archived: true,
             proxy: String::new(),
