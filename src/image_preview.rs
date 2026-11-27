@@ -92,13 +92,16 @@ fn is_modal_navigation(key: Key) -> bool {
     )
 }
 
-/// Fitted image size for a canvas, keeping the aspect ratio and never
-/// enlarging past the original pixels. `(0, 0)` original sizes get `(0, 0)`.
+/// Fitted image size for a canvas, keeping the aspect ratio. A small picture
+/// is enlarged to fill the canvas, up to `MAX_FIT_ENLARGEMENT` times its
+/// original pixels. `(0, 0)` original sizes get `(0, 0)`.
+pub const MAX_FIT_ENLARGEMENT: f32 = 8.0;
+
 pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) -> (f32, f32) {
     if width <= 0.0 || height <= 0.0 {
         return (0.0, 0.0);
     }
-    let scale = (canvas_width / width).min(canvas_height / height).min(1.0);
+    let scale = (canvas_width / width).min(canvas_height / height).min(MAX_FIT_ENLARGEMENT);
     (width * scale, height * scale)
 }
 
@@ -674,7 +677,7 @@ mod tests {
     #[test]
     fn fit_and_zoom_sizes_keep_the_aspect_ratio() {
         assert_eq!(fit_size(1600.0, 1200.0, 800.0, 700.0), (800.0, 600.0));
-        assert_eq!(fit_size(320.0, 240.0, 800.0, 700.0), (320.0, 240.0));
+        assert_eq!(fit_size(320.0, 240.0, 800.0, 700.0), (800.0, 600.0));
         assert_eq!(fit_size(600.0, 1200.0, 800.0, 700.0), (350.0, 700.0));
         assert_eq!(fit_size(0.0, 0.0, 800.0, 700.0), (0.0, 0.0));
         assert_eq!(zoomed_size(320.0, 240.0, 2.0), (640.0, 480.0));

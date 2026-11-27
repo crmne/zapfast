@@ -12389,7 +12389,8 @@ fn hyprland(signature: bool, desktop: Option<&str>) -> bool {
 }
 
 fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
-    if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
+    // Followed channels never notify: their posts are not conversations.
+    if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked || chat.is_channel() {
         return false;
     }
     now - message_at <= 60

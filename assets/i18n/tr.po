@@ -1823,9 +1823,8 @@ msgid "Show when you are typing"
 msgstr "Yazıyor bilgisini göster"
 
 #: src/ui/settings.rs:593
-#, fuzzy
 msgid "Blocked contacts"
-msgstr "Tüm kişiler"
+msgstr "Engellenen kişiler"
 
 #: src/ui/settings.rs:599
 #, fuzzy
@@ -4067,3 +4066,47 @@ msgstr "gönderilmedi"
 
 #~ msgid "Channel"
 #~ msgstr "Kanal"
+
+msgid "Rename"
+msgstr "Yeniden adlandır"
+
+msgid "Add to contacts"
+msgstr "Kişilere ekle"
+
+msgid "Pin"
+msgstr "Sabitle"
+
+msgid "Block"
+msgstr "Engelle"
+
+msgid "Block contact"
+msgstr "Kişiyi engelle"
+
+msgid "Block contact?"
+msgstr "Kişi engellensin mi?"
+
+#, rust-format
+msgid "Block {name}? You will no longer receive their direct messages or calls. This keeps your chat history."
+msgstr "{name} engellensin mi? Artık ondan doğrudan mesaj veya arama almayacaksınız. Sohbet geçmişiniz korunur."
+
+msgid "Connect to WhatsApp to block or unblock contacts."
+msgstr "Kişileri engellemek veya engelini kaldırmak için WhatsApp'a bağlanın."
+
+msgid "Could not load blocked contacts."
+msgstr "Engellenen kişiler yüklenemedi."
+
+msgid "No blocked contacts"
+msgstr "Engellenen kişi yok"
+
+msgid "Unblock"
+msgstr "Engeli kaldır"
+
+msgid "Unblock contact"
+msgstr "Kişinin engelini kaldır"
+
+msgid "Unblock contact?"
+msgstr "Kişinin engeli kaldırılsın mı?"
+
+#, rust-format
+msgid "Unblock {name}? You will be able to exchange messages and calls again."
+msgstr "{name} adlı kişinin engeli kaldırılsın mı? Tekrar mesajlaşabilir ve arama yapabilirsiniz."

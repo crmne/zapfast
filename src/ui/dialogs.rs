@@ -511,7 +511,21 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let contacts = contact_choices(app, &needle);
     let offer_self = app.offers_self(&needle);
-    if let Some(contact) = contacts
+    // A number typed in full that is not in the contacts is offered as a
+    // chat of its own, so someone not in the address book can be messaged.
+    let number_chat = typed_number_chat(app.new_chat_search.trim())
+        .filter(|id| !contacts.iter().any(|contact| &contact.id == id));
+    if let Some(id) = number_chat
+        .clone()
+        .filter(|_| open_first && contacts.is_empty())
+    {
+        let name = crate::model::phone_of(&id).map(|n| format!("+{n}")).unwrap_or_default();
+        app.actions.push(Action::StartChat {
+            id,
+            name,
+            dismiss_dialog: true,
+        });
+    } else if let Some(contact) = contacts
         .first()
         .filter(|_| open_first && !needle.is_empty())
     {
@@ -525,10 +539,11 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
     // The list is as tall as its rows, up to the space the dialog has, so a
     // search with few matches gives a short list and many give a full one.
     // Its height comes from this frame's rows, not last frame's size.
-    let listed = if contacts.is_empty() && !offer_self {
+    let number_chat_is_none = number_chat.is_none();
+    let listed = if contacts.is_empty() && !offer_self && number_chat.is_none() {
         1
     } else {
-        contacts.len() + usize::from(offer_self)
+        contacts.len() + usize::from(offer_self) + usize::from(number_chat.is_some())
     };
     let rows = 2 + listed;
     let spacing = ui.spacing().item_spacing.y;
@@ -553,7 +568,18 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
             if offer_self {
                 super::chats::self_row(app, ui);
             }
-            if contacts.is_empty() && !offer_self {
+            if let Some(id) = number_chat {
+                let number = crate::model::phone_of(&id).unwrap_or_default().to_owned();
+                let label = format!("+{number}");
+                if super::chats::action_row(app, ui, Icon::Plus, &label).clicked() {
+                    app.actions.push(Action::StartChat {
+                        id,
+                        name: label,
+                        dismiss_dialog: true,
+                    });
+                }
+            }
+            if contacts.is_empty() && !offer_self && number_chat_is_none {
                 // No row is drawn to forget the one scrolled into view last.
                 ui.ctx()
                     .data_mut(|data| data.remove::<String>(super::chats::revealed_row_id()));
@@ -571,6 +597,21 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
         });
+}
+
+/// The chat a typed phone number names, as `<digits>@s.whatsapp.net`. A
+/// Turkish national number (`05xx xxx xx xx`) gets the country code 90.
+fn typed_number_chat(text: &str) -> Option<String> {
+    let digits: String = text.chars().filter(char::is_ascii_digit).collect();
+    let national = !text.trim_start().starts_with('+')
+        && digits.len() == 11
+        && digits.starts_with("05");
+    let target = if national {
+        format!("90{}", &digits[1..])
+    } else {
+        text.to_owned()
+    };
+    crate::target::parse(&target).map(|request| request.chat)
 }
 
 /// The people New chat and New call offer, by name: the contacts and the

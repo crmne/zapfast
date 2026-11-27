@@ -805,11 +805,12 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
 fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable: bool) {
     let palette = app.palette;
     let id = shown.id.as_str();
-    let mut buttons: Vec<(Icon, &str, Vec<Action>)> = Vec::new();
+    let locale = app.locale;
+    let mut buttons: Vec<(Icon, std::borrow::Cow<'static, str>, Vec<Action>)> = Vec::new();
     if !shown.group && !mine {
         buttons.push((
             Icon::MessageCircle,
-            "Message",
+            crate::i18n::gettext(locale, "Message"),
             vec![
                 Action::StartChat {
                     id: id.to_owned(),
@@ -829,7 +830,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             .is_some_and(|full| !full.is_empty());
         buttons.push((
             Icon::User,
-            if known { "Rename" } else { "Add to contacts" },
+            if known { crate::i18n::gettext(locale, "Rename") } else { crate::i18n::gettext(locale, "Add to contacts") },
             vec![Action::EditContact {
                 id: id.to_owned(),
                 name: shown.name.trim_start_matches('~').to_owned(),
@@ -839,7 +840,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
     if let Some(phone) = &shown.phone {
         buttons.push((
             Icon::Copy,
-            "Copy number",
+            crate::i18n::gettext(locale, "Copy number"),
             vec![Action::CopyText(format!("+{phone}"))],
         ));
     }
@@ -847,13 +848,13 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         buttons.push(if shown.muted {
             (
                 Icon::Bell,
-                "Unmute",
+                crate::i18n::gettext(locale, "Unmute"),
                 vec![Action::SetMuted(id.to_owned(), None)],
             )
         } else {
             (
                 Icon::BellOff,
-                "Mute",
+                crate::i18n::gettext(locale, "Mute"),
                 vec![Action::SetMuted(id.to_owned(), Some(0))],
             )
         });
@@ -863,15 +864,15 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             } else {
                 Icon::Pin
             },
-            if shown.pinned { "Unpin" } else { "Pin" },
+            if shown.pinned { crate::i18n::gettext(locale, "Unpin") } else { crate::i18n::gettext(locale, "Pin") },
             vec![Action::SetPinned(id.to_owned(), !shown.pinned)],
         ));
         buttons.push((
             Icon::Archive,
             if shown.archived {
-                "Unarchive"
+                crate::i18n::gettext(locale, "Unarchive")
             } else {
-                "Archive"
+                crate::i18n::gettext(locale, "Archive")
             },
             vec![
                 Action::SetArchived(id.to_owned(), !shown.archived),
@@ -888,7 +889,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         let mut end = start;
         let mut total = 0.0;
         while end < buttons.len() {
-            let width = theme::soft_button_width(ui, buttons[end].1, true);
+            let width = theme::soft_button_width(ui, &buttons[end].1, true);
             let grown = if end == start {
                 width
             } else {
@@ -903,7 +904,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
         ui.horizontal(|ui| {
             ui.add_space((available - total).max(0.0) / 2.0);
             for (index, (icon, label, actions)) in buttons[start..end].iter().enumerate() {
-                if theme::soft_button(ui, &palette, Some(*icon), label, false)
+                if theme::soft_button(ui, &palette, Some(*icon), label.as_ref(), false)
                     .tab_stop(Stop::InfoControl(ACTION_STOP + (start + index) as u8))
                     .clicked()
                 {
