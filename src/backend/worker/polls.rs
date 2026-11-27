@@ -5,12 +5,81 @@ use crate::archive::PollVote;
 use crate::model::{PollDraft, PollState};
 use whatsapp_rust::features::PollVoteCiphertext;
 
+/// Every top-level field that carries a `PollCreationMessage`.
+///
+/// WhatsApp moves a poll into a newer slot when it uses an extended setting:
+/// `poll_type` quizzes use V5, and end time, hidden voter names and added
+/// options use V6. Checking only the older slots makes those polls look
+/// unsupported. The pinned whatsapp-rust treats all of them as polls too.
 pub(super) fn definition(message: &wa::Message) -> Option<&wa::message::PollCreationMessage> {
     message
         .poll_creation_message
         .as_option()
         .or(message.poll_creation_message_v2.as_option())
         .or(message.poll_creation_message_v3.as_option())
+        .or(message.poll_creation_message_v5.as_option())
+        .or(message.poll_creation_message_v6.as_option())
+}
+
+impl Worker {
+    /// Reclassify polls archived as unsupported before V5 and V6 were read.
+    /// Raw protobufs are kept, so no phone history is needed.
+    pub(super) fn backfill_extended_polls(&mut self) {
+        const KEY: &str = "extended_polls";
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let result = (|| -> anyhow::Result<usize> {
+            let mut updated = 0;
+            // Scan every row with a raw protobuf, not just unsupported ones:
+            // the general derived-content backfill may already have turned an
+            // older V5/V6 poll into a poll without saving its definition.
+            for (chat, id, raw) in self.archive.rows_with_raw()? {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                if definition(base).is_none() {
+                    continue;
+                }
+                let Some(old) = self.archive.message(&chat, &id)? else {
+                    continue;
+                };
+                if old.edited {
+                    continue;
+                }
+                let mut reclassified = old;
+                let was_unsupported = matches!(reclassified.content, Content::Unsupported { .. });
+                if was_unsupported {
+                    let Some(content @ Content::Poll { .. }) = classify(base) else {
+                        continue;
+                    };
+                    reclassified.content = content.clone();
+                    self.archive.set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &self.mentions_of(&recorded_mention_ids(base)),
+                        thumbnail_of(base).as_deref(),
+                        forwarded_of(base),
+                    )?;
+                    updated += 1;
+                }
+                let creator = reclassified.sender.clone();
+                self.remember_poll(&reclassified, &message, &creator, None);
+            }
+            self.archive.set_meta(KEY, "1")?;
+            Ok(updated)
+        })();
+        match result {
+            Ok(updated) if updated > 0 => {
+                log::info!("reclassified {updated} archived extended polls");
+                self.emit_chats();
+            }
+            Err(_) => log::warn!("could not reclassify extended polls; will retry at next startup"),
+            _ => {}
+        }
+    }
 }
 
 fn secret(message: &wa::Message) -> Option<&[u8]> {
@@ -257,11 +326,12 @@ impl Worker {
         let Content::Poll { options, state, .. } = &mut row.content else {
             return;
         };
-        if let Some(poll) = raw
+        let definition = raw
             .as_ref()
-            .and_then(|raw| definition(raw.get_base_message()))
-        {
+            .and_then(|raw| definition(raw.get_base_message()));
+        if let Some(poll) = definition {
             state.selectable = poll.selectable_options_count.unwrap_or(0) as usize;
+            state.hide_voter_names = poll.hide_participant_name.unwrap_or(false);
         }
         state.selectable = if state.selectable == 0 {
             options.len()
@@ -308,19 +378,21 @@ impl Worker {
             }
             if !choices.is_empty() {
                 state.voters += 1;
-                state.votes.push(crate::model::PollVoter {
-                    name: if vote.from_me || self.is_me(&vote.voter) {
-                        "You".into()
-                    } else {
-                        self.name_for(&voter).unwrap_or_else(|| {
-                            crate::util::phone(voter.split('@').next().unwrap_or(&voter))
-                        })
-                    },
-                    id: voter,
-                    from_me: vote.from_me || self.is_me(&vote.voter),
-                    timestamp: vote.at / 1000,
-                    choices: choices.clone(),
-                });
+                if !state.hide_voter_names {
+                    state.votes.push(crate::model::PollVoter {
+                        name: if vote.from_me || self.is_me(&vote.voter) {
+                            "You".into()
+                        } else {
+                            self.name_for(&voter).unwrap_or_else(|| {
+                                crate::util::phone(voter.split('@').next().unwrap_or(&voter))
+                            })
+                        },
+                        id: voter,
+                        from_me: vote.from_me || self.is_me(&vote.voter),
+                        timestamp: vote.at / 1000,
+                        choices: choices.clone(),
+                    });
+                }
             }
             for index in choices {
                 if let Some(count) = state.counts.get_mut(index) {
@@ -1217,5 +1289,185 @@ mod tests {
             panic!("poll")
         };
         assert_eq!(state.votes.len(), 2, "refresh cannot duplicate details");
+    }
+
+    #[test]
+    fn backfill_saves_definitions_for_polls_already_reclassified() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "reclassified", 100, false);
+        row.content = content();
+        let mut inner = wa::Message::default();
+        inner.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Lunch?".into());
+            poll.selectable_options_count = Some(1);
+            poll
+        });
+        // The secret lives on the outer wrapper, as with ephemeral polls.
+        // get_base_message unwraps ephemeral_message, so definition(base)
+        // resolves; a V4 wrapper would not be unwrapped here.
+        let mut wrapper = wa::message::FutureProofMessage::default();
+        wrapper.message = MessageField::some(inner);
+        let mut outer = wa::Message::default();
+        outer.message_context_info = MessageField::some({
+            let mut context = wa::MessageContextInfo::default();
+            context.message_secret = Some(vec![9; 32]);
+            context
+        });
+        outer.ephemeral_message = MessageField::some(wrapper);
+        // Insert directly: store_message would polish the poll and save the
+        // key before the backfill runs, making the assertion meaningless.
+        worker
+            .archive
+            .insert_message(&row, Some(&outer.encode_to_vec()))
+            .unwrap();
+        assert!(
+            worker
+                .archive
+                .poll_key(chat, "reclassified")
+                .unwrap()
+                .is_none()
+        );
+
+        worker.backfill_extended_polls();
+
+        assert!(
+            worker
+                .archive
+                .poll_key(chat, "reclassified")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn hidden_name_poll_keeps_counts_but_not_voter_identities() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "hidden", 100, false);
+        row.content = content();
+        let mut raw = wa::Message::default();
+        raw.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Lunch?".into());
+            poll.hide_participant_name = Some(true);
+            poll.selectable_options_count = Some(1);
+            poll.options = vec![
+                {
+                    let mut option = wa::message::poll_creation_message::Option::default();
+                    option.option_name = Some("Pizza".into());
+                    option
+                },
+                {
+                    let mut option = wa::message::poll_creation_message::Option::default();
+                    option.option_name = Some("Pasta".into());
+                    option
+                },
+            ];
+            poll
+        });
+        worker.store_message(row.clone(), Some(raw.encode_to_vec()), None);
+        worker
+            .archive
+            .save_poll_vote(&PollVote {
+                chat: chat.into(),
+                poll: row.id.clone(),
+                voter: "200@s.whatsapp.net".into(),
+                sender: "200".into(),
+                update_id: "update".into(),
+                at: 2_000,
+                from_me: false,
+                choices: Some(vec![0]),
+                encrypted: None,
+            })
+            .unwrap();
+
+        worker.polish_poll(&mut row);
+        let Content::Poll { state, .. } = &row.content else {
+            panic!("poll")
+        };
+        assert!(state.hide_voter_names);
+        assert_eq!(state.counts, vec![1, 0]);
+        assert_eq!(state.voters, 1);
+        assert!(state.votes.is_empty(), "voter identity must not surface");
+        let json = serde_json::to_value(&row.content).unwrap();
+        assert!(json["state"].get("hide_voter_names").is_none());
+    }
+
+    #[test]
+    fn definition_reads_every_poll_slot_including_extended_settings() {
+        let mut poll = wa::message::PollCreationMessage::default();
+        poll.name = Some("Where?".into());
+        poll.hide_participant_name = Some(true);
+        poll.end_time = Some(1_800_000_000_000);
+
+        let mut slots = Vec::new();
+        let mut message = wa::Message::default();
+        message.poll_creation_message = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v2 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v3 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v5 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v6 = MessageField::some(poll);
+        slots.push(message);
+        for message in &slots {
+            let found = definition(message).expect("poll slot recognized");
+            assert_eq!(found.name.as_deref(), Some("Where?"));
+            assert_eq!(found.hide_participant_name, Some(true));
+        }
+        assert!(definition(&wa::Message::default()).is_none());
+    }
+
+    #[test]
+    fn backfill_recovers_a_poll_archived_as_unsupported() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut raw = wa::Message::default();
+        raw.message_context_info = MessageField::some({
+            let mut context = wa::MessageContextInfo::default();
+            context.message_secret = Some(vec![7; 32]);
+            context
+        });
+        raw.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Where?".into());
+            poll.hide_participant_name = Some(true);
+            poll.end_time = Some(1_800_000_000_000);
+            poll.options = vec![{
+                let mut option = wa::message::poll_creation_message::Option::default();
+                option.option_name = Some("Here".into());
+                option
+            }];
+            poll.selectable_options_count = Some(1);
+            poll
+        });
+        let mut row = crate::archive::tests::message(chat, "v6-poll", 100, false);
+        row.content = Content::Unsupported {
+            what: "message".into(),
+        };
+        worker
+            .archive
+            .insert_message(&row, Some(&raw.encode_to_vec()))
+            .unwrap();
+
+        worker.backfill_extended_polls();
+
+        let stored = worker.archive.message(chat, "v6-poll").unwrap().unwrap();
+        assert!(matches!(stored.content, Content::Poll { .. }));
+        assert!(worker.archive.poll_key(chat, "v6-poll").unwrap().is_some());
+        assert_eq!(
+            worker.archive.meta("extended_polls").unwrap().as_deref(),
+            Some("1")
+        );
+        // A second run is a no-op, including for rows archived later.
+        worker.backfill_extended_polls();
     }
 }

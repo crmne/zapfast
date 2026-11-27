@@ -575,7 +575,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                         });
                     });
                 }
-                if voters.len() < count {
+                if !state.hide_voter_names && voters.len() < count {
                     theme::text(
                         ui,
                         crate::i18n::gettext(locale, "Participant details are not available yet"),
