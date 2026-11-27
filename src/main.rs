@@ -401,6 +401,8 @@ fn run() -> eframe::Result<()> {
         }
     }
     #[cfg(feature = "demo")]
+    let single_window = demo && (cli.demo_shot.is_some() || cli.demo_tour);
+    #[cfg(feature = "demo")]
     let shot = cli.demo_shot.clone().map(|path| Shot {
         path,
         due: std::time::Instant::now() + std::time::Duration::from_millis(cli.demo_shot_delay),
@@ -471,6 +473,14 @@ fn run() -> eframe::Result<()> {
                 "ZapFast",
                 native_options(demo_persistence.clone(), geometry, transparent),
                 Box::new(move |cc| {
+                    // A screenshot and the tour photograph one window. Draw
+                    // the floating call window over it, as a backend without
+                    // viewports would, rather than in a window the frame
+                    // cannot hold.
+                    #[cfg(feature = "demo")]
+                    if single_window {
+                        cc.egui_ctx.set_embed_viewports(true);
+                    }
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
                     #[cfg(target_os = "linux")]

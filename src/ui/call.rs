@@ -7,7 +7,7 @@
 //! [`crate::calls::CallUpdate`], which the worker fills from the protocol's
 //! own events. This module draws them and pushes [`Action`]s.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2, vec2};
 
@@ -22,6 +22,9 @@ use crate::ui::widgets;
 const SURFACE: &str = "zapfast-call-surface";
 /// The floating window's id, and the size its reader first sees it at.
 const PIP: &str = "zapfast-call-pip";
+/// The id of the window the floating call lives in when the desktop can make
+/// one, which is what keeps it from being tied to the app's own window.
+const PIP_VIEWPORT: &str = "zapfast-call-pip-window";
 pub const PIP_DEFAULT: egui::Vec2 = egui::vec2(320.0, 180.0);
 /// The smallest the floating window may be made, and the largest as a share of
 /// the app's own.
@@ -33,8 +36,14 @@ const PIP_MARGIN: f32 = 8.0;
 const PIP_HEADER: f32 = 30.0;
 const PIP_CONTROLS: f32 = 44.0;
 const PIP_BUTTON: f32 = 28.0;
+/// The pin in the native window's header, which has no room in the one drawn
+/// over the app.
+const PIP_PIN: f32 = 24.0;
 const PIP_GAP: f32 = 8.0;
 const PIP_GRIP: f32 = 16.0;
+/// A new window may not be mapped on the frame it is asked to open, so asking
+/// it to take the focus is retried for a moment before giving up.
+const PIP_FOCUS_FOR: Duration = Duration::from_secs(5);
 /// Padding between the window edge and everything the surface draws.
 const PADDING: f32 = 24.0;
 /// The round controls along the bottom.
@@ -176,9 +185,180 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
 
 /// The small floating window a video call keeps while its screen is put
 /// aside: the peer's picture, or a group's grid, with the same controls as
-/// the full screen and a corner the reader drags to resize it. It floats over
-/// the chats wherever it was left, and the app's own edges keep it inside.
+/// the full screen and a corner the reader drags to resize it.
+///
+/// On a desktop it is a window of its own, so it can be dragged anywhere on
+/// the screen and, where the desktop allows it, kept above the other windows.
+/// A backend that cannot make a second window draws it over the app instead,
+/// as the demo's single-window snapshots do.
 pub fn pip(app: &mut App, ctx: &egui::Context) {
+    if !app.call_pip_open() {
+        app.close_call_pip_window();
+        return;
+    }
+    if ctx.embed_viewports() {
+        pip_overlay(app, ctx);
+        return;
+    }
+    let builder = pip_viewport_builder(app, ctx);
+    ctx.show_viewport_immediate(
+        egui::ViewportId::from_hash_of(PIP_VIEWPORT),
+        builder,
+        |ui, class| match class {
+            egui::ViewportClass::Immediate => pip_window(ui, app),
+            // The backend took the viewport into the app instead: keep the
+            // floating window where it always was.
+            _ => pip_overlay(app, ui.ctx()),
+        },
+    );
+}
+
+/// What the floating window is asked for when it opens: a frameless window
+/// the reader can move and resize, with the size and place it was last left
+/// at and the level the pin asks for.
+fn pip_viewport_builder(app: &mut App, ctx: &egui::Context) -> egui::ViewportBuilder {
+    // `None` only between windows: a new one gets its own moment to open.
+    app.call_pip_focus_until
+        .get_or_insert_with(|| Instant::now() + PIP_FOCUS_FOR);
+    let size = app.call_pip_size.max(PIP_MIN);
+    if app.call_pip_screen_pos.is_none() {
+        app.call_pip_screen_pos = pip_screen_pos(ctx, size);
+    }
+    let mut builder = egui::ViewportBuilder::default()
+        .with_title("ZapFast")
+        .with_app_id(fastframe_desktop::desktop_entry("zapfast"))
+        .with_decorations(false)
+        .with_resizable(true)
+        .with_min_inner_size(PIP_MIN)
+        .with_inner_size(size)
+        .with_window_level(pip_window_level(app.call_pip_on_top));
+    if let Some(pos) = app.call_pip_screen_pos {
+        builder = builder.with_position(pos);
+    }
+    builder
+}
+
+/// What the desktop is asked to do with the window the pin controls. Wayland
+/// leaves the stacking to the compositor, which may ignore the request.
+fn pip_window_level(on_top: bool) -> egui::viewport::WindowLevel {
+    if on_top {
+        egui::viewport::WindowLevel::AlwaysOnTop
+    } else {
+        egui::viewport::WindowLevel::Normal
+    }
+}
+
+/// The bottom right corner of the app's window, a margin in, for the desktops
+/// that let an app place a window. Wayland does not, and reports no place.
+fn pip_screen_pos(ctx: &egui::Context, size: Vec2) -> Option<egui::Pos2> {
+    let app = ctx.input(|input| input.viewport().outer_rect)?;
+    Some(egui::pos2(
+        app.right() - size.x - PIP_MARGIN,
+        app.bottom() - size.y - PIP_MARGIN,
+    ))
+}
+
+/// Draws the floating window inside the window of its own: square corners,
+/// because the window itself is opaque, and the picture and controls over it.
+fn pip_window(ui: &mut egui::Ui, app: &mut App) {
+    let Some(call) = app.call.clone() else {
+        return;
+    };
+    // A window of its own must be seen the moment it opens, above the call
+    // screen it left. Keep asking until it is seen, then stop: clicking the
+    // app takes the focus back as usual.
+    if let Some(until) = app.call_pip_focus_until {
+        if ui.input(|input| input.viewport().focused == Some(true)) || Instant::now() >= until {
+            app.call_pip_focus_until = None;
+        } else {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+    }
+    let rect = ui.max_rect();
+    let size = rect.size();
+    app.call_pip_last_size = Some(size);
+    // The window's size is the reader's while it is open. Remember it once
+    // the hand is off, so the next one opens at the same size.
+    if !ui.input(|input| input.pointer.any_down()) {
+        app.call_pip_size = size.max(PIP_MIN);
+    }
+    if let Some(pos) = ui.input(|input| input.viewport().outer_rect) {
+        app.call_pip_last_pos = Some(pos.min);
+    }
+    let palette = app.palette;
+    let peer = app.call_name();
+    let picture = app.call_avatar();
+    let people = app.call_people();
+    let status = status(app.locale, &call);
+    let who = Who {
+        peer: &peer,
+        picture: picture.as_deref(),
+        caller: None,
+        people: &people,
+        me: None,
+    };
+    ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+    pip_window_drag(ui, rect);
+    pip_picture(ui, app, &call, &who, &palette, rect);
+    pip_header(ui, app, &peer, &status, rect, true, &palette);
+    pip_controls(ui, app, &call, &palette, rect);
+    pip_window_grip(ui, app, rect);
+}
+
+/// The picture is the handle in a window of its own too: a drag hands the
+/// window to the desktop, which carries it anywhere on the screen.
+fn pip_window_drag(ui: &mut egui::Ui, rect: Rect) {
+    let body = Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + PIP_HEADER),
+        egui::pos2(rect.right(), rect.bottom() - PIP_CONTROLS),
+    );
+    let response = ui.interact(
+        body,
+        egui::Id::new(PIP).with("window-body"),
+        egui::Sense::click_and_drag(),
+    );
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+}
+
+/// The corner asks the desktop for an interactive resize, so the edge keeps
+/// up with the hand on every platform. A double click asks for the default
+/// size again, which the desktops that let an app size a window honor.
+fn pip_window_grip(ui: &mut egui::Ui, app: &mut App, rect: Rect) {
+    let grip = Rect::from_min_size(
+        egui::pos2(rect.right() - PIP_GRIP, rect.bottom() - PIP_GRIP),
+        egui::Vec2::splat(PIP_GRIP),
+    );
+    let response = ui.interact(
+        grip,
+        egui::Id::new(PIP).with("window-resize"),
+        egui::Sense::click_and_drag(),
+    );
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::BeginResize(
+                egui::viewport::ResizeDirection::SouthEast,
+            ));
+    }
+    if response.double_clicked() {
+        app.call_pip_size = PIP_DEFAULT;
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::InnerSize(PIP_DEFAULT));
+    }
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+    }
+    paint_grip(ui, grip, response.hovered() || response.dragged());
+}
+
+/// The window drawn over the app, for a backend without viewports and for the
+/// demo's single-window snapshots. It keeps its own place and size inside the
+/// app, since it shares the app's window.
+fn pip_overlay(app: &mut App, ctx: &egui::Context) {
     if !app.call_pip_open() {
         return;
     }
@@ -220,9 +400,9 @@ pub fn pip(app: &mut App, ctx: &egui::Context) {
                 .rect_filled(rect, CornerRadius::same(14), Color32::BLACK);
             pip_drag(ui, app, pos, size, bounds, rect);
             pip_picture(ui, app, &call, &who, &palette, rect);
-            pip_header(ui, app, &peer, &status, rect);
+            pip_header(ui, app, &peer, &status, rect, false, &palette);
             pip_controls(ui, app, &call, &palette, rect);
-            pip_grip(ui, app, size, bounds, rect);
+            pip_overlay_grip(ui, app, size, bounds, rect);
         });
 }
 
@@ -392,14 +572,37 @@ fn pip_picture(
 }
 
 /// Who is on the call and how long it has been up, on a plate over the
-/// picture. A double click goes back to the full screen.
-fn pip_header(ui: &mut egui::Ui, app: &mut App, peer: &str, status: &str, rect: Rect) {
+/// picture. A double click goes back to the full screen. In a window of its
+/// own the header also drags the window, and the pin keeps it above the
+/// others where the desktop allows that.
+fn pip_header(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    peer: &str,
+    status: &str,
+    rect: Rect,
+    native: bool,
+    palette: &Palette,
+) {
     let header = Rect::from_min_size(rect.min, egui::vec2(rect.width(), PIP_HEADER));
+    let pin = native.then(|| {
+        Rect::from_center_size(
+            egui::pos2(header.right() - PIP_PIN / 2.0 - 4.0, header.center().y),
+            egui::Vec2::splat(PIP_PIN),
+        )
+    });
+    let handle = match pin {
+        Some(pin) => Rect::from_min_max(header.min, egui::pos2(pin.left() - 4.0, header.bottom())),
+        None => header,
+    };
     let response = ui.interact(
-        header,
+        handle,
         egui::Id::new(PIP).with("header"),
-        egui::Sense::click(),
+        egui::Sense::click_and_drag(),
     );
+    if native && response.drag_started_by(egui::PointerButton::Primary) {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
     if response.double_clicked() {
         app.actions.push(Action::ReturnToCall);
     }
@@ -416,16 +619,18 @@ fn pip_header(ui: &mut egui::Ui, app: &mut App, peer: &str, status: &str, rect: 
         },
         VIDEO_SCRIM,
     );
+    let text_right = pin.map_or(header.right() - 12.0, |pin| pin.left() - 8.0);
     let line = format!("{peer} · {status}");
     let galley = ui.painter().layout(
         line,
         theme::medium(12.0),
         Color32::WHITE,
-        (rect.width() - 24.0).max(0.0),
+        (text_right - header.left() - 12.0).max(0.0),
     );
-    let clip = ui
-        .painter()
-        .with_clip_rect(header.shrink2(egui::vec2(12.0, 0.0)));
+    let clip = ui.painter().with_clip_rect(Rect::from_min_max(
+        egui::pos2(header.left() + 12.0, header.top()),
+        egui::pos2(text_right, header.bottom()),
+    ));
     clip.galley(
         egui::pos2(
             header.left() + 12.0,
@@ -434,6 +639,39 @@ fn pip_header(ui: &mut egui::Ui, app: &mut App, peer: &str, status: &str, rect: 
         galley,
         Color32::WHITE,
     );
+    if let Some(pin) = pin {
+        let locale = app.locale;
+        let tip = if app.call_pip_on_top {
+            gettext(locale, "Stop keeping on top")
+        } else {
+            gettext(locale, "Keep on top")
+        };
+        let (fill, tint) = if app.call_pip_on_top {
+            (palette.accent, palette.on_accent)
+        } else {
+            (Color32::from_black_alpha(110), Color32::WHITE)
+        };
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(pin)
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                if theme::circle_button(
+                    ui,
+                    Icon::Pin,
+                    PIP_PIN,
+                    fill,
+                    theme::blend(fill, tint, 0.12),
+                    tint,
+                    &tip,
+                )
+                .clicked()
+                {
+                    app.call_pip_on_top = !app.call_pip_on_top;
+                }
+            },
+        );
+    }
 }
 
 /// The controls the full screen has, in a row over the picture: mute, the
@@ -570,9 +808,10 @@ fn pip_button(
     )
 }
 
-/// The corner the reader drags to resize the floating window. Shift keeps the
-/// picture's shape, and a double click puts the size back to its default.
-fn pip_grip(ui: &mut egui::Ui, app: &mut App, size: egui::Vec2, bounds: Rect, rect: Rect) {
+/// The corner the reader drags to resize the window drawn over the app. Shift
+/// keeps the picture's shape, and a double click puts the size back to its
+/// default.
+fn pip_overlay_grip(ui: &mut egui::Ui, app: &mut App, size: egui::Vec2, bounds: Rect, rect: Rect) {
     let grip = Rect::from_min_size(
         egui::pos2(rect.right() - PIP_GRIP, rect.bottom() - PIP_GRIP),
         egui::Vec2::splat(PIP_GRIP),
@@ -591,7 +830,12 @@ fn pip_grip(ui: &mut egui::Ui, app: &mut App, size: egui::Vec2, bounds: Rect, re
     if response.hovered() || response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
     }
-    let tint = if response.hovered() || response.dragged() {
+    paint_grip(ui, grip, response.hovered() || response.dragged());
+}
+
+/// The two lines of the resize corner, in the window's own corner.
+fn paint_grip(ui: &egui::Ui, grip: Rect, lit: bool) {
+    let tint = if lit {
         Color32::WHITE
     } else {
         Color32::from_white_alpha(120)
@@ -1762,6 +2006,85 @@ fn call_texture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::AppDirs;
+    use crate::settings::Settings;
+
+    fn app() -> (App, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let (app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        (app, root)
+    }
+
+    #[test]
+    fn the_native_window_asks_for_the_level_the_pin_shows() {
+        let (mut app, _root) = app();
+        let ctx = egui::Context::default();
+        assert_eq!(
+            pip_window_level(app.call_pip_on_top),
+            egui::viewport::WindowLevel::Normal
+        );
+        app.call_pip_on_top = true;
+        let builder = pip_viewport_builder(&mut app, &ctx);
+        assert_eq!(
+            builder.window_level,
+            Some(egui::viewport::WindowLevel::AlwaysOnTop)
+        );
+        assert_eq!(builder.decorations, Some(false));
+        assert_eq!(builder.inner_size, Some(PIP_DEFAULT));
+        app.call_pip_on_top = false;
+        let builder = pip_viewport_builder(&mut app, &ctx);
+        assert_eq!(
+            builder.window_level,
+            Some(egui::viewport::WindowLevel::Normal)
+        );
+        // The first frame gives the new window a moment to come to the front.
+        assert!(app.call_pip_focus_until.is_some());
+    }
+
+    #[test]
+    fn the_pin_in_the_native_header_toggles_always_on_top() {
+        let (mut app, _root) = app();
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), PIP_DEFAULT);
+        let pin = egui::pos2(
+            rect.right() - PIP_PIN / 2.0 - 4.0,
+            rect.top() + PIP_HEADER / 2.0,
+        );
+        let palette = app.palette;
+        app.attach(&ctx);
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    ..Default::default()
+                },
+                |ui| pip_header(ui, &mut app, "Ada", "00:10", rect, true, &palette),
+            );
+            output.textures_delta.clear();
+        }
+        for pressed in [true, false] {
+            let mut input = egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            };
+            input.events.push(egui::Event::PointerMoved(pin));
+            input.events.push(egui::Event::PointerButton {
+                pos: pin,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            let mut output = ctx.run_ui(input, |ui| {
+                pip_header(ui, &mut app, "Ada", "00:10", rect, true, &palette);
+            });
+            output.textures_delta.clear();
+        }
+        assert!(app.call_pip_on_top, "the pin did not take the click");
+        assert_eq!(
+            pip_window_level(app.call_pip_on_top),
+            egui::viewport::WindowLevel::AlwaysOnTop
+        );
+    }
 
     #[test]
     fn the_floating_window_stays_inside_the_app() {

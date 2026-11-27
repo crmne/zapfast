@@ -874,6 +874,26 @@ pub struct App {
     /// Where that floating window was left, in the app's own points. `None`
     /// opens it in the bottom right corner of the app.
     pub call_pip_pos: Option<egui::Pos2>,
+    /// Whether the floating window asks to stay above the app's other
+    /// windows. It keeps the place it is dragged to either way; Wayland
+    /// leaves stacking to the compositor, which may ignore the request.
+    pub call_pip_on_top: bool,
+    /// Where the floating window was last left on the screen, in points, for
+    /// the windowing systems that let an app place a window. `None` opens it
+    /// at the bottom right of the app's own window, where that is allowed.
+    pub call_pip_screen_pos: Option<egui::Pos2>,
+    /// The size the native floating window last reported, kept until it
+    /// closes. The values the window is asked for stay fixed while it is
+    /// open, or the app would fight a window being dragged or resized.
+    pub(crate) call_pip_last_size: Option<egui::Vec2>,
+    /// The place the native floating window last reported, as above. Wayland
+    /// never reports one.
+    pub(crate) call_pip_last_pos: Option<egui::Pos2>,
+    /// How long a new native floating window may ask for the focus. A window
+    /// is not always mapped on its first frame, so the request is repeated
+    /// until it is seen or this time is out. Once done, clicking the app takes
+    /// the focus back as usual.
+    pub(crate) call_pip_focus_until: Option<Instant>,
     /// Whether the call surface has taken the whole screen. A window state:
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
@@ -1775,6 +1795,11 @@ impl App {
                 crate::ui::call::PIP_DEFAULT.y,
             ),
             call_pip_pos: None,
+            call_pip_on_top: false,
+            call_pip_screen_pos: None,
+            call_pip_last_size: None,
+            call_pip_last_pos: None,
+            call_pip_focus_until: None,
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,

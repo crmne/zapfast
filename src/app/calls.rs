@@ -69,6 +69,19 @@ impl App {
             && !self.call_is_private()
     }
 
+    /// Keeps the size and place the native floating window last reported, so
+    /// the next one opens there. The window drawn over the app has none, and
+    /// keeps the size and place it was dragged to itself.
+    pub(crate) fn close_call_pip_window(&mut self) {
+        if let Some(size) = self.call_pip_last_size.take() {
+            self.call_pip_size = size;
+        }
+        if let Some(pos) = self.call_pip_last_pos.take() {
+            self.call_pip_screen_pos = Some(pos);
+        }
+        self.call_pip_focus_until = None;
+    }
+
     /// Whether this chat of the account on screen has the live call, which is
     /// what the chat header's call button reflects. A finished call keeps its
     /// snapshot for the farewell, but that is no call to hang up.
@@ -791,6 +804,22 @@ mod tests {
     use crate::settings::Settings;
 
     const ADA: &str = "15550001111@s.whatsapp.net";
+
+    #[test]
+    fn closing_the_floating_window_keeps_its_size_and_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(root.path());
+        app.call_pip_size = egui::vec2(320.0, 180.0);
+        app.call_pip_last_size = Some(egui::vec2(410.0, 260.0));
+        app.call_pip_last_pos = Some(egui::pos2(700.0, 300.0));
+        app.call_pip_focus_until = Some(Instant::now());
+        app.close_call_pip_window();
+        assert_eq!(app.call_pip_size, egui::vec2(410.0, 260.0));
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(700.0, 300.0)));
+        assert!(app.call_pip_last_size.is_none());
+        assert!(app.call_pip_last_pos.is_none());
+        assert!(app.call_pip_focus_until.is_none());
+    }
 
     /// A window with one account whose commands a test can read.
     fn app(directory: &std::path::Path) -> (App, tokio::sync::mpsc::UnboundedReceiver<Command>) {

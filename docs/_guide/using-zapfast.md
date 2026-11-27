@@ -579,13 +579,19 @@ the two sides are connected, and the controls along the bottom: mute, the
 microphone and speaker pickers, and hang up. Mute tells the other side, as on
 the phone. The arrow in the top corner puts the call screen aside. A voice call
 keeps running in a strip at the bottom of the window with **Return to the
-call** and a hang-up button; a video call becomes a small floating window over
-the chat with the same controls and the other side's picture, or a group's grid.
-Opening another chat from the list does the same for a video call. Drag the
-floating window's picture to move it anywhere inside the app, drag its bottom
-right corner to resize it (hold Shift to keep 16:9, double click the corner for
-the default size), and double click its header to go back to the full call
-screen. Escape works as the arrow does, and leaves full screen first. Only
+call** and a hang-up button; a video call becomes a small floating window of
+its own with the same controls and the other side's picture, or a group's grid.
+Opening another chat from the list does the same for a video call. The window
+opens at the bottom right of the app where the desktop lets an app place it.
+Drag its header or its picture to move it anywhere on the screen, and drag its
+bottom right corner to resize it; a double click on the corner puts the size
+back to its default. The pin in the header keeps the window above the others
+where the desktop allows that, and a second click lets it go behind them. A
+Wayland compositor decides where windows go and what stays on top, so it may
+ignore those requests. Double click the header to go back to the full call
+screen. Escape works as the arrow does, and leaves full screen first. Where a
+desktop cannot make a second window, the floating call stays over the chat
+instead; there Shift keeps the picture at 16:9 while it is resized. Only
 hanging up ends a call; closing the window to the tray keeps it running. A call
 you hang up or decline leaves the screen at once; one the other side ends,
 declines, or misses, or one that could not connect, says so for a second and a
