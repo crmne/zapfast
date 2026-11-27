@@ -95,7 +95,7 @@ fn is_modal_navigation(key: Key) -> bool {
 /// Fitted image size for a canvas, keeping the aspect ratio. A small picture
 /// is enlarged to fill the canvas, up to `MAX_FIT_ENLARGEMENT` times its
 /// original pixels. `(0, 0)` original sizes get `(0, 0)`.
-pub const MAX_FIT_ENLARGEMENT: f32 = 8.0;
+pub const MAX_FIT_ENLARGEMENT: f32 = 64.0;
 
 pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) -> (f32, f32) {
     if width <= 0.0 || height <= 0.0 {
