@@ -548,6 +548,48 @@ pub struct Settings {
     pub window_y: Option<f32>,
     /// Whether the window was maximized when it last closed.
     pub window_maximized: bool,
+    /// The microphone, speaker and camera picked in Settings, for recording,
+    /// playback and calls alike.
+    pub devices: DevicePreferences,
+}
+
+/// The devices picked in Settings, each by the system's own id for it
+/// (fastframe-audio's `DeviceId`, or the camera's id).
+///
+/// `None` is the system default for sound, and the first camera the machine
+/// reports for video, since a camera has no system default. A device that is
+/// unplugged keeps its id here, so it is used again once it comes back; until
+/// then the default stands in for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DevicePreferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub microphone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<String>,
+}
+
+impl DevicePreferences {
+    /// The choice for one kind of device.
+    pub fn get(&self, kind: crate::calls::DeviceKind) -> Option<&str> {
+        match kind {
+            crate::calls::DeviceKind::Microphone => self.microphone.as_deref(),
+            crate::calls::DeviceKind::Speaker => self.speaker.as_deref(),
+            crate::calls::DeviceKind::Camera => self.camera.as_deref(),
+        }
+    }
+
+    /// Picks a device for one kind; an empty id is the default.
+    pub fn set(&mut self, kind: crate::calls::DeviceKind, id: Option<String>) {
+        let id = id.filter(|id| !id.is_empty());
+        match kind {
+            crate::calls::DeviceKind::Microphone => self.microphone = id,
+            crate::calls::DeviceKind::Speaker => self.speaker = id,
+            crate::calls::DeviceKind::Camera => self.camera = id,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -605,6 +647,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            devices: DevicePreferences::default(),
         }
     }
 }
@@ -1224,6 +1267,41 @@ mod tests {
         assert!(!settings.enter_sends);
         assert!(settings.custom_theme_cache.is_none());
         assert_eq!(settings.custom_theme.as_deref(), Some("mine.json"));
+    }
+
+    #[test]
+    fn picked_devices_round_trip_and_older_files_keep_the_defaults() {
+        use crate::calls::DeviceKind;
+
+        let older: Settings = serde_json::from_str(r#"{"zoom": 1.0}"#).expect("parses");
+        assert_eq!(older.devices, DevicePreferences::default());
+        let written = serde_json::to_string(&Settings::default()).expect("writes");
+        assert!(
+            !written.contains("microphone"),
+            "the default writes no device ids: {written}"
+        );
+
+        let mut settings = Settings::default();
+        settings
+            .devices
+            .set(DeviceKind::Microphone, Some("alsa_input.usb-mic".into()));
+        settings.devices.set(DeviceKind::Camera, Some("1".into()));
+        settings
+            .devices
+            .set(DeviceKind::Speaker, Some(String::new()));
+        assert_eq!(
+            settings.devices.get(DeviceKind::Microphone),
+            Some("alsa_input.usb-mic")
+        );
+        assert_eq!(
+            settings.devices.get(DeviceKind::Speaker),
+            None,
+            "an empty id is the default"
+        );
+        let read: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).expect("writes"))
+                .expect("reads");
+        assert_eq!(read.devices, settings.devices);
     }
 
     #[test]

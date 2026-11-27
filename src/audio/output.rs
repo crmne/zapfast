@@ -254,13 +254,23 @@ struct Request {
     wake: Option<Weak<dyn Fn() + Send + Sync>>,
 }
 
+/// What the shared output's thread is asked.
+enum Message {
+    /// A place on the output.
+    Open(Request),
+    /// Settings picked another speaker: the output moves to it once nothing plays.
+    Retarget,
+}
+
 struct Shared {
-    requests: mpsc::Sender<Request>,
+    requests: mpsc::Sender<Message>,
     generation: Arc<AtomicU64>,
 }
 
+/// The shared output's thread, started by the first place asked of it.
+static SHARED: OnceLock<Result<Shared, String>> = OnceLock::new();
+
 fn shared() -> Result<&'static Shared, String> {
-    static SHARED: OnceLock<Result<Shared, String>> = OnceLock::new();
     SHARED
         .get_or_init(|| {
             let (requests, received) = mpsc::channel();
@@ -287,10 +297,10 @@ pub fn open_output(wake: Option<Arc<dyn Fn() + Send + Sync>>) -> Result<Output, 
     let (reply, answer) = mpsc::channel();
     shared
         .requests
-        .send(Request {
+        .send(Message::Open(Request {
             reply,
             wake: wake.as_ref().map(Arc::downgrade),
-        })
+        }))
         .map_err(|_| "the sound thread has stopped".to_owned())?;
     let (mixer, generation) = answer
         .recv_timeout(OPEN_WAIT)
@@ -303,35 +313,71 @@ pub fn open_output(wake: Option<Arc<dyn Fn() + Send + Sync>>) -> Result<Output, 
     })
 }
 
+/// Moves the shared output to the speaker Settings picked. It takes effect once nothing plays,
+/// so a sound already playing ends where it started; nothing happens before the output exists.
+pub(super) fn retarget() {
+    if let Some(Ok(shared)) = SHARED.get() {
+        let _ = shared.requests.send(Message::Retarget);
+    }
+}
+
+/// Whether an output asked to move to another speaker can do it now: when it is not open, or
+/// nothing is connected to it, so no sound is cut off.
+fn can_retarget(output: Option<&MixOutput>, released: bool) -> bool {
+    released || output.is_none_or(MixOutput::is_paused)
+}
+
 /// The shared output's thread: opens the device on the first request, resumes it for each, and
 /// keeps it until the process ends. While its device is let go it waits for the next request.
-fn run_shared(requests: &mpsc::Receiver<Request>, generation: &AtomicU64) {
+fn run_shared(requests: &mpsc::Receiver<Message>, generation: &AtomicU64) {
     let mut output: Option<MixOutput> = None;
     let mut released = false;
+    let mut retarget = false;
     let mut wakers: Vec<Weak<dyn Fn() + Send + Sync>> = Vec::new();
     loop {
+        if retarget && can_retarget(output.as_ref(), released) {
+            retarget = false;
+            if output.take().is_some() {
+                // A place held while nothing played points at the old device: it reads as
+                // failed and opens again, here, on the new one. Whoever holds one is told, as
+                // when the device is lost.
+                generation.fetch_add(1, Ordering::AcqRel);
+                wake_all(&mut wakers);
+            }
+            released = false;
+        }
         let wait = match &output {
             None => None,
             Some(_) if released => None,
             Some(output) if output.is_paused() => Some(PAUSED_TICK),
             Some(_) => Some(PLAYING_TICK),
         };
-        let request = match wait {
+        let message = match wait {
             None => match requests.recv() {
-                Ok(request) => Some(request),
+                Ok(message) => Some(message),
                 Err(_) => return,
             },
             Some(wait) => match requests.recv_timeout(wait) {
-                Ok(request) => Some(request),
+                Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => None,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             },
+        };
+        let request = match message {
+            Some(Message::Retarget) => {
+                retarget = true;
+                continue;
+            }
+            Some(Message::Open(request)) => Some(request),
+            None => None,
         };
         if let Some(Request { reply, wake }) = request {
             wakers.retain(|wake| wake.strong_count() > 0);
             wakers.extend(wake);
             if output.is_none() {
-                match MixOutput::open(Device::Default, Some(IDLE_PAUSE), false, None) {
+                let speaker = super::preferred().speaker;
+                let device = super::preferred::device(speaker.as_deref());
+                match MixOutput::open(device, Some(IDLE_PAUSE), false, None) {
                     Ok(opened) => {
                         log::info!(
                             "sound output: playing through {} ({})",
@@ -362,20 +408,32 @@ fn run_shared(requests: &mpsc::Receiver<Request>, generation: &AtomicU64) {
         released |= kept.released;
         if kept.lost {
             generation.fetch_add(1, Ordering::AcqRel);
-            wakers.retain(|wake| match wake.upgrade() {
-                Some(wake) => {
-                    wake();
-                    true
-                }
-                None => false,
-            });
+            wake_all(&mut wakers);
         }
     }
+}
+
+/// Tells every holder of a place on the shared output that it no longer plays, forgetting those
+/// that have gone.
+fn wake_all(wakers: &mut Vec<Weak<dyn Fn() + Send + Sync>>) {
+    wakers.retain(|wake| match wake.upgrade() {
+        Some(wake) => {
+            wake();
+            true
+        }
+        None => false,
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_open_moves_to_a_new_speaker_at_once() {
+        assert!(can_retarget(None, false), "nothing open moves at once");
+        assert!(can_retarget(None, true));
+    }
     use rodio::buffer::SamplesBuffer;
 
     fn tone(samples: usize) -> SamplesBuffer {

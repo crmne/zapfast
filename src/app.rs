@@ -625,6 +625,9 @@ pub struct App {
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
+    /// Demo/test: keep the call screen's microphone or camera menu open.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_call_device_menu: Option<crate::calls::DeviceKind>,
     /// Demo/test: keep this group member's menu open in the info panel.
     #[cfg(any(test, feature = "demo"))]
     pub open_member_menu: Option<ChatId>,
@@ -862,8 +865,9 @@ pub struct App {
     call_surface_until: Option<Instant>,
     /// The microphones and speakers the call screen offers.
     pub call_devices: crate::calls::DeviceList,
-    /// Whether the call screen shows its device pickers.
-    pub call_devices_open: bool,
+    /// Whether one of the call screen's device menus is open, as the last
+    /// frame drew it.
+    pub call_device_menu_open: bool,
     /// Whether the full call screen is put aside so a chat can be read while
     /// the call runs. The call itself is untouched; a bar offers the way back.
     pub call_surface_hidden: bool,
@@ -1469,6 +1473,7 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
+        app.apply_device_preferences();
         let folder = app.settings.download_folder.clone();
         for account in &app.accounts {
             account
@@ -1655,6 +1660,8 @@ impl App {
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
             #[cfg(any(test, feature = "demo"))]
+            open_call_device_menu: None,
+            #[cfg(any(test, feature = "demo"))]
             open_member_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_timer_menu: None,
@@ -1761,7 +1768,7 @@ impl App {
             call_account: None,
             call_surface_until: None,
             call_devices: crate::calls::DeviceList::default(),
-            call_devices_open: false,
+            call_device_menu_open: false,
             call_surface_hidden: false,
             call_fullscreen: false,
             call_notified: None,
@@ -2101,6 +2108,9 @@ impl App {
         account.backend.send(Command::SetDownloadFolder(
             self.settings.download_folder.clone(),
         ));
+        account
+            .backend
+            .send(Command::SetPreferredDevices(self.settings.devices.clone()));
         account.backend.send(Command::SetKeepChatsArchived(
             self.settings.keep_chats_archived,
         ));
@@ -7095,6 +7105,22 @@ impl App {
         self.settings_dirty = true;
     }
 
+    /// Hands the devices picked in Settings to everything that opens one: the
+    /// sound threads (recording and the shared output) and every account's
+    /// calls. A recording or call already running keeps its own.
+    fn apply_device_preferences(&mut self) {
+        let devices = self.settings.devices.clone();
+        crate::audio::set_preferred(crate::audio::Preferred {
+            microphone: devices.microphone.clone(),
+            speaker: devices.speaker.clone(),
+        });
+        for account in &self.accounts {
+            account
+                .backend
+                .send(Command::SetPreferredDevices(devices.clone()));
+        }
+    }
+
     /// A lock cancels exports for every account, including those off screen.
     fn sync_chat_export_permission(&mut self) {
         let allowed = !self.app_lock.is_locked();
@@ -7444,6 +7470,11 @@ impl App {
                 if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
                     self.backend.send(Command::FetchAccountPrivacy);
                 }
+                // Devices come and go: list them again whenever Settings
+                // opens, for its microphone, speaker and camera pickers.
+                if page == Page::Settings && self.page != Page::Settings {
+                    self.backend.send(Command::RefreshCallDevices);
+                }
                 // The cache grows with every download: measure it again
                 // whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings {
@@ -7514,6 +7545,7 @@ impl App {
             | Action::HangupCall
             | Action::StartVideoCall(_)
             | Action::SetCallMuted(_)
+            | Action::SetCallSpeakerMuted(_)
             | Action::SetCallCamera(_)
             | Action::SetCallMicrophone(_)
             | Action::SetCallSpeaker(_)
@@ -9952,6 +9984,14 @@ impl App {
                 for account in &self.accounts {
                     account.backend.send(Command::SetProxy(value.clone()));
                 }
+            }
+            Action::SetPreferredDevice(kind, device) => {
+                if self.settings.devices.get(kind) == device.as_deref() {
+                    return;
+                }
+                self.settings.devices.set(kind, device);
+                self.mark_settings_dirty();
+                self.apply_device_preferences();
             }
             Action::SetStartWithSystem(enabled) => {
                 let waker = self.waker.clone();

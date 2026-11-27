@@ -172,6 +172,8 @@ pub struct CallUpdate {
     pub started: Option<Instant>,
     pub muted: bool,
     pub camera_on: bool,
+    /// Whether the person silenced the speaker here; the peer is not told.
+    pub speaker_muted: bool,
     /// Whether the peer's picture has started arriving.
     pub remote_video: bool,
     /// Whether the peer asked to turn a voice call into a video call and waits for an answer.
@@ -238,6 +240,7 @@ impl CallUpdate {
             started: None,
             muted: false,
             camera_on: false,
+            speaker_muted: false,
             remote_video: false,
             video_requested: false,
             outcome: None,
@@ -1964,7 +1967,8 @@ impl Call {
     }
 
     /// Records an incoming offer so the UI can ask the user. No media exists until they answer,
-    /// and answering opens the system's default devices unless others are picked meanwhile.
+    /// and answering opens the system's default devices unless others are picked meanwhile
+    /// ([`Call::prefer_devices`] starts them from Settings).
     pub fn ringing(chat: String, incoming: Box<IncomingCall>, video: bool) -> Self {
         let call_id = incoming.action.call_id().to_owned();
         let group = GroupRoster::of_offer(&incoming);
@@ -2013,11 +2017,19 @@ impl Call {
         generation: u64,
         token: String,
         video: bool,
-        camera: Option<String>,
+        devices: ResolvedDevices,
         cancel: &AtomicBool,
         done: async_channel::Sender<std::result::Result<CallHandle, String>>,
     ) -> Result<(Self, Option<async_channel::Receiver<VideoTick>>)> {
-        if let Some(missing) = missing_audio_device_off_thread(None, None).await {
+        let ResolvedDevices {
+            microphone,
+            speaker,
+            camera,
+            lost_devices,
+        } = devices;
+        if let Some(missing) =
+            missing_audio_device_off_thread(microphone.clone(), speaker.clone()).await
+        {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         let mut pipe = None;
@@ -2034,8 +2046,8 @@ impl Call {
             return Err(Cancelled.into());
         }
         let far_end = crate::call_audio::FarEnd::new();
-        let (mic, mic_rx) = AudioInput::spawn(None, &far_end);
-        let (output, output_tx) = AudioOutput::spawn(None, &far_end);
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone(), &far_end);
         let endpoints = pipe
             .as_ref()
             .map(|(pipeline, _)| (pipeline.source(), pipeline.sink()));
@@ -2083,10 +2095,10 @@ impl Call {
                 rang: std::time::Instant::now(),
                 video_pipe,
                 remote_video: false,
-                microphone: None,
-                speaker_device: None,
+                microphone,
+                speaker_device: speaker,
                 camera,
-                lost_devices: Vec::new(),
+                lost_devices,
                 group: Some(GroupRoster {
                     link: true,
                     ..GroupRoster::default()
@@ -2109,14 +2121,22 @@ impl Call {
         generation: u64,
         chat: String,
         video: bool,
-        camera: Option<String>,
+        devices: ResolvedDevices,
         cancel: &AtomicBool,
         done: async_channel::Sender<std::result::Result<CallHandle, GroupRefusal>>,
     ) -> Result<(Self, Option<async_channel::Receiver<VideoTick>>)> {
         let group: Jid = chat
             .parse()
             .map_err(|error| anyhow!("not a WhatsApp JID: {error}"))?;
-        if let Some(missing) = missing_audio_device_off_thread(None, None).await {
+        let ResolvedDevices {
+            microphone,
+            speaker,
+            camera,
+            lost_devices,
+        } = devices;
+        if let Some(missing) =
+            missing_audio_device_off_thread(microphone.clone(), speaker.clone()).await
+        {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         let mut pipe = None;
@@ -2131,8 +2151,8 @@ impl Call {
             return Err(Cancelled.into());
         }
         let far_end = crate::call_audio::FarEnd::new();
-        let (mic, mic_rx) = AudioInput::spawn(None, &far_end);
-        let (output, output_tx) = AudioOutput::spawn(None, &far_end);
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone(), &far_end);
         let endpoints = pipe
             .as_ref()
             .map(|(pipeline, _)| (pipeline.source(), pipeline.sink()));
@@ -2197,10 +2217,10 @@ impl Call {
                 rang: std::time::Instant::now(),
                 video_pipe,
                 remote_video: false,
-                microphone: None,
-                speaker_device: None,
+                microphone,
+                speaker_device: speaker,
                 camera,
-                lost_devices: Vec::new(),
+                lost_devices,
                 group: Some(GroupRoster {
                     own,
                     ..GroupRoster::default()
@@ -2379,6 +2399,7 @@ impl Call {
                 .video_pipe
                 .as_ref()
                 .is_some_and(VideoPipeline::camera_running),
+            speaker_muted: self.speaker.as_ref().is_some_and(AudioOutput::is_muted),
             remote_video: self.remote_video,
             video_requested: self.peer_video_request.is_some(),
             outcome: self.outcome,
@@ -2515,6 +2536,21 @@ impl Call {
                 .video_pipe
                 .as_ref()
                 .is_some_and(|pipe| !pipe.camera_running())
+    }
+
+    /// Starts a ringing call's selections from the devices picked in Settings, so answering opens
+    /// those, and turning video on in an answered voice call opens the picked camera. A call whose
+    /// media is up keeps its own.
+    pub fn prefer_devices(&mut self, preferred: &crate::settings::DevicePreferences) {
+        if self.mic.is_some() || self.speaker.is_some() || self.video_pipe.is_some() {
+            return;
+        }
+        self.microphone.clone_from(&preferred.microphone);
+        self.speaker_device.clone_from(&preferred.speaker);
+        // A voice call takes the camera too: answering resolves an unset camera to the first one
+        // the machine reports and keeps it, so turning video on later would open that one rather
+        // than the camera picked in Settings.
+        self.camera.clone_from(&preferred.camera);
     }
 
     /// The devices picked so far: what a call that has not started media yet should bind to, so a
@@ -3475,6 +3511,16 @@ impl Call {
         self.update()
     }
 
+    /// Silences the speaker here, or lets it play again. The peer is not told: this is not the
+    /// call's mute, which is the microphone's, only what this computer plays.
+    pub fn set_speaker_muted(&mut self, muted: bool) -> CallUpdate {
+        if let Some(speaker) = &self.speaker {
+            speaker.set_muted(muted);
+        }
+        log::info!("[CALL] speaker muted={muted}");
+        self.update()
+    }
+
     /// Rebinds the speaker. The engine's channel is untouched.
     pub fn set_speaker(&mut self, device: Option<String>) -> CallUpdate {
         self.speaker_device = device.clone();
@@ -4031,6 +4077,7 @@ mod tests {
             started: None,
             muted: false,
             camera_on,
+            speaker_muted: false,
             remote_video: false,
             video_requested: false,
             outcome: None,

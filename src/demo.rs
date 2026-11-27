@@ -2618,6 +2618,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            // Settings' Audio and video section, with a microphone picked
+            // and a camera that is not plugged in now.
+            "settings-devices" => {
+                app.page = Page::Settings;
+                app.settings_search = "Audio and video".to_owned();
+                app.call_devices = sample_devices();
+                app.settings.devices.microphone = Some("studio-mic".into());
+                app.settings.devices.camera = Some("usb-webcam".into());
+            }
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
@@ -2657,21 +2666,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             }
             "call-devices" => {
                 call_sample(app, false, false);
-                app.call_devices = crate::calls::DeviceList {
-                    microphones: vec![crate::calls::AudioDevice {
-                        id: "studio-mic".into(),
-                        label: "Studio Microphone".into(),
-                    }],
-                    speakers: vec![crate::calls::AudioDevice {
-                        id: "desk-speakers".into(),
-                        label: "Desk Speakers".into(),
-                    }],
-                    cameras: vec![crate::calls::CameraDevice {
-                        id: "0".into(),
-                        label: "Integrated Camera".into(),
-                    }],
-                };
-                app.call_devices_open = true;
+                app.call_devices = sample_devices();
+                app.open_call_device_menu = Some(crate::calls::DeviceKind::Speaker);
                 if let Some(call) = app.call.as_mut() {
                     call.muted = true;
                     call.speaker = Some("desk-speakers".into());
@@ -2679,6 +2675,27 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         kind: crate::calls::DeviceKind::Microphone,
                         name: "Wireless Headset".into(),
                     }];
+                }
+            }
+            // The arrows on the microphone and camera controls, with their
+            // menus open.
+            "call-mic-menu" | "call-camera-menu" => {
+                call_sample(app, false, false);
+                app.call_devices = sample_devices();
+                if let Some(call) = app.call.as_mut() {
+                    call.microphone = Some("studio-mic".into());
+                }
+                app.open_call_device_menu = Some(if part == "call-mic-menu" {
+                    crate::calls::DeviceKind::Microphone
+                } else {
+                    crate::calls::DeviceKind::Camera
+                });
+            }
+            // The speaker silenced here, its button lit.
+            "call-speaker-off" => {
+                call_sample(app, false, false);
+                if let Some(call) = app.call.as_mut() {
+                    call.speaker_muted = true;
                 }
             }
             "call-ended" => {
@@ -4370,6 +4387,30 @@ fn call_bubbles_sample(app: &mut App) {
     app.scroll_to_bottom = true;
 }
 
+/// The microphones, speakers and cameras the device pickers offer in the demo.
+fn sample_devices() -> crate::calls::DeviceList {
+    crate::calls::DeviceList {
+        microphones: vec![
+            crate::calls::AudioDevice {
+                id: "studio-mic".into(),
+                label: "Studio Microphone".into(),
+            },
+            crate::calls::AudioDevice {
+                id: "laptop-mic".into(),
+                label: "Built-in Microphone".into(),
+            },
+        ],
+        speakers: vec![crate::calls::AudioDevice {
+            id: "desk-speakers".into(),
+            label: "Desk Speakers".into(),
+        }],
+        cameras: vec![crate::calls::CameraDevice {
+            id: "0".into(),
+            label: "Integrated Camera".into(),
+        }],
+    }
+}
+
 pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
     let chat = SAMPLES[0].id;
     app.call = Some(CallUpdate {
@@ -4392,6 +4433,7 @@ pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
             .then(|| std::time::Instant::now() - std::time::Duration::from_secs(221)),
         muted: false,
         camera_on: video,
+        speaker_muted: false,
         remote_video: video && !incoming,
         video_requested: false,
         outcome: None,
@@ -9854,6 +9896,10 @@ mod tests {
             "call-connecting",
             "call-failed",
             "call-devices",
+            "settings-devices",
+            "call-mic-menu",
+            "call-camera-menu",
+            "call-speaker-off",
             "call-ended",
             "call-strip",
             "call-group",
@@ -25407,7 +25453,12 @@ mod call_surface_tests {
         running.attach(&ctx);
         ctx.enable_accesskit();
         let shown = labels(&mut running, &ctx);
-        for expected in ["Mute", "Devices", "Hang up"] {
+        for expected in [
+            "Mute",
+            "Turn the speaker off",
+            "Choose a speaker",
+            "Hang up",
+        ] {
             assert!(
                 shown.contains(&expected.to_owned()),
                 "{expected} is on the call screen: {shown:?}"
@@ -25443,7 +25494,10 @@ mod call_surface_tests {
             "Full screen",
             "Mute",
             "Start video",
-            "Devices",
+            "Turn the speaker off",
+            "Choose a microphone",
+            "Choose a camera",
+            "Choose a speaker",
             "Hang up",
         ] {
             assert!(

@@ -876,6 +876,10 @@ pub async fn run(
     mut inbox: mpsc::UnboundedReceiver<Command>,
     waker: Waker,
 ) {
+    // The devices picked in Settings can arrive while the archive is still locked; the newest is
+    // kept for the worker built once it opens, since the window sends it only at start and on a
+    // change.
+    let mut preferred_devices = crate::settings::DevicePreferences::default();
     let archive = loop {
         let path = dirs.archive_db();
         let opened = tokio::task::spawn_blocking(move || Archive::open(&path)).await;
@@ -912,6 +916,7 @@ pub async fn run(
                             break;
                         }
                         Some(Command::Shutdown) | None => return,
+                        Some(Command::SetPreferredDevices(devices)) => preferred_devices = devices,
                         _ => {}
                     }
                 }
@@ -1014,6 +1019,7 @@ pub async fn run(
         call: None,
         phone_only_calls: Vec::new(),
         call_devices: crate::calls::DeviceList::default(),
+        preferred_devices,
         wa_sender,
         me_pn: None,
         me_lid: None,
@@ -1722,6 +1728,8 @@ struct Worker {
     /// The devices the call screen was last handed, kept so a device that goes away can be named
     /// by the description the user saw in the picker rather than by its node name.
     call_devices: crate::calls::DeviceList,
+    /// The microphone, speaker and camera picked in Settings, which every call starts on.
+    preferred_devices: crate::settings::DevicePreferences,
 }
 
 /// A queued forward: where it goes, the protobuf, and its disappearing timer.
@@ -7349,6 +7357,7 @@ impl Worker {
             Command::DeclineCall => self.decline_call().await,
             Command::HangupCall => self.hangup_call().await,
             Command::SetCallMuted(muted) => self.set_call_muted(muted).await,
+            Command::SetCallSpeakerMuted(muted) => self.set_call_speaker_muted(muted),
             Command::SetCallCamera(on) => self.set_call_camera(on).await,
             Command::SetCallMicrophone(device) => self.set_call_microphone(device),
             Command::SetCallSpeaker(device) => self.set_call_speaker(device),
@@ -7758,6 +7767,7 @@ impl Worker {
                     self.start_bot().await;
                 }
             }
+            Command::SetPreferredDevices(devices) => self.preferred_devices = devices,
             Command::SetDownloadFolder(folder) => {
                 // Interrupted downloads leave hidden staging files behind.
                 if let Some(folder) = &folder
@@ -20396,6 +20406,7 @@ mod receipt_tests {
             call: None,
             phone_only_calls: Vec::new(),
             call_devices: crate::calls::DeviceList::default(),
+            preferred_devices: crate::settings::DevicePreferences::default(),
             wa_sender,
             me_pn: Some(ME.to_owned()),
             me_lid: None,

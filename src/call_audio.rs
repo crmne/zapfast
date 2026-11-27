@@ -500,6 +500,15 @@ impl Sink {
         }
     }
 
+    /// Plays at full volume, or at none while the person has silenced the speaker.
+    fn set_silenced(&self, silenced: bool) {
+        match self {
+            Sink::Real { player, .. } => player.set_volume(if silenced { 0.0 } else { 1.0 }),
+            #[cfg(test)]
+            Sink::Fake(_) => {}
+        }
+    }
+
     fn append(&self, samples: Vec<f32>) {
         match self {
             Sink::Real { player, layout, .. } => {
@@ -886,6 +895,8 @@ pub struct AudioOutput {
     pub restarts: Arc<AtomicUsize>,
     /// When the current grace window closes, if one is open.
     relink: Arc<Mutex<Option<Instant>>>,
+    /// Set while the person has silenced the speaker: the peer's frames are played as silence.
+    muted: Arc<AtomicBool>,
 }
 
 impl AudioOutput {
@@ -904,6 +915,7 @@ impl AudioOutput {
         let stalls = Arc::new(AtomicUsize::new(0));
         let restarts = Arc::new(AtomicUsize::new(0));
         let relink = Arc::new(Mutex::new(None));
+        let muted = Arc::new(AtomicBool::new(false));
         tokio::spawn(play_pump(
             rx,
             swaps,
@@ -914,6 +926,7 @@ impl AudioOutput {
                 stalls: Arc::clone(&stalls),
                 restarts: Arc::clone(&restarts),
                 relink: Arc::clone(&relink),
+                muted: Arc::clone(&muted),
             },
             far_end.clone(),
         ));
@@ -925,9 +938,21 @@ impl AudioOutput {
                 stalls,
                 restarts,
                 relink,
+                muted,
             },
             tx,
         )
+    }
+
+    /// Silences the speaker, or lets it play again. Only here: the peer is not told, and the
+    /// stream keeps running, playing silence, so nothing reopens when it is turned back on.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    /// Whether the speaker is silenced.
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
     }
 
     /// Whether the call has ever opened a relink window, which is what a call's own test asks.
@@ -970,6 +995,15 @@ impl AudioOutput {
     }
 }
 
+/// The peer's frame as the speaker should play it: silence of the same length while the person
+/// has silenced the speaker, so the stream keeps its pace and is never judged stalled.
+fn silenced(mut frame: Vec<i16>, muted: &AtomicBool) -> Vec<i16> {
+    if muted.load(Ordering::Relaxed) {
+        frame.fill(0);
+    }
+    frame
+}
+
 /// What one call's speaker keeps about itself, handed to the pump as one thing.
 ///
 /// Three counters and a window, which are four questions about one stream: how many were opened,
@@ -982,6 +1016,7 @@ struct SpeakerHealth {
     stalls: Arc<AtomicUsize>,
     restarts: Arc<AtomicUsize>,
     relink: Arc<Mutex<Option<Instant>>>,
+    muted: Arc<AtomicBool>,
 }
 
 async fn play_pump(
@@ -997,13 +1032,19 @@ async fn play_pump(
         stalls,
         restarts,
         relink,
+        muted,
     } = health;
     let mut target = initial;
     // Restarts in a row that never played a sample. Reset by any stream that plays one, so this
     // counts a device that is not there rather than a busy one.
     let mut unplayed = 0_usize;
     loop {
-        let writer = match SpkWriter::start(target.as_deref(), Arc::clone(&relink), &far_end) {
+        let writer = match SpkWriter::start(
+            target.as_deref(),
+            Arc::clone(&relink),
+            Arc::clone(&muted),
+            &far_end,
+        ) {
             Ok(writer) => {
                 opens.fetch_add(1, Ordering::Relaxed);
                 writer
@@ -1034,6 +1075,7 @@ async fn play_pump(
                 frame = rx.recv() => {
                     match frame {
                         Ok(frame) => {
+                            let frame = silenced(frame, &muted);
                             if writer.send(frame).await.is_err() {
                                 // The writer ended, either from a stall or from its device going away.
                                 break;
@@ -1130,6 +1172,7 @@ impl SpkWriter {
     fn start(
         device: Option<&str>,
         relink: Arc<Mutex<Option<Instant>>>,
+        muted: Arc<AtomicBool>,
         far_end: &FarEnd,
     ) -> Result<Self, String> {
         let (tx, rx) = async_channel::bounded::<Vec<i16>>(SPEAKER_QUEUE);
@@ -1156,6 +1199,7 @@ impl SpkWriter {
                             accepted: &accepted,
                             stalled: &stalled,
                             played: &played,
+                            muted: &muted,
                         },
                         &relink,
                         &ready,
@@ -1209,6 +1253,8 @@ struct SpeakerFlags<'a> {
     /// Set once the stream has played, which is what tells a stream that never started from one
     /// that was playing and stopped.
     played: &'a AtomicBool,
+    /// Set while the person has silenced the speaker.
+    muted: &'a AtomicBool,
 }
 
 fn write_speaker(
@@ -1224,6 +1270,7 @@ fn write_speaker(
         accepted,
         stalled,
         played,
+        muted,
     } = flags;
     let mut sink = match open_sink(device, far_end) {
         Ok(sink) => {
@@ -1246,6 +1293,8 @@ fn write_speaker(
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        // Silencing reaches what the player already holds too, not only the frames still to come.
+        sink.set_silenced(muted.load(Ordering::Relaxed));
         sink.append(sink.layout().convert(&frame));
         accepted.store(true, Ordering::Relaxed);
         if sink.failed() {
@@ -1550,6 +1599,16 @@ pub(crate) mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A silenced speaker plays the peer's frames as silence of the same length, so the stream
+    /// keeps its pace and nothing reads it as stalled; turned back on, the frames play as sent.
+    #[test]
+    fn a_silenced_speaker_plays_silence_at_the_same_pace() {
+        let muted = AtomicBool::new(true);
+        assert_eq!(silenced(vec![120, -340, 9], &muted), vec![0, 0, 0]);
+        muted.store(false, Ordering::Relaxed);
+        assert_eq!(silenced(vec![120, -340, 9], &muted), vec![120, -340, 9]);
+    }
 
     #[test]
     fn mono_mixes_every_channel_in() {

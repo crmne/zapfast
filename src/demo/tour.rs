@@ -2101,7 +2101,7 @@ mod tests {
             "ringing",
             "video call with both pictures",
             "muted",
-            "device pickers",
+            "device menu",
             "entry in the chat",
             "incoming voice call",
             "voice call answered",
@@ -2132,7 +2132,7 @@ mod tests {
                     && app.call_remote_frame.is_some()
                     && app.call_local_frame.is_some(),
                 call.is_some_and(|call| call.muted),
-                app.call_devices_open,
+                app.call_device_menu_open,
                 app.call.is_none() && filed(app, ada),
                 phase == Some(CallPhase::Incoming) && call.is_some_and(|call| call.chat == grace),
                 phase == Some(CallPhase::Active)
@@ -2166,7 +2166,7 @@ mod tests {
         never_shown(&features, &seen);
         assert!(app.call.is_none(), "every call hung up");
         assert!(filed(&app, grace) && filed(&app, group));
-        assert!(!app.call_devices_open);
+        assert!(!app.call_device_menu_open);
         assert!(app.backend.is_offline());
     }
 

@@ -547,6 +547,8 @@ pub enum Command {
     HangupCall,
     /// Mutes or unmutes the current call's microphone through the engine.
     SetCallMuted(bool),
+    /// Silences the call's speaker here, or lets it play again; the peer is not told.
+    SetCallSpeakerMuted(bool),
     /// Turns the current call's camera on or off.
     SetCallCamera(bool),
     /// Rebinds the current call's microphone; `None` is the system default.
@@ -745,6 +747,9 @@ pub enum Command {
     },
     /// Where new downloads go; `None` is the cache.
     SetDownloadFolder(Option<std::path::PathBuf>),
+    /// The microphone, speaker and camera picked in Settings, for the calls this account makes
+    /// and answers from now on. A call already up keeps the devices it has.
+    SetPreferredDevices(crate::settings::DevicePreferences),
     /// Whether archived chats stay archived when a new message arrives or is
     /// sent; when not, a new message unarchives the chat here.
     SetKeepChatsArchived(bool),

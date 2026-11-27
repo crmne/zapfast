@@ -28,6 +28,7 @@ fn rate() -> NonZero<u32> {
 
 mod microphone;
 mod output;
+mod preferred;
 
 /// What a call's speaker and microphone are called in the system's volume mixer.
 const CALL_STREAM: &str = "Call";
@@ -35,6 +36,7 @@ const CALL_STREAM: &str = "Call";
 pub use microphone::{Microphone, microphones};
 pub(crate) use output::{MixOutput, Monitor};
 pub use output::{Output, open_output};
+pub use preferred::{Preferred, preferred, set_preferred};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -850,9 +852,15 @@ fn record(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>, S
     record_from(open_microphone, STALLED_MICROPHONE, stop, live, wake)
 }
 
-/// Opens the default microphone, with its channel count and sample rate.
+/// Opens the microphone picked in Settings, else the default, with its channel count and sample
+/// rate.
 fn open_microphone() -> Result<(Microphone, u16, u32), String> {
-    let microphone = Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?;
+    let choice = preferred().microphone;
+    let microphone = Microphone::open(
+        preferred::device(choice.as_deref()),
+        "voice recording",
+        false,
+    )?;
     let channels = microphone.channels();
     let rate = microphone.rate();
     Ok((microphone, channels, rate))

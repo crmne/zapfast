@@ -2743,6 +2743,8 @@ pub enum Action {
     HangupCall,
     /// Mutes or unmutes the current call's microphone.
     SetCallMuted(bool),
+    /// Silences the call's speaker here, or lets it play again; the peer is not told.
+    SetCallSpeakerMuted(bool),
     /// Turns the current call's camera on or off.
     SetCallCamera(bool),
     /// Rebinds the current call's microphone; `None` is the system default.
@@ -3385,6 +3387,9 @@ pub enum Action {
     SetKeepChatsArchived(bool),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
+    /// Picks the microphone, speaker or camera every recording, sound and call uses; `None` is
+    /// the system default (the first camera, for video).
+    SetPreferredDevice(crate::calls::DeviceKind, Option<String>),
     /// Plays a notification sound once, as a preview.
     PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),
