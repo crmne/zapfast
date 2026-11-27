@@ -264,6 +264,13 @@ fn pip_window(ui: &mut egui::Ui, app: &mut App) {
     let Some(call) = app.call.clone() else {
         return;
     };
+    // Closing the floating window puts the call back in the chat. If the chat
+    // was hidden to leave the call on screen, bring it back with the call.
+    if ui.input(|input| input.viewport().close_requested()) {
+        app.call_surface_hidden = false;
+        app.show_hidden_window_for_pip(ui.ctx());
+        return;
+    }
     // A window of its own must be seen the moment it opens, above the call
     // screen it left. Keep asking until it is seen, then stop: clicking the
     // app takes the focus back as usual.

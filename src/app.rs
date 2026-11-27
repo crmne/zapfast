@@ -974,6 +974,9 @@ pub struct App {
     tray_lockable: bool,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
+    /// Whether the root window is hidden in place while a floating call keeps
+    /// its event loop alive, rather than given back to the shell.
+    pub window_hidden_in_place: bool,
     /// Whether window close should keep the process running.
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
@@ -1834,6 +1837,7 @@ impl App {
             test_raised: false,
             tray_lockable,
             window_hidden: false,
+            window_hidden_in_place: false,
             hide_intent: false,
             wants_show: false,
             tray_wait: None,
@@ -2234,6 +2238,7 @@ impl App {
             self.search_hits.clear();
         }
         self.window_hidden = true;
+        self.window_hidden_in_place = false;
         self.window_focused = false;
         self.hide_intent = false;
         self.wants_show = false;
@@ -2788,6 +2793,7 @@ impl App {
         self.theme_transition = fastframe_theme::Transition::default();
         self.zoom_applied = false;
         self.window_hidden = false;
+        self.window_hidden_in_place = false;
         self.paste_keys = PasteKeys::default();
         self.hide_intent = false;
         self.wants_show = false;
@@ -7194,6 +7200,20 @@ impl App {
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
+        // A floating call was the only reason to keep a hidden window alive.
+        // Once it ends there is nothing to paint in it, so give the window
+        // back to the shell, which keeps running in the tray.
+        if self.window_hidden_in_place && !self.call_pip_open() {
+            self.window_hidden_in_place = false;
+            self.window_hidden = true;
+            if self.keeps_running_on_close() {
+                self.hide_intent = true;
+            } else {
+                self.quit_requested = true;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         // Close the window and continue headless when background mode is
         // enabled. Decided here rather than in `frame_ui`, which eframe skips
         // for a minimized window: closing one from the taskbar quit instead.
@@ -7201,8 +7221,51 @@ impl App {
             && !self.quit_requested
             && self.keeps_running_on_close()
         {
-            self.hide_intent = true;
+            // A call in its own window needs this window's event loop. Hide
+            // it instead of closing it, so the call stays on screen and the
+            // tray can bring the chat back. An embedded window cannot stay
+            // once its only visible window is gone.
+            if self.call_pip_open() && !ctx.embed_viewports() {
+                self.hide_window_for_pip(ctx);
+            } else {
+                self.hide_intent = true;
+            }
         }
+    }
+
+    /// Hides the window without ending the eframe session. The floating call
+    /// lives in a viewport of this window, so closing the window would close
+    /// the call too. `CancelClose` keeps eframe from leaving its event loop;
+    /// `Visible(false)` takes the window off the screen and the taskbar.
+    pub(crate) fn hide_window_for_pip(&mut self, ctx: &egui::Context) {
+        // The call can ask for this from its own viewport, so name the root
+        // instead of relying on whichever viewport is drawing right now.
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::Visible(false),
+        );
+        self.window_hidden = true;
+        self.window_hidden_in_place = true;
+        self.hide_intent = false;
+        self.wants_show = false;
+    }
+
+    /// Brings a window hidden for a floating call back. Other hidden windows
+    /// belong to the shell, which opens them in a fresh pass.
+    pub(crate) fn show_hidden_window_for_pip(&mut self, ctx: &egui::Context) {
+        if !self.window_hidden_in_place {
+            return;
+        }
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::Minimized(false),
+        );
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+        self.window_hidden = false;
+        self.window_hidden_in_place = false;
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
     pub fn load_custom_themes(&mut self) {
@@ -10099,7 +10162,9 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Action::ShowWindow => {
-                if self.window_hidden {
+                if self.window_hidden_in_place {
+                    self.show_hidden_window_for_pip(ctx);
+                } else if self.window_hidden {
                     // The headless loop in `main` will create the window.
                     self.wants_show = true;
                 } else if self.wayland && self.raise_on_compositor() {
@@ -10121,9 +10186,15 @@ impl App {
                 }
             }
             Action::HideWindow => {
-                if self.tray_shown() {
-                    self.hide_intent = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if self.window_hidden_in_place {
+                    // Already off screen; the floating call is still here.
+                } else if self.tray_shown() {
+                    if self.call_pip_open() && !ctx.embed_viewports() {
+                        self.hide_window_for_pip(ctx);
+                    } else {
+                        self.hide_intent = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 }
             }
             // Route through the configured window-close behavior.
@@ -12505,6 +12576,30 @@ mod tests {
             |ui| app.frame_ui(ui),
         );
         output.textures_delta.clear();
+    }
+
+    /// A live video call the reader stepped away from, which is what opens
+    /// the floating window.
+    fn pip_call() -> crate::calls::CallUpdate {
+        crate::calls::CallUpdate {
+            generation: 1,
+            chat: "1@s.whatsapp.net".into(),
+            direction: crate::model::CallDirection::Incoming,
+            video: true,
+            phase: crate::calls::CallPhase::Active,
+            started: None,
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        }
     }
 
     fn composer_undo_key() -> egui::Event {
@@ -18199,6 +18294,73 @@ mod tests {
         app.quit_requested = true;
         close_minimized(&mut app);
         assert_eq!(app.closed(), Closed::Quit);
+    }
+
+    /// A floating call lives in a viewport of the chat window, so closing
+    /// that window while the tray keeps the app alive hides it in place and
+    /// cancels the close. The tray brings the same window back.
+    #[test]
+    fn a_floating_call_keeps_the_window_hidden_in_place() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        assert!(app.call_pip_open());
+
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(commands.contains(&egui::ViewportCommand::Visible(false)));
+        output.textures_delta.clear();
+        assert!(app.window_hidden && app.window_hidden_in_place);
+        assert!(!app.hide_intent, "the window did not go back to the shell");
+
+        app.apply(Action::ShowWindow, &ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Visible(true)));
+        output.textures_delta.clear();
+        assert!(!app.window_hidden && !app.window_hidden_in_place);
+        assert!(!app.wants_show, "the shell was asked for a new window");
+
+        // With the call gone, there is nothing left to keep an unseen window
+        // alive. It goes back to the shell, which carries on in the tray.
+        app.hide_window_for_pip(&ctx);
+        app.call = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        output.textures_delta.clear();
+        assert!(app.hide_intent && app.window_hidden);
+        assert!(!app.window_hidden_in_place);
+    }
+
+    /// An embedded floating window cannot outlive the only window that draws
+    /// it, so closing that window keeps the ordinary hide-to-tray path.
+    #[test]
+    fn an_embedded_call_uses_the_normal_close_path() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(true);
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        assert!(app.call_pip_open());
+
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(!commands.contains(&egui::ViewportCommand::Visible(false)));
+        output.textures_delta.clear();
+        assert!(app.hide_intent && !app.window_hidden_in_place);
     }
 
     /// A Wayland compositor ignores an app's focus and unminimize requests, so
