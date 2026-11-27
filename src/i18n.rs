@@ -18,6 +18,8 @@ pub enum Locale {
     English,
     #[serde(rename = "pt-BR")]
     PortugueseBrazil,
+    #[serde(rename = "pt-PT")]
+    PortuguesePortugal,
     #[serde(rename = "de")]
     German,
     #[serde(rename = "es")]
@@ -42,9 +44,10 @@ pub enum Locale {
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
+        Self::PortuguesePortugal,
         Self::German,
         Self::Spanish,
         Self::Italian,
@@ -62,6 +65,7 @@ impl Locale {
         match self {
             Self::English => "English",
             Self::PortugueseBrazil => "Português (Brasil)",
+            Self::PortuguesePortugal => "Português (Portugal)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
             Self::Italian => "Italiano",
@@ -76,8 +80,11 @@ impl Locale {
     }
 
     /// Maps a system language tag (BCP 47 or POSIX) to a supported locale by
-    /// its language subtag, so `pt-PT` and `pt_BR` both resolve to Portuguese.
-    /// Chinese is the exception: its script decides, so a reader who asked for
+    /// its language subtag. Portuguese and Chinese are the exceptions. For
+    /// Portuguese the region decides: Brazil gets Brazilian Portuguese, and
+    /// every other tag, a bare `pt` included, European Portuguese, the norm
+    /// Portugal and the African and Asian Portuguese-speaking countries
+    /// follow. For Chinese the script decides, so a reader who asked for
     /// Traditional does not get Simplified characters and the other way round.
     pub fn from_system(identifier: &str) -> Option<Locale> {
         fastframe_i18n::LanguageTag::parse(identifier).and_then(|tag| Self::from_tag(&tag))
@@ -89,7 +96,10 @@ impl Locale {
     fn from_tag(tag: &fastframe_i18n::LanguageTag) -> Option<Locale> {
         Some(match tag.language.as_str() {
             "en" => Self::English,
-            "pt" => Self::PortugueseBrazil,
+            "pt" => match tag.region.as_deref() {
+                Some("br") => Self::PortugueseBrazil,
+                _ => Self::PortuguesePortugal,
+            },
             "de" => Self::German,
             "es" => Self::Spanish,
             "it" => Self::Italian,
@@ -121,6 +131,7 @@ impl fastframe_i18n::Locale for Locale {
     fn catalog(self) -> Option<&'static dyn fastframe_i18n::Translator> {
         match self {
             Self::PortugueseBrazil => Some(&pt_br::Translator),
+            Self::PortuguesePortugal => Some(&pt_pt::Translator),
             Self::German => Some(&de::Translator),
             Self::Spanish => Some(&es::Translator),
             Self::French => Some(&fr::Translator),
@@ -199,7 +210,20 @@ mod tests {
     #[test]
     fn system_locales_map_to_the_right_catalog() {
         assert_eq!(Locale::from_system("pt-BR"), Some(Locale::PortugueseBrazil));
-        assert_eq!(Locale::from_system("pt_PT"), Some(Locale::PortugueseBrazil));
+        assert_eq!(
+            Locale::from_system("pt_BR.UTF-8"),
+            Some(Locale::PortugueseBrazil)
+        );
+        for identifier in [
+            "pt", "pt-PT", "pt_PT", "pt_PT.UTF-8", "pt-AO", "pt-MZ", "pt-CV", "pt-GW", "pt-ST",
+            "pt-TL", "pt-MO",
+        ] {
+            assert_eq!(
+                Locale::from_system(identifier),
+                Some(Locale::PortuguesePortugal),
+                "{identifier}"
+            );
+        }
         assert_eq!(Locale::from_system("de-DE"), Some(Locale::German));
         assert_eq!(Locale::from_system("es"), Some(Locale::Spanish));
         assert_eq!(Locale::from_system("it-IT"), Some(Locale::Italian));
@@ -381,6 +405,58 @@ mod tests {
             ),
             "Selecionar mensagem de {sender} ({time}): {summary}"
         );
+    }
+
+    #[test]
+    fn european_portuguese_is_its_own_catalog() {
+        assert!(Locale::ALL.contains(&Locale::PortuguesePortugal));
+        assert_eq!(Locale::PortuguesePortugal.label(), "Português (Portugal)");
+        assert_eq!(
+            serde_json::to_string(&Locale::PortuguesePortugal).unwrap(),
+            "\"pt-PT\""
+        );
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"pt-PT\"").unwrap(),
+            Locale::PortuguesePortugal
+        );
+        // A stored Brazilian choice stays Brazilian.
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"pt-BR\"").unwrap(),
+            Locale::PortugueseBrazil
+        );
+        let pt = Locale::PortuguesePortugal;
+        assert_eq!(gettext(pt, "Chats"), "Conversas");
+        assert_eq!(gettext(pt, "Settings"), "Definições");
+        assert_eq!(gettext(pt, "Search"), "Pesquisar");
+        assert_eq!(gettext(pt, "Type a message"), "Escreva uma mensagem");
+        assert_eq!(gettext(pt, "Stickers"), "Autocolantes");
+        assert_ne!(
+            gettext(pt, "Settings"),
+            gettext(Locale::PortugueseBrazil, "Settings")
+        );
+        let missing = "A string nobody has translated";
+        assert_eq!(gettext(pt, missing), missing);
+    }
+
+    /// Portugal counts zero as plural, unlike Brazil.
+    #[test]
+    fn european_portuguese_plural_rules_treat_zero_as_plural() {
+        for (count, expected) in [
+            (0, "{} membros"),
+            (1, "{} membro"),
+            (2, "{} membros"),
+            (21, "{} membros"),
+        ] {
+            assert_eq!(
+                ngettext(
+                    Locale::PortuguesePortugal,
+                    "{} member",
+                    "{} members",
+                    count
+                ),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1333,29 +1333,28 @@ mod tests {
     }
 
     #[test]
-    fn brazilian_portuguese_stamps_are_translated() {
+    fn portuguese_stamps_are_translated() {
         let when = Timestamp::from_second(1_700_000_000)
             .expect("valid")
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date = when.date();
-        assert_eq!(
-            stamp_relative_to(
-                Locale::PortugueseBrazil,
-                date,
-                date.tomorrow().expect("date"),
-                &when
-            ),
-            "Ontem"
-        );
-        assert_eq!(
-            stamp_relative_to(
-                Locale::PortugueseBrazil,
-                date,
-                date.checked_add(jiff::Span::new().days(3)).expect("date"),
-                &when
-            ),
-            "Terça-feira"
-        );
+        for locale in [Locale::PortugueseBrazil, Locale::PortuguesePortugal] {
+            assert_eq!(
+                stamp_relative_to(locale, date, date.tomorrow().expect("date"), &when),
+                "Ontem",
+                "{locale:?}"
+            );
+            assert_eq!(
+                stamp_relative_to(
+                    locale,
+                    date,
+                    date.checked_add(jiff::Span::new().days(3)).expect("date"),
+                    &when
+                ),
+                "Terça-feira",
+                "{locale:?}"
+            );
+        }
     }
 
     #[test]
