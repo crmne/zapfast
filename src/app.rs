@@ -974,9 +974,16 @@ pub struct App {
     tray_lockable: bool,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
-    /// Whether the root window is hidden in place while a floating call keeps
-    /// its event loop alive, rather than given back to the shell.
-    pub window_hidden_in_place: bool,
+    /// Whether the root window itself has become the floating call. Closing
+    /// the chat window while a native PiP is up turns this window into the
+    /// call instead of ending the eframe session the call lives in.
+    pub root_is_pip: bool,
+    /// The chat window's size and maximized state, kept while it is the call.
+    pip_root_size: Option<egui::Vec2>,
+    pip_root_maximized: bool,
+    /// The frame that turned the chat into a call still carries its close
+    /// request; drawing the call must not undo the change at once.
+    pub(crate) pip_root_ignore_close: bool,
     /// Whether window close should keep the process running.
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
@@ -1837,7 +1844,10 @@ impl App {
             test_raised: false,
             tray_lockable,
             window_hidden: false,
-            window_hidden_in_place: false,
+            root_is_pip: false,
+            pip_root_size: None,
+            pip_root_maximized: false,
+            pip_root_ignore_close: false,
             hide_intent: false,
             wants_show: false,
             tray_wait: None,
@@ -2238,7 +2248,10 @@ impl App {
             self.search_hits.clear();
         }
         self.window_hidden = true;
-        self.window_hidden_in_place = false;
+        self.root_is_pip = false;
+        self.pip_root_size = None;
+        self.pip_root_maximized = false;
+        self.pip_root_ignore_close = false;
         self.window_focused = false;
         self.hide_intent = false;
         self.wants_show = false;
@@ -2793,7 +2806,10 @@ impl App {
         self.theme_transition = fastframe_theme::Transition::default();
         self.zoom_applied = false;
         self.window_hidden = false;
-        self.window_hidden_in_place = false;
+        self.root_is_pip = false;
+        self.pip_root_size = None;
+        self.pip_root_maximized = false;
+        self.pip_root_ignore_close = false;
         self.paste_keys = PasteKeys::default();
         self.hide_intent = false;
         self.wants_show = false;
@@ -7200,72 +7216,122 @@ impl App {
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
-        // A floating call was the only reason to keep a hidden window alive.
-        // Once it ends there is nothing to paint in it, so give the window
-        // back to the shell, which keeps running in the tray.
-        if self.window_hidden_in_place && !self.call_pip_open() {
-            self.window_hidden_in_place = false;
-            self.window_hidden = true;
-            if self.keeps_running_on_close() {
-                self.hide_intent = true;
-            } else {
-                self.quit_requested = true;
-            }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // The call ended while this window was the call: give the chat its
+        // window back, with the size and frame it had before.
+        if self.root_is_pip && !self.call_pip_open() {
+            self.restore_chat_window_from_pip(ctx);
             return;
         }
         // Close the window and continue headless when background mode is
         // enabled. Decided here rather than in `frame_ui`, which eframe skips
         // for a minimized window: closing one from the taskbar quit instead.
-        if ctx.input(|input| input.viewport().close_requested())
-            && !self.quit_requested
-            && self.keeps_running_on_close()
-        {
-            // A call in its own window needs this window's event loop. Hide
-            // it instead of closing it, so the call stays on screen and the
-            // tray can bring the chat back. An embedded window cannot stay
-            // once its only visible window is gone.
+        if ctx.input(|input| input.viewport().close_requested()) && !self.quit_requested {
+            // A native call lives in this window's event loop, so closing the
+            // window would end it. Turn the window into the floating call
+            // instead: the chat goes away, the call stays on screen, and the
+            // tray or the call's own close button brings the chat back. An
+            // embedded window cannot stay once its only window is gone.
             if self.call_pip_open() && !ctx.embed_viewports() {
-                self.hide_window_for_pip(ctx);
-            } else {
+                if self.root_is_pip {
+                    self.restore_chat_window_from_pip(ctx);
+                } else {
+                    self.turn_chat_window_into_pip(ctx);
+                }
+            } else if self.keeps_running_on_close() {
                 self.hide_intent = true;
             }
         }
     }
 
-    /// Hides the window without ending the eframe session. The floating call
-    /// lives in a viewport of this window, so closing the window would close
-    /// the call too. `CancelClose` keeps eframe from leaving its event loop;
-    /// `Visible(false)` takes the window off the screen and the taskbar.
-    pub(crate) fn hide_window_for_pip(&mut self, ctx: &egui::Context) {
-        // The call can ask for this from its own viewport, so name the root
-        // instead of relying on whichever viewport is drawing right now.
-        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
-        ctx.send_viewport_cmd_to(
-            egui::ViewportId::ROOT,
-            egui::ViewportCommand::Visible(false),
-        );
-        self.window_hidden = true;
-        self.window_hidden_in_place = true;
-        self.hide_intent = false;
-        self.wants_show = false;
-    }
-
-    /// Brings a window hidden for a floating call back. Other hidden windows
-    /// belong to the shell, which opens them in a fresh pass.
-    pub(crate) fn show_hidden_window_for_pip(&mut self, ctx: &egui::Context) {
-        if !self.window_hidden_in_place {
+    /// Turns the chat window itself into the floating call. The OS window
+    /// stays, so eframe keeps running, but the chat and its frame give way to
+    /// the call's picture and controls. `CancelClose` keeps eframe from
+    /// leaving the event loop that owns the call.
+    pub(crate) fn turn_chat_window_into_pip(&mut self, ctx: &egui::Context) {
+        if self.root_is_pip {
             return;
         }
-        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd_to(
-            egui::ViewportId::ROOT,
-            egui::ViewportCommand::Minimized(false),
+        let zoom = ctx.zoom_factor();
+        self.pip_root_size = Some(
+            ctx.input(|input| {
+                input
+                    .viewport()
+                    .inner_rect
+                    .or(input.raw.screen_rect)
+                    .map(|rect| rect.size() * zoom)
+            })
+            .unwrap_or(crate::ui::call::PIP_DEFAULT),
         );
-        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+        self.pip_root_maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+        self.root_is_pip = true;
+        self.pip_root_ignore_close = true;
+        self.call_surface_hidden = true;
         self.window_hidden = false;
-        self.window_hidden_in_place = false;
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        self.hide_intent = false;
+        self.wants_show = false;
+        let root = egui::ViewportId::ROOT;
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Maximized(false));
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::MinInnerSize(crate::ui::call::PIP_MIN),
+        );
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::InnerSize(self.call_pip_size.max(crate::ui::call::PIP_MIN)),
+        );
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Decorations(false));
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::WindowLevel(if self.call_pip_on_top {
+                egui::viewport::WindowLevel::AlwaysOnTop
+            } else {
+                egui::viewport::WindowLevel::Normal
+            }),
+        );
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Focus);
+        ctx.request_repaint_of(root);
+    }
+
+    /// Gives the chat its window back after a floating call. The close button
+    /// on the call window, the tray, and the end of the call all land here.
+    pub(crate) fn restore_chat_window_from_pip(&mut self, ctx: &egui::Context) {
+        if !self.root_is_pip {
+            return;
+        }
+        let root = egui::ViewportId::ROOT;
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::CancelClose);
+        let zoom = ctx.zoom_factor();
+        let size = self.pip_root_size.take().unwrap_or_else(|| {
+            ctx.input(|input| {
+                input
+                    .viewport()
+                    .inner_rect
+                    .or(input.raw.screen_rect)
+                    .map(|rect| rect.size() * zoom)
+            })
+            .unwrap_or(crate::ui::call::PIP_DEFAULT)
+        });
+        let maximized = self.pip_root_maximized;
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::WindowLevel(egui::viewport::WindowLevel::Normal),
+        );
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::Decorations(!fastframe_titlebar::enabled()),
+        );
+        ctx.send_viewport_cmd_to(
+            root,
+            egui::ViewportCommand::MinInnerSize(egui::vec2(400.0, 300.0)),
+        );
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Maximized(maximized));
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::InnerSize(size));
+        ctx.send_viewport_cmd_to(root, egui::ViewportCommand::Focus);
+        self.root_is_pip = false;
+        self.pip_root_ignore_close = false;
+        self.call_surface_hidden = false;
+        ctx.request_repaint_of(root);
     }
 
     pub fn load_custom_themes(&mut self) {
@@ -10162,8 +10228,8 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Action::ShowWindow => {
-                if self.window_hidden_in_place {
-                    self.show_hidden_window_for_pip(ctx);
+                if self.root_is_pip {
+                    self.restore_chat_window_from_pip(ctx);
                 } else if self.window_hidden {
                     // The headless loop in `main` will create the window.
                     self.wants_show = true;
@@ -10186,19 +10252,31 @@ impl App {
                 }
             }
             Action::HideWindow => {
-                if self.window_hidden_in_place {
-                    // Already off screen; the floating call is still here.
+                if self.root_is_pip {
+                    // The tray brings the chat back, not another call window.
+                    self.restore_chat_window_from_pip(ctx);
                 } else if self.tray_shown() {
                     if self.call_pip_open() && !ctx.embed_viewports() {
-                        self.hide_window_for_pip(ctx);
+                        self.turn_chat_window_into_pip(ctx);
                     } else {
                         self.hide_intent = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 }
             }
-            // Route through the configured window-close behavior.
-            Action::CloseWindow => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            // Route through the configured window-close behavior. A native
+            // call keeps this window alive as its own floating window.
+            Action::CloseWindow => {
+                if self.call_pip_open() && !ctx.embed_viewports() {
+                    if self.root_is_pip {
+                        self.restore_chat_window_from_pip(ctx);
+                    } else {
+                        self.turn_chat_window_into_pip(ctx);
+                    }
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
             Action::SwitchAccount(id) => self.switch_account(&id),
             Action::CycleAccount(step) => self.cycle_account(step, Instant::now()),
             Action::AddAccount => self.add_account(),
@@ -10557,11 +10635,10 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        // A root window hidden for a floating call is not gone: the call's
-        // window is on screen, and announcing ourselves as away here would
-        // make the phone end the call ten seconds later.
-        let pip_visible = self.window_hidden_in_place && self.call_pip_open();
-        let looking = (pip_visible || self.window_focused && !self.window_hidden)
+        // The window that became a floating call is on screen even when the
+        // reader is using another app. Announcing ourselves as away here
+        // would make the phone end the call ten seconds later.
+        let looking = (self.root_is_pip || self.window_focused && !self.window_hidden)
             && !self.power.conditions().display_off;
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
@@ -18300,11 +18377,11 @@ mod tests {
         assert_eq!(app.closed(), Closed::Quit);
     }
 
-    /// A floating call lives in a viewport of the chat window, so closing
-    /// that window while the tray keeps the app alive hides it in place and
-    /// cancels the close. The tray brings the same window back.
+    /// Closing the chat window while a native call floats turns this window
+    /// into the call. The OS window stays, so the call's event loop stays too,
+    /// and the tray or the call's close button gives the chat its window back.
     #[test]
-    fn a_floating_call_keeps_the_window_hidden_in_place() {
+    fn a_floating_call_turns_the_chat_window_into_the_call() {
         let ctx = egui::Context::default();
         ctx.set_embed_viewports(false);
         let mut app = app();
@@ -18313,35 +18390,55 @@ mod tests {
         app.call = Some(pip_call());
         assert!(app.call_pip_open());
 
-        let mut input = egui::RawInput::default();
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1180.0, 780.0),
+            )),
+            ..Default::default()
+        };
         let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
         info.events.push(egui::ViewportEvent::Close);
         let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
         let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
         assert!(commands.contains(&egui::ViewportCommand::CancelClose));
-        assert!(commands.contains(&egui::ViewportCommand::Visible(false)));
+        assert!(commands.contains(&egui::ViewportCommand::Decorations(false)));
+        assert!(commands.contains(&egui::ViewportCommand::MinInnerSize(
+            crate::ui::call::PIP_MIN
+        )));
+        assert!(commands.contains(&egui::ViewportCommand::InnerSize(app.call_pip_size)));
         output.textures_delta.clear();
-        assert!(app.window_hidden && app.window_hidden_in_place);
+        assert!(app.root_is_pip && !app.window_hidden);
         assert!(!app.hide_intent, "the window did not go back to the shell");
 
         app.apply(Action::ShowWindow, &ctx);
         let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
         let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
-        assert!(commands.contains(&egui::ViewportCommand::Visible(true)));
+        assert!(commands.contains(&egui::ViewportCommand::Decorations(
+            !fastframe_titlebar::enabled()
+        )));
+        assert!(commands.contains(&egui::ViewportCommand::InnerSize(egui::vec2(1180.0, 780.0))));
         output.textures_delta.clear();
-        assert!(!app.window_hidden && !app.window_hidden_in_place);
-        assert!(!app.wants_show, "the shell was asked for a new window");
+        assert!(!app.root_is_pip && !app.wants_show);
+        assert!(!app.call_surface_hidden, "the call is back in the chat");
+    }
 
-        // With the call gone, there is nothing left to keep an unseen window
-        // alive. It goes back to the shell, which carries on in the tray.
-        app.hide_window_for_pip(&ctx);
-        app.call = None;
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.window_logic(ui.ctx()));
+    /// The close shortcut takes the same route as the window's close button:
+    /// the chat gives way to the call instead of taking the call with it.
+    #[test]
+    fn the_close_shortcut_turns_a_native_call_into_the_window() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+
+        app.apply(Action::CloseWindow, &ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
         let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
-        assert!(commands.contains(&egui::ViewportCommand::Close));
+        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
         output.textures_delta.clear();
-        assert!(app.hide_intent && app.window_hidden);
-        assert!(!app.window_hidden_in_place);
+        assert!(app.root_is_pip);
     }
 
     /// An embedded floating window cannot outlive the only window that draws
@@ -18362,9 +18459,9 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
         let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
         assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
-        assert!(!commands.contains(&egui::ViewportCommand::Visible(false)));
+        assert!(!commands.contains(&egui::ViewportCommand::Decorations(false)));
         output.textures_delta.clear();
-        assert!(app.hide_intent && !app.window_hidden_in_place);
+        assert!(app.hide_intent && !app.root_is_pip);
     }
 
     /// A Wayland compositor ignores an app's focus and unminimize requests, so
@@ -20251,7 +20348,7 @@ mod tests {
     }
 
     #[test]
-    fn a_floating_call_keeps_presence_online_with_the_chat_hidden() {
+    fn a_floating_call_keeps_presence_online_when_the_chat_window_is_the_call() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -20259,9 +20356,9 @@ mod tests {
         app.report_presence();
         assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
 
-        app.hide_window_for_pip(&egui::Context::default());
         app.call_surface_hidden = true;
         app.call = Some(pip_call());
+        app.turn_chat_window_into_pip(&egui::Context::default());
         app.window_focused = false;
         app.report_presence();
         assert!(
@@ -20269,10 +20366,10 @@ mod tests {
             "the call window is still on screen"
         );
 
-        // When the call is gone the hidden window is no longer an excuse to
-        // stay online, so the usual tray presence takes over.
+        // Once the chat has its window back, the usual tray presence takes
+        // over.
+        app.restore_chat_window_from_pip(&egui::Context::default());
         app.call = None;
-        app.window_hidden_in_place = false;
         app.report_presence();
         assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(false))));
     }

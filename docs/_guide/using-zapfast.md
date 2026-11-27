@@ -592,8 +592,10 @@ ignore those requests. Double click the header to go back to the full call
 screen. Escape works as the arrow does, and leaves full screen first. Where a
 desktop cannot make a second window, the floating call stays over the chat
 instead; there Shift keeps the picture at 16:9 while it is resized. Only
-hanging up ends a call. Closing the chat window to the tray leaves the floating
-call on screen, and the tray brings the chat back when the call is over. A call
+hanging up ends a call. Closing the chat window during a floating video call
+turns that window into the call: the chat and its frame go away, and the call
+stays on screen. Closing the call window, using the tray, or waiting for the
+call to end brings the chat window back. A call
 you hang up or decline leaves the screen at once; one the other side ends,
 declines, or misses, or one that could not connect, says so for a second and a
 half.

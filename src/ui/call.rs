@@ -28,7 +28,7 @@ const PIP_VIEWPORT: &str = "zapfast-call-pip-window";
 pub const PIP_DEFAULT: egui::Vec2 = egui::vec2(320.0, 180.0);
 /// The smallest the floating window may be made, and the largest as a share of
 /// the app's own.
-const PIP_MIN: egui::Vec2 = egui::vec2(200.0, 112.0);
+pub(crate) const PIP_MIN: egui::Vec2 = egui::vec2(200.0, 112.0);
 const PIP_MAX_SHARE: egui::Vec2 = egui::vec2(0.6, 0.5);
 /// The room the gap between the window's edge and the app's own keeps it in.
 const PIP_MARGIN: f32 = 8.0;
@@ -192,6 +192,11 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
 /// A backend that cannot make a second window draws it over the app instead,
 /// as the demo's single-window snapshots do.
 pub fn pip(app: &mut App, ctx: &egui::Context) {
+    // Closing the chat turns the root window itself into the call, so there
+    // is no second viewport to draw while that is so.
+    if app.root_is_pip {
+        return;
+    }
     if !app.call_pip_open() {
         app.close_call_pip_window();
         return;
@@ -258,19 +263,40 @@ fn pip_screen_pos(ctx: &egui::Context, size: Vec2) -> Option<egui::Pos2> {
     ))
 }
 
+/// Draws the call in the chat window that became its floating window. The
+/// first frame still carries the close request that turned the chat into the
+/// call, so it is ignored here; the next close is the reader leaving the call.
+pub(crate) fn pip_root(app: &mut App, ui: &mut egui::Ui) {
+    if !app.call_pip_open() {
+        app.restore_chat_window_from_pip(ui.ctx());
+        return;
+    }
+    if std::mem::take(&mut app.pip_root_ignore_close) {
+        // The chat's close request was used to become this window.
+    } else if ui.input(|input| input.viewport().close_requested()) {
+        app.call_surface_hidden = false;
+        app.restore_chat_window_from_pip(ui.ctx());
+        return;
+    }
+    pip_window_content(ui, app);
+}
+
 /// Draws the floating window inside the window of its own: square corners,
 /// because the window itself is opaque, and the picture and controls over it.
 fn pip_window(ui: &mut egui::Ui, app: &mut App) {
+    // Closing the floating window puts the call back in the chat.
+    if ui.input(|input| input.viewport().close_requested()) {
+        app.call_surface_hidden = false;
+        app.restore_chat_window_from_pip(ui.ctx());
+        return;
+    }
+    pip_window_content(ui, app);
+}
+
+fn pip_window_content(ui: &mut egui::Ui, app: &mut App) {
     let Some(call) = app.call.clone() else {
         return;
     };
-    // Closing the floating window puts the call back in the chat. If the chat
-    // was hidden to leave the call on screen, bring it back with the call.
-    if ui.input(|input| input.viewport().close_requested()) {
-        app.call_surface_hidden = false;
-        app.show_hidden_window_for_pip(ui.ctx());
-        return;
-    }
     // A window of its own must be seen the moment it opens, above the call
     // screen it left. Keep asking until it is seen, then stop: clicking the
     // app takes the focus back as usual.

@@ -754,7 +754,7 @@ impl App {
             Action::ReturnToCall if self.call.is_some() => {
                 if !self.call_is_private() {
                     self.call_surface_hidden = false;
-                    self.show_hidden_window_for_pip(ctx);
+                    self.restore_chat_window_from_pip(ctx);
                 } else if self.call_account.as_ref() == Some(&self.account().id) {
                     self.apply(Action::OpenLockedFolder, ctx);
                 }

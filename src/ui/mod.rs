@@ -42,6 +42,12 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    // Closing the chat while a native call floats turns this very window into
+    // the call. Nothing else, including the lock screen, covers it.
+    if app.root_is_pip {
+        call::pip_root(app, ui);
+        return;
+    }
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
     picker::release_gif_animations(app, ctx);
