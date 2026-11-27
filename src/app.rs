@@ -10557,8 +10557,12 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        let looking =
-            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
+        // A root window hidden for a floating call is not gone: the call's
+        // window is on screen, and announcing ourselves as away here would
+        // make the phone end the call ten seconds later.
+        let pip_visible = self.window_hidden_in_place && self.call_pip_open();
+        let looking = (pip_visible || self.window_focused && !self.window_hidden)
+            && !self.power.conditions().display_off;
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
             let online = looking && index == active;
@@ -20244,6 +20248,33 @@ mod tests {
         app.window_focused = true;
         app.report_presence();
         assert!(reported().is_empty());
+    }
+
+    #[test]
+    fn a_floating_call_keeps_presence_online_with_the_chat_hidden() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.window_focused = true;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+
+        app.hide_window_for_pip(&egui::Context::default());
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.window_focused = false;
+        app.report_presence();
+        assert!(
+            commands.try_recv().is_err(),
+            "the call window is still on screen"
+        );
+
+        // When the call is gone the hidden window is no longer an excuse to
+        // stay online, so the usual tray presence takes over.
+        app.call = None;
+        app.window_hidden_in_place = false;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(false))));
     }
 
     #[test]
