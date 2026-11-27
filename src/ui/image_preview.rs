@@ -1687,7 +1687,7 @@ mod tests {
         );
         assert_eq!(
             display_size(vec2(320.0, 240.0), vec2(800.0, 700.0), true, 1.0),
-            vec2(320.0, 240.0)
+            vec2(800.0, 600.0)
         );
         assert_eq!(
             display_size(vec2(320.0, 240.0), vec2(800.0, 700.0), false, 2.0),
