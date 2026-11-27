@@ -635,6 +635,29 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
     zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
+/// Whether Linux has an X server to use. Wayland is kept when there is none,
+/// since forcing X11 without a display would stop the window from opening.
+#[cfg(target_os = "linux")]
+fn x11_display(display: Option<&std::ffi::OsStr>) -> bool {
+    display.is_some_and(|value| !value.is_empty())
+}
+
+/// Linux uses XWayland when an X server is there. The call window's pin asks
+/// X11 for the always-on-top state, which a Wayland compositor may ignore.
+/// The hook applies to every window the shell opens, chat and call alike.
+#[cfg(target_os = "linux")]
+fn prefer_x11(options: &mut eframe::NativeOptions) {
+    if x11_display(std::env::var_os("DISPLAY").as_deref()) {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        options.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prefer_x11(_options: &mut eframe::NativeOptions) {}
+
 /// The floating call gets a window of its own. It is deliberately not the
 /// chat window: full screen, resizing and closing it cannot reach the chat,
 /// which opens again from the tray when asked.
@@ -659,12 +682,14 @@ fn call_native_options(
     if let Some(position) = position {
         viewport = viewport.with_position(position);
     }
-    eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         persistence_path: None,
         persist_window: false,
         ..Default::default()
-    }
+    };
+    prefer_x11(&mut options);
+    options
 }
 
 fn native_options(
@@ -705,7 +730,7 @@ fn native_options(
         // Windows and Linux: no frame when ZapFast draws its own title bar.
         // Fixed for the window's life; a new choice replaces the window.
         .with_decorations(!fastframe_titlebar::enabled());
-    eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         persistence_path: demo_persistence,
         // The settings remember the window (fastframe_shell::window::Geometry),
@@ -714,7 +739,9 @@ fn native_options(
         // since its zoom comes back only once the window exists.
         persist_window: false,
         ..Default::default()
-    }
+    };
+    prefer_x11(&mut options);
+    options
 }
 
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes
@@ -1067,6 +1094,17 @@ mod target_cli_tests {
         let cli = Cli::try_parse_from(["zapfast", "--start-hidden"]).unwrap();
         assert!(cli.start_hidden);
         assert!(cli.target.is_none());
+    }
+
+    /// X11 is used only when there is a display to open it on. A Wayland-only
+    /// session must keep its native backend.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_is_chosen_only_with_a_display() {
+        use std::ffi::OsStr;
+        assert!(x11_display(Some(OsStr::new(":0"))));
+        assert!(!x11_display(None));
+        assert!(!x11_display(Some(OsStr::new(""))));
     }
 
     /// A link asked to be seen: `--start-hidden` with a chat to open must not

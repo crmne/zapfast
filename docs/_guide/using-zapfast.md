@@ -586,9 +586,11 @@ opens at the bottom right of the app where the desktop lets an app place it.
 Drag its header or its picture to move it anywhere on the screen, and drag its
 bottom right corner to resize it; a double click on the corner puts the size
 back to its default. The pin in the header keeps the window above the others
-where the desktop allows that, and a second click lets it go behind them. A
-Wayland compositor decides where windows go and what stays on top, so it may
-ignore those requests. Double click the header to go back to the full call
+where the desktop allows that, and a second click lets it go behind them. On
+Linux, ZapFast uses X11 when an X server is available, so the pin works through
+XWayland on desktops such as GNOME. On a Wayland-only session, the compositor
+decides where windows go and what stays on top, so it may ignore those
+requests. Double click the header to go back to the full call
 screen. Escape works as the arrow does, and leaves full screen first. Where a
 desktop cannot make a second window, the floating call stays over the chat
 instead; there Shift keeps the picture at 16:9 while it is resized. Only
