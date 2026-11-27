@@ -12,7 +12,7 @@ use std::time::Instant;
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, TextureOptions, Vec2, vec2};
 
 use crate::app::{App, CallPerson};
-use crate::calls::{CallOutcome, CallPhase, CallUpdate, PeerAudio, SilenceReason};
+use crate::calls::{CallOutcome, CallPhase, CallUpdate, DeviceKind, PeerAudio, SilenceReason};
 use crate::i18n::{Locale, gettext};
 use crate::model::Action;
 use crate::theme::{self, Icon, Palette};
@@ -531,9 +531,11 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
                 palette.text,
             )
         };
-        if control(ui, icon, fill, tint, &tip, call.phase.is_connected()).clicked() {
+        let mute = control(ui, icon, fill, tint, &tip, call.phase.is_connected());
+        if mute.clicked() {
             app.actions.push(Action::SetCallMuted(!call.muted));
         }
+        device_menu(ui, app, &mute, DeviceKind::Microphone, call, palette);
 
         // The camera: starts video on a voice call, and stops or starts
         // sending our picture on a video call.
@@ -559,8 +561,12 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
                 palette.window,
             )
         };
-        if camera && control(ui, icon, fill, tint, &tip, call.phase.is_connected()).clicked() {
-            app.actions.push(Action::SetCallCamera(!call.camera_on));
+        if camera {
+            let toggle = control(ui, icon, fill, tint, &tip, call.phase.is_connected());
+            if toggle.clicked() {
+                app.actions.push(Action::SetCallCamera(!call.camera_on));
+            }
+            device_menu(ui, app, &toggle, DeviceKind::Camera, call, palette);
         }
 
         let open = app.call_devices_open;
@@ -587,6 +593,101 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         {
             app.actions.push(Action::HangupCall);
         }
+    }
+}
+
+/// The diameter of the arrow on a control's corner that opens its device menu.
+const MENU_ARROW: f32 = 22.0;
+
+/// The arrow on the microphone's or camera's control, and the menu it opens:
+/// the devices of that kind, with the one the call uses checked. Picking one
+/// moves the running call to it, as the pickers do; in a voice call the camera
+/// picked is the one turning video on opens.
+fn device_menu(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    control: &egui::Response,
+    kind: DeviceKind,
+    call: &CallUpdate,
+    palette: &Palette,
+) {
+    let locale = app.locale;
+    let pairs = |found: Vec<(&String, &String)>| -> Vec<(String, String)> {
+        found
+            .into_iter()
+            .map(|(id, label)| (id.clone(), label.clone()))
+            .collect()
+    };
+    let list = &app.call_devices;
+    let (title, default_label, current, devices) = match kind {
+        DeviceKind::Microphone => (
+            gettext(locale, "Microphone"),
+            gettext(locale, "System default"),
+            call.microphone.as_deref(),
+            pairs(list.microphones.iter().map(|d| (&d.id, &d.label)).collect()),
+        ),
+        DeviceKind::Camera => (
+            gettext(locale, "Camera"),
+            gettext(locale, "First camera"),
+            // A voice call has no camera yet: turning video on opens the one
+            // picked in Settings unless another is picked here.
+            call.camera
+                .as_deref()
+                .or(app.settings.devices.camera.as_deref()),
+            pairs(list.cameras.iter().map(|d| (&d.id, &d.label)).collect()),
+        ),
+        DeviceKind::Speaker => return,
+    };
+    let current = current.map(str::to_owned);
+    let center = control.rect.right_top() + vec2(-MENU_ARROW / 4.0, MENU_ARROW / 4.0);
+    let rect = Rect::from_center_size(center, Vec2::splat(MENU_ARROW));
+    let tip = match kind {
+        DeviceKind::Camera => gettext(locale, "Choose a camera"),
+        _ => gettext(locale, "Choose a microphone"),
+    };
+    let enabled = call.phase.is_live();
+    let arrow = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.put(rect, |ui: &mut egui::Ui| {
+                theme::circle_button(
+                    ui,
+                    Icon::ChevronUp,
+                    MENU_ARROW,
+                    palette.surface,
+                    theme::blend(palette.surface, palette.text, 0.12),
+                    palette.text,
+                    &tip,
+                )
+            })
+        })
+        .inner;
+    // Demo/test: hold this menu open for a screenshot.
+    #[cfg(any(test, feature = "demo"))]
+    if app.open_call_device_menu == Some(kind) {
+        egui::Popup::open_id(ui.ctx(), arrow.id.with("popup"));
+    }
+    let mut actions = Vec::new();
+    egui::Popup::menu(&arrow)
+        .width(260.0)
+        .frame(widgets::menu_frame(palette))
+        .show(|ui| {
+            theme::text(ui, title.as_ref(), theme::medium(12.0), palette.secondary);
+            let check = |selected: bool| selected.then_some(Icon::Check);
+            if widgets::menu_item(ui, palette, check(current.is_none()), &default_label) {
+                actions.push(None);
+            }
+            for (id, name) in &devices {
+                let selected = current.as_deref() == Some(id.as_str());
+                if widgets::menu_item(ui, palette, check(selected), name) {
+                    actions.push(Some(id.clone()));
+                }
+            }
+        });
+    for device in actions {
+        app.actions.push(match kind {
+            DeviceKind::Camera => Action::SetCallCameraDevice(device),
+            _ => Action::SetCallMicrophone(device),
+        });
     }
 }
 

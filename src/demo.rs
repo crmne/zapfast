@@ -2677,6 +2677,20 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     }];
                 }
             }
+            // The arrows on the microphone and camera controls, with their
+            // menus open.
+            "call-mic-menu" | "call-camera-menu" => {
+                call_sample(app, false, false);
+                app.call_devices = sample_devices();
+                if let Some(call) = app.call.as_mut() {
+                    call.microphone = Some("studio-mic".into());
+                }
+                app.open_call_device_menu = Some(if part == "call-mic-menu" {
+                    crate::calls::DeviceKind::Microphone
+                } else {
+                    crate::calls::DeviceKind::Camera
+                });
+            }
             "call-ended" => {
                 call_sample(app, false, false);
                 if let Some(call) = app.call.as_mut() {
@@ -9875,6 +9889,8 @@ mod tests {
             "call-failed",
             "call-devices",
             "settings-devices",
+            "call-mic-menu",
+            "call-camera-menu",
             "call-ended",
             "call-strip",
             "call-group",

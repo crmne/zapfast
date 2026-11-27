@@ -576,7 +576,10 @@ you open the locked chats with their code.
 
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
-microphone, speaker and (in a video call) camera pickers, and hang up. Mute tells the other side, as on
+microphone, speaker and (in a video call) camera pickers, and hang up. The
+small arrow on the microphone's and the camera's button opens a menu of your
+microphones or cameras, with the one in use checked; in a voice call, the camera
+picked there is the one turning video on opens. Mute tells the other side, as on
 the phone. The arrow in the top corner puts the call screen aside: the call
 keeps running in a strip at the bottom of the window with **Return to the
 call** and a hang-up button, and you can read and write in any chat meanwhile.

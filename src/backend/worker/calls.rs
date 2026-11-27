@@ -559,12 +559,15 @@ impl Worker {
             Some(runtime) => {
                 if on && !runtime.call.is_video() {
                     // A voice call: ask the peer for video, or answer the peer who asked, and start
-                    // draining the frames it brings, from the camera picked in Settings, else the
-                    // first camera the machine reports.
-                    let camera = calls::default_camera(
-                        &self.call_devices,
-                        self.preferred_devices.camera.clone(),
-                    );
+                    // draining the frames it brings, from the camera picked on the call screen or
+                    // in Settings, else the first camera the machine reports.
+                    // The one picked on the call screen while it was a voice call comes first.
+                    let picked = runtime
+                        .call
+                        .selections()
+                        .2
+                        .or_else(|| self.preferred_devices.camera.clone());
+                    let camera = calls::default_camera(&self.call_devices, picked);
                     match runtime.call.upgrade_to_video(camera).await {
                         Ok(frames) => {
                             if frames.is_some() {

@@ -625,6 +625,9 @@ pub struct App {
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
+    /// Demo/test: keep the call screen's microphone or camera menu open.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_call_device_menu: Option<crate::calls::DeviceKind>,
     /// Demo/test: keep this group member's menu open in the info panel.
     #[cfg(any(test, feature = "demo"))]
     pub open_member_menu: Option<ChatId>,
@@ -1655,6 +1658,8 @@ impl App {
             open_chat_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            open_call_device_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_member_menu: None,
             #[cfg(any(test, feature = "demo"))]
