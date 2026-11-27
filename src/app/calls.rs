@@ -690,7 +690,9 @@ impl App {
         }
         // Full screen belongs to the call surface while the reader is looking
         // at it: however the surface was put aside, the window comes back.
-        if self.call_fullscreen && !self.call_surface_open() {
+        // The root window can be the call itself, with the chat closed. It
+        // stays full screen even though the chat's call surface is aside.
+        if self.call_fullscreen && !self.call_surface_open() && !self.root_is_pip {
             self.set_call_fullscreen(ctx, false);
         }
         self.sync_call_tone();
@@ -1010,6 +1012,35 @@ mod tests {
         app.handle_call_update(ended(1, CallOutcome::Answered));
         app.tick_call(&ctx);
         assert!(!app.call_fullscreen);
+    }
+
+    #[test]
+    fn full_screen_in_the_call_window_keeps_the_chat_window_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        let mut video = update(1, CallPhase::Active);
+        video.video = true;
+        app.handle_call_update(video);
+        app.call_surface_hidden = true;
+        app.root_is_pip = true;
+        assert!(app.call_pip_open());
+
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(app.call_fullscreen);
+        app.tick_call(&ctx);
+        assert!(
+            app.call_fullscreen,
+            "the call window is the full screen, not the chat's surface"
+        );
+        assert!(app.root_is_pip && app.call_surface_hidden);
+
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(!app.call_fullscreen);
+        assert!(
+            app.root_is_pip,
+            "windowed again, the call is still its own window"
+        );
     }
 
     #[test]

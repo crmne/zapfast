@@ -799,8 +799,7 @@ fn pip_controls(
             )
             .clicked()
             {
-                app.actions.push(Action::ReturnToCall);
-                app.actions.push(Action::ToggleCallFullscreen);
+                push_fullscreen_actions(app);
             }
             let back = gettext(locale, "Return to the call").into_owned();
             if pip_button(
@@ -820,6 +819,16 @@ fn pip_controls(
             }
         },
     );
+}
+
+/// Full screen from a floating window usually returns to the call screen in
+/// the chat. When the chat's window has become the call, it is already the
+/// call screen, so only the window changes. The tray is what opens the chat.
+fn push_fullscreen_actions(app: &mut App) {
+    if !app.root_is_pip {
+        app.actions.push(Action::ReturnToCall);
+    }
+    app.actions.push(Action::ToggleCallFullscreen);
 }
 
 /// One round control of the floating window, smaller than the full screen's.
@@ -2046,6 +2055,22 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
         (app, root)
+    }
+
+    #[test]
+    fn full_screen_in_the_call_window_keeps_the_chat_closed() {
+        let (mut app, _root) = app();
+        app.root_is_pip = true;
+        push_fullscreen_actions(&mut app);
+        assert_eq!(app.actions, [Action::ToggleCallFullscreen]);
+
+        app.actions.clear();
+        app.root_is_pip = false;
+        push_fullscreen_actions(&mut app);
+        assert_eq!(
+            app.actions,
+            [Action::ReturnToCall, Action::ToggleCallFullscreen]
+        );
     }
 
     #[test]
