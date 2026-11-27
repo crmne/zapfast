@@ -830,7 +830,11 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             .is_some_and(|full| !full.is_empty());
         buttons.push((
             Icon::User,
-            if known { crate::i18n::gettext(locale, "Rename") } else { crate::i18n::gettext(locale, "Add to contacts") },
+            if known {
+                crate::i18n::gettext(locale, "Rename")
+            } else {
+                crate::i18n::gettext(locale, "Add to contacts")
+            },
             vec![Action::EditContact {
                 id: id.to_owned(),
                 name: shown.name.trim_start_matches('~').to_owned(),
@@ -864,7 +868,11 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             } else {
                 Icon::Pin
             },
-            if shown.pinned { crate::i18n::gettext(locale, "Unpin") } else { crate::i18n::gettext(locale, "Pin") },
+            if shown.pinned {
+                crate::i18n::gettext(locale, "Unpin")
+            } else {
+                crate::i18n::gettext(locale, "Pin")
+            },
             vec![Action::SetPinned(id.to_owned(), !shown.pinned)],
         ));
         buttons.push((

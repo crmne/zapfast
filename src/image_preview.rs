@@ -101,7 +101,9 @@ pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) 
     if width <= 0.0 || height <= 0.0 {
         return (0.0, 0.0);
     }
-    let scale = (canvas_width / width).min(canvas_height / height).min(MAX_FIT_ENLARGEMENT);
+    let scale = (canvas_width / width)
+        .min(canvas_height / height)
+        .min(MAX_FIT_ENLARGEMENT);
     (width * scale, height * scale)
 }
 

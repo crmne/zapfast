@@ -519,7 +519,9 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
         .clone()
         .filter(|_| open_first && contacts.is_empty())
     {
-        let name = crate::model::phone_of(&id).map(|n| format!("+{n}")).unwrap_or_default();
+        let name = crate::model::phone_of(&id)
+            .map(|n| format!("+{n}"))
+            .unwrap_or_default();
         app.actions.push(Action::StartChat {
             id,
             name,
@@ -603,9 +605,8 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
 /// Turkish national number (`05xx xxx xx xx`) gets the country code 90.
 fn typed_number_chat(text: &str) -> Option<String> {
     let digits: String = text.chars().filter(char::is_ascii_digit).collect();
-    let national = !text.trim_start().starts_with('+')
-        && digits.len() == 11
-        && digits.starts_with("05");
+    let national =
+        !text.trim_start().starts_with('+') && digits.len() == 11 && digits.starts_with("05");
     let target = if national {
         format!("90{}", &digits[1..])
     } else {
