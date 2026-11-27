@@ -223,7 +223,7 @@ name or description, in the interface language or in English.
 Each is kept in `settings.json` by the system's own id for the device, so a
 renamed device keeps its place. One that is unplugged stays picked and is
 shown as not connected; until it comes back the default stands in for it, and
-a call says so. The call screen's own pickers change only the call that is
+a call says so. The menus on the call screen's buttons change only the call that is
 running. The lists are read again each time Settings opens.
 
 **Privacy**

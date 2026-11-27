@@ -865,8 +865,9 @@ pub struct App {
     call_surface_until: Option<Instant>,
     /// The microphones and speakers the call screen offers.
     pub call_devices: crate::calls::DeviceList,
-    /// Whether the call screen shows its device pickers.
-    pub call_devices_open: bool,
+    /// Whether one of the call screen's device menus is open, as the last
+    /// frame drew it.
+    pub call_device_menu_open: bool,
     /// Whether the full call screen is put aside so a chat can be read while
     /// the call runs. The call itself is untouched; a bar offers the way back.
     pub call_surface_hidden: bool,
@@ -1767,7 +1768,7 @@ impl App {
             call_account: None,
             call_surface_until: None,
             call_devices: crate::calls::DeviceList::default(),
-            call_devices_open: false,
+            call_device_menu_open: false,
             call_surface_hidden: false,
             call_fullscreen: false,
             call_notified: None,
@@ -7544,6 +7545,7 @@ impl App {
             | Action::HangupCall
             | Action::StartVideoCall(_)
             | Action::SetCallMuted(_)
+            | Action::SetCallSpeakerMuted(_)
             | Action::SetCallCamera(_)
             | Action::SetCallMicrophone(_)
             | Action::SetCallSpeaker(_)

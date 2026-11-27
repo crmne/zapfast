@@ -273,13 +273,7 @@ fn live(
 
     corner_buttons(ui, app, call, area, remote.is_some());
 
-    let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
-    if app.call_devices_open && call.phase.is_live() {
-        let above = area.with_max_y(controls_row.top() - 20.0);
-        bottom_row(ui, above, PICKER_HEIGHT, |ui| {
-            devices(ui, app, call, palette)
-        });
-    }
+    bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
 }
 
 /// Stepping back to the chat and full screen, along the top: neither ends
@@ -501,9 +495,10 @@ fn control(
     .inner
 }
 
-/// Mute, the device pickers, and hang up.
+/// Mute, the camera and the speaker, each with its device menu, and hang up.
 fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palette) {
     let locale = app.locale;
+    app.call_device_menu_open = false;
     let live = call.phase.is_live();
     // A group call takes video only when it began as a video call: the
     // library refuses to turn a group's voice call into one, so no button
@@ -535,7 +530,7 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         if mute.clicked() {
             app.actions.push(Action::SetCallMuted(!call.muted));
         }
-        device_menu(ui, app, &mute, DeviceKind::Microphone, call, palette);
+        let _ = device_menu(ui, app, &mute, DeviceKind::Microphone, call, palette);
 
         // The camera: starts video on a voice call, and stops or starts
         // sending our picture on a video call.
@@ -566,19 +561,33 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
             if toggle.clicked() {
                 app.actions.push(Action::SetCallCamera(!call.camera_on));
             }
-            device_menu(ui, app, &toggle, DeviceKind::Camera, call, palette);
+            let _ = device_menu(ui, app, &toggle, DeviceKind::Camera, call, palette);
         }
 
-        let open = app.call_devices_open;
-        let tip = gettext(locale, "Devices");
-        let (fill, tint) = if open {
-            (palette.text, palette.window)
+        // The speaker: silences what this computer plays of the call, or
+        // lets it play again, without telling the peer. Its arrow picks the
+        // device.
+        let (icon, tip, fill, tint) = if call.speaker_muted {
+            (
+                Icon::VolumeX,
+                gettext(locale, "Turn the speaker on"),
+                palette.text,
+                palette.window,
+            )
         } else {
-            (palette.surface_active, palette.text)
+            (
+                Icon::Volume2,
+                gettext(locale, "Turn the speaker off"),
+                palette.surface_active,
+                palette.text,
+            )
         };
-        if control(ui, Icon::Volume2, fill, tint, &tip, live).clicked() {
-            app.call_devices_open = !open;
+        let speaker = control(ui, icon, fill, tint, &tip, call.phase.is_connected());
+        if speaker.clicked() {
+            app.actions
+                .push(Action::SetCallSpeakerMuted(!call.speaker_muted));
         }
+        let _ = device_menu(ui, app, &speaker, DeviceKind::Speaker, call, palette);
 
         let tip = gettext(locale, "Hang up");
         if control(
@@ -599,10 +608,11 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
 /// The diameter of the arrow on a control's corner that opens its device menu.
 const MENU_ARROW: f32 = 22.0;
 
-/// The arrow on the microphone's or camera's control, and the menu it opens:
-/// the devices of that kind, with the one the call uses checked. Picking one
-/// moves the running call to it, as the pickers do; in a voice call the camera
-/// picked is the one turning video on opens.
+/// The arrow on the microphone's, the speaker's or the camera's control, and
+/// the menu it opens: the devices of that kind, with the one the call uses
+/// checked. It is the call screen's one way to pick a device. Picking one moves
+/// the running call to it, without changing Settings; in a voice call the
+/// camera picked is the one turning video on opens. Returns the menu's id.
 fn device_menu(
     ui: &mut egui::Ui,
     app: &mut App,
@@ -610,7 +620,7 @@ fn device_menu(
     kind: DeviceKind,
     call: &CallUpdate,
     palette: &Palette,
-) {
+) -> egui::Id {
     let locale = app.locale;
     let pairs = |found: Vec<(&String, &String)>| -> Vec<(String, String)> {
         found
@@ -636,14 +646,20 @@ fn device_menu(
                 .or(app.settings.devices.camera.as_deref()),
             pairs(list.cameras.iter().map(|d| (&d.id, &d.label)).collect()),
         ),
-        DeviceKind::Speaker => return,
+        DeviceKind::Speaker => (
+            gettext(locale, "Speaker"),
+            gettext(locale, "System default"),
+            call.speaker.as_deref(),
+            pairs(list.speakers.iter().map(|d| (&d.id, &d.label)).collect()),
+        ),
     };
     let current = current.map(str::to_owned);
     let center = control.rect.right_top() + vec2(-MENU_ARROW / 4.0, MENU_ARROW / 4.0);
     let rect = Rect::from_center_size(center, Vec2::splat(MENU_ARROW));
     let tip = match kind {
+        DeviceKind::Microphone => gettext(locale, "Choose a microphone"),
+        DeviceKind::Speaker => gettext(locale, "Choose a speaker"),
         DeviceKind::Camera => gettext(locale, "Choose a camera"),
-        _ => gettext(locale, "Choose a microphone"),
     };
     let enabled = call.phase.is_live();
     let arrow = ui
@@ -661,10 +677,11 @@ fn device_menu(
             })
         })
         .inner;
+    let menu = arrow.id.with("popup");
     // Demo/test: hold this menu open for a screenshot.
     #[cfg(any(test, feature = "demo"))]
     if app.open_call_device_menu == Some(kind) {
-        egui::Popup::open_id(ui.ctx(), arrow.id.with("popup"));
+        egui::Popup::open_id(ui.ctx(), menu);
     }
     let mut actions = Vec::new();
     egui::Popup::menu(&arrow)
@@ -683,140 +700,15 @@ fn device_menu(
                 }
             }
         });
+    app.call_device_menu_open |= egui::Popup::is_id_open(ui.ctx(), menu);
     for device in actions {
         app.actions.push(match kind {
+            DeviceKind::Microphone => Action::SetCallMicrophone(device),
+            DeviceKind::Speaker => Action::SetCallSpeaker(device),
             DeviceKind::Camera => Action::SetCallCameraDevice(device),
-            _ => Action::SetCallMicrophone(device),
         });
     }
-}
-
-/// The microphone and speaker pickers. Each one rebinds a live stream, so
-/// what it shows is what is in use; nothing about the system changes.
-fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palette) {
-    let locale = app.locale;
-    let default_label = gettext(locale, "System default").into_owned();
-    let microphones: Vec<(String, String)> = app
-        .call_devices
-        .microphones
-        .iter()
-        .map(|device| (device.id.clone(), device.label.clone()))
-        .collect();
-    let speakers: Vec<(String, String)> = app
-        .call_devices
-        .speakers
-        .iter()
-        .map(|device| (device.id.clone(), device.label.clone()))
-        .collect();
-    let cameras: Vec<(String, String)> = app
-        .call_devices
-        .cameras
-        .iter()
-        .map(|device| (device.id.clone(), device.label.clone()))
-        .collect();
-    let mut actions = Vec::new();
-    {
-        let pickers = if call.video { 3.0 } else { 2.0 };
-        let width = pickers * PICKER + (pickers - 1.0) * 16.0;
-        ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
-        Picker {
-            salt: "call-microphone",
-            icon: Icon::Mic,
-            title: &gettext(locale, "Microphone"),
-            default_label: &default_label,
-            current: call.microphone.as_deref(),
-            devices: &microphones,
-            palette,
-        }
-        .show(ui, &mut actions, Action::SetCallMicrophone);
-        ui.add_space(16.0);
-        Picker {
-            salt: "call-speaker",
-            icon: Icon::Volume2,
-            title: &gettext(locale, "Speaker"),
-            default_label: &default_label,
-            current: call.speaker.as_deref(),
-            devices: &speakers,
-            palette,
-        }
-        .show(ui, &mut actions, Action::SetCallSpeaker);
-        if call.video {
-            ui.add_space(16.0);
-            Picker {
-                salt: "call-camera",
-                icon: Icon::Video,
-                title: &gettext(locale, "Camera"),
-                default_label: &gettext(locale, "First camera"),
-                current: call.camera.as_deref(),
-                devices: &cameras,
-                palette,
-            }
-            .show(ui, &mut actions, Action::SetCallCameraDevice);
-        }
-    }
-    app.actions.extend(actions);
-}
-
-/// The width of one device picker, and the height of the row they make.
-const PICKER: f32 = 200.0;
-const PICKER_HEIGHT: f32 = 60.0;
-
-/// One device picker: its title with an icon, and what the machine has.
-struct Picker<'a> {
-    salt: &'a str,
-    icon: Icon,
-    title: &'a str,
-    default_label: &'a str,
-    current: Option<&'a str>,
-    devices: &'a [(String, String)],
-    palette: &'a Palette,
-}
-
-impl Picker<'_> {
-    fn show(
-        &self,
-        ui: &mut egui::Ui,
-        actions: &mut Vec<Action>,
-        action: impl Fn(Option<String>) -> Action,
-    ) {
-        let label = self
-            .current
-            .and_then(|id| {
-                self.devices
-                    .iter()
-                    .find(|(known, _)| known == id)
-                    .map(|(_, label)| label.clone())
-            })
-            .or_else(|| self.current.map(str::to_owned))
-            .unwrap_or_else(|| self.default_label.to_owned());
-        ui.vertical(|ui| {
-            ui.set_width(PICKER);
-            ui.horizontal(|ui| {
-                theme::icon(ui, self.icon, 13.0, self.palette.secondary);
-                theme::text(ui, self.title, theme::medium(12.0), self.palette.secondary);
-            });
-            egui::ComboBox::from_id_salt(self.salt)
-                .selected_text(label)
-                .width(PICKER)
-                .truncate()
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(self.current.is_none(), self.default_label)
-                        .clicked()
-                    {
-                        actions.push(action(None));
-                    }
-                    for (id, name) in self.devices {
-                        if ui
-                            .selectable_label(self.current == Some(id.as_str()), name)
-                            .clicked()
-                        {
-                            actions.push(action(Some(id.clone())));
-                        }
-                    }
-                });
-        });
-    }
+    menu
 }
 
 /// Who a call is with, as the surface names them: the chat (a group's own
@@ -1063,13 +955,6 @@ fn group_live(
 
     let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
     let mut bottom = controls_row.top() - 20.0;
-    if app.call_devices_open && call.phase.is_live() {
-        let above = area.with_max_y(controls_row.top() - 20.0);
-        let pickers = bottom_row(ui, above, PICKER_HEIGHT, |ui| {
-            devices(ui, app, call, palette)
-        });
-        bottom = pickers.top() - 16.0;
-    }
     // What moved under the call, between the tiles and the controls.
     let notes_height = notes_height(call);
     if notes_height > 0.0 {

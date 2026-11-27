@@ -717,6 +717,9 @@ impl App {
                 self.dismiss_call();
             }
             Action::SetCallMuted(muted) => self.send_call_command(Command::SetCallMuted(muted)),
+            Action::SetCallSpeakerMuted(muted) => {
+                self.send_call_command(Command::SetCallSpeakerMuted(muted));
+            }
             Action::SetCallMicrophone(device) => {
                 self.send_call_command(Command::SetCallMicrophone(device));
             }
@@ -822,6 +825,7 @@ mod tests {
             started: (phase == CallPhase::Active).then(Instant::now),
             muted: false,
             camera_on: false,
+            speaker_muted: false,
             remote_video: false,
             video_requested: false,
             outcome: None,
@@ -1176,10 +1180,18 @@ mod tests {
         );
         app.apply(Action::AnswerCall, &ctx);
         app.apply(Action::SetCallMuted(true), &ctx);
+        app.apply(Action::SetCallSpeakerMuted(true), &ctx);
         let calls = |commands: Vec<Command>| -> Vec<Command> {
             commands
                 .into_iter()
-                .filter(|command| matches!(command, Command::AnswerCall | Command::SetCallMuted(_)))
+                .filter(|command| {
+                    matches!(
+                        command,
+                        Command::AnswerCall
+                            | Command::SetCallMuted(_)
+                            | Command::SetCallSpeakerMuted(_)
+                    )
+                })
                 .collect()
         };
         assert!(
@@ -1188,7 +1200,11 @@ mod tests {
         );
         assert!(matches!(
             calls(sent(&mut second)).as_slice(),
-            [Command::AnswerCall, Command::SetCallMuted(true)]
+            [
+                Command::AnswerCall,
+                Command::SetCallMuted(true),
+                Command::SetCallSpeakerMuted(true)
+            ]
         ));
     }
 

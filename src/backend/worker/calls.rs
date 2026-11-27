@@ -613,6 +613,16 @@ impl Worker {
         }
     }
 
+    pub(super) fn set_call_speaker_muted(&mut self, muted: bool) {
+        let update = self
+            .call
+            .as_mut()
+            .map(|runtime| runtime.call.set_speaker_muted(muted));
+        if let Some(update) = update {
+            self.emit_call(update);
+        }
+    }
+
     pub(super) fn set_call_speaker(&mut self, device: Option<String>) {
         let update = self
             .call

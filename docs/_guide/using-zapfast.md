@@ -576,10 +576,11 @@ you open the locked chats with their code.
 
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
-microphone, speaker and (in a video call) camera pickers, and hang up. The
-small arrow on the microphone's and the camera's button opens a menu of your
-microphones or cameras, with the one in use checked; in a voice call, the camera
-picked there is the one turning video on opens. Mute tells the other side, as on
+camera, the speaker, and hang up. The speaker button silences what this
+computer plays of the call, and turns it back on; unlike mute, the other side is
+not told. The small arrow on the mute, camera and speaker buttons opens a menu
+of your microphones, cameras or speakers, with the one in use checked; in a
+voice call, the camera picked there is the one turning video on opens. Mute tells the other side, as on
 the phone. The arrow in the top corner puts the call screen aside: the call
 keeps running in a strip at the bottom of the window with **Return to the
 call** and a hang-up button, and you can read and write in any chat meanwhile.
@@ -608,7 +609,7 @@ Calls open the microphone, speaker and camera picked in **Settings > Audio and
 video**, or the system's default microphone and speaker and the first camera
 when nothing is picked there. A call that rings here starts on the same
 devices, and choosing others while it rings changes what answering opens. The
-pickers move a call to another device while it runs, without changing Settings
+arrows' menus move a call to another device while it runs, without changing Settings
 or your system's defaults; a device that goes away falls back to the default,
 and the call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The

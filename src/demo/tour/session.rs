@@ -316,6 +316,9 @@ pub fn respond(app: &mut App) {
             // The engine's answers to the call screen's own controls: the
             // call as it now is, as the worker reports it.
             Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),
+            Command::SetCallSpeakerMuted(muted) => {
+                update_call(app, |call| call.speaker_muted = muted);
+            }
             Command::SetCallCamera(on) => update_call(app, |call| call.camera_on = on),
             Command::AnswerCall => update_call(app, |call| {
                 call.phase = crate::calls::CallPhase::Active;

@@ -16,7 +16,7 @@
 //! | 4.3 - 4.7   | Ada answered: Connecting…                                        |
 //! | 4.7 - 6.4   | Active: Ada's video fills the window, the timer runs             |
 //! | 6.4 - 8.0   | Mute, then Unmute                                                |
-//! | 9.2 - 10.8  | The device pickers, open and closed                              |
+//! | 9.2 - 10.8  | A device menu, open and closed                                   |
 //! | 12.0        | Hang up: straight back to the chat                               |
 //! | 12.1 - 14.0 | The call's entry at the end of Ada's chat                        |
 //! | 14.0 - 16.4 | Grace Hopper's voice call rings: Decline and Accept              |
@@ -82,7 +82,7 @@ pub fn prepare(app: &mut App) {
     app.call_account = None;
     app.call_log.clear();
     app.call_log_loaded = false;
-    app.call_devices_open = false;
+    app.call_device_menu_open = false;
     app.call_devices = crate::calls::DeviceList {
         microphones: vec![crate::calls::AudioDevice {
             id: "studio-mic".into(),
@@ -261,12 +261,12 @@ pub(super) fn script() -> Vec<Cue> {
     add(4.3, Remote(accepted));
     add(VIDEO_UP, Remote(up));
 
-    // Mute and unmute, then the device pickers.
+    // Mute and unmute, then a device menu, opened and closed.
     add(5.9, Move(Button("Mute")));
     add(6.4, Click(left));
     add(7.6, Move(Button("Unmute")));
     add(8.0, Click(left));
-    add(8.8, Move(Button("Devices")));
+    add(8.8, Move(Button("Choose a microphone")));
     add(9.2, Click(left));
     add(10.8, Click(left));
 

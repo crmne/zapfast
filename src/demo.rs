@@ -2667,7 +2667,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "call-devices" => {
                 call_sample(app, false, false);
                 app.call_devices = sample_devices();
-                app.call_devices_open = true;
+                app.open_call_device_menu = Some(crate::calls::DeviceKind::Speaker);
                 if let Some(call) = app.call.as_mut() {
                     call.muted = true;
                     call.speaker = Some("desk-speakers".into());
@@ -2690,6 +2690,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 } else {
                     crate::calls::DeviceKind::Camera
                 });
+            }
+            // The speaker silenced here, its button lit.
+            "call-speaker-off" => {
+                call_sample(app, false, false);
+                if let Some(call) = app.call.as_mut() {
+                    call.speaker_muted = true;
+                }
             }
             "call-ended" => {
                 call_sample(app, false, false);
@@ -4426,6 +4433,7 @@ pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
             .then(|| std::time::Instant::now() - std::time::Duration::from_secs(221)),
         muted: false,
         camera_on: video,
+        speaker_muted: false,
         remote_video: video && !incoming,
         video_requested: false,
         outcome: None,
@@ -9891,6 +9899,7 @@ mod tests {
             "settings-devices",
             "call-mic-menu",
             "call-camera-menu",
+            "call-speaker-off",
             "call-ended",
             "call-strip",
             "call-group",
@@ -25444,7 +25453,12 @@ mod call_surface_tests {
         running.attach(&ctx);
         ctx.enable_accesskit();
         let shown = labels(&mut running, &ctx);
-        for expected in ["Mute", "Devices", "Hang up"] {
+        for expected in [
+            "Mute",
+            "Turn the speaker off",
+            "Choose a speaker",
+            "Hang up",
+        ] {
             assert!(
                 shown.contains(&expected.to_owned()),
                 "{expected} is on the call screen: {shown:?}"
@@ -25480,7 +25494,10 @@ mod call_surface_tests {
             "Full screen",
             "Mute",
             "Start video",
-            "Devices",
+            "Turn the speaker off",
+            "Choose a microphone",
+            "Choose a camera",
+            "Choose a speaker",
             "Hang up",
         ] {
             assert!(

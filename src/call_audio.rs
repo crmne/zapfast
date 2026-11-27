@@ -886,6 +886,8 @@ pub struct AudioOutput {
     pub restarts: Arc<AtomicUsize>,
     /// When the current grace window closes, if one is open.
     relink: Arc<Mutex<Option<Instant>>>,
+    /// Set while the person has silenced the speaker: the peer's frames are played as silence.
+    muted: Arc<AtomicBool>,
 }
 
 impl AudioOutput {
@@ -904,6 +906,7 @@ impl AudioOutput {
         let stalls = Arc::new(AtomicUsize::new(0));
         let restarts = Arc::new(AtomicUsize::new(0));
         let relink = Arc::new(Mutex::new(None));
+        let muted = Arc::new(AtomicBool::new(false));
         tokio::spawn(play_pump(
             rx,
             swaps,
@@ -914,6 +917,7 @@ impl AudioOutput {
                 stalls: Arc::clone(&stalls),
                 restarts: Arc::clone(&restarts),
                 relink: Arc::clone(&relink),
+                muted: Arc::clone(&muted),
             },
             far_end.clone(),
         ));
@@ -925,9 +929,21 @@ impl AudioOutput {
                 stalls,
                 restarts,
                 relink,
+                muted,
             },
             tx,
         )
+    }
+
+    /// Silences the speaker, or lets it play again. Only here: the peer is not told, and the
+    /// stream keeps running, playing silence, so nothing reopens when it is turned back on.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    /// Whether the speaker is silenced.
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
     }
 
     /// Whether the call has ever opened a relink window, which is what a call's own test asks.
@@ -970,6 +986,15 @@ impl AudioOutput {
     }
 }
 
+/// The peer's frame as the speaker should play it: silence of the same length while the person
+/// has silenced the speaker, so the stream keeps its pace and is never judged stalled.
+fn silenced(mut frame: Vec<i16>, muted: &AtomicBool) -> Vec<i16> {
+    if muted.load(Ordering::Relaxed) {
+        frame.fill(0);
+    }
+    frame
+}
+
 /// What one call's speaker keeps about itself, handed to the pump as one thing.
 ///
 /// Three counters and a window, which are four questions about one stream: how many were opened,
@@ -982,6 +1007,7 @@ struct SpeakerHealth {
     stalls: Arc<AtomicUsize>,
     restarts: Arc<AtomicUsize>,
     relink: Arc<Mutex<Option<Instant>>>,
+    muted: Arc<AtomicBool>,
 }
 
 async fn play_pump(
@@ -997,6 +1023,7 @@ async fn play_pump(
         stalls,
         restarts,
         relink,
+        muted,
     } = health;
     let mut target = initial;
     // Restarts in a row that never played a sample. Reset by any stream that plays one, so this
@@ -1034,6 +1061,7 @@ async fn play_pump(
                 frame = rx.recv() => {
                     match frame {
                         Ok(frame) => {
+                            let frame = silenced(frame, &muted);
                             if writer.send(frame).await.is_err() {
                                 // The writer ended, either from a stall or from its device going away.
                                 break;
@@ -1550,6 +1578,16 @@ pub(crate) mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A silenced speaker plays the peer's frames as silence of the same length, so the stream
+    /// keeps its pace and nothing reads it as stalled; turned back on, the frames play as sent.
+    #[test]
+    fn a_silenced_speaker_plays_silence_at_the_same_pace() {
+        let muted = AtomicBool::new(true);
+        assert_eq!(silenced(vec![120, -340, 9], &muted), vec![0, 0, 0]);
+        muted.store(false, Ordering::Relaxed);
+        assert_eq!(silenced(vec![120, -340, 9], &muted), vec![120, -340, 9]);
+    }
 
     #[test]
     fn mono_mixes_every_channel_in() {

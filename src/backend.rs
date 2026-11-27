@@ -547,6 +547,8 @@ pub enum Command {
     HangupCall,
     /// Mutes or unmutes the current call's microphone through the engine.
     SetCallMuted(bool),
+    /// Silences the call's speaker here, or lets it play again; the peer is not told.
+    SetCallSpeakerMuted(bool),
     /// Turns the current call's camera on or off.
     SetCallCamera(bool),
     /// Rebinds the current call's microphone; `None` is the system default.

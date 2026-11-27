@@ -172,6 +172,8 @@ pub struct CallUpdate {
     pub started: Option<Instant>,
     pub muted: bool,
     pub camera_on: bool,
+    /// Whether the person silenced the speaker here; the peer is not told.
+    pub speaker_muted: bool,
     /// Whether the peer's picture has started arriving.
     pub remote_video: bool,
     /// Whether the peer asked to turn a voice call into a video call and waits for an answer.
@@ -238,6 +240,7 @@ impl CallUpdate {
             started: None,
             muted: false,
             camera_on: false,
+            speaker_muted: false,
             remote_video: false,
             video_requested: false,
             outcome: None,
@@ -2396,6 +2399,7 @@ impl Call {
                 .video_pipe
                 .as_ref()
                 .is_some_and(VideoPipeline::camera_running),
+            speaker_muted: self.speaker.as_ref().is_some_and(AudioOutput::is_muted),
             remote_video: self.remote_video,
             video_requested: self.peer_video_request.is_some(),
             outcome: self.outcome,
@@ -3505,6 +3509,16 @@ impl Call {
         self.update()
     }
 
+    /// Silences the speaker here, or lets it play again. The peer is not told: this is not the
+    /// call's mute, which is the microphone's, only what this computer plays.
+    pub fn set_speaker_muted(&mut self, muted: bool) -> CallUpdate {
+        if let Some(speaker) = &self.speaker {
+            speaker.set_muted(muted);
+        }
+        log::info!("[CALL] speaker muted={muted}");
+        self.update()
+    }
+
     /// Rebinds the speaker. The engine's channel is untouched.
     pub fn set_speaker(&mut self, device: Option<String>) -> CallUpdate {
         self.speaker_device = device.clone();
@@ -4061,6 +4075,7 @@ mod tests {
             started: None,
             muted: false,
             camera_on,
+            speaker_muted: false,
             remote_video: false,
             video_requested: false,
             outcome: None,

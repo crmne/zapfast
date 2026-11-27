@@ -7352,6 +7352,7 @@ impl Worker {
             Command::DeclineCall => self.decline_call().await,
             Command::HangupCall => self.hangup_call().await,
             Command::SetCallMuted(muted) => self.set_call_muted(muted).await,
+            Command::SetCallSpeakerMuted(muted) => self.set_call_speaker_muted(muted),
             Command::SetCallCamera(on) => self.set_call_camera(on).await,
             Command::SetCallMicrophone(device) => self.set_call_microphone(device),
             Command::SetCallSpeaker(device) => self.set_call_speaker(device),
