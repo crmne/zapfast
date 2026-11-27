@@ -567,7 +567,6 @@ struct RemoteStream {
 /// A device change starts a fresh thread rather than telling this one to switch: a running encoder
 /// carries state the new device's stream cannot inherit.
 struct CameraCapture {
-    timed: async_channel::Receiver<TimedVideoFrame>,
     /// Cleared when the camera is no longer wanted, and read by the capture loop between frames.
     running: Arc<AtomicBool>,
     /// Set when the engine needs a keyframe; the next frame is encoded as one.
@@ -591,13 +590,16 @@ impl CameraCapture {
     /// delivers, so a call never signals video it cannot send. Blocking: call it off the async loop.
     ///
     /// `rate` is what the call's rate control last decided; the thread reads it between frames.
+    /// The frames go into the call's own `line`, which outlives this camera, so the engine keeps
+    /// reading from the same place when the camera is switched or turned off and on.
     fn start(
         device: Option<String>,
+        line: FrameLine,
         ticks: async_channel::Sender<VideoTick>,
         rate: Arc<RateShare>,
         diag: Arc<crate::call_diag::CallVideo>,
     ) -> Result<Self> {
-        let (frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
+        let id = line.next_camera();
         let running = Arc::new(AtomicBool::new(true));
         let keyframe = Arc::new(AtomicBool::new(false));
         let (ready, came_up) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -614,13 +616,14 @@ impl CameraCapture {
                     keyframe: &forced,
                     rate: &rate,
                     diag: &diag,
+                    line: &line,
+                    id,
                 };
-                capture(device, frames, ticks, controls, ready);
+                capture(device, ticks, controls, ready);
                 let _ = done.send(());
             })
             .context("camera thread could not be started")?;
         let capture = Self {
-            timed,
             running,
             keyframe,
             finished,
@@ -657,6 +660,55 @@ struct CaptureAlive(Arc<AtomicBool>);
 impl Drop for CaptureAlive {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Where a call's encoded camera frames go, for the whole call: one channel the engine reads, and
+/// one origin their timestamps count from.
+///
+/// Both outlive any one camera. A camera switched mid-call used to bring a channel of its own,
+/// which the engine never read (it kept the closed one of the camera before), and a clock that
+/// started again from zero, whose frames the peer took for older than the picture it already
+/// showed. Either froze the peer's picture on the last frame until the call ended.
+#[derive(Clone)]
+struct FrameLine {
+    tx: async_channel::Sender<TimedVideoFrame>,
+    rx: async_channel::Receiver<TimedVideoFrame>,
+    origin: Instant,
+    /// The newest frame's time, in microseconds from `origin`, so a new camera's first timestamp
+    /// comes after the last one sent even when its frame rate rounds differently.
+    latest_us: Arc<AtomicU64>,
+    /// Which camera may send: each start takes the next, and a camera whose thread outlived its
+    /// stop sends nothing more once another has started.
+    current: Arc<AtomicU64>,
+}
+
+impl FrameLine {
+    fn new() -> Self {
+        let (tx, rx) = async_channel::bounded::<TimedVideoFrame>(4);
+        Self {
+            tx,
+            rx,
+            origin: Instant::now(),
+            latest_us: Arc::new(AtomicU64::new(0)),
+            current: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Makes the next camera the only one that may send, and returns its number.
+    fn next_camera(&self) -> u64 {
+        self.current.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    /// Whether camera `id` is still the one that may send.
+    fn sends(&self, id: u64) -> bool {
+        self.current.load(Ordering::Acquire) == id
+    }
+
+    /// Lets go of frames a stopped camera left queued, so the next camera's first frame, a
+    /// keyframe, is the next the engine sends.
+    fn drain(&self) {
+        while self.rx.try_recv().is_ok() {}
     }
 }
 
@@ -697,6 +749,8 @@ pub struct VideoPipeline {
     ticks: async_channel::Sender<VideoTick>,
     remote_tx: async_channel::Sender<VideoFrame>,
     camera: Option<CameraCapture>,
+    /// Where every camera of this call sends its frames.
+    line: FrameLine,
     device: Option<String>,
     /// How much the camera sends, adapted to the peer's reports. It outlives a camera switch: the
     /// path has not changed because the camera did.
@@ -738,11 +792,13 @@ impl VideoPipeline {
         decode_remote(remote_rx, ticks.clone(), Arc::clone(&diag));
         let rate_share = Arc::new(RateShare::default());
         let rate = RateControl::new(Arc::clone(&rate_share));
+        let line = FrameLine::new();
         // A machine without a camera, or one whose camera is busy, still takes part in a video
         // call: it sees the other side, its own camera reads as off, and the camera button says
         // why when pressed.
         let camera = match CameraCapture::start(
             device.clone(),
+            line.clone(),
             ticks.clone(),
             Arc::clone(&rate_share),
             Arc::clone(&diag),
@@ -758,6 +814,7 @@ impl VideoPipeline {
                 ticks,
                 remote_tx,
                 camera,
+                line,
                 device,
                 rate,
                 rate_share,
@@ -820,7 +877,7 @@ impl VideoPipeline {
         let (empty_tx, empty) = async_channel::bounded::<Vec<u8>>(1);
         drop(empty_tx);
         let timed = match &self.camera {
-            Some(camera) => camera.timed.clone(),
+            Some(_) => self.line.rx.clone(),
             // No camera running: a closed timestamped channel, so the feed simply sees no frames.
             None => {
                 let (unused, closed) = async_channel::bounded::<TimedVideoFrame>(1);
@@ -849,6 +906,7 @@ impl VideoPipeline {
     pub async fn resume_camera(&mut self, device: Option<String>) -> Result<()> {
         let previous = self.camera.take();
         self.device = device.clone();
+        let line = self.line.clone();
         let ticks = self.ticks.clone();
         let rate = Arc::clone(&self.rate_share);
         let diag = Arc::clone(&self.diag);
@@ -856,7 +914,8 @@ impl VideoPipeline {
         // races it for the device.
         let camera = tokio::task::spawn_blocking(move || {
             drop(previous);
-            CameraCapture::start(device, ticks, rate, diag)
+            line.drain();
+            CameraCapture::start(device, line, ticks, rate, diag)
         })
         .await
         .map_err(|error| anyhow!("the camera thread failed: {error}"))??;
@@ -894,7 +953,6 @@ impl VideoPipeline {
 /// camera.
 fn capture(
     device: Option<String>,
-    timed: async_channel::Sender<TimedVideoFrame>,
     ticks: async_channel::Sender<VideoTick>,
     controls: CaptureControls<'_>,
     ready: std::sync::mpsc::Sender<Result<(), String>>,
@@ -923,7 +981,7 @@ fn capture(
     };
     // The camera and the encoder are both up: only now is a video call worth signaling.
     let _ = ready.send(Ok(()));
-    capture_frames(&mut source, controls, &timed, &ticks, plan, encoder);
+    capture_frames(&mut source, controls, &ticks, plan, encoder);
     source.stop();
 }
 
@@ -933,6 +991,10 @@ struct CaptureControls<'a> {
     stopping: &'a AtomicBool,
     /// Set when the engine needs a keyframe; the next frame sent is encoded as one.
     keyframe: &'a AtomicBool,
+    /// Where the frames go, and the timeline they continue.
+    line: &'a FrameLine,
+    /// This camera's number on the line ([`FrameLine::sends`]).
+    id: u64,
     /// The rate and the picture size the call's rate control last chose.
     rate: &'a RateShare,
     /// Where what is sent is counted, and dumped when asked.
@@ -1103,13 +1165,16 @@ fn set_encoder_bitrate(encoder: &mut openh264::encoder::Encoder, bitrate: u32) -
 fn capture_frames(
     source: &mut crate::camera::Source,
     controls: CaptureControls<'_>,
-    timed: &async_channel::Sender<TimedVideoFrame>,
     ticks: &async_channel::Sender<VideoTick>,
     mut plan: SendPlan,
     mut encoder: CameraEncoder,
 ) {
     let mut bytes = vec![0u8; plan.frame_len()];
-    let mut clock = FrameClock::new(Instant::now(), plan.sent_fps());
+    // From the call's own origin, not this camera's start: a camera switched or turned on again
+    // carries on the timeline where the last one left it.
+    let line = controls.line;
+    let mut clock =
+        FrameClock::new(line.origin, plan.sent_fps()).after(line.latest_us.load(Ordering::Acquire));
     let mut cadence = Cadence::new(plan.camera_fps);
     // Camera frames since the last one sent; the next is sent when this reaches zero.
     let mut countdown = 0u32;
@@ -1227,10 +1292,17 @@ fn capture_frames(
                         .timestamp(clock.stamp(captured))
                         .captured_at(captured_at)
                         .build();
+                    if let Some(us) = clock.last_us() {
+                        line.latest_us.fetch_max(us, Ordering::AcqRel);
+                    }
+                    if !line.sends(controls.id) {
+                        // Another camera has started: this one's thread outlived its stop.
+                        break;
+                    }
                     // A full queue means the wire is behind. The frame is dropped, which leaves the
                     // peer's decoder without its reference, so the next frame sent starts afresh,
                     // and the rate control hears that the path carries less than is sent.
-                    if timed.try_send(frame).is_err() {
+                    if line.tx.try_send(frame).is_err() {
                         resync = true;
                         controls.rate.note_queue_drop();
                     } else {
@@ -3722,19 +3794,18 @@ mod tests {
     fn pipeline_with_a_running_camera() -> VideoPipeline {
         let (ticks, _ticks_rx) = async_channel::bounded::<VideoTick>(2);
         let (remote_tx, _remote_rx) = async_channel::bounded::<VideoFrame>(8);
-        let (_frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
-        // No thread behind it: its end of the channel is already dropped.
+        // No thread behind it.
         let (_done, finished) = std::sync::mpsc::channel();
         let rate_share = Arc::new(RateShare::default());
         VideoPipeline {
             ticks,
             remote_tx,
             camera: Some(CameraCapture {
-                timed,
                 running: Arc::new(AtomicBool::new(true)),
                 keyframe: Arc::new(AtomicBool::new(false)),
                 finished,
             }),
+            line: FrameLine::new(),
             device: None,
             rate: RateControl::new(Arc::clone(&rate_share)),
             rate_share,
@@ -3743,6 +3814,43 @@ mod tests {
             peer_jitter: None,
             diag: Arc::new(crate::call_diag::CallVideo::new("test")),
         }
+    }
+
+    /// The engine keeps reading the same frames however many cameras the call goes through.
+    ///
+    /// A switched camera used to bring a channel of its own that nothing handed the engine, so the
+    /// peer's picture froze on the last frame of the camera before until the call ended.
+    #[test]
+    fn a_switched_camera_sends_where_the_engine_already_reads() {
+        let pipe = pipeline_with_a_running_camera();
+        let engine = pipe.source().timed_frames().expect("a timed source");
+        let frame = |byte: u8| {
+            TimedVideoFrame::builder()
+                .data(vec![byte])
+                .timestamp(u32::from(byte))
+                .build()
+        };
+
+        let first = pipe.line.next_camera();
+        pipe.line.tx.try_send(frame(1)).expect("room");
+        // The switch: whatever the first camera left queued goes, and a second one takes over.
+        pipe.line.drain();
+        let second = pipe.line.next_camera();
+        pipe.line.tx.try_send(frame(2)).expect("room");
+
+        let got = engine
+            .try_recv()
+            .expect("the new camera's frame reaches the engine");
+        assert_eq!(got.data, vec![2]);
+        assert!(
+            engine.try_recv().is_err(),
+            "the old camera's frame was let go"
+        );
+        assert!(pipe.line.sends(second));
+        assert!(
+            !pipe.line.sends(first),
+            "a camera whose thread outlived its stop sends nothing more"
+        );
     }
 
     /// Opening or closing a camera tells the speaker the audio graph is relinking.
