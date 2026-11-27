@@ -1076,6 +1076,10 @@ pub struct PollState {
     /// Latest decrypted votes only. Derived on load, never stored in content JSON.
     #[serde(skip)]
     pub votes: Vec<PollVoter>,
+    /// Hidden-name polls show counts only, never who voted. Derived from the
+    /// creation protobuf on load, never stored in content JSON.
+    #[serde(skip)]
+    pub hide_voter_names: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

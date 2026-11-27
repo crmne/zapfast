@@ -13124,6 +13124,7 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             question: non_empty(&poll.name).unwrap_or_else(|| "Poll".to_owned()),
             state: crate::model::PollState {
                 selectable: poll.selectable_options_count.unwrap_or(0) as usize,
+                hide_voter_names: poll.hide_participant_name.unwrap_or(false),
                 ..Default::default()
             },
             options: poll
@@ -27823,8 +27824,8 @@ mod extended_poll_tests {
         message.poll_creation_message_v6 = MessageField::some(poll());
         assert!(matches!(
             classify(&message),
-            Some(Content::Poll { question, options, .. })
-                if question == "Where?" && options == ["Here"]
+            Some(Content::Poll { question, options, state, .. })
+                if question == "Where?" && options == ["Here"] && state.hide_voter_names
         ));
         assert!(polls::definition(message.get_base_message()).is_some());
     }

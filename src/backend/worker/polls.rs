@@ -317,11 +317,12 @@ impl Worker {
         let Content::Poll { options, state, .. } = &mut row.content else {
             return;
         };
-        if let Some(poll) = raw
+        let definition = raw
             .as_ref()
-            .and_then(|raw| definition(raw.get_base_message()))
-        {
+            .and_then(|raw| definition(raw.get_base_message()));
+        if let Some(poll) = definition {
             state.selectable = poll.selectable_options_count.unwrap_or(0) as usize;
+            state.hide_voter_names = poll.hide_participant_name.unwrap_or(false);
         }
         state.selectable = if state.selectable == 0 {
             options.len()
@@ -368,19 +369,21 @@ impl Worker {
             }
             if !choices.is_empty() {
                 state.voters += 1;
-                state.votes.push(crate::model::PollVoter {
-                    name: if vote.from_me || self.is_me(&vote.voter) {
-                        "You".into()
-                    } else {
-                        self.name_for(&voter).unwrap_or_else(|| {
-                            crate::util::phone(voter.split('@').next().unwrap_or(&voter))
-                        })
-                    },
-                    id: voter,
-                    from_me: vote.from_me || self.is_me(&vote.voter),
-                    timestamp: vote.at / 1000,
-                    choices: choices.clone(),
-                });
+                if !state.hide_voter_names {
+                    state.votes.push(crate::model::PollVoter {
+                        name: if vote.from_me || self.is_me(&vote.voter) {
+                            "You".into()
+                        } else {
+                            self.name_for(&voter).unwrap_or_else(|| {
+                                crate::util::phone(voter.split('@').next().unwrap_or(&voter))
+                            })
+                        },
+                        id: voter,
+                        from_me: vote.from_me || self.is_me(&vote.voter),
+                        timestamp: vote.at / 1000,
+                        choices: choices.clone(),
+                    });
+                }
             }
             for index in choices {
                 if let Some(count) = state.counts.get_mut(index) {
@@ -1277,6 +1280,60 @@ mod tests {
             panic!("poll")
         };
         assert_eq!(state.votes.len(), 2, "refresh cannot duplicate details");
+    }
+
+    #[test]
+    fn hidden_name_poll_keeps_counts_but_not_voter_identities() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "hidden", 100, false);
+        row.content = content();
+        let mut raw = wa::Message::default();
+        raw.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Lunch?".into());
+            poll.hide_participant_name = Some(true);
+            poll.selectable_options_count = Some(1);
+            poll.options = vec![
+                {
+                    let mut option = wa::message::poll_creation_message::Option::default();
+                    option.option_name = Some("Pizza".into());
+                    option
+                },
+                {
+                    let mut option = wa::message::poll_creation_message::Option::default();
+                    option.option_name = Some("Pasta".into());
+                    option
+                },
+            ];
+            poll
+        });
+        worker.store_message(row.clone(), Some(raw.encode_to_vec()), None);
+        worker
+            .archive
+            .save_poll_vote(&PollVote {
+                chat: chat.into(),
+                poll: row.id.clone(),
+                voter: "200@s.whatsapp.net".into(),
+                sender: "200".into(),
+                update_id: "update".into(),
+                at: 2_000,
+                from_me: false,
+                choices: Some(vec![0]),
+                encrypted: None,
+            })
+            .unwrap();
+
+        worker.polish_poll(&mut row);
+        let Content::Poll { state, .. } = &row.content else {
+            panic!("poll")
+        };
+        assert!(state.hide_voter_names);
+        assert_eq!(state.counts, vec![1, 0]);
+        assert_eq!(state.voters, 1);
+        assert!(state.votes.is_empty(), "voter identity must not surface");
+        let json = serde_json::to_value(&row.content).unwrap();
+        assert!(json["state"].get("hide_voter_names").is_none());
     }
 
     #[test]
