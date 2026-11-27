@@ -215,8 +215,17 @@ mod tests {
             Some(Locale::PortugueseBrazil)
         );
         for identifier in [
-            "pt", "pt-PT", "pt_PT", "pt_PT.UTF-8", "pt-AO", "pt-MZ", "pt-CV", "pt-GW", "pt-ST",
-            "pt-TL", "pt-MO",
+            "pt",
+            "pt-PT",
+            "pt_PT",
+            "pt_PT.UTF-8",
+            "pt-AO",
+            "pt-MZ",
+            "pt-CV",
+            "pt-GW",
+            "pt-ST",
+            "pt-TL",
+            "pt-MO",
         ] {
             assert_eq!(
                 Locale::from_system(identifier),
@@ -448,12 +457,7 @@ mod tests {
             (21, "{} membros"),
         ] {
             assert_eq!(
-                ngettext(
-                    Locale::PortuguesePortugal,
-                    "{} member",
-                    "{} members",
-                    count
-                ),
+                ngettext(Locale::PortuguesePortugal, "{} member", "{} members", count),
                 expected
             );
         }
