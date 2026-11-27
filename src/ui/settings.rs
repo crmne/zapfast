@@ -570,6 +570,14 @@ fn sections(app: &App) -> Vec<Section> {
         );
         let (title, description) = sound_text(locale, true);
         notifications.row(title, description, |ui, app| sound_control(ui, app, true));
+        notifications.toggle(
+            translated(locale, "Notify for channels"),
+            translated(
+                locale,
+                "Show notifications for posts in channels you follow.",
+            ),
+            |settings| &mut settings.notify_channels,
+        );
     }
 
     let mut privacy = Section::new(translated(locale, "Privacy"));

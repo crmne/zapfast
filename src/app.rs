@@ -2541,7 +2541,7 @@ impl App {
             return;
         };
         let now = crate::util::now();
-        if !notification_eligible(chat, now, message.timestamp) {
+        if !notification_eligible(chat, now, message.timestamp, self.settings.notify_channels) {
             return;
         }
         let reading = !self.events_hidden
@@ -12388,9 +12388,14 @@ fn hyprland(signature: bool, desktop: Option<&str>) -> bool {
         })
 }
 
-fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
-    // Followed channels never notify: their posts are not conversations.
-    if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked || chat.is_channel() {
+fn notification_eligible(chat: &Chat, now: i64, message_at: i64, channels: bool) -> bool {
+    // Followed channels notify only when the setting allows it.
+    if chat.archived
+        || chat.unread == 0
+        || chat.muted(now)
+        || chat.locked
+        || (chat.is_channel() && !channels)
+    {
         return false;
     }
     now - message_at <= 60
@@ -16971,11 +16976,26 @@ mod tests {
             chat.unread = 1;
 
             chat.archived = true;
-            assert!(!notification_eligible(&chat, now, now), "{id} archived");
+            assert!(
+                !notification_eligible(&chat, now, now, false),
+                "{id} archived"
+            );
 
             chat.archived = false;
-            assert!(notification_eligible(&chat, now, now), "{id} unarchived");
+            assert!(
+                notification_eligible(&chat, now, now, false),
+                "{id} unarchived"
+            );
         }
+    }
+
+    #[test]
+    fn a_channel_notifies_only_when_the_setting_allows_it() {
+        let now = crate::util::now();
+        let mut channel = Chat::new("1@newsletter".into(), "News".into());
+        channel.unread = 1;
+        assert!(!notification_eligible(&channel, now, now, false));
+        assert!(notification_eligible(&channel, now, now, true));
     }
 
     /// A chat whose album holds `count` pictures.

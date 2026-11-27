@@ -4110,3 +4110,9 @@ msgstr "Kişinin engeli kaldırılsın mı?"
 #, rust-format
 msgid "Unblock {name}? You will be able to exchange messages and calls again."
 msgstr "{name} adlı kişinin engeli kaldırılsın mı? Tekrar mesajlaşabilir ve arama yapabilirsiniz."
+
+msgid "Notify for channels"
+msgstr "Kanallar için bildirim"
+
+msgid "Show notifications for posts in channels you follow."
+msgstr "Takip ettiğiniz kanallardaki paylaşımlar için bildirim göster."
