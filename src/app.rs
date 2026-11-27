@@ -3921,9 +3921,12 @@ impl App {
                         .image_preview
                         .as_ref()
                         .map(PreviewState::chat)
+                        // A profile picture belongs to no chat (empty id).
                         .is_some_and(|id| {
-                            self.chat(id)
-                                .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                            !id.is_empty()
+                                && self
+                                    .chat(id)
+                                    .is_none_or(|chat| chat.locked && !self.locked_folder_open())
                         })
                 {
                     self.image_preview = None;
@@ -8007,9 +8010,10 @@ impl App {
                 };
                 // A chat that is gone, or locked outside the open folder,
                 // shows nothing more of its album: the viewer closes instead.
-                if self
-                    .chat(preview.chat())
-                    .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                if !preview.chat().is_empty()
+                    && self
+                        .chat(preview.chat())
+                        .is_none_or(|chat| chat.locked && !self.locked_folder_open())
                 {
                     self.apply(Action::CloseImagePreview, ctx);
                     return;
@@ -17489,6 +17493,23 @@ mod tests {
             .unwrap();
         app.handle_events();
         assert!(app.viewer_media.is_empty());
+    }
+
+    /// A profile picture belongs to no chat, so a refreshed chat list must not
+    /// close the viewer that shows it.
+    #[test]
+    fn a_profile_picture_stays_open_when_the_chat_list_refreshes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, events) =
+            App::headless(AppDirs::under(directory.path()), Settings::default());
+        app.image_preview = Some(crate::image_preview::PreviewState::new(
+            None,
+            String::new(),
+            String::new(),
+        ));
+        events.send(Event::Chats(Vec::new())).unwrap();
+        app.handle_events();
+        assert!(app.image_preview.is_some());
     }
 
     /// The viewer belongs to the window. Another linked account may use the
