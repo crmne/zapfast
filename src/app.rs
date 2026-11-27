@@ -1469,6 +1469,7 @@ impl App {
                 crate::util::twelve_hour_clock();
             })
             .ok();
+        app.apply_device_preferences();
         let folder = app.settings.download_folder.clone();
         for account in &app.accounts {
             account
@@ -2101,6 +2102,9 @@ impl App {
         account.backend.send(Command::SetDownloadFolder(
             self.settings.download_folder.clone(),
         ));
+        account
+            .backend
+            .send(Command::SetPreferredDevices(self.settings.devices.clone()));
         account.backend.send(Command::SetKeepChatsArchived(
             self.settings.keep_chats_archived,
         ));
@@ -7095,6 +7099,22 @@ impl App {
         self.settings_dirty = true;
     }
 
+    /// Hands the devices picked in Settings to everything that opens one: the
+    /// sound threads (recording and the shared output) and every account's
+    /// calls. A recording or call already running keeps its own.
+    fn apply_device_preferences(&mut self) {
+        let devices = self.settings.devices.clone();
+        crate::audio::set_preferred(crate::audio::Preferred {
+            microphone: devices.microphone.clone(),
+            speaker: devices.speaker.clone(),
+        });
+        for account in &self.accounts {
+            account
+                .backend
+                .send(Command::SetPreferredDevices(devices.clone()));
+        }
+    }
+
     /// A lock cancels exports for every account, including those off screen.
     fn sync_chat_export_permission(&mut self) {
         let allowed = !self.app_lock.is_locked();
@@ -7443,6 +7463,11 @@ impl App {
                 // announces it: read it again whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings && self.is_connected() {
                     self.backend.send(Command::FetchAccountPrivacy);
+                }
+                // Devices come and go: list them again whenever Settings
+                // opens, for its microphone, speaker and camera pickers.
+                if page == Page::Settings && self.page != Page::Settings {
+                    self.backend.send(Command::RefreshCallDevices);
                 }
                 // The cache grows with every download: measure it again
                 // whenever Settings opens.
@@ -9952,6 +9977,14 @@ impl App {
                 for account in &self.accounts {
                     account.backend.send(Command::SetProxy(value.clone()));
                 }
+            }
+            Action::SetPreferredDevice(kind, device) => {
+                if self.settings.devices.get(kind) == device.as_deref() {
+                    return;
+                }
+                self.settings.devices.set(kind, device);
+                self.mark_settings_dirty();
+                self.apply_device_preferences();
             }
             Action::SetStartWithSystem(enabled) => {
                 let waker = self.waker.clone();

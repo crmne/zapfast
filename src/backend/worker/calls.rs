@@ -267,25 +267,25 @@ impl Worker {
             self.emit_call(placing.not_placed());
             return;
         };
-        // A call opens on the system's default devices; the call screen's pickers move it to
-        // others while it runs.
+        // A call opens on the devices picked in Settings, else the system's defaults; the call
+        // screen's pickers move it to others while it runs.
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let resolved = self.preferred_call_devices(&devices, video);
+        let lost = resolved.lost_devices;
         let placed = Call::place(
             &client,
             generation,
             chat.to_string(),
             video,
-            None,
-            None,
-            camera,
+            resolved.microphone,
+            resolved.speaker,
+            resolved.camera,
             &cancel,
         )
         .await;
         match placed {
-            Ok((call, frames)) => {
+            Ok((mut call, frames)) => {
+                call.set_lost_devices(lost);
                 let mut runtime = CallRuntime::new(call, frames);
                 runtime.watch();
                 let update = runtime.call.update();
@@ -341,16 +341,14 @@ impl Worker {
             return;
         };
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let resolved = self.preferred_call_devices(&devices, video);
         let (done, answers) = async_channel::bounded(1);
         let placed = Call::place_group(
             &client,
             generation,
             chat.to_string(),
             video,
-            camera,
+            resolved,
             &cancel,
             done,
         )
@@ -424,12 +422,10 @@ impl Worker {
             return;
         };
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let resolved = self.preferred_call_devices(&devices, video);
         let (done, answers) = async_channel::bounded(1);
         let joined =
-            Call::join_link(&client, generation, token, video, camera, &cancel, done).await;
+            Call::join_link(&client, generation, token, video, resolved, &cancel, done).await;
         match joined {
             Ok((call, frames)) => {
                 let (tx, events) = async_channel::bounded(1);
@@ -563,8 +559,12 @@ impl Worker {
             Some(runtime) => {
                 if on && !runtime.call.is_video() {
                     // A voice call: ask the peer for video, or answer the peer who asked, and start
-                    // draining the frames it brings, from the first camera the machine reports.
-                    let camera = calls::default_camera(&self.call_devices, None);
+                    // draining the frames it brings, from the camera picked in Settings, else the
+                    // first camera the machine reports.
+                    let camera = calls::default_camera(
+                        &self.call_devices,
+                        self.preferred_devices.camera.clone(),
+                    );
                     match runtime.call.upgrade_to_video(camera).await {
                         Ok(frames) => {
                             if frames.is_some() {
@@ -587,6 +587,17 @@ impl Worker {
                 self.emit(Event::Error(error.to_string()));
             }
         }
+    }
+
+    /// The devices a call starts on: those picked in Settings, checked against what the machine
+    /// has, so one that is unplugged falls back to the default and the call screen says so. A
+    /// voice call takes no camera.
+    fn preferred_call_devices(
+        &self,
+        devices: &calls::DeviceList,
+        video: bool,
+    ) -> calls::ResolvedDevices {
+        preferred_call_devices(devices, &self.preferred_devices, video)
     }
 
     pub(super) fn set_call_microphone(&mut self, device: Option<String>) {
@@ -820,7 +831,8 @@ impl Worker {
             return;
         }
         let video = calls::offer_is_video(action);
-        let call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        let mut call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        call.prefer_devices(&self.preferred_devices);
         let update = call.update();
         self.call = Some(CallRuntime::new(call, None));
         self.emit_call_devices().await;
@@ -1413,6 +1425,26 @@ fn group_refusal_text(refusal: &calls::GroupRefusal) -> String {
 /// [`Worker::start_group_call`]), but the worker is the boundary rather than the interface: a
 /// channel or a broadcast list reaching the 1:1 builder would be refused by the protocol at best
 /// and misbehave at worst, so the JID is checked here as well.
+/// The devices a call starts on, from those picked in Settings: checked against the machine's
+/// list so one that is unplugged falls back to the default and is named as lost. A voice call
+/// takes no camera; a video call with no camera picked takes the first one listed.
+fn preferred_call_devices(
+    devices: &calls::DeviceList,
+    preferred: &crate::settings::DevicePreferences,
+    video: bool,
+) -> calls::ResolvedDevices {
+    let mut resolved = calls::resolve_devices(
+        devices,
+        preferred.microphone.clone(),
+        preferred.speaker.clone(),
+        video.then(|| preferred.camera.clone()).flatten(),
+    );
+    if !video {
+        resolved.camera = None;
+    }
+    resolved
+}
+
 fn callable_chat(chat: &str) -> bool {
     matches!(
         crate::model::ChatKind::from_id(chat),
@@ -1433,6 +1465,87 @@ fn rings_in(chat: &str, group: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn machine() -> calls::DeviceList {
+        calls::DeviceList {
+            microphones: vec![calls::AudioDevice {
+                id: "usb-mic".into(),
+                label: "USB Microphone".into(),
+            }],
+            speakers: vec![calls::AudioDevice {
+                id: "headset".into(),
+                label: "Headset".into(),
+            }],
+            cameras: vec![
+                calls::CameraDevice {
+                    id: "0".into(),
+                    label: "Integrated Camera".into(),
+                },
+                calls::CameraDevice {
+                    id: "1".into(),
+                    label: "USB Webcam".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_call_starts_on_the_devices_picked_in_settings() {
+        let picked = crate::settings::DevicePreferences {
+            microphone: Some("usb-mic".into()),
+            speaker: Some("headset".into()),
+            camera: Some("1".into()),
+        };
+        let video = preferred_call_devices(&machine(), &picked, true);
+        assert_eq!(video.microphone.as_deref(), Some("usb-mic"));
+        assert_eq!(video.speaker.as_deref(), Some("headset"));
+        assert_eq!(video.camera.as_deref(), Some("1"));
+        assert!(video.lost_devices.is_empty());
+
+        let voice = preferred_call_devices(&machine(), &picked, false);
+        assert_eq!(voice.microphone.as_deref(), Some("usb-mic"));
+        assert_eq!(voice.camera, None, "a voice call opens no camera");
+    }
+
+    #[test]
+    fn nothing_picked_is_the_default_sound_and_the_first_camera() {
+        let none = crate::settings::DevicePreferences::default();
+        let resolved = preferred_call_devices(&machine(), &none, true);
+        assert_eq!(resolved.microphone, None);
+        assert_eq!(resolved.speaker, None);
+        assert_eq!(resolved.camera.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn an_unplugged_pick_falls_back_and_is_named() {
+        let picked = crate::settings::DevicePreferences {
+            microphone: Some("gone-mic".into()),
+            speaker: None,
+            camera: Some("gone-camera".into()),
+        };
+        let resolved = preferred_call_devices(&machine(), &picked, true);
+        assert_eq!(resolved.microphone, None);
+        assert_eq!(resolved.camera.as_deref(), Some("0"));
+        let kinds: Vec<_> = resolved.lost_devices.iter().map(|lost| lost.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![calls::DeviceKind::Microphone, calls::DeviceKind::Camera]
+        );
+    }
+
+    #[test]
+    fn a_ringing_call_starts_on_the_picked_devices() {
+        let mut call = Call::test_snapshot("5511999999999@s.whatsapp.net");
+        call.prefer_devices(&crate::settings::DevicePreferences {
+            microphone: Some("usb-mic".into()),
+            speaker: Some("headset".into()),
+            camera: Some("1".into()),
+        });
+        let (microphone, speaker, camera) = call.selections();
+        assert_eq!(microphone.as_deref(), Some("usb-mic"));
+        assert_eq!(speaker.as_deref(), Some("headset"));
+        assert_eq!(camera, None, "a voice call keeps no camera");
+    }
 
     /// A call that rang here and whose end never arrived must not keep the account busy: the next
     /// offer would be refused at once, and the caller would hear one ring and the call drop.

@@ -745,6 +745,9 @@ pub enum Command {
     },
     /// Where new downloads go; `None` is the cache.
     SetDownloadFolder(Option<std::path::PathBuf>),
+    /// The microphone, speaker and camera picked in Settings, for the calls this account makes
+    /// and answers from now on. A call already up keeps the devices it has.
+    SetPreferredDevices(crate::settings::DevicePreferences),
     /// Whether archived chats stay archived when a new message arrives or is
     /// sent; when not, a new message unarchives the chat here.
     SetKeepChatsArchived(bool),

@@ -1014,6 +1014,7 @@ pub async fn run(
         call: None,
         phone_only_calls: Vec::new(),
         call_devices: crate::calls::DeviceList::default(),
+        preferred_devices: crate::settings::DevicePreferences::default(),
         wa_sender,
         me_pn: None,
         me_lid: None,
@@ -1722,6 +1723,8 @@ struct Worker {
     /// The devices the call screen was last handed, kept so a device that goes away can be named
     /// by the description the user saw in the picker rather than by its node name.
     call_devices: crate::calls::DeviceList,
+    /// The microphone, speaker and camera picked in Settings, which every call starts on.
+    preferred_devices: crate::settings::DevicePreferences,
 }
 
 /// A queued forward: where it goes, the protobuf, and its disappearing timer.
@@ -7758,6 +7761,7 @@ impl Worker {
                     self.start_bot().await;
                 }
             }
+            Command::SetPreferredDevices(devices) => self.preferred_devices = devices,
             Command::SetDownloadFolder(folder) => {
                 // Interrupted downloads leave hidden staging files behind.
                 if let Some(folder) = &folder
@@ -20396,6 +20400,7 @@ mod receipt_tests {
             call: None,
             phone_only_calls: Vec::new(),
             call_devices: crate::calls::DeviceList::default(),
+            preferred_devices: crate::settings::DevicePreferences::default(),
             wa_sender,
             me_pn: Some(ME.to_owned()),
             me_lid: None,

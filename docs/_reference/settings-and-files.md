@@ -209,6 +209,23 @@ name or description, in the interface language or in English.
   chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
+
+**Audio and video**
+
+- **Microphone**: what voice messages record from and calls send. **System
+  default** follows the system's own default microphone as it changes.
+- **Speaker**: what voice messages, videos, notification sounds and calls
+  play through. A sound already playing finishes on the speaker it started on;
+  the next one plays through the new choice.
+- **Camera**: what video calls send. **First camera** is the first camera the
+  machine reports, since cameras have no system default.
+
+Each is kept in `settings.json` by the system's own id for the device, so a
+renamed device keeps its place. One that is unplugged stays picked and is
+shown as not connected; until it comes back the default stands in for it, and
+a call says so. The call screen's own pickers change only the call that is
+running. The lists are read again each time Settings opens.
+
 **Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account

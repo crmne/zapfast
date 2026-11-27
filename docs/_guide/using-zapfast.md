@@ -576,7 +576,7 @@ you open the locked chats with their code.
 
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
-microphone and speaker pickers, and hang up. Mute tells the other side, as on
+microphone, speaker and (in a video call) camera pickers, and hang up. Mute tells the other side, as on
 the phone. The arrow in the top corner puts the call screen aside: the call
 keeps running in a strip at the bottom of the window with **Return to the
 call** and a hang-up button, and you can read and write in any chat meanwhile.
@@ -601,10 +601,13 @@ the other side can rebuild a lost packet instead of freezing until the next
 full picture; it comes out of the same budget, so the call uses no more of your
 connection.
 
-Calls open the system's default microphone and speaker, and the first camera.
-The pickers move a call to another device while it runs without changing your
-system's defaults; a device that goes away falls back to the default, and the
-call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
+Calls open the microphone, speaker and camera picked in **Settings > Audio and
+video**, or the system's default microphone and speaker and the first camera
+when nothing is picked there. A call that rings here starts on the same
+devices, and choosing others while it rings changes what answering opens. The
+pickers move a call to another device while it runs, without changing Settings
+or your system's defaults; a device that goes away falls back to the default,
+and the call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The
 Flatpak is allowed its devices for this, since Flatpak has no narrower
 permission for cameras. On Linux, YU12 (I420) cameras, including Iriun Webcam,

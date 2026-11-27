@@ -3385,6 +3385,9 @@ pub enum Action {
     SetKeepChatsArchived(bool),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
+    /// Picks the microphone, speaker or camera every recording, sound and call uses; `None` is
+    /// the system default (the first camera, for video).
+    SetPreferredDevice(crate::calls::DeviceKind, Option<String>),
     /// Plays a notification sound once, as a preview.
     PreviewSound(crate::settings::NotificationSound),
     ZoomBy(f32),

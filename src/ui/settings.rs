@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use crate::app::App;
+use crate::calls::DeviceKind;
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -572,6 +573,26 @@ fn sections(app: &App) -> Vec<Section> {
         notifications.row(title, description, |ui, app| sound_control(ui, app, true));
     }
 
+    let mut devices = Section::new(translated(locale, "Audio and video"));
+    devices.row(
+        translated(locale, "Microphone"),
+        translated(locale, "For voice messages and calls."),
+        |ui, app| device_picker(ui, app, DeviceKind::Microphone),
+    );
+    devices.row(
+        translated(locale, "Speaker"),
+        translated(
+            locale,
+            "For voice messages, videos, sounds and calls. A sound already playing finishes where it started.",
+        ),
+        |ui, app| device_picker(ui, app, DeviceKind::Speaker),
+    );
+    devices.row(
+        translated(locale, "Camera"),
+        translated(locale, "For video calls."),
+        |ui, app| device_picker(ui, app, DeviceKind::Camera),
+    );
+
     let mut privacy = Section::new(translated(locale, "Privacy"));
     let receipts_note = if app.account_receipts_off {
         translated(locale, "Off for your account, so only groups get them.")
@@ -908,6 +929,7 @@ fn sections(app: &App) -> Vec<Section> {
         appearance,
         chats,
         notifications,
+        devices,
         privacy,
         system,
         account_section,
@@ -2083,6 +2105,90 @@ fn privacy_control(ui: &mut egui::Ui, app: &mut App, kind: PrivacyKind) {
 }
 
 /// Theme filenames can contain emoji, so paint them through the shared line renderer.
+/// The devices of one kind the machine reports, as `(id, name)`.
+fn listed_devices(app: &App, kind: DeviceKind) -> Vec<(String, String)> {
+    let list = &app.call_devices;
+    match kind {
+        DeviceKind::Microphone => list
+            .microphones
+            .iter()
+            .map(|device| (device.id.clone(), device.label.clone()))
+            .collect(),
+        DeviceKind::Speaker => list
+            .speakers
+            .iter()
+            .map(|device| (device.id.clone(), device.label.clone()))
+            .collect(),
+        DeviceKind::Camera => list
+            .cameras
+            .iter()
+            .map(|device| (device.id.clone(), device.label.clone()))
+            .collect(),
+    }
+}
+
+/// What a device picker shows for the current choice: the device's name, the
+/// default, or, for a device that is not plugged in now, its name as last
+/// listed and that it is not connected.
+fn device_label(app: &App, kind: DeviceKind, listed: &[(String, String)]) -> String {
+    let locale = app.locale;
+    match app.settings.devices.get(kind) {
+        None => default_device_label(locale, kind),
+        Some(id) => match listed.iter().find(|(known, _)| known == id) {
+            Some((_, name)) => name.clone(),
+            // An empty list means discovery has not answered yet, not that
+            // nothing is plugged in.
+            None if listed.is_empty() => id.to_owned(),
+            None => format!(
+                "{} ({})",
+                crate::calls::device_name(&app.call_devices, kind, id),
+                crate::i18n::gettext(locale, "not connected")
+            ),
+        },
+    }
+}
+
+/// The picker's first entry: the system default for sound, the first camera
+/// for video, since a camera has no system default.
+fn default_device_label(locale: Locale, kind: DeviceKind) -> String {
+    match kind {
+        DeviceKind::Camera => crate::i18n::gettext(locale, "First camera").into_owned(),
+        DeviceKind::Microphone | DeviceKind::Speaker => {
+            crate::i18n::gettext(locale, "System default").into_owned()
+        }
+    }
+}
+
+/// A picker for the microphone, speaker or camera every recording, sound and
+/// call uses, from the devices the machine reports.
+fn device_picker(ui: &mut egui::Ui, app: &mut App, kind: DeviceKind) {
+    let palette = app.palette;
+    let listed = listed_devices(app, kind);
+    let current = app.settings.devices.get(kind).map(str::to_owned);
+    let salt = match kind {
+        DeviceKind::Microphone => "settings-microphone",
+        DeviceKind::Speaker => "settings-speaker",
+        DeviceKind::Camera => "settings-camera",
+    };
+    let response = egui::ComboBox::from_id_salt(salt)
+        .selected_text(device_label(app, kind, &listed))
+        .width(240.0_f32.min(ui.available_width()))
+        .truncate()
+        .show_ui(ui, |ui| {
+            let default = default_device_label(app.locale, kind);
+            if theme_option(ui, &palette, &default, current.is_none()) {
+                app.actions.push(Action::SetPreferredDevice(kind, None));
+            }
+            for (id, name) in &listed {
+                if theme_option(ui, &palette, name, current.as_deref() == Some(id.as_str())) {
+                    app.actions
+                        .push(Action::SetPreferredDevice(kind, Some(id.clone())));
+                }
+            }
+        });
+    theme::reveal_focus(&response.response);
+}
+
 fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selected: bool) -> bool {
     let response = ui.add(
         egui::Button::selectable(selected, " ").min_size(egui::vec2(ui.available_width(), 28.0)),
