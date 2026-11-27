@@ -12760,12 +12760,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     if let Some(contacts) = base.contacts_array_message.as_option() {
         return contacts.context_info.as_option();
     }
-    if let Some(poll) = base
-        .poll_creation_message
-        .as_option()
-        .or(base.poll_creation_message_v2.as_option())
-        .or(base.poll_creation_message_v3.as_option())
-    {
+    if let Some(poll) = polls::definition(base) {
         return poll.context_info.as_option();
     }
     interactive::context(base)
@@ -13123,12 +13118,7 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
                 .join("\n"),
         });
     }
-    if let Some(poll) = base
-        .poll_creation_message
-        .as_option()
-        .or(base.poll_creation_message_v2.as_option())
-        .or(base.poll_creation_message_v3.as_option())
-    {
+    if let Some(poll) = polls::definition(base) {
         return Some(Content::Poll {
             question: non_empty(&poll.name).unwrap_or_else(|| "Poll".to_owned()),
             state: crate::model::PollState {
@@ -27805,5 +27795,43 @@ mod lottie_sticker_tests {
             classify(&message),
             Some(Content::Sticker { media, animated: false }) if media.mime == "image/webp"
         ));
+    }
+}
+
+#[cfg(test)]
+mod extended_poll_tests {
+    use super::*;
+
+    fn poll() -> wa::message::PollCreationMessage {
+        let mut poll = wa::message::PollCreationMessage::default();
+        poll.name = Some("Where?".into());
+        poll.options = vec![{
+            let mut option = wa::message::poll_creation_message::Option::default();
+            option.option_name = Some("Here".into());
+            option
+        }];
+        poll.selectable_options_count = Some(1);
+        poll.hide_participant_name = Some(true);
+        poll.end_time = Some(1_800_000_000_000);
+        poll
+    }
+
+    #[test]
+    fn classifies_hidden_voter_name_poll_sent_as_v6() {
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v6 = MessageField::some(poll());
+        assert!(matches!(
+            classify(&message),
+            Some(Content::Poll { question, options, .. })
+                if question == "Where?" && options == ["Here"]
+        ));
+        assert!(polls::definition(message.get_base_message()).is_some());
+    }
+
+    #[test]
+    fn classifies_quiz_poll_sent_as_v5() {
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v5 = MessageField::some(poll());
+        assert!(matches!(classify(&message), Some(Content::Poll { .. })));
     }
 }

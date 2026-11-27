@@ -5,12 +5,20 @@ use crate::archive::PollVote;
 use crate::model::{PollDraft, PollState};
 use whatsapp_rust::features::PollVoteCiphertext;
 
+/// Every top-level field that carries a `PollCreationMessage`.
+///
+/// WhatsApp moves a poll into a newer slot when it uses an extended setting:
+/// `poll_type` quizzes use V5, and end time, hidden voter names and added
+/// options use V6. Checking only the older slots makes those polls look
+/// unsupported. The pinned whatsapp-rust treats all of them as polls too.
 pub(super) fn definition(message: &wa::Message) -> Option<&wa::message::PollCreationMessage> {
     message
         .poll_creation_message
         .as_option()
         .or(message.poll_creation_message_v2.as_option())
         .or(message.poll_creation_message_v3.as_option())
+        .or(message.poll_creation_message_v5.as_option())
+        .or(message.poll_creation_message_v6.as_option())
 }
 
 fn secret(message: &wa::Message) -> Option<&[u8]> {
@@ -1217,5 +1225,36 @@ mod tests {
             panic!("poll")
         };
         assert_eq!(state.votes.len(), 2, "refresh cannot duplicate details");
+    }
+
+    #[test]
+    fn definition_reads_every_poll_slot_including_extended_settings() {
+        let mut poll = wa::message::PollCreationMessage::default();
+        poll.name = Some("Where?".into());
+        poll.hide_participant_name = Some(true);
+        poll.end_time = Some(1_800_000_000_000);
+
+        let mut slots = Vec::new();
+        let mut message = wa::Message::default();
+        message.poll_creation_message = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v2 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v3 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v5 = MessageField::some(poll.clone());
+        slots.push(message);
+        let mut message = wa::Message::default();
+        message.poll_creation_message_v6 = MessageField::some(poll);
+        slots.push(message);
+        for message in &slots {
+            let found = definition(message).expect("poll slot recognized");
+            assert_eq!(found.name.as_deref(), Some("Where?"));
+            assert_eq!(found.hide_participant_name, Some(true));
+        }
+        assert!(definition(&wa::Message::default()).is_none());
     }
 }
