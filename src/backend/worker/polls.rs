@@ -31,14 +31,17 @@ impl Worker {
         }
         let result = (|| -> anyhow::Result<usize> {
             let mut updated = 0;
-            for (chat, id, raw) in self.archive.unsupported_with_raw()? {
+            // Scan every row with a raw protobuf, not just unsupported ones:
+            // the general derived-content backfill may already have turned an
+            // older V5/V6 poll into a poll without saving its definition.
+            for (chat, id, raw) in self.archive.rows_with_raw()? {
                 let Ok(message) = wa::Message::decode_from_slice(&raw) else {
                     continue;
                 };
                 let base = message.get_base_message();
-                let Some(content @ Content::Poll { .. }) = classify(base) else {
+                if definition(base).is_none() {
                     continue;
-                };
+                }
                 let Some(old) = self.archive.message(&chat, &id)? else {
                     continue;
                 };
@@ -46,18 +49,24 @@ impl Worker {
                     continue;
                 }
                 let mut reclassified = old;
-                reclassified.content = content.clone();
-                self.archive.set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &self.mentions_of(&recorded_mention_ids(base)),
-                    thumbnail_of(base).as_deref(),
-                    forwarded_of(base),
-                )?;
+                let was_unsupported = matches!(reclassified.content, Content::Unsupported { .. });
+                if was_unsupported {
+                    let Some(content @ Content::Poll { .. }) = classify(base) else {
+                        continue;
+                    };
+                    reclassified.content = content.clone();
+                    self.archive.set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &self.mentions_of(&recorded_mention_ids(base)),
+                        thumbnail_of(base).as_deref(),
+                        forwarded_of(base),
+                    )?;
+                    updated += 1;
+                }
                 let creator = reclassified.sender.clone();
-                self.remember_poll(&reclassified, base, &creator, None);
-                updated += 1;
+                self.remember_poll(&reclassified, &message, &creator, None);
             }
             self.archive.set_meta(KEY, "1")?;
             Ok(updated)
@@ -1280,6 +1289,42 @@ mod tests {
             panic!("poll")
         };
         assert_eq!(state.votes.len(), 2, "refresh cannot duplicate details");
+    }
+
+    #[test]
+    fn backfill_saves_definitions_for_polls_already_reclassified() {
+        let (mut worker, _, _, _) = super::super::receipt_tests::worker();
+        let chat = "123@g.us";
+        let mut row = crate::archive::tests::message(chat, "reclassified", 100, false);
+        row.content = content();
+        let mut inner = wa::Message::default();
+        inner.poll_creation_message_v6 = MessageField::some({
+            let mut poll = wa::message::PollCreationMessage::default();
+            poll.name = Some("Lunch?".into());
+            poll.selectable_options_count = Some(1);
+            poll
+        });
+        // The secret lives on the outer wrapper, as with device-sent polls.
+        let mut wrapper = wa::message::FutureProofMessage::default();
+        wrapper.message = MessageField::some(inner);
+        let mut outer = wa::Message::default();
+        outer.message_context_info = MessageField::some({
+            let mut context = wa::MessageContextInfo::default();
+            context.message_secret = Some(vec![9; 32]);
+            context
+        });
+        outer.poll_creation_message_v4 = MessageField::some(wrapper);
+        worker.store_message(row, Some(outer.encode_to_vec()), None);
+
+        worker.backfill_extended_polls();
+
+        assert!(
+            worker
+                .archive
+                .poll_key(chat, "reclassified")
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
