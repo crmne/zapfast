@@ -24,6 +24,9 @@ mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
 pub use worker::attachment_compression::ZipCopy;
+/// Compresses a staged attachment without a worker, for the offline demo.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) use worker::attachment_compression::compress as compress_attachment;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.

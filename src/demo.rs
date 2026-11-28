@@ -9615,6 +9615,30 @@ mod tests {
         }
     }
 
+    /// The ZIP copy page finishes its compression through the demo's own
+    /// answer to the command, as the offline window does.
+    #[test]
+    fn the_zip_copy_demo_finishes_its_compression() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("zip-copy"));
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        let target = app.pending[0].id;
+        app.actions
+            .push(crate::model::Action::CompressAttachment(target));
+        render(&mut app, &ctx);
+        assert!(app.compression_in_progress(), "the page started a copy");
+        crate::demo::tour::respond(&mut app);
+        render(&mut app, &ctx);
+        assert!(!app.compression_in_progress(), "the demo answered");
+        assert!(matches!(
+            app.pending[0].item,
+            crate::app::Pending::Document(_)
+        ));
+    }
+
     #[test]
     /// Checks all synthetic demo surfaces fit their tested window sizes and themes.
     fn every_surface_lays_out() {

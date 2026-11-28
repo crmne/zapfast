@@ -337,6 +337,24 @@ pub fn respond(app: &mut App) {
                 app.call_log = log;
                 app.call_log_loaded = true;
             }
+            Command::CompressAttachment {
+                chat,
+                target,
+                path,
+                cancelled,
+            } => {
+                let cache = app.dirs.media_cache_dir();
+                let result = crate::backend::compress_attachment(&cache, &path, &cancelled);
+                if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    app.backend
+                        .deliver_demo_event(crate::backend::Event::AttachmentCompressed {
+                            chat,
+                            target,
+                            cancelled,
+                            result,
+                        });
+                }
+            }
             _ => {}
         }
     }

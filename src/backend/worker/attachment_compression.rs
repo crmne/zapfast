@@ -12,7 +12,7 @@ pub struct ZipCopy {
     pub after: u64,
 }
 
-pub(super) fn compress(
+pub(crate) fn compress(
     cache: &Path,
     path: &Path,
     cancelled: &AtomicBool,
@@ -29,27 +29,7 @@ pub(super) fn compress(
     }
     let before = metadata.len();
     let name = path.file_name().ok_or(())?.to_string_lossy();
-    // A single portable component, not an absolute path or a ZIP directory.
-    let entry: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || "/\\:<>\"|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .scan(0, |bytes, c| {
-            *bytes += c.len_utf8();
-            (*bytes <= 200).then_some(c)
-        })
-        .collect();
-    let entry = entry.trim_matches([' ', '.']);
-    let entry = if entry.is_empty() {
-        "attachment"
-    } else {
-        entry
-    };
+    let entry = portable_entry_name(&name);
     std::fs::create_dir_all(cache).map_err(|_| ())?;
     let dir = tempfile::Builder::new()
         .prefix("zip-")
@@ -95,9 +75,61 @@ pub(super) fn compress(
     }))
 }
 
+/// A single portable ZIP entry name, not an absolute path or a directory.
+fn portable_entry_name(name: &str) -> String {
+    let entry: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "/\\:<>\"|?*".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .scan(0, |bytes, c| {
+            *bytes += c.len_utf8();
+            (*bytes <= 200).then_some(c)
+        })
+        .collect();
+    let entry = entry.trim_matches([' ', '.']);
+    if entry.is_empty() {
+        "attachment".to_owned()
+    } else if is_reserved_device_name(entry) {
+        // Windows refuses to create or extract `CON`, `COM1` and the like,
+        // even with an extension, so keep the name portable.
+        format!("_{entry}")
+    } else {
+        entry.to_owned()
+    }
+}
+
+/// Windows reserves these device names, with or without an extension.
+fn is_reserved_device_name(entry: &str) -> bool {
+    let stem = entry.split('.').next().unwrap_or(entry);
+    let upper = stem.to_ascii_uppercase();
+    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && matches!(upper.as_bytes()[3], b'1'..=b'9'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_portable_entry_name_avoids_windows_device_names() {
+        assert_eq!(portable_entry_name("CON"), "_CON");
+        assert_eq!(portable_entry_name("con.txt"), "_con.txt");
+        assert_eq!(portable_entry_name(".CON.txt"), "_CON.txt");
+        assert_eq!(portable_entry_name("COM1.log"), "_COM1.log");
+        assert_eq!(portable_entry_name("lpt9"), "_lpt9");
+        assert_eq!(portable_entry_name("COM0"), "COM0");
+        assert_eq!(portable_entry_name("COM10"), "COM10");
+        assert_eq!(portable_entry_name("console.txt"), "console.txt");
+        assert_eq!(portable_entry_name("a/b:c"), "a_b_c");
+        assert_eq!(portable_entry_name("..."), "attachment");
+    }
 
     #[test]
     fn only_smaller_zip_copies_survive_and_the_source_is_unchanged() {
