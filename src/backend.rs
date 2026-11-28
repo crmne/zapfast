@@ -23,6 +23,7 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+pub use worker::attachment_compression::ZipCopy;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
@@ -465,6 +466,12 @@ pub enum Command {
     PickFiles {
         chat: ChatId,
         documents: bool,
+    },
+    CompressAttachment {
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        path: PathBuf,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
     },
     /// Sends files with the caption on the first.
     SendFiles {
@@ -1200,6 +1207,12 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    AttachmentCompressed {
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        result: Result<Option<ZipCopy>, ()>,
+    },
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,

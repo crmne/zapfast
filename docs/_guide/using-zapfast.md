@@ -301,6 +301,12 @@ instead. The files you select there go as documents with their own name and
 bytes, pictures included, and show as files in the review area until you send
 them.
 
+Select a staged file and choose **Create ZIP copy** to compress it on this
+computer. ZapFast replaces the staged file only if the ZIP is smaller and shows
+both sizes. Your original stays untouched. Already compressed files, such as
+many PDFs, photos, and videos, may not shrink. Press **Send** to send the ZIP
+as a document; WhatsApp's upload limits still apply.
+
 Videos go as playable video messages only when they are MP4. WhatsApp does
 not deliver a video message in another format, and ZapFast does not convert
 videos, so a QuickTime `.mov`, WebM, MKV, or AVI file goes as a document

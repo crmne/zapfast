@@ -16,6 +16,7 @@ pub enum Stop {
     ReviewRemove(usize),
     ReviewAdd,
     ReviewEdit,
+    ReviewZip,
     ReviewClose,
     PhoneLink(u32),
     /// The chat header's Search, then the search pane's controls in reading

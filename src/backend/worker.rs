@@ -39,6 +39,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod archive_chats;
+pub(crate) mod attachment_compression;
 mod blocking;
 mod bot_replies;
 mod calls;
@@ -7659,6 +7660,28 @@ impl Worker {
                 });
             }
             Command::LoadStorageStats { token } => self.measure_storage(token, false),
+            Command::CompressAttachment {
+                chat,
+                target,
+                path,
+                cancelled,
+            } => {
+                let cache = self.dirs.media_cache_dir();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = attachment_compression::compress(&cache, &path, &cancelled);
+                    if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = events.send(Event::AttachmentCompressed {
+                            chat,
+                            target,
+                            cancelled,
+                            result,
+                        });
+                        waker.wake();
+                    }
+                });
+            }
             Command::ClearMediaCache { token } => self.measure_storage(token, true),
             Command::StorageMeasured {
                 stats,
