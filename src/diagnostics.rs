@@ -172,8 +172,6 @@ fn receive_summary(message: &str) -> Option<Cow<'static, str>> {
     .map(|(_, summary)| summary.into())
 }
 
-/// The decimal number `text` starts with, rebuilt from its digits, and what
-/// follows it.
 /// Names what the peer's voice codec changed to when the MLow decoder starts dropping its frames:
 /// the frame's count, which of the decoder's three limits it broke, the value, and its TOC byte.
 /// The peer's audio is silent from there on, and that dimension is what an upstream report needs.
@@ -201,6 +199,8 @@ fn mlow_summary(message: &str) -> Option<Cow<'static, str>> {
     )
 }
 
+/// The decimal number `text` starts with, rebuilt from its digits, and what
+/// follows it.
 fn leading_number(text: &str) -> Option<(u64, &str)> {
     let end = text
         .find(|c: char| !c.is_ascii_digit())
