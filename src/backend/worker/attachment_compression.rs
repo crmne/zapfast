@@ -57,6 +57,12 @@ pub(crate) fn compress(
     if source.read(&mut chunk[..1]).map_err(|_| ())? != 0 {
         return Err(());
     }
+    // The handle keeps reading the file it opened, so a replace cannot mix
+    // bytes into this copy. An in-place write of the same length can, so
+    // discard the staging copy if the source changed while it was read.
+    if !same_source(&metadata, &source.metadata().map_err(|_| ())?) {
+        return Err(());
+    }
     let file = writer.finish().map_err(|_| ())?;
     let after = file.metadata().map_err(|_| ())?.len();
     drop(file);
@@ -73,6 +79,17 @@ pub(crate) fn compress(
         before,
         after,
     }))
+}
+
+/// Whether the source handle still describes the file we began reading.
+/// A same-length in-place write that preserves the timestamp remains
+/// indistinguishable without filesystem-specific file identities.
+fn same_source(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    before.len() == after.len()
+        && matches!(
+            (before.modified(), after.modified()),
+            (Ok(before), Ok(after)) if before == after
+        )
 }
 
 /// A single portable ZIP entry name, not an absolute path or a directory.
@@ -161,5 +178,26 @@ mod tests {
         );
         assert!(compress(&cache, &path, &AtomicBool::new(true)).is_err());
         assert_eq!(std::fs::read_dir(cache).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_same_length_source_change_is_detected() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture.txt");
+        std::fs::write(&path, vec![b'a'; 1_024]).unwrap();
+        let original = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let source = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        source.set_modified(original).unwrap();
+        drop(source);
+        let before = path.metadata().unwrap();
+        assert!(same_source(&before, &path.metadata().unwrap()));
+
+        std::fs::write(&path, vec![b'b'; 1_024]).unwrap();
+        let source = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        source
+            .set_modified(original + std::time::Duration::from_secs(60))
+            .unwrap();
+        drop(source);
+        assert!(!same_source(&before, &path.metadata().unwrap()));
     }
 }

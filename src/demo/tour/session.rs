@@ -343,7 +343,7 @@ pub fn respond(app: &mut App) {
                 path,
                 cancelled,
             } => {
-                let cache = app.dirs.media_cache_dir();
+                let cache = app.account().dirs.media_cache_dir();
                 app.backend
                     .run_demo_compression(cache, chat, target, path, cancelled);
             }

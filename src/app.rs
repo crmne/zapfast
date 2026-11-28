@@ -18481,6 +18481,7 @@ mod tests {
 
         let (backend, events) = Backend::detached();
         app.accounts[1].backend = backend;
+        app.accounts[1].open_chat = Some(chat.clone());
         events.send(Event::Chats(Vec::new())).unwrap();
         app.handle_events();
 

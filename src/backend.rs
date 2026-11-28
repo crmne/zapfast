@@ -1954,7 +1954,11 @@ impl Backend {
             return;
         };
         let waker = self.demo_waker.clone();
-        std::thread::Builder::new()
+        let failed_events = events.clone();
+        let failed_waker = waker.clone();
+        let failed_chat = chat.clone();
+        let failed_cancelled = cancelled.clone();
+        let spawned = std::thread::Builder::new()
             .name("demo-zip-copy".into())
             .spawn(move || {
                 let result = compress_attachment(&cache, &path, &cancelled);
@@ -1967,8 +1971,16 @@ impl Backend {
                     });
                     waker.wake();
                 }
-            })
-            .ok();
+            });
+        if spawned.is_err() {
+            let _ = failed_events.send(Event::AttachmentCompressed {
+                chat: failed_chat,
+                target,
+                cancelled: failed_cancelled,
+                result: Err(()),
+            });
+            failed_waker.wake();
+        }
     }
 
     /// Captures real UI commands for an offline demo's local responder.
