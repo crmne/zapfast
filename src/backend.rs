@@ -23,6 +23,10 @@ pub(crate) mod sticker_import;
 mod sticker_maker;
 pub(crate) mod sticker_store;
 mod worker;
+pub use worker::attachment_compression::ZipCopy;
+/// Compresses a staged attachment without a worker, for the offline demo.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) use worker::attachment_compression::compress as compress_attachment;
 pub use worker::{PINNED_CHATS, PLUS_PINNED_CHATS, host_owned_presence};
 
 /// Result of a deletion request, without protocol errors crossing the bridge.
@@ -465,6 +469,12 @@ pub enum Command {
     PickFiles {
         chat: ChatId,
         documents: bool,
+    },
+    CompressAttachment {
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        path: PathBuf,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
     },
     /// Sends files with the caption on the first.
     SendFiles {
@@ -1200,6 +1210,12 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    AttachmentCompressed {
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        result: Result<Option<ZipCopy>, ()>,
+    },
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,
@@ -1922,6 +1938,49 @@ impl Backend {
     #[cfg(any(test, feature = "demo"))]
     pub(crate) fn attach_demo_window(&self, ctx: &egui::Context) {
         self.demo_waker.attach(ctx);
+    }
+
+    /// Compresses a demo attachment off the window thread, as the worker does.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn run_demo_compression(
+        &self,
+        cache: PathBuf,
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        path: PathBuf,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let Some(events) = self.demo_events.clone() else {
+            return;
+        };
+        let waker = self.demo_waker.clone();
+        let failed_events = events.clone();
+        let failed_waker = waker.clone();
+        let failed_chat = chat.clone();
+        let failed_cancelled = cancelled.clone();
+        let spawned = std::thread::Builder::new()
+            .name("demo-zip-copy".into())
+            .spawn(move || {
+                let result = compress_attachment(&cache, &path, &cancelled);
+                if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = events.send(Event::AttachmentCompressed {
+                        chat,
+                        target,
+                        cancelled,
+                        result,
+                    });
+                    waker.wake();
+                }
+            });
+        if spawned.is_err() {
+            let _ = failed_events.send(Event::AttachmentCompressed {
+                chat: failed_chat,
+                target,
+                cancelled: failed_cancelled,
+                result: Err(()),
+            });
+            failed_waker.wake();
+        }
     }
 
     /// Captures real UI commands for an offline demo's local responder.

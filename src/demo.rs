@@ -3844,6 +3844,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
                 app.composer = "Large synthetic pasted photo".into();
             }
+            "zip-copy" => {
+                let path = app.dirs.media_cache_dir().join("demo-zip-copy.txt");
+                std::fs::write(
+                    &path,
+                    "Flight plan for the synthetic archive.\n".repeat(512),
+                )
+                .expect("write the compressible demo file");
+                app.stage(crate::app::Pending::File(path));
+                app.composer = "Sharing the notes".into();
+            }
             "staged" => {
                 let (photo, _) = sample_files(app);
                 let side = 48usize;
@@ -9605,6 +9615,34 @@ mod tests {
         }
     }
 
+    /// The ZIP copy page finishes its compression through the demo's own
+    /// answer to the command, as the offline window does.
+    #[test]
+    fn the_zip_copy_demo_finishes_its_compression() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("zip-copy"));
+        render(&mut app, &ctx);
+        app.backend.record_demo_commands();
+        let target = app.pending[0].id;
+        app.actions
+            .push(crate::model::Action::CompressAttachment(target));
+        render(&mut app, &ctx);
+        assert!(app.compression_in_progress(), "the page started a copy");
+        crate::demo::tour::respond(&mut app);
+        let started = std::time::Instant::now();
+        while app.compression_in_progress() {
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            render(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(matches!(
+            app.pending[0].item,
+            crate::app::Pending::Document(_)
+        ));
+    }
+
     #[test]
     /// Checks all synthetic demo surfaces fit their tested window sizes and themes.
     fn every_surface_lays_out() {
@@ -9819,6 +9857,7 @@ mod tests {
             "search",
             "forward-portuguese",
             "staged",
+            "zip-copy",
             "view-once-off",
             "view-once",
             "view-once,light",

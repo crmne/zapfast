@@ -642,6 +642,7 @@ pub struct App {
     pub(crate) pending_view_once: bool,
     /// The next identity to give a staged attachment.
     next_pending_id: AttachmentId,
+    compression: Option<(AttachmentId, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     /// Whether the composer plus menu is open or closing.
     pub composer_tools_open: bool,
     /// In-chat audio player.
@@ -1174,6 +1175,29 @@ impl App {
         }
         self.picture_origins.retain(|id, _| live.contains(id));
         self.picture_applying.retain(|id, _| live.contains(id));
+        if self
+            .compression
+            .as_ref()
+            .is_some_and(|(id, _)| self.staged_at(*id).is_none())
+        {
+            self.cancel_compression();
+        }
+    }
+
+    pub(crate) fn compressing(&self, target: AttachmentId) -> bool {
+        self.compression
+            .as_ref()
+            .is_some_and(|(id, _)| *id == target)
+    }
+
+    pub(crate) fn compression_in_progress(&self) -> bool {
+        self.compression.is_some()
+    }
+
+    fn cancel_compression(&mut self) {
+        if let Some((_, cancelled)) = self.compression.take() {
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
@@ -1185,6 +1209,19 @@ pub struct ComposerMention {
 }
 
 impl Pending {
+    pub(crate) fn zip_source(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::File(path) | Self::Document(path)
+                if !path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip")) =>
+            {
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether the composer can preview the file as an image.
     pub fn is_picture_file(path: &std::path::Path) -> bool {
         mime_guess2::from_path(path)
@@ -1664,6 +1701,7 @@ impl App {
             pending: Vec::new(),
             pending_view_once: false,
             next_pending_id: 0,
+            compression: None,
             composer_tools_open: false,
             player: Player::new(waker.clone()),
             video: crate::video::Player::new(waker.clone()),
@@ -2124,6 +2162,9 @@ impl App {
         let Some(index) = self.accounts.iter().position(|account| account.id == id) else {
             return;
         };
+        if index == self.active {
+            self.cancel_compression();
+        }
         if self.accounts.len() <= 1 {
             self.accounts[index].backend.send(Command::Unlink);
             return;
@@ -3709,6 +3750,43 @@ impl App {
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
+            Event::AttachmentCompressed {
+                chat,
+                target,
+                cancelled,
+                result,
+            } => {
+                if live
+                    && self.open_chat.as_deref() == Some(chat.as_str())
+                    && self.compression.as_ref().is_some_and(|(id, token)| {
+                        *id == target && std::sync::Arc::ptr_eq(token, &cancelled)
+                    })
+                    && let Some(at) = self.staged_at(target)
+                {
+                    self.compression = None;
+                    match result {
+                        Ok(Some(copy)) => {
+                            let _ = copy.dir.keep();
+                            self.pending[at].item = Pending::Document(copy.path);
+                            self.pending[at].preview = None;
+                            self.picture_origins.remove(&target);
+                            let text =
+                                crate::i18n::gettext(self.locale, "ZIP copy: {before} to {after}")
+                                    .replace("{before}", &crate::util::bytes(copy.before))
+                                    .replace("{after}", &crate::util::bytes(copy.after));
+                            self.toast(text);
+                        }
+                        Ok(None) => self.toast(crate::i18n::gettext(
+                            self.locale,
+                            "ZIP would not make this file smaller. Kept the original.",
+                        )),
+                        Err(()) => self.toast_error(crate::i18n::gettext(
+                            self.locale,
+                            "Could not create a ZIP copy. Kept the original.",
+                        )),
+                    }
+                }
+            }
             Event::StorageStats {
                 stats,
                 token,
@@ -3932,6 +4010,7 @@ impl App {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
                         if live {
                             self.invalidate_composer_undo();
+                            self.cancel_compression();
                         }
                         self.open_chat = None;
                     } else {
@@ -5197,6 +5276,7 @@ impl App {
                 self.draft_mentions.clear();
                 self.attachment_drafts.clear();
                 if live {
+                    self.cancel_compression();
                     self.pending.clear();
                     self.pending_view_once = false;
                     self.reply_to = None;
@@ -6775,6 +6855,7 @@ impl App {
     /// except a private reply: its quote comes from a group and cannot be
     /// picked again in this chat.
     fn save_attachment_draft(&mut self, chat: &str) {
+        self.cancel_compression();
         let private = self
             .reply_to
             .as_ref()
@@ -6847,6 +6928,11 @@ impl App {
             return;
         }
         if self.pending.is_empty() {
+            return;
+        }
+        if self.compression_in_progress() {
+            self.composer = caption;
+            self.composer_mentions = selected;
             return;
         }
         if self.pending_view_once && !self.pending_supports_view_once() {
@@ -8499,10 +8585,37 @@ impl App {
                     self.forget_unstaged_pictures();
                 }
             }
+            Action::CompressAttachment(target) => {
+                if self.compression.is_none()
+                    && !self.storage_clearing
+                    && !self.pending_view_once
+                    && !self.picture_applying.contains_key(&target)
+                    && let Some(chat) = self.open_chat.clone()
+                    && let Some(path) = self
+                        .staged_at(target)
+                        .and_then(|at| self.pending[at].item.zip_source())
+                        .map(std::path::Path::to_owned)
+                {
+                    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    self.compression = Some((target, cancelled.clone()));
+                    self.backend.send(Command::CompressAttachment {
+                        chat,
+                        target,
+                        path,
+                        cancelled,
+                    });
+                }
+            }
             Action::SetPendingViewOnce(view_once) => {
+                if view_once {
+                    self.cancel_compression();
+                }
                 self.set_pending_view_once(view_once);
             }
             Action::EditPicture(target) => {
+                if self.compressing(target) {
+                    self.cancel_compression();
+                }
                 // Whatever was being waited for is not what is wanted now.
                 self.picture_inspecting = None;
                 self.picture_edit_followed = Some(crate::ui::overlay::followed(ctx));
@@ -10099,6 +10212,9 @@ impl App {
             }
             Action::RemoveAccount(id) => self.remove_account(id),
             Action::ClearMediaCache(id) => {
+                if self.account().id == id {
+                    self.cancel_compression();
+                }
                 if let Some(account) = self.accounts.iter_mut().find(|known| known.id == id) {
                     account.storage_token += 1;
                     account.storage_clearing = true;
@@ -10611,6 +10727,7 @@ impl App {
             return;
         }
         self.app_lock.lock();
+        self.cancel_compression();
         // Nothing private stays readable in the tree behind the lock screen.
         self.announcer.forget_private();
         self.window_focused = false;
@@ -11862,6 +11979,7 @@ impl App {
     }
 
     pub fn shutdown(&mut self) {
+        self.cancel_compression();
         self.call_tones.set(None);
         self.save_state();
         self.flush_open_draft();
@@ -18258,6 +18376,168 @@ mod tests {
                     if message == "m1" && gone == path
             ))
         );
+    }
+
+    #[test]
+    fn zip_completion_is_bound_to_the_staged_file_and_still_needs_send() {
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("notes.txt");
+        let chat = "test-chat".to_owned();
+        let mut app = app();
+        app.backend.record_demo_commands();
+        app.open_chat = Some(chat.clone());
+        let target = app.stage(Pending::Document(source.clone()));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let cancelled = app.compression.as_ref().unwrap().1.clone();
+        let dir = tempfile::tempdir_in(root.path()).unwrap();
+        let zipped = dir.path().join("notes.txt.zip");
+        let copy = crate::backend::ZipCopy {
+            dir,
+            path: zipped.clone(),
+            before: 2048,
+            after: 256,
+        };
+        app.apply_backend_event(
+            Event::AttachmentCompressed {
+                chat: chat.clone(),
+                target,
+                cancelled: cancelled.clone(),
+                result: Ok(Some(copy)),
+            },
+            false,
+        );
+        assert!(matches!(&app.pending[0].item, Pending::Document(path) if path == &source));
+        app.apply(Action::RemovePending(0), &ctx);
+        assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
+
+        let target = app.stage(Pending::Document(source));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let cancelled = app.compression.as_ref().unwrap().1.clone();
+        let dir = tempfile::tempdir_in(root.path()).unwrap();
+        let zipped = dir.path().join("notes.txt.zip");
+        let copy = crate::backend::ZipCopy {
+            dir,
+            path: zipped.clone(),
+            before: 2048,
+            after: 256,
+        };
+        app.apply_backend_event(
+            Event::AttachmentCompressed {
+                chat: chat.clone(),
+                target,
+                cancelled,
+                result: Ok(Some(copy)),
+            },
+            true,
+        );
+        assert!(matches!(&app.pending[0].item, Pending::Document(path) if path == &zipped));
+        assert!(
+            !app.backend
+                .take_demo_commands()
+                .iter()
+                .any(|cmd| matches!(cmd, Command::SendFiles { .. }))
+        );
+        app.send_pending(app.account().id.clone(), chat, String::new(), vec![]);
+        assert!(app.backend.take_demo_commands().iter().any(|cmd| matches!(cmd,
+            Command::SendFiles { documents: true, paths, .. } if paths == std::slice::from_ref(&zipped))));
+    }
+
+    /// A chat snapshot that drops the open chat also frees the ZIP copy, so
+    /// the next chat can stage and compress a file.
+    #[test]
+    fn a_chat_snapshot_that_drops_the_open_chat_cancels_compression() {
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let chat = "test-chat".to_owned();
+        let mut app = app();
+        app.open_chat = Some(chat.clone());
+        let target = app.stage(Pending::Document(root.path().join("notes.txt")));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let token = app.compression.as_ref().unwrap().1.clone();
+
+        app.apply_backend_event(Event::Chats(Vec::new()), true);
+        assert_eq!(app.open_chat, None);
+        assert!(app.compression.is_none());
+        assert!(token.load(std::sync::atomic::Ordering::Relaxed));
+
+        app.open_chat = Some("other-chat".to_owned());
+        let next = app.stage(Pending::Document(root.path().join("more.txt")));
+        app.apply(Action::CompressAttachment(next), &ctx);
+        assert!(app.compression.is_some(), "the new chat can make a copy");
+    }
+
+    /// A hidden account's snapshot cannot cancel the visible account's ZIP copy.
+    #[test]
+    fn a_hidden_chat_snapshot_keeps_the_visible_zip_copy() {
+        let ctx = egui::Context::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let chat = "test-chat".to_owned();
+        app.open_chat = Some(chat.clone());
+        let target = app.stage(Pending::Document(directory.path().join("notes.txt")));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let token = app.compression.as_ref().unwrap().1.clone();
+
+        let (backend, events) = Backend::detached();
+        app.accounts[1].backend = backend;
+        app.accounts[1].open_chat = Some(chat.clone());
+        events.send(Event::Chats(Vec::new())).unwrap();
+        app.handle_events();
+
+        assert!(
+            app.compression.is_some(),
+            "the visible copy is still running"
+        );
+        assert!(
+            !token.load(std::sync::atomic::Ordering::Relaxed),
+            "a hidden account did not cancel it"
+        );
+    }
+
+    /// A view-once photo recovered while a ZIP copy runs keeps its privacy
+    /// choice when the copy's late answer arrives.
+    #[test]
+    fn a_zip_completion_keeps_a_view_once_photo_recovered_meanwhile() {
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let chat = "test-chat".to_owned();
+        let mut app = app();
+        app.open_chat = Some(chat.clone());
+        let target = app.stage(Pending::Document(root.path().join("notes.txt")));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let token = app.compression.as_ref().unwrap().1.clone();
+        app.restore_attachments(
+            &chat,
+            [Pending::Picture {
+                width: 1,
+                height: 1,
+                rgba: std::sync::Arc::new(vec![255; 4]),
+                texture: None,
+            }],
+            None,
+            true,
+        );
+        assert!(app.pending_view_once, "the recovered photo chose view once");
+
+        let dir = tempfile::tempdir_in(root.path()).unwrap();
+        let copy = crate::backend::ZipCopy {
+            dir,
+            path: root.path().join("notes.txt.zip"),
+            before: 2048,
+            after: 256,
+        };
+        app.apply_backend_event(
+            Event::AttachmentCompressed {
+                chat,
+                target,
+                cancelled: token,
+                result: Ok(Some(copy)),
+            },
+            true,
+        );
+        assert!(app.pending_view_once, "the copy's answer kept the choice");
+        assert!(matches!(&app.pending[0].item, Pending::Document(_)));
     }
 
     #[cfg(target_os = "macos")]

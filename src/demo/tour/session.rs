@@ -337,6 +337,16 @@ pub fn respond(app: &mut App) {
                 app.call_log = log;
                 app.call_log_loaded = true;
             }
+            Command::CompressAttachment {
+                chat,
+                target,
+                path,
+                cancelled,
+            } => {
+                let cache = app.account().dirs.media_cache_dir();
+                app.backend
+                    .run_demo_compression(cache, chat, target, path, cancelled);
+            }
             _ => {}
         }
     }

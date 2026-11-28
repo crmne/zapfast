@@ -161,17 +161,21 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) -> bool {
                             });
                     },
                 );
-                send = theme::circle_button(
-                    ui,
-                    Icon::Send,
-                    44.0,
-                    palette.accent,
-                    palette.accent_hover,
-                    palette.on_accent,
-                    "Send",
-                )
-                .tab_stop(Stop::Send)
-                .clicked();
+                send = ui
+                    .add_enabled_ui(!app.compression_in_progress(), |ui| {
+                        theme::circle_button(
+                            ui,
+                            Icon::Send,
+                            44.0,
+                            palette.accent,
+                            palette.accent_hover,
+                            palette.on_accent,
+                            "Send",
+                        )
+                        .tab_stop(Stop::Send)
+                        .clicked()
+                    })
+                    .inner;
             });
         });
     if let Some(index) = remove {
@@ -291,6 +295,13 @@ fn tile(
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let selected = selected(app, ui.ctx());
+    let view_once = app.pending_view_once;
+    let clearing = app.storage_clearing;
+    let busy = app.compression_in_progress();
+    let compressing = app
+        .pending
+        .get(selected)
+        .is_some_and(|item| app.compressing(item.id));
     let Some(item) = app.pending.get_mut(selected) else {
         return;
     };
@@ -298,6 +309,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let can_edit = editable(&item.item);
     let name = file_name(&item.item);
     let mut edit = false;
+    let mut compress = false;
     let mut close = false;
     ui.painter()
         .rect_filled(ui.available_rect_before_wrap(), 0.0, palette.surface);
@@ -325,6 +337,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     &crate::i18n::gettext(app.locale, "Edit picture"),
                 )
                 .tab_stop(Stop::ReviewEdit)
+                .clicked();
+            }
+            if compressing {
+                ui.spinner();
+                ui.label(crate::i18n::gettext(app.locale, "Creating ZIP copy…"));
+            } else if !busy && !view_once && !clearing && item.item.zip_source().is_some() {
+                compress = theme::soft_button(
+                    ui,
+                    &palette,
+                    None,
+                    &crate::i18n::gettext(app.locale, "Create ZIP copy"),
+                    false,
+                )
+                .tab_stop(Stop::ReviewZip)
                 .clicked();
             }
         });
@@ -369,6 +395,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     if edit {
         app.actions.push(Action::EditPicture(target));
+    }
+    if compress {
+        app.actions.push(Action::CompressAttachment(target));
     }
     if close {
         app.actions.push(Action::ClearPending);

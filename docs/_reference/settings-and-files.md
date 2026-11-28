@@ -37,7 +37,8 @@ the downloaded file is kept in its destination.
 has in its media cache, split into images, videos and GIFs, stickers, and other
 files. **Clear…** there deletes that account's cached attachments after asking:
 its messages, its other caches, and the other accounts' files stay, and so do
-files in a download folder you chose.
+files in a download folder you chose. ZIP copies made in attachment review are
+also stored in this cache and removed by **Clear…**; their originals stay put.
 **Settings > Files > Change…** sends new downloads to another folder, leaving
 earlier ones in place. New downloads use one fixed layout inside that folder:
 `<account>/<chat name>/file`, where the account folder is the account's phone

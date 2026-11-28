@@ -39,6 +39,7 @@ use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
 mod archive_chats;
+pub(crate) mod attachment_compression;
 mod blocking;
 mod bot_replies;
 mod calls;
@@ -589,6 +590,28 @@ fn discard_attachment_staging(dir: &Path) {
     }
 }
 
+/// Removes ZIP copy folders left by an interrupted process. A copy lives only
+/// as long as its attachment is staged, so none survives a restart.
+fn discard_zip_copies(dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(_) => {
+            log::warn!("could not list ZIP copy folders");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("zip-") || !entry.path().is_dir() {
+            continue;
+        }
+        if std::fs::remove_dir_all(entry.path()).is_err() {
+            log::warn!("could not remove an abandoned ZIP copy");
+        }
+    }
+}
+
 /// WhatsApp keeps at most three pinned chats without WhatsApp Plus, and
 /// replaces an existing pin on the phone when a linked device adds a fourth.
 pub const PINNED_CHATS: usize = 3;
@@ -1113,6 +1136,7 @@ pub async fn run(
     worker.adopt_broadcast_lists();
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
+    discard_zip_copies(&worker.dirs.media_cache_dir());
     discard_attachment_staging(&worker.dirs.sticker_cache_dir());
     // Saved stickers are user data, but an interrupted download's staging
     // file never is: a favourite fetched when the process died would
@@ -7659,6 +7683,28 @@ impl Worker {
                 });
             }
             Command::LoadStorageStats { token } => self.measure_storage(token, false),
+            Command::CompressAttachment {
+                chat,
+                target,
+                path,
+                cancelled,
+            } => {
+                let cache = self.dirs.media_cache_dir();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = attachment_compression::compress(&cache, &path, &cancelled);
+                    if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = events.send(Event::AttachmentCompressed {
+                            chat,
+                            target,
+                            cancelled,
+                            result,
+                        });
+                        waker.wake();
+                    }
+                });
+            }
             Command::ClearMediaCache { token } => self.measure_storage(token, true),
             Command::StorageMeasured {
                 stats,
@@ -15828,6 +15874,23 @@ mod tests {
         assert!(!attachment_is_too_large(None));
         assert!(!attachment_is_too_large(Some(ATTACHMENT_DOWNLOAD_LIMIT)));
         assert!(attachment_is_too_large(Some(ATTACHMENT_DOWNLOAD_LIMIT + 1)));
+    }
+
+    #[test]
+    fn abandoned_zip_copy_folders_are_removed() {
+        let directory =
+            std::env::temp_dir().join(format!("zapfast-zip-copies-{}", rand::random::<u64>()));
+        let abandoned = directory.join("zip-abandoned");
+        std::fs::create_dir_all(&abandoned).expect("creates the abandoned copy");
+        std::fs::write(abandoned.join(".compression.part"), b"half a copy")
+            .expect("writes the interrupted copy");
+        let kept = directory.join("kept");
+        std::fs::create_dir_all(&kept).expect("creates a folder to keep");
+        std::fs::write(kept.join("file"), b"not a ZIP copy").expect("writes a kept file");
+        discard_zip_copies(&directory);
+        assert!(!abandoned.exists());
+        assert!(kept.join("file").exists());
+        std::fs::remove_dir_all(&directory).expect("removes the test directory");
     }
 
     #[test]
