@@ -3844,6 +3844,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
                 app.composer = "Large synthetic pasted photo".into();
             }
+            "zip-copy" => {
+                let path = app.dirs.media_cache_dir().join("demo-zip-copy.txt");
+                std::fs::write(
+                    &path,
+                    "Flight plan for the synthetic archive.\n".repeat(512),
+                )
+                .expect("write the compressible demo file");
+                app.stage(crate::app::Pending::File(path));
+                app.composer = "Sharing the notes".into();
+            }
             "staged" => {
                 let (photo, _) = sample_files(app);
                 let side = 48usize;
@@ -9819,6 +9829,7 @@ mod tests {
             "search",
             "forward-portuguese",
             "staged",
+            "zip-copy",
             "view-once-off",
             "view-once",
             "view-once,light",
