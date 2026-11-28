@@ -167,3 +167,6 @@ python3 scripts/render-demo.py raw.mp4 tour.json whats-new.mp4 --scale 1.5
 
 `--demo-page export-chat` shows the synthetic export dialog;
 `--demo-page export-chat-progress` shows its saved-message and attachment counts.
+`--demo-page pdf-preview` opens the native PDF viewer on a synthetic document,
+`pdf-preview,pdf-find` shows active search highlighting, and
+`pdf-preview,pdf-selection` shows selected text on the page.

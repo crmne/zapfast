@@ -2032,6 +2032,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, review_send: Option<b
                                 // close before taking focus back.
                                 if app.focus_composer
                                     && app.image_preview.is_none()
+                                    && app.pdf_preview.is_none()
                                     && app.sticker_view.is_none()
                                 {
                                     app.focus_composer = false;
@@ -3003,6 +3004,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         && !chat.can_send()
         && app.selection.is_none()
         && app.image_preview.is_none()
+        && app.pdf_preview.is_none()
         && app.dialog.is_none();
     // Declined with the pointer, the request is dropped, not left pending:
     // the field it names does not exist here, and a later Tab would
@@ -11234,6 +11236,9 @@ fn attachment(
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() && !auto {
         match &media.path {
+            Some(path) if crate::safety::can_preview_pdf(path) => {
+                actions.push(Action::PreviewPdf(path.clone()));
+            }
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {

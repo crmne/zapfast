@@ -44,6 +44,8 @@ pub mod new_group;
 pub mod notify;
 pub mod opener;
 pub mod paths;
+pub mod pdf;
+pub mod pdf_preview;
 pub mod privacy;
 pub mod proxy;
 pub mod qr;

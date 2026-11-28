@@ -426,6 +426,13 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
     (photo, sticker)
 }
 
+fn sample_pdf_path(app: &App) -> std::path::PathBuf {
+    let path = app.dirs.media_cache_dir().join("demo-document.pdf");
+    let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+    let _ = std::fs::write(&path, crate::pdf::demo_pdf());
+    path
+}
+
 /// Loads the sample account and opens its first chat.
 pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
@@ -2125,6 +2132,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     message: "demo-video".into(),
                     path: app.dirs.media_cache_dir().join("demo-video.mp4"),
                 });
+            }
+            "pdf-preview" => {
+                let mut preview = crate::pdf_preview::PreviewState::new(
+                    sample_pdf_path(app),
+                    app.open_chat
+                        .clone()
+                        .unwrap_or_else(|| SAMPLES[0].id.into()),
+                );
+                // Leave the next sheet visible in the synthetic preview capture.
+                preview.zoom_by(0.75);
+                app.pdf_preview = Some(preview);
+            }
+            "pdf-find" => {
+                if let Some(preview) = app.pdf_preview.as_mut() {
+                    preview.set_text(crate::pdf::demo_text());
+                    preview.set_query("find".into());
+                    preview.step_match(1);
+                }
+            }
+            "pdf-selection" => {
+                if let Some(preview) = app.pdf_preview.as_mut() {
+                    let text = crate::pdf::demo_text();
+                    let first = text[0][0].rect.center();
+                    let last = text[0][6].rect.center();
+                    let geometry = [crate::pdf_preview::PageGeometry {
+                        page: 0,
+                        rect: egui::Rect::from_min_size(
+                            egui::pos2(0.0, 0.0),
+                            egui::vec2(200.0, 300.0),
+                        ),
+                        size: egui::vec2(200.0, 300.0),
+                    }];
+                    preview.set_text(text);
+                    preview.select(first, &geometry, false);
+                    preview.select(last, &geometry, true);
+                }
             }
             "media-album" => media_album_sample(app, true),
             "media-album-replies" => {
@@ -9830,6 +9873,9 @@ mod tests {
             "voice,voice-menu",
             "recording",
             "preview",
+            "pdf-preview",
+            "pdf-preview,pdf-find",
+            "pdf-preview,pdf-selection",
             "gifs",
             "gifs-badkey",
             "react-menu",
@@ -9997,6 +10043,9 @@ mod tests {
             ("info", wide),
             ("chat-search", wide),
             ("empty", wide),
+            ("pdf-preview", wide),
+            ("pdf-preview,pdf-find", wide),
+            ("pdf-preview,pdf-selection", wide),
             ("chat", narrow),
             ("info", narrow),
             ("empty", narrow),
@@ -12838,6 +12887,41 @@ mod tests {
         };
         assert_eq!(texture.size(), [1024, 512]);
         assert!(new_ctx.tex_manager().read().meta(texture.id()).is_some());
+    }
+
+    #[test]
+    fn pdf_wheel_scrolls_to_the_next_page() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("pdf-preview"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.pdf_preview.as_ref().unwrap().page_count() != 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "PDF metadata did not load"
+            );
+            render(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(app.pdf_preview.as_ref().unwrap().page(), 0);
+        for _ in 0..8 {
+            frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(590.0, 390.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, -12.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+            );
+        }
+        assert_eq!(app.pdf_preview.as_ref().unwrap().page(), 1);
     }
 
     /// Tab reaches review controls and Space activates the focused close button.
