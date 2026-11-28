@@ -367,6 +367,21 @@ it again. A live-location share shows the position this linked device received;
 WhatsApp sends later positions only to the phone. ZapFast marks when newer
 positions are available there, but cannot follow the moving location here.
 
+Click a downloaded PDF to read it in ZapFast. Scroll vertically through pages
+with the mouse or trackpad, or jump with the page arrows, Left and Right, or
+Page Up and Page Down. Zoom with the buttons or `+` and `-`, and press `0` to fit.
+Find text with the search button or `Ctrl/Cmd+F`, then use Enter, Shift+Enter, F3,
+or Shift+F3 to step through matches. Press `Esc` to close the search bar, or
+press `Esc` again to close the viewer. Drag across text to select it, then press
+`Ctrl/Cmd+C` or use **Copy** to copy what you selected. Text extraction happens
+on this computer. Scanned pages hold pictures rather than text, so they cannot
+be found or selected unless the file also carries a text layer. **Open in
+another app** sends it to your system's PDF viewer. Previewing is limited to
+PDFs up to 64 MiB and 2,000 pages; password-protected, complex, or unsupported
+files can be opened in another app instead. A very text-heavy PDF can reach the
+local indexing limit; the search bar then marks the results as partial, and
+matches already found still work. PDF contents stay on this computer.
+
 ## Locations
 
 **Send location** in the plus menu beside the message field opens a dialog that

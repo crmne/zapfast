@@ -19,6 +19,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         editor_keys(app, ctx);
         return;
     }
+    if app.pdf_preview.is_some() {
+        pdf_keys(app, ctx);
+        return;
+    }
     if app.image_preview.is_some() {
         video_keys(app, ctx);
         preview_keys(app, ctx);
@@ -430,6 +434,63 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     if let Some(id) = edit_previous.then(|| app.previous_own_editable()).flatten() {
         actions.push(Action::Edit(id));
     }
+    app.actions.extend(actions);
+}
+
+/// Keeps chat shortcuts and text input behind the PDF modal; arrows turn pages.
+fn pdf_keys(app: &mut App, ctx: &egui::Context) {
+    let search_open = app
+        .pdf_preview
+        .as_ref()
+        .is_some_and(crate::pdf_preview::PreviewState::search_open);
+    let search_focused =
+        ctx.memory(|memory| memory.has_focus(crate::pdf_preview::PreviewState::search_id()));
+    let copy_available = !search_focused
+        && app
+            .pdf_preview
+            .as_ref()
+            .is_some_and(|preview| preview.has_selection());
+    let actions = ctx.input_mut(|input| {
+        let mut actions = Vec::new();
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(if search_open {
+                Action::ClosePdfSearch
+            } else {
+                Action::ClosePdfPreview
+            });
+        }
+        let mut copied = false;
+        for event in &input.events {
+            if copy_available && is_copy_event(event) {
+                if !copied {
+                    actions.push(Action::PdfCopySelection);
+                    copied = true;
+                }
+                continue;
+            }
+            if let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+                && let Some(action) = crate::pdf_preview::key_action(*key, *modifiers)
+            {
+                let search_key = matches!(&action, Action::PdfFind | Action::PdfMatch(_));
+                if (!search_focused || search_key) && !matches!(&action, Action::PdfCopySelection) {
+                    actions.push(action);
+                }
+            }
+        }
+        // The search field needs its text, caret and clipboard events; no
+        // chat handler runs behind the modal.
+        if !search_focused {
+            input.events.retain(|event| {
+                !is_copy_event(event) && !crate::image_preview::consumes_key(event)
+            });
+        }
+        actions
+    });
     app.actions.extend(actions);
 }
 

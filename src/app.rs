@@ -675,6 +675,8 @@ pub struct App {
     pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
+    /// Downloaded PDF currently shown in the native document viewer.
+    pub pdf_preview: Option<crate::pdf_preview::PreviewState>,
     /// The motion photo whose clip plays over it: its chat and message.
     pub motion_playing: Option<(ChatId, String)>,
     /// Sticker currently shown large.
@@ -1677,6 +1679,7 @@ impl App {
             media_hold: None,
             pauses_media: false,
             image_preview: None,
+            pdf_preview: None,
             motion_playing: None,
             sticker_view: None,
             viewer_media: Vec::new(),
@@ -2047,6 +2050,7 @@ impl App {
         self.voice_wanted = None;
         self.recording = None;
         self.image_preview = None;
+        self.pdf_preview = None;
         self.viewer_media.clear();
         self.viewer_media_chat = None;
         self.viewer_media_state.clear();
@@ -2865,6 +2869,14 @@ impl App {
         }
         if self.image_preview.as_ref().map(PreviewState::chat) == Some(id) {
             self.image_preview = None;
+        }
+        if self
+            .pdf_preview
+            .as_ref()
+            .map(crate::pdf_preview::PreviewState::chat)
+            == Some(id)
+        {
+            self.pdf_preview = None;
         }
         if matches!(
             &self.dialog,
@@ -3927,6 +3939,14 @@ impl App {
                         })
                 {
                     self.image_preview = None;
+                }
+                if !self.events_hidden
+                    && self.pdf_preview.as_ref().is_some_and(|preview| {
+                        self.chat(preview.chat())
+                            .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                    })
+                {
+                    self.pdf_preview = None;
                 }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
@@ -5206,6 +5226,9 @@ impl App {
                     // to the account that left: close it and release the clip.
                     self.video.stop();
                     self.image_preview = None;
+                    if !self.events_hidden {
+                        self.pdf_preview = None;
+                    }
                     self.viewer_media.clear();
                     self.viewer_media_chat = None;
                     self.viewer_media_state.clear();
@@ -5313,6 +5336,15 @@ impl App {
             && self.chat(&id).is_some_and(|chat| chat.locked)
         {
             self.hide_locked_chat(&id);
+        }
+        // The chat may already be closed while its document is still on
+        // screen. Authentication ending must not leave it there.
+        if self
+            .pdf_preview
+            .as_ref()
+            .is_some_and(|preview| self.chat(preview.chat()).is_some_and(|chat| chat.locked))
+        {
+            self.pdf_preview = None;
         }
         // A live call in a locked chat goes back behind the bar.
         self.hide_private_call();
@@ -6300,6 +6332,9 @@ impl App {
                 self.store_draft(&previous, &draft);
             }
             self.selection = None;
+            // A preview belongs to the chat it was opened from. A
+            // notification or list click must not leave it over another chat.
+            self.pdf_preview = None;
             self.unread_divider =
                 self.chat(&id)
                     .filter(|chat| chat.unread > 0)
@@ -7651,6 +7686,7 @@ impl App {
             }
             Action::CloseChat => {
                 self.close_info();
+                self.pdf_preview = None;
                 // A narrow window's Back from a picked call returns to the
                 // call history.
                 self.picked_call = None;
@@ -7898,6 +7934,80 @@ impl App {
                 } else {
                     self.actions.push(Action::OpenFile(path));
                 }
+            }
+            Action::PreviewPdf(path) => {
+                if !crate::safety::can_preview_pdf(&path)
+                    || !crate::safety::can_open_attachment(&path)
+                    || !path.is_file()
+                {
+                    self.actions.push(Action::OpenFile(path));
+                } else if let Some(chat) = self.open_chat.clone() {
+                    self.pdf_preview = Some(crate::pdf_preview::PreviewState::new(path, chat));
+                    self.image_preview = None;
+                    self.sticker_view = None;
+                    // egui drops the focus of widgets behind a modal only on
+                    // the frame after it first shows. Give up the composer
+                    // now, or Enter would still send its draft while the
+                    // reader steps through matches. Closing hands focus back.
+                    let composer = crate::ui::conversation::composer_id();
+                    let followed = crate::ui::overlay::followed(ctx);
+                    ctx.memory_mut(|memory| {
+                        if let Some(focused) = memory.focused()
+                            && (focused == composer || !followed)
+                        {
+                            memory.surrender_focus(focused);
+                        }
+                    });
+                    self.focus_composer = false;
+                } else {
+                    self.actions.push(Action::OpenFile(path));
+                }
+            }
+            Action::PdfPage(step) => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.move_page(step);
+                }
+            }
+            Action::ZoomPdfBy(factor) => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.zoom_by(factor);
+                }
+            }
+            Action::FitPdf => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.fit();
+                }
+            }
+            Action::PdfFind => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.open_search();
+                    ctx.memory_mut(|memory| {
+                        memory.request_focus(crate::pdf_preview::PreviewState::search_id())
+                    });
+                }
+            }
+            Action::ClosePdfSearch => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.close_search();
+                }
+            }
+            Action::PdfMatch(step) => {
+                if let Some(preview) = &mut self.pdf_preview {
+                    preview.step_match(step);
+                }
+            }
+            Action::PdfCopySelection => {
+                let selected = self
+                    .pdf_preview
+                    .as_ref()
+                    .and_then(crate::pdf_preview::PreviewState::selection_text);
+                if let Some(text) = selected {
+                    self.actions.push(Action::CopyText(text));
+                }
+            }
+            Action::ClosePdfPreview => {
+                self.pdf_preview = None;
+                self.refocus_composer(ctx);
             }
             Action::ZoomImageBy(factor) => {
                 if let Some(preview) = &mut self.image_preview {
@@ -11806,6 +11916,7 @@ impl App {
             && self.chat_view()
             && self.dialog.is_none()
             && self.image_preview.is_none()
+            && self.pdf_preview.is_none()
             && self.picker.is_none()
             && self.reaction_target.is_none()
             && self.recording.is_none()
@@ -18257,6 +18368,104 @@ mod tests {
                 Command::AttachmentMissing { message, card: None, path: gone, .. }
                     if message == "m1" && gone == path
             ))
+        );
+    }
+
+    #[test]
+    fn pdf_preview_opens_locally_and_follows_chat_navigation() {
+        let ctx = egui::Context::default();
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
+        let mut app = app();
+        app.open_chat = Some("test-chat".into());
+        let composer = crate::ui::conversation::composer_id();
+        app.focus_composer = true;
+        ctx.memory_mut(|memory| memory.request_focus(composer));
+
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        let preview = app.pdf_preview.as_ref().expect("PDF preview opens");
+        assert_eq!(preview.chat(), "test-chat");
+        assert_eq!(preview.status(), crate::pdf_preview::Status::Loading);
+        assert!(!app.focus_composer, "the modal takes the keyboard");
+        assert!(
+            !ctx.memory(|memory| memory.has_focus(composer)),
+            "Enter must not reach the composer behind the preview"
+        );
+
+        app.apply(Action::OpenChat("test-chat".into()), &ctx);
+        assert!(app.pdf_preview.is_some(), "the same chat keeps its preview");
+        // A notification for another chat takes the normal open path.
+        app.apply(Action::OpenChat("other-chat".into()), &ctx);
+        assert!(
+            app.pdf_preview.is_none(),
+            "another chat must not open under the PDF"
+        );
+
+        app.apply(Action::OpenChat("test-chat".into()), &ctx);
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        assert!(app.pdf_preview.is_some());
+        app.apply(Action::CloseChat, &ctx);
+        assert!(app.pdf_preview.is_none(), "closing the chat drops the PDF");
+    }
+
+    #[test]
+    fn closing_a_locked_folder_drops_its_pdf_preview() {
+        let ctx = egui::Context::default();
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
+        let mut app = app();
+        let mut chat = Chat::new("locked".into(), "Synthetic locked chat".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.open_chat = Some("locked".into());
+        app.locked_folder = true;
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        assert!(app.pdf_preview.is_some());
+
+        app.close_locked_folder();
+        assert!(
+            app.pdf_preview.is_none(),
+            "authentication must not leave a locked chat's document visible"
+        );
+    }
+
+    #[test]
+    fn pdf_find_and_copy_stay_with_the_preview() {
+        let ctx = egui::Context::default();
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
+        let mut app = app();
+        app.open_chat = Some("test-chat".into());
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        app.apply(Action::PdfFind, &ctx);
+        assert!(
+            app.pdf_preview
+                .as_ref()
+                .is_some_and(crate::pdf_preview::PreviewState::search_open)
+        );
+        assert!(
+            ctx.memory(|memory| memory.has_focus(crate::pdf_preview::PreviewState::search_id()))
+        );
+
+        let text = crate::pdf::demo_text();
+        let first = text[0][0].rect.center();
+        let last = text[0][6].rect.center();
+        let geometry = [crate::pdf_preview::PageGeometry {
+            page: 0,
+            rect: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 300.0)),
+            size: egui::vec2(200.0, 300.0),
+        }];
+        let preview = app.pdf_preview.as_mut().expect("PDF preview opens");
+        preview.set_text(text);
+        preview.set_query("find".into());
+        assert_eq!(preview.match_count(), 1);
+        preview.select(first, &geometry, false);
+        preview.select(last, &geometry, true);
+        app.apply(Action::PdfCopySelection, &ctx);
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::CopyText(text) if text == "Find me"))
         );
     }
 

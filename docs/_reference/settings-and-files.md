@@ -160,6 +160,9 @@ name or description, in the interface language or in English.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
+  Downloaded PDFs open in ZapFast's native viewer; PDFs over 64 MiB, over 2,000
+  pages, password-protected, too complex, or unsupported can be opened in
+  another app.
 - **Fetch older history**: off by default, and set for
   each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently

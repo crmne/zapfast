@@ -26,6 +26,7 @@ use crate::model::{ChatId, Dialog, Page};
 enum Overlay {
     Dialog(Dialog),
     Viewer,
+    Pdf,
     Editor,
     Sticker,
     Reactions,
@@ -38,6 +39,7 @@ impl Overlay {
         match self {
             Self::Dialog(_) => super::dialogs::modal_id(),
             Self::Viewer => super::image_preview::modal_id(),
+            Self::Pdf => super::pdf_preview::modal_id(),
             Self::Editor => super::image_editor::area_id(),
             Self::Sticker => super::image_preview::sticker_modal_id(),
             Self::Reactions => super::picker::reaction_area_id(),
@@ -100,6 +102,8 @@ fn current(app: &App) -> Option<Overlay> {
     // The cropper covers everything, and takes the keys first.
     if app.picture_edit.is_some() {
         Some(Overlay::Editor)
+    } else if app.pdf_preview.is_some() {
+        Some(Overlay::Pdf)
     } else if app.image_preview.is_some() {
         Some(Overlay::Viewer)
     } else if app.sticker_view.is_some() {

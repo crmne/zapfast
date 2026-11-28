@@ -24,6 +24,7 @@ pub mod message_info;
 pub mod new_group;
 pub(crate) mod overlay;
 pub mod pane;
+pub mod pdf_preview;
 pub mod picker;
 pub mod polls;
 pub mod rail;
@@ -67,6 +68,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         && app.reaction_target.is_none()
         && app.recording.is_none()
         && app.image_preview.is_none()
+        && app.pdf_preview.is_none()
         && app.picture_edit.is_none()
         && app.sticker_view.is_none()
         && app.emoji_start.is_none()
@@ -119,6 +121,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     picker::show(app, ctx);
     dialogs::show(app, ctx);
     image_preview::show(app, ctx);
+    pdf_preview::show(app, ctx);
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);
@@ -370,6 +373,7 @@ fn central_frame(app: &App) -> Frame {
 /// a menu.
 fn history_buttons(app: &mut App, ctx: &egui::Context) {
     if app.image_preview.is_some()
+        || app.pdf_preview.is_some()
         || app.dialog.is_some()
         || app.show_update
         || app.picker.is_some()

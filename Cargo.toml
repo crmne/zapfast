@@ -44,8 +44,10 @@ directories = "6"
 eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg", "webp", "gif"] }
+# Renders downloaded PDFs in the native viewer without a browser or native library.
+hayro = "0.9.0"
 # Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures. Keep
-# skrifa aligned with epaint to avoid compiling two versions.
+# this aligned with epaint; Hayro's PDF font stack uses a newer skrifa release.
 skrifa = "0.44"
 # Decodes JPEG, PNG, WebP, and GIF images.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }

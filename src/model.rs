@@ -2954,6 +2954,24 @@ pub enum Action {
     ZoomImageOut,
     FitImage,
     CloseImagePreview,
+    /// Opens a downloaded PDF in the native document viewer.
+    PreviewPdf(PathBuf),
+    /// Moves the PDF viewer one page backward or forward.
+    PdfPage(i8),
+    /// Multiplies the PDF viewer's zoom by this factor.
+    ZoomPdfBy(f32),
+    /// Fits the current PDF page to the viewer.
+    FitPdf,
+    /// Opens and focuses the PDF viewer's text search field.
+    PdfFind,
+    /// Closes the PDF viewer's text search bar and clears matches.
+    ClosePdfSearch,
+    /// Moves to the next or previous text match, wrapping around.
+    PdfMatch(i8),
+    /// Copies the selected PDF text, if any.
+    PdfCopySelection,
+    /// Closes the PDF viewer.
+    ClosePdfPreview,
     /// Shows a downloaded sticker large, with a favorite toggle.
     PreviewSticker(PathBuf),
     CloseStickerPreview,

@@ -66,6 +66,13 @@ pub fn can_preview_image(path: &Path) -> bool {
     )
 }
 
+/// Only PDF files may enter the native document renderer.
+pub fn can_preview_pdf(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
 /// The code of a WhatsApp group invite link such as
 /// `https://chat.whatsapp.com/AbCd123` or `whatsapp://chat/?code=AbCd123`,
 /// which ZapFast opens itself.
@@ -364,6 +371,16 @@ mod tests {
             "photo",
         ] {
             assert!(!can_preview_image(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn only_pdf_extensions_enter_the_native_document_preview() {
+        for name in ["report.pdf", "REPORT.PDF"] {
+            assert!(can_preview_pdf(Path::new(name)), "{name}");
+        }
+        for name in ["report.pdf.exe", "report", "report.docx"] {
+            assert!(!can_preview_pdf(Path::new(name)), "{name}");
         }
     }
 
