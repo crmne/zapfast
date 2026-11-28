@@ -687,16 +687,15 @@ impl PreviewState {
             let mut owners = Vec::new();
             let mut previous: Option<&TextGlyph> = None;
             for (index, glyph) in glyphs.iter().enumerate() {
-                if let Some(prev) = previous {
-                    if line_changed(prev, glyph)
-                        && !prev.text.chars().last().is_some_and(char::is_whitespace)
-                        && !glyph.text.chars().next().is_some_and(char::is_whitespace)
-                    {
-                        // Copy inserts a newline at a baseline change; search
-                        // uses a space so a byte offset still maps to a glyph.
-                        folded.push(' ');
-                        owners.push(index);
-                    }
+                if let Some(prev) = previous
+                    && line_changed(prev, glyph)
+                    && !prev.text.chars().last().is_some_and(char::is_whitespace)
+                    && !glyph.text.chars().next().is_some_and(char::is_whitespace)
+                {
+                    // Copy inserts a newline at a baseline change; search
+                    // uses a space so a byte offset still maps to a glyph.
+                    folded.push(' ');
+                    owners.push(index);
                 }
                 for c in glyph.text.chars().flat_map(char::to_lowercase) {
                     // `String::find` returns a byte offset, so every UTF-8
