@@ -344,16 +344,8 @@ pub fn respond(app: &mut App) {
                 cancelled,
             } => {
                 let cache = app.dirs.media_cache_dir();
-                let result = crate::backend::compress_attachment(&cache, &path, &cancelled);
-                if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-                    app.backend
-                        .deliver_demo_event(crate::backend::Event::AttachmentCompressed {
-                            chat,
-                            target,
-                            cancelled,
-                            result,
-                        });
-                }
+                app.backend
+                    .run_demo_compression(cache, chat, target, path, cancelled);
             }
             _ => {}
         }

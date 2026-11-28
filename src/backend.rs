@@ -1940,6 +1940,37 @@ impl Backend {
         self.demo_waker.attach(ctx);
     }
 
+    /// Compresses a demo attachment off the window thread, as the worker does.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn run_demo_compression(
+        &self,
+        cache: PathBuf,
+        chat: ChatId,
+        target: crate::app::AttachmentId,
+        path: PathBuf,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let Some(events) = self.demo_events.clone() else {
+            return;
+        };
+        let waker = self.demo_waker.clone();
+        std::thread::Builder::new()
+            .name("demo-zip-copy".into())
+            .spawn(move || {
+                let result = compress_attachment(&cache, &path, &cancelled);
+                if !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = events.send(Event::AttachmentCompressed {
+                        chat,
+                        target,
+                        cancelled,
+                        result,
+                    });
+                    waker.wake();
+                }
+            })
+            .ok();
+    }
+
     /// Captures real UI commands for an offline demo's local responder.
     #[cfg(any(test, feature = "demo"))]
     pub(crate) fn record_demo_commands(&mut self) {

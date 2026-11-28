@@ -9631,8 +9631,12 @@ mod tests {
         render(&mut app, &ctx);
         assert!(app.compression_in_progress(), "the page started a copy");
         crate::demo::tour::respond(&mut app);
-        render(&mut app, &ctx);
-        assert!(!app.compression_in_progress(), "the demo answered");
+        let started = std::time::Instant::now();
+        while app.compression_in_progress() {
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            render(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(matches!(
             app.pending[0].item,
             crate::app::Pending::Document(_)

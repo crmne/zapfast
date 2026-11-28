@@ -4010,8 +4010,8 @@ impl App {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
                         if live {
                             self.invalidate_composer_undo();
+                            self.cancel_compression();
                         }
-                        self.cancel_compression();
                         self.open_chat = None;
                     } else {
                         // Show archived messages immediately, including offline.
@@ -18465,6 +18465,33 @@ mod tests {
         let next = app.stage(Pending::Document(root.path().join("more.txt")));
         app.apply(Action::CompressAttachment(next), &ctx);
         assert!(app.compression.is_some(), "the new chat can make a copy");
+    }
+
+    /// A hidden account's snapshot cannot cancel the visible account's ZIP copy.
+    #[test]
+    fn a_hidden_chat_snapshot_keeps_the_visible_zip_copy() {
+        let ctx = egui::Context::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let chat = "test-chat".to_owned();
+        app.open_chat = Some(chat.clone());
+        let target = app.stage(Pending::Document(directory.path().join("notes.txt")));
+        app.apply(Action::CompressAttachment(target), &ctx);
+        let token = app.compression.as_ref().unwrap().1.clone();
+
+        let (backend, events) = Backend::detached();
+        app.accounts[1].backend = backend;
+        events.send(Event::Chats(Vec::new())).unwrap();
+        app.handle_events();
+
+        assert!(
+            app.compression.is_some(),
+            "the visible copy is still running"
+        );
+        assert!(
+            !token.load(std::sync::atomic::Ordering::Relaxed),
+            "a hidden account did not cancel it"
+        );
     }
 
     /// A view-once photo recovered while a ZIP copy runs keeps its privacy
