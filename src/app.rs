@@ -5337,6 +5337,15 @@ impl App {
         {
             self.hide_locked_chat(&id);
         }
+        // The chat may already be closed while its document is still on
+        // screen. Authentication ending must not leave it there.
+        if self
+            .pdf_preview
+            .as_ref()
+            .is_some_and(|preview| self.chat(preview.chat()).is_some_and(|chat| chat.locked))
+        {
+            self.pdf_preview = None;
+        }
         // A live call in a locked chat goes back behind the bar.
         self.hide_private_call();
         self.drop_locked_panel();
@@ -6323,6 +6332,9 @@ impl App {
                 self.store_draft(&previous, &draft);
             }
             self.selection = None;
+            // A preview belongs to the chat it was opened from. A
+            // notification or list click must not leave it over another chat.
+            self.pdf_preview = None;
             self.unread_divider =
                 self.chat(&id)
                     .filter(|chat| chat.unread > 0)
@@ -7674,6 +7686,7 @@ impl App {
             }
             Action::CloseChat => {
                 self.close_info();
+                self.pdf_preview = None;
                 // A narrow window's Back from a picked call returns to the
                 // call history.
                 self.picked_call = None;
@@ -11889,6 +11902,7 @@ impl App {
             && self.chat_view()
             && self.dialog.is_none()
             && self.image_preview.is_none()
+            && self.pdf_preview.is_none()
             && self.picker.is_none()
             && self.reaction_target.is_none()
             && self.recording.is_none()
@@ -18344,7 +18358,7 @@ mod tests {
     }
 
     #[test]
-    fn pdf_preview_opens_locally_and_closes_with_its_chat() {
+    fn pdf_preview_opens_locally_and_follows_chat_navigation() {
         let ctx = egui::Context::default();
         let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
         std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
@@ -18356,8 +18370,41 @@ mod tests {
         assert_eq!(preview.chat(), "test-chat");
         assert_eq!(preview.status(), crate::pdf_preview::Status::Loading);
 
-        app.leave_chat("test-chat");
-        assert!(app.pdf_preview.is_none(), "leaving the chat drops the PDF");
+        app.apply(Action::OpenChat("test-chat".into()), &ctx);
+        assert!(app.pdf_preview.is_some(), "the same chat keeps its preview");
+        // A notification for another chat takes the normal open path.
+        app.apply(Action::OpenChat("other-chat".into()), &ctx);
+        assert!(
+            app.pdf_preview.is_none(),
+            "another chat must not open under the PDF"
+        );
+
+        app.apply(Action::OpenChat("test-chat".into()), &ctx);
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        assert!(app.pdf_preview.is_some());
+        app.apply(Action::CloseChat, &ctx);
+        assert!(app.pdf_preview.is_none(), "closing the chat drops the PDF");
+    }
+
+    #[test]
+    fn closing_a_locked_folder_drops_its_pdf_preview() {
+        let ctx = egui::Context::default();
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
+        let mut app = app();
+        let mut chat = Chat::new("locked".into(), "Synthetic locked chat".into());
+        chat.locked = true;
+        app.chats.push(chat);
+        app.open_chat = Some("locked".into());
+        app.locked_folder = true;
+        app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
+        assert!(app.pdf_preview.is_some());
+
+        app.close_locked_folder();
+        assert!(
+            app.pdf_preview.is_none(),
+            "authentication must not leave a locked chat's document visible"
+        );
     }
 
     #[test]

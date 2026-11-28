@@ -5035,6 +5035,15 @@ impl egui::plugin::Plugin for SelectionLeash {
     }
 
     fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        // This hook is global. The PDF modal paints over the transcript, but
+        // its own text selection must not be leashed to the view behind it.
+        if ctx.data(|data| {
+            data.get_temp::<bool>(crate::ui::pdf_preview::modal_active_id())
+                .unwrap_or(false)
+        }) {
+            self.holding = false;
+            return;
+        }
         let Some(view) = *self.view.lock().unwrap_or_else(|p| p.into_inner()) else {
             self.holding = false;
             return;
@@ -13651,4 +13660,53 @@ fn view_once_button(app: &App, ui: &mut egui::Ui) -> egui::Response {
             app.locale,
             "The recipient can open this photo only once, on their phone.",
         ))
+}
+
+#[cfg(test)]
+mod pdf_leash_tests {
+    use super::SelectionLeash;
+    use egui::plugin::Plugin;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn the_leash_ignores_drags_while_the_pdf_modal_is_open() {
+        let ctx = egui::Context::default();
+        let view = Arc::new(Mutex::new(Some(egui::Rect::from_min_size(
+            egui::pos2(100.0, 100.0),
+            egui::vec2(200.0, 200.0),
+        ))));
+        let mut leash = SelectionLeash::new(Arc::clone(&view));
+        let pos = egui::pos2(10.0, 10.0);
+        let mut input = egui::RawInput {
+            events: vec![egui::Event::PointerMoved(pos)],
+            ..Default::default()
+        };
+
+        ctx.data_mut(|data| {
+            data.insert_temp(crate::ui::pdf_preview::modal_active_id(), true);
+        });
+        leash.input_hook(&ctx, &mut input);
+        assert!(matches!(input.events.as_slice(), [egui::Event::PointerMoved(p)] if *p == pos));
+
+        ctx.data_mut(|data| {
+            data.insert_temp(crate::ui::pdf_preview::modal_active_id(), false);
+        });
+        leash.view = Arc::new(Mutex::new(Some(egui::Rect::from_min_size(
+            egui::pos2(100.0, 100.0),
+            egui::vec2(200.0, 200.0),
+        ))));
+        // A drag started inside the transcript is still clamped: start it
+        // with a press, then move outside the view.
+        input.events = vec![
+            egui::Event::PointerButton {
+                pos: egui::pos2(150.0, 150.0),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(pos),
+        ];
+        leash.input_hook(&ctx, &mut input);
+        assert!(matches!(input.events[1], egui::Event::PointerMoved(p) if p != pos));
+    }
 }

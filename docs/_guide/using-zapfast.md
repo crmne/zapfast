@@ -378,7 +378,9 @@ on this computer. Scanned pages hold pictures rather than text, so they cannot
 be found or selected unless the file also carries a text layer. **Open in
 another app** sends it to your system's PDF viewer. Previewing is limited to
 PDFs up to 64 MiB and 2,000 pages; password-protected, complex, or unsupported
-files can be opened in another app instead. PDF contents stay on this computer.
+files can be opened in another app instead. A very text-heavy PDF can reach the
+local indexing limit; the search bar then marks the results as partial, and
+matches already found still work. PDF contents stay on this computer.
 
 ## Locations
 

@@ -2,6 +2,8 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::thread;
 
@@ -27,6 +29,10 @@ const MAX_RENDER_SCALE: f32 = 4.0;
 const MAX_PAGE_POINTS: f32 = 100_000.0;
 const MAX_GLYPHS_PER_PAGE: usize = 4_000;
 const MAX_GLYPHS_TOTAL: usize = 20_000;
+const TEXT_BATCH: usize = 8;
+const UNITS_PER_EM: f64 = 1000.0;
+const GLYPH_TOP_UNITS: f64 = 820.0;
+const GLYPH_BOTTOM_UNITS: f64 = -180.0;
 
 /// One positioned Unicode run from a PDF, in render-space document points.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +47,12 @@ pub struct TextGlyph {
 #[derive(Debug)]
 pub enum Event {
     Ready(Vec<(f32, f32)>),
-    Text(Vec<Vec<TextGlyph>>),
+    Text {
+        first_page: usize,
+        pages: Vec<Vec<TextGlyph>>,
+        complete: bool,
+        partial: bool,
+    },
     Rendered {
         request: u64,
         page: usize,
@@ -63,6 +74,15 @@ pub struct Request {
 pub struct Worker {
     requests: SyncSender<Request>,
     events: Receiver<Event>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        // The thread is detached. Tell it to stop before its next expensive
+        // phase so a closed preview does not keep a document alive.
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 impl Worker {
@@ -70,12 +90,15 @@ impl Worker {
         let (request_tx, request_rx) = sync_channel(1);
         let (event_tx, event_rx) = sync_channel(1);
         let path = path.to_owned();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancelled);
         thread::Builder::new()
             .name("zapfast-pdf-preview".into())
-            .spawn(move || run(path, request_rx, event_tx, ctx))?;
+            .spawn(move || run(path, request_rx, event_tx, ctx, worker_cancel))?;
         Ok(Self {
             requests: request_tx,
             events: event_rx,
+            cancelled,
         })
     }
 
@@ -88,13 +111,21 @@ impl Worker {
     }
 }
 
+fn stopped(cancelled: &AtomicBool) -> bool {
+    cancelled.load(Ordering::Relaxed)
+}
+
 fn run(
     path: std::path::PathBuf,
     requests: Receiver<Request>,
     events: SyncSender<Event>,
     ctx: egui::Context,
+    cancelled: Arc<AtomicBool>,
 ) {
-    let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(&path)));
+    if stopped(&cancelled) {
+        return;
+    }
+    let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(&path, &cancelled)));
     let pdf = match loaded {
         Ok(Ok(pdf)) => pdf,
         Ok(Err(message)) => {
@@ -114,6 +145,9 @@ fn run(
             return;
         }
     };
+    if stopped(&cancelled) {
+        return;
+    }
 
     let pages = pdf.pages();
     let dimensions: Vec<_> = pages.iter().map(|page| page.render_dimensions()).collect();
@@ -149,67 +183,126 @@ fn run(
     }
     ctx.request_repaint();
 
-    let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_text(pages)))
-        .unwrap_or_default();
-    if events.send(Event::Text(text)).is_err() {
-        return;
-    }
-    ctx.request_repaint();
-
     let interpreter = InterpreterSettings::default();
     let settings = RenderSettings::default();
-    while let Ok(request) = requests.recv() {
-        let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            render_page(
-                &pages[request.page],
-                // Hayro cannot clear its cache. Don't retain resources from every page read.
-                &RenderCache::new(),
+    // Index in short runs. A visible page can render between them, so a long
+    // appendix never holds the cover on "Rendering page". Search gets each
+    // run as it arrives, with `complete` telling the viewer if it may finish.
+    let mut first = 0usize;
+    let mut remaining = MAX_GLYPHS_TOTAL;
+    let mut partial = false;
+    while first < pages.len() {
+        if stopped(&cancelled) {
+            return;
+        }
+        while let Ok(request) = requests.try_recv() {
+            if !serve_request(
+                request,
+                pages,
                 &interpreter,
                 &settings,
-                request.scale,
-            )
-        }));
-        match rendered {
-            Ok(Some(image)) => {
-                if events
-                    .send(Event::Rendered {
-                        request: request.id,
-                        page: request.page,
-                        image,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Ok(None) => {
-                if events
-                    .send(Event::Failed {
-                        request: Some(request.id),
-                        message: "This PDF page could not be rendered.",
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Err(_) => {
-                if events
-                    .send(Event::Failed {
-                        request: Some(request.id),
-                        message: "This PDF page could not be rendered.",
-                    })
-                    .is_err()
-                {
-                    break;
-                }
+                &events,
+                &ctx,
+                &cancelled,
+            ) {
+                return;
             }
         }
+        let end = (first + TEXT_BATCH).min(pages.len());
+        let mut batch = Vec::with_capacity(end - first);
+        for page in first..end {
+            if stopped(&cancelled) {
+                return;
+            }
+            if remaining == 0 {
+                partial = true;
+                batch.push(Vec::new());
+                continue;
+            }
+            let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                extract_page(&pages[page], page, remaining)
+            }))
+            .unwrap_or_default();
+            remaining = remaining.saturating_sub(extracted.len());
+            batch.push(extracted);
+        }
+        let complete = end == pages.len();
+        if events
+            .send(Event::Text {
+                first_page: first,
+                pages: batch,
+                complete,
+                partial,
+            })
+            .is_err()
+        {
+            return;
+        }
         ctx.request_repaint();
+        first = end;
+    }
+    while let Ok(request) = requests.recv() {
+        if !serve_request(
+            request,
+            pages,
+            &interpreter,
+            &settings,
+            &events,
+            &ctx,
+            &cancelled,
+        ) {
+            return;
+        }
     }
 }
 
-fn load(path: &Path) -> Result<Pdf, &'static str> {
+fn serve_request<'a>(
+    request: Request,
+    pages: &[hayro::hayro_syntax::page::Page<'a>],
+    interpreter: &InterpreterSettings,
+    settings: &RenderSettings,
+    events: &SyncSender<Event>,
+    ctx: &egui::Context,
+    cancelled: &AtomicBool,
+) -> bool {
+    if stopped(cancelled) {
+        return false;
+    }
+    if request.page >= pages.len() {
+        return true;
+    }
+    let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        render_page(
+            &pages[request.page],
+            // Hayro cannot clear its cache. Don't retain resources from every page read.
+            &RenderCache::new(),
+            interpreter,
+            settings,
+            request.scale,
+        )
+    }));
+    let outcome = match rendered {
+        Ok(Some(image)) => events.send(Event::Rendered {
+            request: request.id,
+            page: request.page,
+            image,
+        }),
+        Ok(None) | Err(_) => events.send(Event::Failed {
+            request: Some(request.id),
+            message: "This PDF page could not be rendered.",
+        }),
+    };
+    if outcome.is_err() {
+        return false;
+    }
+    ctx.request_repaint();
+    true
+}
+
+fn load(path: &Path, cancelled: &AtomicBool) -> Result<Pdf, &'static str> {
+    if stopped(cancelled) {
+        return Err("This PDF is no longer available.");
+    }
     let mut file = std::fs::File::open(path).map_err(|_| "This PDF is no longer available.")?;
     if file
         .metadata()
@@ -225,6 +318,9 @@ fn load(path: &Path) -> Result<Pdf, &'static str> {
         .map_err(|_| "This PDF could not be read.")?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err("This PDF is too large to preview.");
+    }
+    if stopped(cancelled) {
+        return Err("This PDF is no longer available.");
     }
     let pdf = Pdf::new(bytes).map_err(|_| "This file is not a readable PDF.")?;
     if pdf.len() > MAX_OBJECTS {
@@ -243,15 +339,31 @@ fn valid_dimensions(width: f32, height: f32) -> bool {
 }
 
 pub fn render_scale(width: f32, height: f32, requested: f32) -> Option<f32> {
+    render_scale_with_side(width, height, requested, MAX_RENDER_SIDE as usize)
+}
+
+/// The same bounds as `render_scale`, with the viewport's texture limit added.
+/// egui debug-asserts that an uploaded texture fits this side on every axis.
+pub fn render_scale_with_side(
+    width: f32,
+    height: f32,
+    requested: f32,
+    max_texture_side: usize,
+) -> Option<f32> {
     if !valid_dimensions(width, height) || !requested.is_finite() || requested <= 0.0 {
+        return None;
+    }
+    if max_texture_side == 0 {
         return None;
     }
     let area = f64::from(width) * f64::from(height);
     let area_scale = (f64::from(MAX_RENDER_PIXELS) / area).sqrt() as f32;
+    let side = max_texture_side as f32;
     let scale = requested
         .min(MAX_RENDER_SCALE)
         .min(MAX_RENDER_SIDE / width.max(height))
-        .min(area_scale);
+        .min(area_scale)
+        .min(side / width.max(height));
     (scale.is_finite() && scale > 0.0).then_some(scale)
 }
 
@@ -292,38 +404,48 @@ fn render_page<'a>(
 /// Extracts Unicode runs in the same document coordinates the page is drawn
 /// in. Text that cannot be mapped is skipped: a search must not claim a match
 /// on a glyph it cannot name.
+#[cfg(any(test, feature = "demo"))]
 fn extract_text(pages: &[hayro::hayro_syntax::page::Page<'_>]) -> Vec<Vec<TextGlyph>> {
     let mut remaining = MAX_GLYPHS_TOTAL;
     pages
         .iter()
         .enumerate()
         .map(|(page, page_ref)| {
-            if remaining == 0 {
-                return Vec::new();
-            }
-            let (width, height) = page_ref.render_dimensions();
-            if !valid_dimensions(width, height) {
-                return Vec::new();
-            }
-            let cache = InterpreterCache::new();
-            let mut context = Context::new(
-                page_ref.initial_transform(true).to_kurbo(),
-                KurboRect::new(0.0, 0.0, f64::from(width), f64::from(height)),
-                &cache,
-                page_ref.xref(),
-                InterpreterSettings::default(),
-            );
-            let mut extractor = TextExtractor {
-                page,
-                order: 0,
-                glyphs: Vec::new(),
-                limit: remaining.min(MAX_GLYPHS_PER_PAGE),
-            };
-            interpret_page(page_ref, &mut context, &mut extractor);
-            remaining -= extractor.glyphs.len();
-            extractor.glyphs
+            let extracted = extract_page(page_ref, page, remaining);
+            remaining = remaining.saturating_sub(extracted.len());
+            extracted
         })
         .collect()
+}
+
+fn extract_page(
+    page_ref: &hayro::hayro_syntax::page::Page<'_>,
+    page: usize,
+    limit: usize,
+) -> Vec<TextGlyph> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let (width, height) = page_ref.render_dimensions();
+    if !valid_dimensions(width, height) {
+        return Vec::new();
+    }
+    let cache = InterpreterCache::new();
+    let mut context = Context::new(
+        page_ref.initial_transform(true).to_kurbo(),
+        KurboRect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+        &cache,
+        page_ref.xref(),
+        InterpreterSettings::default(),
+    );
+    let mut extractor = TextExtractor {
+        page,
+        order: 0,
+        glyphs: Vec::new(),
+        limit: limit.min(MAX_GLYPHS_PER_PAGE),
+    };
+    interpret_page(page_ref, &mut context, &mut extractor);
+    extractor.glyphs
 }
 
 struct TextExtractor {
@@ -341,8 +463,6 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
     fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'_>>, _: BlendMode) {}
 
     fn draw_glyph_run(&mut self, glyph_run: &GlyphRun<'_, '_>, props: DrawProps<'_>, _: &DrawMode) {
-        // Hayro scales glyph transforms by 1 / UNITS_PER_EM (1000).
-        const UNITS_PER_EM: f64 = 1000.0;
         if self.glyphs.len() >= self.limit {
             return;
         }
@@ -353,36 +473,61 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
                 Some(BfString::String(text)) => text,
                 None => continue,
             };
+            // Hayro scales glyph transforms by 1 / UNITS_PER_EM (1000), so
+            // the corners below are in the font's own coordinate space.
             let transform = props.transform * glyph.transform();
             let origin = transform * Point::ZERO;
             let [a, b, c, d, _, _] = transform.as_coeffs();
-            let em_x = (a.hypot(b) * UNITS_PER_EM) as f32;
+            let x_scale = a.hypot(b);
+            let em_x = (x_scale * UNITS_PER_EM) as f32;
             let em_y = (c.hypot(d) * UNITS_PER_EM) as f32;
             let height = em_y.max(em_x * 0.25);
-            if !height.is_finite() || height <= 0.0 {
+            if !height.is_finite() || height <= 0.0 || x_scale <= 0.0 {
                 continue;
             }
-            // shortcut: rotated text gets an axis-aligned box from its
-            // baseline, enough for selection in ordinary PDF attachments.
             let font_advance = match &**glyph {
                 Glyph::Outline(g) => g.advance_width(),
                 Glyph::Type3(g) => g.advance_width(),
             }
-            .map(|width| width * a.hypot(b) as f32)
-            .filter(|width| width.is_finite() && *width > 0.0 && *width < height * 4.0);
+            .map(f64::from)
+            .filter(|units| units.is_finite() && *units > 0.0 && *units < UNITS_PER_EM * 4.0);
             let next_advance = glyphs
                 .get(index + 1)
                 .map(|next| {
-                    ((props.transform * next.transform() * Point::ZERO) - origin).hypot() as f32
+                    ((props.transform * next.transform() * Point::ZERO) - origin).hypot() / x_scale
                 })
-                .filter(|width| width.is_finite() && *width > 0.0 && *width < height * 1.8);
-            let advance = font_advance
+                .filter(|units| units.is_finite() && *units > 0.0 && *units < UNITS_PER_EM * 1.8);
+            let advance_units = font_advance
                 .or(next_advance)
-                .unwrap_or_else(|| height * 0.55 * text.chars().count().max(1) as f32);
-            let top = (origin.y - f64::from(height) * 0.82) as f32;
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(origin.x as f32, top),
-                egui::vec2(advance, height),
+                .unwrap_or(UNITS_PER_EM * 0.55 * text.chars().count().max(1) as f64);
+            let corners = [
+                Point::new(0.0, GLYPH_BOTTOM_UNITS),
+                Point::new(0.0, GLYPH_TOP_UNITS),
+                Point::new(advance_units, GLYPH_TOP_UNITS),
+                Point::new(advance_units, GLYPH_BOTTOM_UNITS),
+            ];
+            let mut min_x = f64::INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            for corner in corners {
+                let point = transform * corner;
+                min_x = min_x.min(point.x);
+                min_y = min_y.min(point.y);
+                max_x = max_x.max(point.x);
+                max_y = max_y.max(point.y);
+            }
+            if ![min_x, min_y, max_x, max_y]
+                .iter()
+                .all(|value| value.is_finite())
+            {
+                continue;
+            }
+            // Transforming every corner keeps the box over the painted letter
+            // when the page turns the text 90 degrees.
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(min_x as f32, min_y as f32),
+                egui::pos2(max_x as f32, max_y as f32),
             );
             if let Some(prev) = self.glyphs.last()
                 && prev.page == self.page
@@ -400,8 +545,8 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
                         text: " ".into(),
                         origin: (prev.rect.max.x, prev.origin.1),
                         rect: egui::Rect::from_min_max(
-                            egui::pos2(prev.rect.max.x, top),
-                            egui::pos2(origin.x as f32, top + height),
+                            egui::pos2(prev.rect.max.x.min(origin.x as f32), rect.min.y),
+                            egui::pos2(prev.rect.max.x.max(origin.x as f32), rect.max.y),
                         ),
                     });
                     self.order += 1;
@@ -444,6 +589,18 @@ pub fn demo_pdf() -> Vec<u8> {
         stream(second),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
     ];
+    serialize_pdf(&bodies)
+}
+
+#[cfg(any(test, feature = "demo"))]
+pub fn demo_text() -> Vec<Vec<TextGlyph>> {
+    let pdf = Pdf::new(demo_pdf()).expect("the synthetic PDF parses");
+    let pages = pdf.pages();
+    extract_text(pages)
+}
+
+#[cfg(any(test, feature = "demo"))]
+fn serialize_pdf(bodies: &[Vec<u8>]) -> Vec<u8> {
     let mut bytes = b"%PDF-1.4\n".to_vec();
     let mut offsets = vec![0usize];
     for (index, body) in bodies.iter().enumerate() {
@@ -466,13 +623,6 @@ pub fn demo_pdf() -> Vec<u8> {
         .as_bytes(),
     );
     bytes
-}
-
-#[cfg(any(test, feature = "demo"))]
-pub fn demo_text() -> Vec<Vec<TextGlyph>> {
-    let pdf = Pdf::new(demo_pdf()).expect("the synthetic PDF parses");
-    let pages = pdf.pages();
-    extract_text(pages)
 }
 
 #[cfg(any(test, feature = "demo"))]
@@ -565,31 +715,58 @@ mod tests {
             stream(content),
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
         ];
-        let mut bytes = b"%PDF-1.4\n".to_vec();
-        let mut offsets = vec![0usize];
-        for (index, body) in bodies.iter().enumerate() {
-            offsets.push(bytes.len());
-            bytes.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
-            bytes.extend_from_slice(body);
-            bytes.extend_from_slice(b"\nendobj\n");
-        }
-        let xref = bytes.len();
-        bytes.extend_from_slice(format!("xref\n0 {}\n", offsets.len()).as_bytes());
-        bytes.extend_from_slice(b"0000000000 65535 f \n");
-        for offset in offsets.iter().skip(1) {
-            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-        }
-        bytes.extend_from_slice(
-            format!(
-                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-                offsets.len()
-            )
-            .as_bytes(),
-        );
-        let pdf = Pdf::new(bytes).unwrap();
+        let pdf = Pdf::new(serialize_pdf(&bodies)).unwrap();
         let text = extract_text(pdf.pages());
         let joined: String = text[0].iter().map(|g| g.text.as_str()).collect();
         assert_eq!(joined, "Hello world");
+    }
+
+    #[test]
+    fn texture_side_cap_keeps_rasters_uploadable() {
+        assert_eq!(render_scale_with_side(100.0, 200.0, 1.0, 0), None);
+        assert_eq!(render_scale_with_side(100.0, 200.0, 1.0, 4096), Some(1.0));
+        let scale = render_scale_with_side(3_000.0, 1_000.0, 1.0, 2_048).unwrap();
+        assert!(scale * 3_000.0 <= 2_048.0 + 0.01);
+        assert!(scale * 1_000.0 <= 2_048.0 + 0.01);
+    }
+
+    #[test]
+    fn rotated_glyph_boxes_follow_the_transform() {
+        let fixture = |matrix: &[u8]| {
+            let mut content = b"BT /F1 12 Tf ".to_vec();
+            content.extend_from_slice(matrix);
+            content.extend_from_slice(b" (A) Tj ET\n");
+            let bodies = [
+                b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+                stream(&content),
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
+            ];
+            let pdf = Pdf::new(serialize_pdf(&bodies)).unwrap();
+            extract_page(&pdf.pages()[0], 0, MAX_GLYPHS_PER_PAGE)
+                .pop()
+                .expect("the glyph is extracted")
+                .rect
+        };
+        let upright = fixture(b"1 0 0 1 100 100 Tm");
+        let rotated = fixture(b"0 1 -1 0 100 100 Tm");
+        assert!(upright.height() > upright.width(), "{upright:?}");
+        assert!(
+            rotated.width() > rotated.height() * 1.2,
+            "rotated box should turn with the glyph: {rotated:?}"
+        );
+    }
+
+    #[test]
+    fn dropping_worker_signals_cancellation() {
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), demo_pdf()).unwrap();
+        let worker = Worker::spawn(file.path(), egui::Context::default()).unwrap();
+        let cancelled = Arc::clone(&worker.cancelled);
+        assert!(!stopped(&cancelled));
+        drop(worker);
+        assert!(stopped(&cancelled));
     }
 
     #[test]
@@ -597,7 +774,7 @@ mod tests {
         let path = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(path.path(), b"private fixture text, not a PDF").unwrap();
         assert!(matches!(
-            load(path.path()),
+            load(path.path(), &AtomicBool::new(false)),
             Err("This file is not a readable PDF.")
         ));
     }

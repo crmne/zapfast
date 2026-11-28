@@ -8,19 +8,37 @@ use crate::pdf_preview::{PageGeometry, PreviewState, Status};
 use crate::theme::{self, Icon};
 
 const HEADER: f32 = 56.0;
+const COMPACT_HEADER: f32 = 96.0;
+const WIDE_HEADER_MIN: f32 = 880.0;
+const SEARCH_BAR_WIDTH: f32 = 320.0;
 
 pub(crate) fn modal_id() -> egui::Id {
     egui::Id::new("pdf-preview")
 }
 
+/// A flag the global conversation selection hook reads before the frame.
+pub(crate) fn modal_active_id() -> egui::Id {
+    egui::Id::new("pdf-preview-active")
+}
+
+fn header_height(width: f32, search_open: bool) -> f32 {
+    if search_open && width < WIDE_HEADER_MIN {
+        COMPACT_HEADER
+    } else {
+        HEADER
+    }
+}
+
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(modal_active_id(), app.pdf_preview.is_some()));
     let Some(preview) = app.pdf_preview.as_mut() else {
         return;
     };
     let palette = app.palette;
     let locale = app.locale;
     let screen = ctx.content_rect();
-    let header_rect = Rect::from_min_size(screen.min, vec2(screen.width(), HEADER));
+    let height = header_height(screen.width(), preview.search_open());
+    let header_rect = Rect::from_min_size(screen.min, vec2(screen.width(), height));
     let stage = Rect::from_min_max(egui::pos2(screen.left(), header_rect.bottom()), screen.max);
     preview.poll(ctx);
 
@@ -40,7 +58,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
             let mut head = ui.new_child(UiBuilder::new().max_rect(header_rect));
             head.set_clip_rect(header_rect);
-            header(&mut head, preview, &palette, locale, &mut actions);
+            header(&mut head, preview, &palette, locale, &mut actions, height);
 
             let mut body = ui.new_child(UiBuilder::new().max_rect(stage));
             body.set_clip_rect(stage);
@@ -58,6 +76,7 @@ fn header(
     palette: &theme::Palette,
     locale: crate::i18n::Locale,
     actions: &mut Vec<Action>,
+    height: f32,
 ) {
     let rect = ui.max_rect();
     super::caption_drag(ui, rect);
@@ -72,237 +91,299 @@ fn header(
         .fill(palette.panel)
         .inner_margin(Margin::symmetric(12, 6))
         .show(&mut header, |ui| {
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), HEADER - 12.0),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    if theme::icon_button(
-                        ui,
-                        Icon::X,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        crate::i18n::gettext(locale, "Close PDF preview (Esc)").as_ref(),
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::ClosePdfPreview);
-                    }
-                    ui.add_space(8.0);
-                    let name = preview
-                        .path()
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| {
-                            crate::i18n::gettext(locale, "PDF document").into_owned()
-                        });
-                    let search_t = ui.ctx().animate_bool_with_time(
-                        egui::Id::new("pdf-search-bar"),
-                        preview.search_open(),
-                        0.16,
-                    );
-                    const SEARCH_BAR_WIDTH: f32 = 320.0;
-                    let reserved = 290.0
-                        + if search_t > 0.0 {
-                            (SEARCH_BAR_WIDTH + 8.0) * search_t
-                        } else {
-                            0.0
-                        }
-                        + if preview.has_selection() { 68.0 } else { 0.0 };
-                    ui.allocate_ui_with_layout(
-                        vec2((ui.available_width() - reserved).max(0.0), 36.0),
-                        Layout::left_to_right(Align::Center),
-                        |ui| theme::text(ui, name, theme::medium(14.0), palette.text),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::ExternalLink,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(locale, "Open in another app").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::ClosePdfPreview);
-                            actions.push(Action::OpenFile(preview.path().to_owned()));
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Plus,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(locale, "Zoom in").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::ZoomPdfBy(1.25));
-                        }
-                        if theme::soft_button(
-                            ui,
-                            palette,
-                            None,
-                            &format!("{:.0}%", preview.zoom() * 100.0),
-                            false,
-                        )
-                        .on_hover_text(crate::i18n::gettext(locale, "Fit page to window (0)"))
-                        .clicked()
-                        {
-                            actions.push(Action::FitPdf);
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Minus,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(locale, "Zoom out").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::ZoomPdfBy(0.8));
-                        }
-                        ui.add_space(8.0);
-                        if theme::icon_button(
-                            ui,
-                            Icon::ChevronRight,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(locale, "Next page").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::PdfPage(1));
-                        }
-                        theme::text(
-                            ui,
-                            format!("{} / {}", preview.page() + 1, preview.page_count()),
-                            theme::regular(13.0),
-                            palette.secondary,
-                        );
-                        if theme::icon_button(
-                            ui,
-                            Icon::ChevronLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(locale, "Previous page").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::PdfPage(-1));
-                        }
-                        ui.add_space(12.0);
-                        let search_tip = format!(
-                            "{} ({})",
-                            crate::i18n::gettext(locale, "Find in PDF"),
-                            super::keys::label("Ctrl+F")
-                        );
-                        if theme::icon_button(
-                            ui,
-                            Icon::Search,
-                            18.0,
-                            if preview.search_open() {
-                                palette.accent
-                            } else {
-                                palette.secondary
-                            },
-                            palette.text,
-                            &search_tip,
-                        )
-                        .clicked()
-                        {
-                            actions.push(if preview.search_open() {
-                                Action::ClosePdfSearch
-                            } else {
-                                Action::PdfFind
-                            });
-                        }
-                        if search_t > 0.0 {
-                            let animated_width = (SEARCH_BAR_WIDTH * search_t).round();
-                            ui.allocate_ui_with_layout(
-                                vec2(animated_width, 32.0),
-                                Layout::right_to_left(Align::Center),
-                                |ui| {
-                                    ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
-                                    if theme::icon_button(
-                                        ui,
-                                        Icon::X,
-                                        14.0,
-                                        palette.secondary,
-                                        palette.text,
-                                        crate::i18n::gettext(locale, "Close search").as_ref(),
-                                    )
-                                    .clicked()
-                                    {
-                                        actions.push(Action::ClosePdfSearch);
-                                    }
-                                    if theme::icon_button(
-                                        ui,
-                                        Icon::ChevronRight,
-                                        18.0,
-                                        palette.secondary,
-                                        palette.text,
-                                        crate::i18n::gettext(locale, "Next match").as_ref(),
-                                    )
-                                    .clicked()
-                                    {
-                                        actions.push(Action::PdfMatch(1));
-                                    }
-                                    if theme::icon_button(
-                                        ui,
-                                        Icon::ChevronLeft,
-                                        18.0,
-                                        palette.secondary,
-                                        palette.text,
-                                        crate::i18n::gettext(locale, "Previous match").as_ref(),
-                                    )
-                                    .clicked()
-                                    {
-                                        actions.push(Action::PdfMatch(-1));
-                                    }
-                                    theme::text(
-                                        ui,
-                                        format!(
-                                            "{} / {}",
-                                            preview.active_match(),
-                                            preview.match_count()
-                                        ),
-                                        theme::regular(13.0),
-                                        palette.secondary,
-                                    );
-                                    let mut query = preview.query().to_owned();
-                                    let search = egui::TextEdit::singleline(&mut query)
-                                        .id(PreviewState::search_id())
-                                        .hint_text(crate::i18n::gettext(locale, "Find in PDF"))
-                                        .desired_width(150.0)
-                                        .show(ui)
-                                        .response;
-                                    if search.changed() {
-                                        preview.set_query(query);
-                                    }
-                                },
-                            );
-                        }
-                        if preview.has_selection()
-                            && theme::soft_button(
-                                ui,
-                                palette,
-                                None,
-                                crate::i18n::gettext(locale, "Copy").as_ref(),
-                                false,
-                            )
-                            .clicked()
-                        {
-                            actions.push(Action::PdfCopySelection);
-                        }
-                    });
-                },
-            );
+            if height > HEADER {
+                let content = height - 12.0;
+                let main = (content * 0.5).floor().max(36.0).min(content - 32.0);
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), main),
+                    Layout::left_to_right(Align::Center),
+                    |ui| main_row(ui, preview, palette, locale, actions, false),
+                );
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), content - main),
+                    Layout::left_to_right(Align::Center),
+                    |ui| search_widgets(ui, preview, palette, locale, actions, true),
+                );
+            } else {
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), height - 12.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| main_row(ui, preview, palette, locale, actions, true),
+                );
+            }
         });
+}
+
+/// The document controls. A narrow window leaves search and Copy for the row
+/// below, where they have room beside the field.
+fn main_row(
+    ui: &mut egui::Ui,
+    preview: &mut PreviewState,
+    palette: &theme::Palette,
+    locale: crate::i18n::Locale,
+    actions: &mut Vec<Action>,
+    wide: bool,
+) {
+    let search_t = if wide {
+        ui.ctx().animate_bool_with_time(
+            egui::Id::new("pdf-search-bar"),
+            preview.search_open(),
+            0.16,
+        )
+    } else {
+        0.0
+    };
+    let zoom = format!("{:.0}%", preview.zoom() * 100.0);
+    let page = format!("{} / {}", preview.page() + 1, preview.page_count());
+    let copy = crate::i18n::gettext(locale, "Copy");
+    let icon = 18.0 + theme::ICON_BUTTON_PAD;
+    let zoom_width = theme::soft_button_width(ui, &zoom, false);
+    let page_width = ui
+        .painter()
+        .layout_no_wrap(page.clone(), theme::regular(13.0), palette.text)
+        .size()
+        .x
+        + 8.0;
+    let copy_width = if wide && preview.has_selection() {
+        theme::soft_button_width(ui, &copy, false) + 8.0
+    } else {
+        0.0
+    };
+    let search_width = if wide && search_t > 0.0 {
+        (SEARCH_BAR_WIDTH + 8.0) * search_t
+    } else {
+        0.0
+    };
+    // Six document buttons, the zoom and page labels, and their two gaps.
+    let controls_width = icon * 6.0 + zoom_width + page_width + 20.0 + copy_width + search_width;
+    let name_width = (ui.available_width() - icon - 8.0 - controls_width - 8.0).max(0.0);
+    if theme::icon_button(
+        ui,
+        Icon::X,
+        18.0,
+        palette.secondary,
+        palette.text,
+        crate::i18n::gettext(locale, "Close PDF preview (Esc)").as_ref(),
+    )
+    .clicked()
+    {
+        actions.push(Action::ClosePdfPreview);
+    }
+    ui.add_space(8.0);
+    let name = preview
+        .path()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| crate::i18n::gettext(locale, "PDF document").into_owned());
+    ui.allocate_ui_with_layout(
+        vec2(name_width, 36.0),
+        Layout::left_to_right(Align::Center),
+        |ui| theme::text(ui, name, theme::medium(14.0), palette.text),
+    );
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        if theme::icon_button(
+            ui,
+            Icon::ExternalLink,
+            18.0,
+            palette.secondary,
+            palette.text,
+            crate::i18n::gettext(locale, "Open in another app").as_ref(),
+        )
+        .clicked()
+        {
+            actions.push(Action::ClosePdfPreview);
+            actions.push(Action::OpenFile(preview.path().to_owned()));
+        }
+        if theme::icon_button(
+            ui,
+            Icon::Plus,
+            18.0,
+            palette.secondary,
+            palette.text,
+            crate::i18n::gettext(locale, "Zoom in").as_ref(),
+        )
+        .clicked()
+        {
+            actions.push(Action::ZoomPdfBy(1.25));
+        }
+        if theme::soft_button(ui, palette, None, &zoom, false)
+            .on_hover_text(crate::i18n::gettext(locale, "Fit page to window (0)"))
+            .clicked()
+        {
+            actions.push(Action::FitPdf);
+        }
+        if theme::icon_button(
+            ui,
+            Icon::Minus,
+            18.0,
+            palette.secondary,
+            palette.text,
+            crate::i18n::gettext(locale, "Zoom out").as_ref(),
+        )
+        .clicked()
+        {
+            actions.push(Action::ZoomPdfBy(0.8));
+        }
+        ui.add_space(8.0);
+        if theme::icon_button(
+            ui,
+            Icon::ChevronRight,
+            18.0,
+            palette.secondary,
+            palette.text,
+            crate::i18n::gettext(locale, "Next page").as_ref(),
+        )
+        .clicked()
+        {
+            actions.push(Action::PdfPage(1));
+        }
+        theme::text(ui, page, theme::regular(13.0), palette.secondary);
+        if theme::icon_button(
+            ui,
+            Icon::ChevronLeft,
+            18.0,
+            palette.secondary,
+            palette.text,
+            crate::i18n::gettext(locale, "Previous page").as_ref(),
+        )
+        .clicked()
+        {
+            actions.push(Action::PdfPage(-1));
+        }
+        ui.add_space(12.0);
+        let search_tip = format!(
+            "{} ({})",
+            crate::i18n::gettext(locale, "Find in PDF"),
+            super::keys::label("Ctrl+F")
+        );
+        if theme::icon_button(
+            ui,
+            Icon::Search,
+            18.0,
+            if preview.search_open() {
+                palette.accent
+            } else {
+                palette.secondary
+            },
+            palette.text,
+            &search_tip,
+        )
+        .clicked()
+        {
+            actions.push(if preview.search_open() {
+                Action::ClosePdfSearch
+            } else {
+                Action::PdfFind
+            });
+        }
+        if wide && search_t > 0.0 {
+            ui.add_space(8.0);
+            search_widgets(
+                ui,
+                preview,
+                palette,
+                locale,
+                actions,
+                (SEARCH_BAR_WIDTH * search_t).round(),
+                false,
+            );
+        }
+        if wide && preview.has_selection() {
+            ui.add_space(8.0);
+            if theme::soft_button(ui, palette, None, &copy, false).clicked() {
+                actions.push(Action::PdfCopySelection);
+            }
+        }
+    });
+}
+
+/// Search field and its controls, either inside a wide header or on the
+/// second row of a narrow one.
+fn search_widgets(
+    ui: &mut egui::Ui,
+    preview: &mut PreviewState,
+    palette: &theme::Palette,
+    locale: crate::i18n::Locale,
+    actions: &mut Vec<Action>,
+    width: f32,
+    copy: bool,
+) {
+    ui.allocate_ui_with_layout(
+        vec2(width.max(72.0), 32.0),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+            if theme::icon_button(
+                ui,
+                Icon::X,
+                16.0,
+                palette.secondary,
+                palette.text,
+                crate::i18n::gettext(locale, "Close search").as_ref(),
+            )
+            .clicked()
+            {
+                actions.push(Action::ClosePdfSearch);
+            }
+            if theme::icon_button(
+                ui,
+                Icon::ChevronRight,
+                16.0,
+                palette.secondary,
+                palette.text,
+                crate::i18n::gettext(locale, "Next match").as_ref(),
+            )
+            .clicked()
+            {
+                actions.push(Action::PdfMatch(1));
+            }
+            if theme::icon_button(
+                ui,
+                Icon::ChevronLeft,
+                16.0,
+                palette.secondary,
+                palette.text,
+                crate::i18n::gettext(locale, "Previous match").as_ref(),
+            )
+            .clicked()
+            {
+                actions.push(Action::PdfMatch(-1));
+            }
+            let status = if preview.index_partial() {
+                crate::i18n::gettext(locale, "Partial results").into_owned()
+            } else if !preview.index_complete() {
+                crate::i18n::gettext(locale, "Indexing…").into_owned()
+            } else {
+                format!("{} / {}", preview.active_match(), preview.match_count())
+            };
+            theme::text(ui, status, theme::regular(13.0), palette.secondary);
+            if copy {
+                ui.add_space(8.0);
+                if theme::soft_button(
+                    ui,
+                    palette,
+                    None,
+                    crate::i18n::gettext(locale, "Copy").as_ref(),
+                    false,
+                )
+                .clicked()
+                {
+                    actions.push(Action::PdfCopySelection);
+                }
+            }
+            ui.add_space(8.0);
+            let mut query = preview.query().to_owned();
+            let search = egui::TextEdit::singleline(&mut query)
+                .id(PreviewState::search_id())
+                .hint_text(crate::i18n::gettext(locale, "Find in PDF"))
+                .desired_width(ui.available_width().max(72.0))
+                .show(ui)
+                .response;
+            if search.changed() {
+                preview.set_query(query);
+            }
+        },
+    );
 }
 
 fn page(
@@ -476,7 +557,12 @@ fn page(
         if preview.scrolled_to(current) {
             ui.ctx().request_repaint();
         }
-        preview.request_visible(view.size(), ui.ctx().pixels_per_point(), visible);
+        preview.request_visible(
+            view.size(),
+            ui.ctx().pixels_per_point(),
+            ui.ctx().input(|input| input.max_texture_side),
+            visible,
+        );
     });
 }
 
@@ -507,6 +593,14 @@ fn alpha(color: egui::Color32, opacity: u8) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_search_uses_a_second_header_row() {
+        assert_eq!(header_height(400.0, true), COMPACT_HEADER);
+        assert_eq!(header_height(620.0, true), COMPACT_HEADER);
+        assert_eq!(header_height(900.0, true), HEADER);
+        assert_eq!(header_height(400.0, false), HEADER);
+    }
 
     #[test]
     fn visible_range_handles_page_edges_and_gaps() {

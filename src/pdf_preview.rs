@@ -70,9 +70,12 @@ pub struct PreviewState {
     jump: Option<usize>,
     requested: Option<(u64, usize, f32)>,
     rendered: VecDeque<(usize, f32, TextureHandle)>,
+    cache_limit: usize,
     page_errors: HashMap<usize, &'static str>,
     next_request: u64,
     text: Vec<Vec<TextGlyph>>,
+    index_complete: bool,
+    index_partial: bool,
     search_open: bool,
     query: String,
     matches: Vec<SearchMatch>,
@@ -94,9 +97,12 @@ impl PreviewState {
             jump: Some(0),
             requested: None,
             rendered: VecDeque::new(),
+            cache_limit: CACHED_PAGES,
             page_errors: HashMap::new(),
             next_request: 0,
             text: Vec::new(),
+            index_complete: false,
+            index_partial: false,
             search_open: false,
             query: String::new(),
             matches: Vec::new(),
@@ -137,7 +143,12 @@ impl PreviewState {
                     self.pages = pages;
                     self.status = Status::Ready;
                 }
-                Event::Text(text) => self.set_text(text),
+                Event::Text {
+                    first_page,
+                    pages,
+                    complete,
+                    partial,
+                } => self.add_text(first_page, pages, complete, partial),
                 Event::Rendered {
                     request,
                     page,
@@ -149,8 +160,18 @@ impl PreviewState {
                     if current {
                         let scale = self.requested.map_or(1.0, |(_, _, scale)| scale);
                         self.requested = None;
+                        let max_side = ctx.input(|input| input.max_texture_side);
+                        if image.size[0] == 0
+                            || image.size[1] == 0
+                            || image.size[0] > max_side
+                            || image.size[1] > max_side
+                        {
+                            self.page_errors
+                                .insert(page, "This PDF page is too large for this display.");
+                            continue;
+                        }
                         self.rendered.retain(|(cached, _, _)| *cached != page);
-                        if self.rendered.len() == CACHED_PAGES {
+                        while self.rendered.len() >= self.cache_limit {
                             self.rendered.pop_front();
                         }
                         self.rendered.push_back((
@@ -185,23 +206,30 @@ impl PreviewState {
         &mut self,
         viewport: egui::Vec2,
         pixels_per_point: f32,
+        max_texture_side: usize,
         visible: std::ops::Range<usize>,
     ) {
         if self.requested.is_some() {
             return;
         }
+        // Every sheet the paint loop draws is a candidate. The resident cache
+        // grows with the visible range so these pages cannot evict one another
+        // before their raster arrives.
+        self.cache_limit = cache_limit(&visible);
         let nearby = [visible.end, visible.start.saturating_sub(1)];
-        let candidates: Vec<_> = visible
+        let mut candidates: Vec<_> = visible
             .chain(nearby)
             .filter(|&page| page < self.pages.len())
-            .take(CACHED_PAGES)
             .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
         let Some((page, scale)) = candidates.iter().find_map(|&page| {
             let (width, height) = self.pages[page];
-            let scale = pdf::render_scale(
+            let scale = pdf::render_scale_with_side(
                 width,
                 height,
                 fit_scale((width, height), viewport) * self.zoom * pixels_per_point,
+                max_texture_side,
             )?;
             (!self.page_errors.contains_key(&page)
                 && !self.rendered.iter().any(|(cached, rendered_scale, _)| {
@@ -214,7 +242,7 @@ impl PreviewState {
         // Keep visible pages ahead of old pages in the eviction order.
         self.rendered
             .make_contiguous()
-            .sort_by_key(|(page, _, _)| candidates.contains(page));
+            .sort_by_key(|(page, _, _)| candidates.binary_search(page).is_ok());
         self.next_request = self.next_request.wrapping_add(1);
         let request = Request {
             id: self.next_request,
@@ -245,6 +273,9 @@ impl PreviewState {
             self.zoom = (self.zoom * factor).clamp(0.25, 4.0);
             self.jump = Some(self.page);
             self.page_errors.clear();
+            // A raster still in flight belongs to the old size. Dropping its
+            // id makes the matching failure or image arrive as stale.
+            self.requested = None;
         }
     }
 
@@ -252,6 +283,7 @@ impl PreviewState {
         self.zoom = 1.0;
         self.jump = Some(self.page);
         self.page_errors.clear();
+        self.requested = None;
     }
 
     pub fn path(&self) -> &Path {
@@ -322,12 +354,59 @@ impl PreviewState {
     }
 
     pub fn set_text(&mut self, text: Vec<Vec<TextGlyph>>) {
-        if self.text == text {
+        if self.text == text && self.index_complete && !self.index_partial {
             return;
         }
         self.text = text;
+        self.index_complete = true;
+        self.index_partial = false;
         self.selection = None;
         self.recompute_matches();
+    }
+
+    /// Merges one worker batch. Search stays usable while indexing continues,
+    /// and a query typed before the first batch gets its jump as soon as it
+    /// finds a match.
+    fn add_text(
+        &mut self,
+        first_page: usize,
+        pages: Vec<Vec<TextGlyph>>,
+        complete: bool,
+        partial: bool,
+    ) {
+        if first_page == 0 {
+            self.text = pages;
+        } else {
+            let end = first_page + pages.len();
+            if self.text.len() < end {
+                self.text.resize_with(end, Vec::new);
+            }
+            for (offset, page) in pages.into_iter().enumerate() {
+                self.text[first_page + offset] = page;
+            }
+        }
+        // `complete` means the whole document was walked. `partial` says the
+        // glyph budget cut some pages short, so search can be finished yet
+        // still incomplete.
+        self.index_complete = complete;
+        self.index_partial = partial;
+        self.selection = None;
+        let had_matches = !self.matches.is_empty();
+        self.recompute_matches();
+        if !had_matches
+            && !self.query.is_empty()
+            && let Some(first) = self.matches.first()
+        {
+            self.jump = Some(first.page);
+        }
+    }
+
+    pub fn index_complete(&self) -> bool {
+        self.index_complete
+    }
+
+    pub fn index_partial(&self) -> bool {
+        self.index_partial
     }
 
     pub fn search_open(&self) -> bool {
@@ -575,7 +654,22 @@ impl PreviewState {
         for (page, glyphs) in self.text.iter().enumerate() {
             let mut folded = String::new();
             let mut owners = Vec::new();
+            let mut previous: Option<&TextGlyph> = None;
             for (index, glyph) in glyphs.iter().enumerate() {
+                if let Some(prev) = previous {
+                    let line_height = prev.rect.height().max(glyph.rect.height());
+                    let line_break = line_height > 0.0
+                        && (glyph.origin.1 - prev.origin.1).abs() > line_height * 0.55;
+                    if line_break
+                        && !prev.text.chars().last().is_some_and(char::is_whitespace)
+                        && !glyph.text.chars().next().is_some_and(char::is_whitespace)
+                    {
+                        // Copy inserts a newline at a baseline change; search
+                        // uses a space so a byte offset still maps to a glyph.
+                        folded.push(' ');
+                        owners.push(index);
+                    }
+                }
                 for c in glyph.text.chars().flat_map(char::to_lowercase) {
                     // `String::find` returns a byte offset, so every UTF-8
                     // byte needs an owner, not every char.
@@ -585,6 +679,7 @@ impl PreviewState {
                     }
                     folded.push(c);
                 }
+                previous = Some(glyph);
             }
             let mut from = 0;
             while let Some(offset) = folded[from..].find(&needle) {
@@ -630,6 +725,10 @@ fn union_rects(glyphs: &[TextGlyph], first: usize, last: usize) -> egui::Rect {
     rect
 }
 
+fn cache_limit(visible: &std::ops::Range<usize>) -> usize {
+    (visible.end.saturating_sub(visible.start) + 2).max(CACHED_PAGES)
+}
+
 fn fit_scale(page: (f32, f32), viewport: egui::Vec2) -> f32 {
     (viewport.x / page.0)
         .min(viewport.y / page.1)
@@ -643,7 +742,6 @@ pub fn key_action(key: Key, modifiers: Modifiers) -> Option<crate::model::Action
         (true, Key::C) if !modifiers.alt && !modifiers.shift => {
             Some(crate::model::Action::PdfCopySelection)
         }
-        (true, Key::Plus) | (true, Key::Equals) => Some(crate::model::Action::ZoomPdfBy(1.25)),
         (true, Key::Minus) => Some(crate::model::Action::ZoomPdfBy(0.8)),
         (false, Key::Enter) if !modifiers.any() => Some(crate::model::Action::PdfMatch(1)),
         (false, Key::Enter) if modifiers.shift && !modifiers.alt && !command => {
@@ -655,7 +753,9 @@ pub fn key_action(key: Key, modifiers: Modifiers) -> Option<crate::model::Action
         (false, Key::F3) if modifiers.shift && !modifiers.alt && !command => {
             Some(crate::model::Action::PdfMatch(-1))
         }
-        (false, Key::Plus) | (false, Key::Equals) if !modifiers.any() => {
+        // A US `+` arrives as Plus with Shift held; the unshifted key is
+        // Equals. Neither may carry Ctrl, Command or Alt here.
+        (false, Key::Plus) | (false, Key::Equals) if !command && !modifiers.alt => {
             Some(crate::model::Action::ZoomPdfBy(1.25))
         }
         (false, Key::Minus) if !modifiers.any() => Some(crate::model::Action::ZoomPdfBy(0.8)),
@@ -690,9 +790,12 @@ mod tests {
             jump: None,
             requested: None,
             rendered: VecDeque::new(),
+            cache_limit: CACHED_PAGES,
             page_errors: HashMap::new(),
             next_request: 0,
             text: Vec::new(),
+            index_complete: false,
+            index_partial: false,
             search_open: false,
             query: String::new(),
             matches: Vec::new(),
@@ -712,6 +815,28 @@ mod tests {
         assert_eq!(state.zoom(), 2.0);
         state.fit();
         assert_eq!(state.zoom(), 1.0);
+    }
+
+    #[test]
+    fn plus_zooms_with_shift_but_not_with_system_modifiers() {
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        };
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            key_action(Key::Plus, shift),
+            Some(crate::model::Action::ZoomPdfBy(1.25))
+        );
+        assert_eq!(
+            key_action(Key::Equals, shift),
+            Some(crate::model::Action::ZoomPdfBy(1.25))
+        );
+        assert_eq!(key_action(Key::Plus, alt), None);
+        assert_eq!(key_action(Key::Equals, Modifiers::COMMAND), None);
     }
 
     #[test]
@@ -746,6 +871,76 @@ mod tests {
             origin: (x, 16.0),
             rect: egui::Rect::from_min_max(egui::pos2(x, 0.0), egui::pos2(x + 10.0, 20.0)),
         }
+    }
+
+    #[test]
+    fn partial_index_batches_merge_and_keep_search_live() {
+        let mut state = test_state();
+        state.set_query("later".into());
+        state.add_text(0, vec![vec![glyph(0, 0, "early", 0.0)]], false, false);
+        assert!(!state.index_complete());
+        assert!(!state.index_partial());
+        assert_eq!(state.match_count(), 0);
+        state.add_text(1, vec![vec![glyph(1, 0, "later", 0.0)]], false, false);
+        assert_eq!(state.match_count(), 1);
+        assert_eq!(
+            state.take_jump(),
+            Some(1),
+            "a late match gets the first jump"
+        );
+        state.add_text(2, vec![Vec::new()], true, true);
+        assert!(state.index_complete());
+        assert!(state.index_partial());
+        assert_eq!(state.match_count(), 1);
+    }
+
+    #[test]
+    fn search_does_not_join_words_on_separate_baselines() {
+        let mut state = test_state();
+        let first = glyph(0, 0, "cat", 0.0);
+        let second = TextGlyph {
+            page: 0,
+            order: 1,
+            text: "dog".into(),
+            origin: (0.0, 60.0),
+            rect: egui::Rect::from_min_max(egui::pos2(0.0, 44.0), egui::pos2(30.0, 64.0)),
+        };
+        state.set_text(vec![vec![first, second]]);
+        state.set_query("catdog".into());
+        assert_eq!(state.match_count(), 0);
+        state.set_query("dog".into());
+        assert_eq!(state.match_count(), 1);
+    }
+
+    #[test]
+    fn zoom_invalidates_a_raster_still_in_flight() {
+        let mut state = test_state();
+        state.requested = Some((7, 0, 1.0));
+        state.zoom_by(1.25);
+        assert_eq!(state.requested, None);
+        state.requested = Some((8, 0, 1.25));
+        state.fit();
+        assert_eq!(state.requested, None);
+    }
+
+    #[test]
+    fn cache_grows_to_hold_every_visible_sheet() {
+        assert_eq!(cache_limit(&(0..2)), CACHED_PAGES);
+        assert!(cache_limit(&(0..10)) >= 10 + 2);
+    }
+
+    #[test]
+    fn request_visible_caps_the_raster_to_the_texture_limit() {
+        let file = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
+        std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
+        let mut state = test_state();
+        state.pages = vec![(3_000.0, 1_000.0)];
+        state.worker = Some(Worker::spawn(file.path(), egui::Context::default()).unwrap());
+        state.request_visible(vec2(600.0, 600.0), 1.0, 2_048, 0..1);
+        let (_, page, scale) = state.requested.expect("the visible page is requested");
+        assert_eq!(page, 0);
+        assert!(scale * 3_000.0 <= 2_048.0 + 0.01);
+        assert!(scale * 1_000.0 <= 2_048.0 + 0.01);
     }
 
     #[test]
