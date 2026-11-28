@@ -7945,6 +7945,20 @@ impl App {
                     self.pdf_preview = Some(crate::pdf_preview::PreviewState::new(path, chat));
                     self.image_preview = None;
                     self.sticker_view = None;
+                    // egui drops the focus of widgets behind a modal only on
+                    // the frame after it first shows. Give up the composer
+                    // now, or Enter would still send its draft while the
+                    // reader steps through matches. Closing hands focus back.
+                    let composer = crate::ui::conversation::composer_id();
+                    let followed = crate::ui::overlay::followed(ctx);
+                    ctx.memory_mut(|memory| {
+                        if let Some(focused) = memory.focused()
+                            && (focused == composer || !followed)
+                        {
+                            memory.surrender_focus(focused);
+                        }
+                    });
+                    self.focus_composer = false;
                 } else {
                     self.actions.push(Action::OpenFile(path));
                 }
@@ -18364,11 +18378,19 @@ mod tests {
         std::fs::write(file.path(), crate::pdf::demo_pdf()).unwrap();
         let mut app = app();
         app.open_chat = Some("test-chat".into());
+        let composer = crate::ui::conversation::composer_id();
+        app.focus_composer = true;
+        ctx.memory_mut(|memory| memory.request_focus(composer));
 
         app.apply(Action::PreviewPdf(file.path().to_owned()), &ctx);
         let preview = app.pdf_preview.as_ref().expect("PDF preview opens");
         assert_eq!(preview.chat(), "test-chat");
         assert_eq!(preview.status(), crate::pdf_preview::Status::Loading);
+        assert!(!app.focus_composer, "the modal takes the keyboard");
+        assert!(
+            !ctx.memory(|memory| memory.has_focus(composer)),
+            "Enter must not reach the composer behind the preview"
+        );
 
         app.apply(Action::OpenChat("test-chat".into()), &ctx);
         assert!(app.pdf_preview.is_some(), "the same chat keeps its preview");

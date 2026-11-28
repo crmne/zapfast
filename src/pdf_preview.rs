@@ -374,6 +374,20 @@ impl PreviewState {
         complete: bool,
         partial: bool,
     ) {
+        // A later batch often only appends pages the reader has not selected.
+        // Remember what the endpoints pointed at, so an untouched selection
+        // survives while one whose glyphs are replaced does not.
+        let selection_glyphs = self.selection.map(|(first, second)| {
+            let at = |cursor: TextCursor| {
+                self.text
+                    .get(cursor.page)
+                    .and_then(|page| page.get(cursor.glyph))
+                    .cloned()
+            };
+            (first, at(first), second, at(second))
+        });
+        let active = self.matches.get(self.active_match).copied();
+        let had_matches = !self.matches.is_empty();
         if first_page == 0 {
             self.text = pages;
         } else {
@@ -390,9 +404,29 @@ impl PreviewState {
         // still incomplete.
         self.index_complete = complete;
         self.index_partial = partial;
-        self.selection = None;
-        let had_matches = !self.matches.is_empty();
+        if let Some((first, first_glyph, second, second_glyph)) = selection_glyphs {
+            let holds = |cursor: TextCursor, old: Option<TextGlyph>| {
+                old.is_some_and(|old| {
+                    self.text
+                        .get(cursor.page)
+                        .and_then(|page| page.get(cursor.glyph))
+                        == Some(&old)
+                })
+            };
+            if !holds(first, first_glyph) || !holds(second, second_glyph) {
+                self.selection = None;
+            }
+        }
         self.recompute_matches();
+        if let Some(active) = active
+            && let Some(index) = self.matches.iter().position(|found| {
+                found.page == active.page
+                    && found.first == active.first
+                    && found.last == active.last
+            })
+        {
+            self.active_match = index;
+        }
         if !had_matches
             && !self.query.is_empty()
             && let Some(first) = self.matches.first()
@@ -491,14 +525,11 @@ impl PreviewState {
             }
             let mut prev: Option<&TextGlyph> = None;
             for glyph in glyphs[first..=last].iter() {
-                if let Some(previous) = prev {
-                    let line_height = previous.rect.height().max(glyph.rect.height());
-                    if line_height > 0.0
-                        && (glyph.origin.1 - previous.origin.1).abs() > line_height * 0.55
-                        && !text.ends_with('\n')
-                    {
-                        text.push('\n');
-                    }
+                if let Some(previous) = prev
+                    && line_changed(previous, glyph)
+                    && !text.ends_with('\n')
+                {
+                    text.push('\n');
                 }
                 text.push_str(&glyph.text);
                 prev = Some(glyph);
@@ -657,10 +688,7 @@ impl PreviewState {
             let mut previous: Option<&TextGlyph> = None;
             for (index, glyph) in glyphs.iter().enumerate() {
                 if let Some(prev) = previous {
-                    let line_height = prev.rect.height().max(glyph.rect.height());
-                    let line_break = line_height > 0.0
-                        && (glyph.origin.1 - prev.origin.1).abs() > line_height * 0.55;
-                    if line_break
+                    if line_changed(prev, glyph)
                         && !prev.text.chars().last().is_some_and(char::is_whitespace)
                         && !glyph.text.chars().next().is_some_and(char::is_whitespace)
                     {
@@ -693,6 +721,28 @@ impl PreviewState {
             }
         }
     }
+}
+
+/// Whether two adjacent glyphs sit on different text baselines. Measure
+/// perpendicular to the baseline so a rotated run still advances along it.
+fn line_changed(previous: &TextGlyph, glyph: &TextGlyph) -> bool {
+    let (bx, by) = previous.baseline;
+    let (bx, by) = if bx == 0.0 && by == 0.0 {
+        (1.0, 0.0)
+    } else {
+        (bx, by)
+    };
+    let line_height = if bx.abs() >= by.abs() {
+        previous.rect.height().max(glyph.rect.height())
+    } else {
+        previous.rect.width().max(glyph.rect.width())
+    };
+    if line_height <= 0.0 {
+        return false;
+    }
+    let dx = glyph.origin.0 - previous.origin.0;
+    let dy = glyph.origin.1 - previous.origin.1;
+    (dx * by - dy * bx).abs() > line_height * 0.55
 }
 
 fn glyph_distance(rect: egui::Rect, point: egui::Pos2) -> f32 {
@@ -869,6 +919,7 @@ mod tests {
             order,
             text: text.into(),
             origin: (x, 16.0),
+            baseline: (1.0, 0.0),
             rect: egui::Rect::from_min_max(egui::pos2(x, 0.0), egui::pos2(x + 10.0, 20.0)),
         }
     }
@@ -903,6 +954,7 @@ mod tests {
             order: 1,
             text: "dog".into(),
             origin: (0.0, 60.0),
+            baseline: (1.0, 0.0),
             rect: egui::Rect::from_min_max(egui::pos2(0.0, 44.0), egui::pos2(30.0, 64.0)),
         };
         state.set_text(vec![vec![first, second]]);
@@ -910,6 +962,66 @@ mod tests {
         assert_eq!(state.match_count(), 0);
         state.set_query("dog".into());
         assert_eq!(state.match_count(), 1);
+    }
+
+    #[test]
+    fn rotated_baseline_does_not_insert_spaces_between_glyphs() {
+        let mut state = test_state();
+        let first = TextGlyph {
+            page: 0,
+            order: 0,
+            text: "a".into(),
+            origin: (100.0, 0.0),
+            baseline: (0.0, 1.0),
+            rect: egui::Rect::from_min_max(egui::pos2(80.0, 0.0), egui::pos2(100.0, 10.0)),
+        };
+        let second = TextGlyph {
+            page: 0,
+            order: 1,
+            text: "a".into(),
+            origin: (100.0, 10.0),
+            baseline: (0.0, 1.0),
+            rect: egui::Rect::from_min_max(egui::pos2(80.0, 10.0), egui::pos2(100.0, 20.0)),
+        };
+        state.set_text(vec![vec![first, second]]);
+        state.set_query("aa".into());
+        assert_eq!(
+            state.match_count(),
+            1,
+            "advancing along the baseline is not a line break"
+        );
+        state.set_query("a a".into());
+        assert_eq!(state.match_count(), 0);
+    }
+
+    #[test]
+    fn appended_batches_keep_selection_and_active_result() {
+        let mut state = test_state();
+        state.set_text(vec![
+            vec![glyph(0, 0, "cat", 0.0)],
+            vec![glyph(1, 0, "cat", 0.0)],
+        ]);
+        state.selection = Some((
+            TextCursor { page: 0, glyph: 0 },
+            TextCursor { page: 0, glyph: 0 },
+        ));
+        state.set_query("cat".into());
+        state.step_match(1);
+        assert_eq!(state.active_match(), 2);
+
+        state.add_text(2, vec![vec![glyph(2, 0, "cat", 0.0)]], false, false);
+        assert_eq!(state.selection_text().as_deref(), Some("cat"));
+        assert_eq!(
+            state.active_match(),
+            2,
+            "a later match must not move the active result"
+        );
+
+        state.add_text(0, vec![vec![glyph(0, 0, "dog", 0.0)]], false, false);
+        assert!(
+            !state.has_selection(),
+            "replacing a selected glyph clears it"
+        );
     }
 
     #[test]
@@ -1059,6 +1171,7 @@ mod tests {
             order: 1,
             text: "Second".into(),
             origin: (10.0, 46.0),
+            baseline: (1.0, 0.0),
             rect: egui::Rect::from_min_max(egui::pos2(10.0, 30.0), egui::pos2(50.0, 50.0)),
         };
         state.set_text(vec![vec![glyph(0, 0, "First", 10.0), line_two]]);

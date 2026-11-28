@@ -41,6 +41,8 @@ pub struct TextGlyph {
     pub order: usize,
     pub text: String,
     pub origin: (f32, f32),
+    /// Unit vector along the text baseline in render-space document points.
+    pub baseline: (f32, f32),
     pub rect: egui::Rect,
 }
 
@@ -479,6 +481,7 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
             let origin = transform * Point::ZERO;
             let [a, b, c, d, _, _] = transform.as_coeffs();
             let x_scale = a.hypot(b);
+            let baseline = ((a / x_scale) as f32, (b / x_scale) as f32);
             let em_x = (x_scale * UNITS_PER_EM) as f32;
             let em_y = (c.hypot(d) * UNITS_PER_EM) as f32;
             let height = em_y.max(em_x * 0.25);
@@ -544,6 +547,7 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
                         order: self.order,
                         text: " ".into(),
                         origin: (prev.rect.max.x, prev.origin.1),
+                        baseline,
                         rect: egui::Rect::from_min_max(
                             egui::pos2(prev.rect.max.x.min(origin.x as f32), rect.min.y),
                             egui::pos2(prev.rect.max.x.max(origin.x as f32), rect.max.y),
@@ -560,6 +564,7 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
                 order: self.order,
                 text,
                 origin: (origin.x as f32, origin.y as f32),
+                baseline,
                 rect,
             });
             self.order += 1;
@@ -747,15 +752,16 @@ mod tests {
             extract_page(&pdf.pages()[0], 0, MAX_GLYPHS_PER_PAGE)
                 .pop()
                 .expect("the glyph is extracted")
-                .rect
         };
         let upright = fixture(b"1 0 0 1 100 100 Tm");
         let rotated = fixture(b"0 1 -1 0 100 100 Tm");
-        assert!(upright.height() > upright.width(), "{upright:?}");
+        assert!(upright.rect.height() > upright.rect.width(), "{upright:?}");
+        assert_eq!(upright.baseline, (1.0, 0.0));
         assert!(
-            rotated.width() > rotated.height() * 1.2,
+            rotated.rect.width() > rotated.rect.height() * 1.2,
             "rotated box should turn with the glyph: {rotated:?}"
         );
+        assert_eq!(rotated.baseline, (0.0, 1.0));
     }
 
     #[test]
