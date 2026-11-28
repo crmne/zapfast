@@ -23,6 +23,65 @@ const PASSES: usize = 1;
 /// gathers the colours behind it.
 const SATURATION: f32 = 1.3;
 
+/// Diffuse lavender, teal and rose light behind Aurora's glass panes. One
+/// small mesh, with no textures or repaint timer, also supplies the fallback.
+pub fn ambient(ui: &egui::Ui, palette: &crate::theme::Palette) {
+    if !palette.ambient {
+        return;
+    }
+    let rect = ui.max_rect();
+    let base = if crate::backdrop::active() {
+        palette.window.gamma_multiply(0.55)
+    } else {
+        palette.window
+    };
+    use crate::theme::AuroraVariant;
+    let glows: [(egui::Color32, (f32, f32), f32); 3] = match palette.aurora_variant {
+        AuroraVariant::Default => [
+            (palette.accent, (0.12, 0.05), 0.42),
+            (egui::Color32::from_rgb(83, 179, 186), (0.9, 0.4), 0.32),
+            (egui::Color32::from_rgb(167, 118, 178), (0.4, 1.0), 0.22),
+        ],
+        AuroraVariant::Green => [
+            (palette.accent, (0.08, 0.04), 0.46),
+            (egui::Color32::from_rgb(84, 212, 154), (0.92, 0.38), 0.34),
+            (egui::Color32::from_rgb(184, 233, 134), (0.42, 1.0), 0.2),
+        ],
+        AuroraVariant::Alternative => [
+            (palette.accent, (0.16, 0.06), 0.42),
+            (egui::Color32::from_rgb(91, 200, 232), (0.88, 0.46), 0.34),
+            (egui::Color32::from_rgb(140, 155, 232), (0.35, 0.96), 0.24),
+        ],
+    };
+    const STEPS: u32 = 16;
+    let mut mesh = egui::Mesh::default();
+    for y in 0..=STEPS {
+        let down = y as f32 / STEPS as f32;
+        for x in 0..=STEPS {
+            let across = x as f32 / STEPS as f32;
+            let glow = |cx: f32, cy: f32, strength: f32| {
+                (-6.0 * ((across - cx).powi(2) + (down - cy).powi(2))).exp() * strength
+            };
+            let mut color = base;
+            for (glow_color, (cx, cy), strength) in glows {
+                color = color.lerp_to_gamma(glow_color, glow(cx, cy, strength));
+            }
+            mesh.colored_vertex(
+                rect.min + egui::vec2(across * rect.width(), down * rect.height()),
+                color,
+            );
+        }
+    }
+    for y in 0..STEPS {
+        for x in 0..STEPS {
+            let i = y * (STEPS + 1) + x;
+            mesh.add_triangle(i, i + 1, i + STEPS + 2);
+            mesh.add_triangle(i, i + STEPS + 2, i + STEPS + 1);
+        }
+    }
+    ui.painter().add(egui::Shape::mesh(mesh));
+}
+
 /// A paint callback that frosts `rect`, the bottom `fade` points easing from
 /// blurred to sharp.
 pub fn shape(rect: egui::Rect, fade: f32) -> egui::Shape {
@@ -317,6 +376,44 @@ unsafe fn program(gl: &glow::Context, header: &str, fragment: &str) -> Option<gl
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    #[test]
+    fn ambient_lighting_is_bounded_and_only_paints_for_aurora() {
+        for palette in [
+            crate::theme::Palette::messages(),
+            crate::theme::Palette::light(),
+            crate::theme::Palette::aurora(true),
+            crate::theme::Palette::aurora(false),
+            crate::theme::Palette::aurora_green(true),
+            crate::theme::Palette::aurora_green(false),
+            crate::theme::Palette::aurora_alternative(true),
+            crate::theme::Palette::aurora_alternative(false),
+        ] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| ambient(ui, &palette));
+            output.textures_delta.clear();
+            let meshes: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Mesh(mesh) => Some(mesh),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(meshes.len(), usize::from(palette.ambient));
+            if let Some(mesh) = meshes.first() {
+                assert_eq!(mesh.vertices.len(), 17 * 17);
+                assert_eq!(mesh.indices.len(), 16 * 16 * 6);
+                assert!(mesh.vertices.iter().all(|v| v.pos.is_finite()));
+                assert!(
+                    mesh.indices
+                        .iter()
+                        .all(|i| (*i as usize) < mesh.vertices.len())
+                );
+                assert_ne!(mesh.vertices[0].color, mesh.vertices[17 * 17 - 1].color);
+            }
+        }
+    }
 
     #[test]
     fn objects_stay_with_the_context_they_were_made_for() {

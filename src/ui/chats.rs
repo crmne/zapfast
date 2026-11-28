@@ -33,8 +33,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         app.settings.sidebar_width = width;
         app.actions.push(Action::SettingsChanged);
     }
-    // Separate the panel from the conversation, as the header's line does.
-    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    // Aurora's panes share one ambient sheet; a hairline would split it.
+    if !palette.ambient {
+        // Separate the panel from the conversation, as the header's line does.
+        widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    }
 }
 
 /// The chat list across the whole window, when the window is too narrow to

@@ -834,7 +834,6 @@ impl Shell {
             egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
-        #[cfg(target_os = "macos")]
         app.match_window_transparency(ui.ctx(), self.transparent);
         let startups: Vec<_> = app
             .accounts

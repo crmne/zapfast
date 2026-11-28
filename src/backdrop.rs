@@ -1,4 +1,4 @@
-//! The translucent window behind the Messages theme, with what each platform
+//! The translucent window behind the glass themes, with what each platform
 //! offers: AppKit's sidebar material on macOS, Mica through DWM on Windows,
 //! and on Hyprland a transparent window its compositor blurs. Elsewhere, or
 //! where the platform refuses, the window stays opaque in the theme's
@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Whether the desktop shows through the window this frame: the Messages
-/// theme is on and the platform gave the window its material.
+/// Whether the desktop shows through the window this frame: a glass theme
+/// is on and the platform gave the window its material.
 pub fn active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
 }
@@ -147,7 +147,7 @@ mod platform {
             wanted && set.is_ok() && extended.is_ok()
         };
         if wanted && !accepted {
-            log::info!("Mica is unavailable here; the Messages theme stays opaque");
+            log::info!("Mica is unavailable here; the glass theme stays opaque");
         }
         *applied = Some((key.0, key.1, key.2, accepted));
         accepted
