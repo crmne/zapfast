@@ -1557,7 +1557,6 @@ impl App {
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
-                ThemeChoice::StockWhatsApp => Palette::stock_whatsapp(),
                 ThemeChoice::Messages => Palette::messages(),
                 _ => Palette::dark(),
             });
@@ -6822,6 +6821,10 @@ impl App {
         caption: String,
         selected: Vec<ComposerMention>,
     ) {
+        if self.picture_edit.is_some() || !self.picture_applying.is_empty() {
+            self.toast_error("Finish editing the picture before sending");
+            return;
+        }
         // A queued action cannot consume another chat's or account's draft.
         let active = self.account().id.clone();
         let Some(target) = self.accounts.iter_mut().find(|known| known.id == account) else {
@@ -7216,7 +7219,7 @@ impl App {
     fn apply_theme(&mut self, ctx: &egui::Context) {
         let preference = self.settings.cached_palette().map_or_else(
             || match self.settings.theme {
-                ThemeChoice::Dark | ThemeChoice::StockWhatsApp => egui::ThemePreference::Dark,
+                ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
@@ -7263,9 +7266,7 @@ impl App {
             }
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::StockWhatsApp {
-                Palette::stock_whatsapp()
-            } else if self.settings.theme == ThemeChoice::Messages {
+            if self.settings.theme == ThemeChoice::Messages {
                 if dark {
                     Palette::messages()
                 } else {
@@ -9641,16 +9642,6 @@ impl App {
                 self.settings.font = choice;
                 self.mark_settings_dirty();
                 crate::theme::set_font(ctx, choice);
-                ctx.request_repaint();
-            }
-            Action::SetMessageDensity(density) => {
-                self.settings.message_density = density;
-                self.mark_settings_dirty();
-                ctx.request_repaint();
-            }
-            Action::SetAlbumSaveAll(show) => {
-                self.settings.show_album_save_all = show;
-                self.mark_settings_dirty();
                 ctx.request_repaint();
             }
             Action::SetCustomTitlebar(custom) => {

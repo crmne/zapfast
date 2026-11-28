@@ -127,14 +127,17 @@ pub fn respond(app: &mut App) {
                 height,
                 crop,
                 turns,
+                marks,
+                hd,
             } => {
                 // The same work the worker would do, on this thread instead.
-                let written = crate::backend::picture_edit::write(
+                let written = crate::backend::picture_edit::write_marked(
                     &source,
-                    width,
-                    height,
+                    (width, height),
                     crop,
                     turns,
+                    &marks,
+                    hd,
                     &app.dirs.media_cache_dir().join("edited"),
                 );
                 match written {
