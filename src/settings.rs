@@ -423,7 +423,8 @@ pub struct Settings {
     /// drivers a frameless window shows a black band at the top and its
     /// clicks land below where they are drawn (Spotifast #348, #554).
     pub custom_titlebar: bool,
-    /// Interface language. `None` follows the operating system's locale.
+    /// Interface language. `None` follows the operating system's locale; a
+    /// new installation starts in English.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
     pub custom_theme: Option<String>,
@@ -558,7 +559,7 @@ impl Default for Settings {
             messages_theme: false,
             font: FontChoice::System,
             custom_titlebar: false,
-            interface_language: None,
+            interface_language: Some(crate::i18n::Locale::English),
             custom_theme: None,
             custom_theme_cache: None,
             system_theme_cache: None,
@@ -614,7 +615,9 @@ impl Default for Settings {
 ///
 /// 1. The wallpaper colours that were the defaults (Beige, and Black in dark
 ///    mode) become [`WallpaperColor::Theme`], the new default.
-pub const SETTINGS_VERSION: u32 = 1;
+/// 2. A file that never chose an interface language, back when following the
+///    system was the default, starts in English.
+pub const SETTINGS_VERSION: u32 = 2;
 
 /// Optional build-time GIPHY key from `ZAPFAST_GIPHY_KEY`.
 /// The previous name remains accepted for existing build setups.
@@ -753,6 +756,12 @@ impl Settings {
             if self.dark_wallpaper_color == WallpaperColor::Black {
                 self.dark_wallpaper_color = WallpaperColor::Theme;
             }
+        }
+        if self.version < 2 && self.interface_language.is_none() {
+            // Follow-the-system was the old default, and the interface now
+            // starts in English: an installation that never chose a language
+            // gets the new default, while a language chosen here always wins.
+            self.interface_language = Some(crate::i18n::Locale::English);
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1350,6 +1359,37 @@ mod tests {
         assert_eq!(Settings::load(&settings_path), settings);
         assert_eq!(AccountSettings::load(&account_path), account);
         assert_eq!(AccountRoster::load(&roster_path).unwrap(), roster);
+    }
+
+    #[test]
+    fn an_old_file_without_a_language_starts_in_english_once() {
+        // An old file stores the old follow-the-system default as an explicit
+        // null, so a missing field would not prove the migration ran.
+        let (settings, stored) = load_from(r#"{"version":1,"interface_language":null}"#);
+        assert_eq!(
+            settings.interface_language,
+            Some(crate::i18n::Locale::English)
+        );
+        assert_eq!(stored["interface_language"], "en");
+
+        // Saving and reloading the migrated file keeps English.
+        let (reloaded, _) = load_from(&stored.to_string());
+        assert_eq!(
+            reloaded.interface_language,
+            Some(crate::i18n::Locale::English)
+        );
+
+        // A language chosen in an old file always wins.
+        let (settings, _) = load_from(r#"{"version":1,"interface_language":"de"}"#);
+        assert_eq!(
+            settings.interface_language,
+            Some(crate::i18n::Locale::German)
+        );
+
+        // Auto stays a choice once the file names the current version.
+        let (settings, stored) = load_from(r#"{"version":2,"interface_language":null}"#);
+        assert_eq!(settings.interface_language, None);
+        assert!(stored["interface_language"].is_null());
     }
 
     #[test]
