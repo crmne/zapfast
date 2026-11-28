@@ -731,6 +731,12 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     app.actions.append(&mut actions);
 }
 
+/// The ink inside a starred bubble: the same palette a conversation uses for
+/// that side's bubble, so a saturated outgoing fill keeps its white words.
+fn starred_ink(palette: &Palette, from_me: bool) -> Palette {
+    palette.on_bubble(from_me)
+}
+
 /// One starred message: where it is, when it was starred, and the message's own
 /// words inside a bubble drawn from its side and fill. Clicking opens its chat
 /// at the message; right-clicking the bubble opens the chat's own menu.
@@ -748,7 +754,7 @@ fn starred_row(
         ui,
         &crate::util::clock(message.timestamp),
         theme::regular(11.0),
-        palette.on_bubble(message.from_me).secondary,
+        starred_ink(palette, message.from_me).secondary,
         80.0,
         1,
     );
@@ -762,7 +768,7 @@ fn starred_row(
         ui,
         &words,
         theme::regular(13.0),
-        palette.on_bubble(message.from_me).text,
+        starred_ink(palette, message.from_me).text,
         body_width,
         12,
     );
@@ -834,7 +840,7 @@ fn starred_row(
     body.paint(
         ui,
         pos2(bubble.left() + 10.0, bubble.top() + 6.0),
-        palette.on_bubble(message.from_me).text,
+        starred_ink(palette, message.from_me).text,
     );
     clock.paint(
         ui,
@@ -842,7 +848,7 @@ fn starred_row(
             bubble.right() - 10.0 - clock.size().x,
             bubble.bottom() - 6.0 - clock.size().y,
         ),
-        palette.on_bubble(message.from_me).secondary,
+        starred_ink(palette, message.from_me).secondary,
     );
     // The bubble's rect is what the menu is anchored to, and what a test reads
     // to click it.
@@ -2408,6 +2414,16 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A starred outgoing bubble takes its words from the bubble's ink, not
+    /// from the page foreground: light Aurora's blue fill needs white.
+    #[test]
+    fn starred_bubble_uses_the_ink_for_its_bubble() {
+        let palette = Palette::aurora(false);
+        let ink = starred_ink(&palette, true);
+        assert_eq!(ink.text, palette.on_bubble(true).text);
+        assert_ne!(ink.text, palette.text, "the fixture tells the two apart");
+    }
 
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
