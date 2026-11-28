@@ -748,7 +748,7 @@ fn starred_row(
         ui,
         &crate::util::clock(message.timestamp),
         theme::regular(11.0),
-        palette.secondary,
+        palette.on_bubble(message.from_me).secondary,
         80.0,
         1,
     );
@@ -762,7 +762,7 @@ fn starred_row(
         ui,
         &words,
         theme::regular(13.0),
-        palette.text,
+        palette.on_bubble(message.from_me).text,
         body_width,
         12,
     );
@@ -834,7 +834,7 @@ fn starred_row(
     body.paint(
         ui,
         pos2(bubble.left() + 10.0, bubble.top() + 6.0),
-        palette.text,
+        palette.on_bubble(message.from_me).text,
     );
     clock.paint(
         ui,
@@ -842,7 +842,7 @@ fn starred_row(
             bubble.right() - 10.0 - clock.size().x,
             bubble.bottom() - 6.0 - clock.size().y,
         ),
-        palette.secondary,
+        palette.on_bubble(message.from_me).secondary,
     );
     // The bubble's rect is what the menu is anchored to, and what a test reads
     // to click it.
@@ -2475,6 +2475,69 @@ mod tests {
 
     use crate::paths::AppDirs;
     use crate::settings::Settings;
+
+    /// A starred outgoing message is inked for its bubble, not with the
+    /// page's foreground, so light Aurora's saturated blue stays readable.
+    #[test]
+    fn a_starred_bubble_uses_the_ink_for_its_bubble() {
+        let palette = Palette::aurora(false);
+        let ink = palette.on_bubble(true);
+        assert_ne!(palette.text, ink.text, "the fixture tells the two apart");
+
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let chat = "fixture-chat".to_owned();
+        app.chats.push(Chat::new(chat.clone(), "Fixture".into()));
+        let message = Message {
+            id: "starred-1".into(),
+            chat: chat.clone(),
+            sender: "fixture-me".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1_700_000_000,
+            history_order: None,
+            content: crate::model::Content::text("Fixture words"),
+            status: crate::model::Delivery::Read,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(1000.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                starred_row(
+                    &app,
+                    ui,
+                    &palette,
+                    &message,
+                    message.timestamp,
+                    conversation::Marks { starred: true },
+                    &mut actions,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let body = output.shapes.iter().find_map(|shape| match shape {
+            egui::Shape::Text(text) if text.galley.text().trim() == "Fixture words" => Some(text),
+            _ => None,
+        });
+        let body = body.expect("the starred bubble's words are painted");
+        assert_eq!(body.galley.spans[0].color, ink.text);
+        assert!(actions.is_empty(), "a drawn row does not act");
+    }
 
     #[test]
     fn chat_context_menu_stays_compact_in_wide_windows() {

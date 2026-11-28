@@ -130,9 +130,10 @@ name or description, in the interface language or in English.
   conversation show the desktop through the window where the platform
   offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later,
   and Hyprland's blur on Linux. Elsewhere, including other Linux desktops,
-  where an unblurred desktop behind the sidebar would cost its text
-  contrast. Changing between an opaque and translucent theme replaces the
-  window where needed, while keeping the current chat and connection.
+  the window stays opaque in the theme's colours, since an unblurred desktop
+  behind the sidebar would cost its text contrast. Changing between an opaque
+  and translucent theme replaces the window where needed, while keeping the
+  current chat and connection.
   **Aurora Glass** is a separate appearance with pearl surfaces in light mode,
   ink-blue surfaces in dark mode, lavender accents, and soft lavender, teal and
   rose lighting behind frosted panes. **Aurora Glass Green** uses mint and
