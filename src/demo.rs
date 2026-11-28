@@ -9380,6 +9380,8 @@ mod tests {
                 height,
                 crop: crate::model::PictureCrop::full(width, height),
                 turns: 0,
+                marks: Vec::new(),
+                hd: true,
             },
         );
         app.actions.push(crate::model::Action::EditPicture(target));
