@@ -6821,7 +6821,20 @@ impl App {
         caption: String,
         selected: Vec<ComposerMention>,
     ) {
-        if self.picture_edit.is_some() || !self.picture_applying.is_empty() {
+        let pending_edit = self
+            .picture_edit
+            .as_ref()
+            .is_some_and(|edit| self.pending.iter().any(|staged| staged.id == edit.target))
+            || self
+                .picture_applying
+                .keys()
+                .any(|id| self.pending.iter().any(|staged| staged.id == *id));
+        if pending_edit {
+            let restore_mentions = self.composer.trim().is_empty() && self.editing.is_none();
+            self.restore_text(&chat, caption);
+            if restore_mentions {
+                self.composer_mentions = selected;
+            }
             self.toast_error("Finish editing the picture before sending");
             return;
         }
