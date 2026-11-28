@@ -2524,6 +2524,9 @@ mod tests {
             thumbnail: None,
         };
         let ctx = egui::Context::default();
+        // The starred row asks for the named medium family, so the test
+        // context needs the app's font setup like the other layout tests.
+        ctx.set_fonts(fastframe_fonts::FontSetup::default().definitions());
         let mut actions = Vec::new();
         let mut output = ctx.run_ui(
             egui::RawInput {
