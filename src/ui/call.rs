@@ -41,6 +41,9 @@ const PIP_BUTTON: f32 = 28.0;
 const PIP_PIN: f32 = 24.0;
 const PIP_GAP: f32 = 8.0;
 const PIP_GRIP: f32 = 16.0;
+/// The corners of the window drawn over the app. A window of its own is
+/// square, so what it draws inside has no corners to round.
+const PIP_RADIUS: u8 = 14;
 /// A window may be mapped after the first level request reaches it, so a pin
 /// change keeps asking for the same level briefly instead of asking once.
 const PIP_LEVEL_FOR: Duration = Duration::from_secs(2);
@@ -319,7 +322,10 @@ fn pip_window_content(ui: &mut egui::Ui, app: &mut App) {
             send_call_pip_level(app, ui.ctx());
         }
     }
-    let rect = ui.max_rect();
+    // The whole window, whichever window it is: the call session's own, or
+    // the child window floating over the chat. `max_rect` depends on what
+    // the host wrapped the ui in, so the two could disagree.
+    let rect = ui.ctx().content_rect();
     let size = rect.size();
     app.call_pip_last_size = Some(size);
     // The window's size is the reader's while it is open. Remember it once
@@ -344,9 +350,9 @@ fn pip_window_content(ui: &mut egui::Ui, app: &mut App) {
     };
     ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
     pip_window_drag(ui, rect);
-    pip_picture(ui, app, &call, &who, &palette, rect);
+    pip_picture(ui, app, &call, &who, &palette, rect, 0);
     pip_header(ui, app, &peer, &status, rect, true, &palette);
-    pip_controls(ui, app, &call, &palette, rect);
+    pip_controls(ui, app, &call, &palette, rect, 0);
     pip_window_grip(ui, app, rect);
 }
 
@@ -444,9 +450,9 @@ fn pip_overlay(app: &mut App, ctx: &egui::Context) {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(14), Color32::BLACK);
             pip_drag(ui, app, pos, size, bounds, rect);
-            pip_picture(ui, app, &call, &who, &palette, rect);
+            pip_picture(ui, app, &call, &who, &palette, rect, PIP_RADIUS);
             pip_header(ui, app, &peer, &status, rect, false, &palette);
-            pip_controls(ui, app, &call, &palette, rect);
+            pip_controls(ui, app, &call, &palette, rect, PIP_RADIUS);
             pip_overlay_grip(ui, app, size, bounds, rect);
         });
 }
@@ -523,6 +529,7 @@ fn pip_picture(
     who: &Who<'_>,
     palette: &Palette,
     rect: Rect,
+    radius: u8,
 ) {
     let locale = app.locale;
     let joined: Vec<&CallPerson> = who
@@ -571,7 +578,7 @@ fn pip_picture(
             );
             egui::Image::new((texture, rect.size()))
                 .uv(cover_uv(image_size(image), rect.size()))
-                .corner_radius(CornerRadius::same(14))
+                .corner_radius(CornerRadius::same(radius))
                 .paint_at(ui, rect);
         }
         None => {
@@ -648,17 +655,20 @@ fn pip_header(
     if native && response.drag_started_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
-    if response.double_clicked() && app.window_kind == crate::app::WindowKind::Chat {
+    // Same answer in both windows: the call's own window opens the chat on
+    // the call, the child window brings the call back into the chat.
+    if response.double_clicked() {
         app.actions.push(Action::ReturnToCall);
     }
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
+    let radius = if native { 0 } else { PIP_RADIUS };
     ui.painter().rect_filled(
         header,
         CornerRadius {
-            nw: 14,
-            ne: 14,
+            nw: radius,
+            ne: radius,
             sw: 0,
             se: 0,
         },
@@ -719,21 +729,32 @@ fn pip_header(
     }
 }
 
+/// How many round controls the floating window's row holds: mute, expand,
+/// hang up, and the camera where the call can have one. The same four in the
+/// window over the chat and in the call's own window, so neither offers two
+/// buttons that do the same thing.
+fn pip_button_count(camera: bool) -> f32 {
+    if camera { 4.0 } else { 3.0 }
+}
+
 /// The controls the full screen has, in a row over the picture: mute, the
-/// camera, full screen, the way back, and hanging up.
+/// camera, the way back to the full call screen, and hanging up.
+///
+/// The way back is one button. From the window over the chat it puts the
+/// call screen back in the chat; from the call's own window it opens the
+/// chat on the call. Full screen and closing the window are not here: the
+/// call screen has full screen, and hanging up or the tray ends the window.
 fn pip_controls(
     ui: &mut egui::Ui,
     app: &mut App,
     call: &CallUpdate,
     palette: &Palette,
     rect: Rect,
+    radius: u8,
 ) {
     let locale = app.locale;
     let camera = call.group.is_none() || call.video;
-    let mut buttons = 4.0;
-    if camera {
-        buttons += 1.0;
-    }
+    let buttons = pip_button_count(camera);
     let width = buttons * PIP_BUTTON + (buttons - 1.0) * PIP_GAP + PIP_GRIP;
     let row = Rect::from_min_max(
         egui::pos2(rect.left(), rect.bottom() - PIP_CONTROLS),
@@ -744,8 +765,8 @@ fn pip_controls(
         CornerRadius {
             nw: 0,
             ne: 0,
-            sw: 14,
-            se: 14,
+            sw: radius,
+            se: radius,
         },
         VIDEO_SCRIM,
     );
@@ -801,47 +822,17 @@ fn pip_controls(
                     app.actions.push(Action::SetCallCamera(!call.camera_on));
                 }
             }
-            let (full_icon, full_tip) =
-                if app.window_kind == crate::app::WindowKind::Call && app.call_fullscreen {
-                    (
-                        Icon::Minimize,
-                        gettext(locale, "Exit full screen").into_owned(),
-                    )
-                } else {
-                    (Icon::Maximize, gettext(locale, "Full screen").into_owned())
-                };
+            let back = gettext(locale, "Return to the call").into_owned();
             if pip_button(
                 ui,
-                full_icon,
+                Icon::Maximize,
                 palette.surface_active,
                 palette.text,
-                &full_tip,
+                &back,
             )
             .clicked()
             {
-                push_fullscreen_actions(app);
-            }
-            // The child window's arrow returns to the call in the chat. The
-            // call's own window has no chat behind it, so that control closes
-            // it and leaves ZapFast in the tray.
-            if app.window_kind == crate::app::WindowKind::Call {
-                let close = gettext(locale, "Close the window").into_owned();
-                if pip_button(ui, Icon::X, palette.surface_active, palette.text, &close).clicked() {
-                    app.actions.push(Action::CloseWindow);
-                }
-            } else {
-                let back = gettext(locale, "Return to the call").into_owned();
-                if pip_button(
-                    ui,
-                    Icon::ArrowLeft,
-                    palette.surface_active,
-                    palette.text,
-                    &back,
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::ReturnToCall);
-                }
+                app.actions.push(Action::ReturnToCall);
             }
             let hang_up = gettext(locale, "Hang up").into_owned();
             if pip_button(ui, Icon::PhoneOff, palette.danger, Color32::WHITE, &hang_up).clicked() {
@@ -849,16 +840,6 @@ fn pip_controls(
             }
         },
     );
-}
-
-/// Full screen from the child window also returns to the call in the chat.
-/// The call's own window is already the call, so only it changes: the chat
-/// stays closed until the tray opens it.
-fn push_fullscreen_actions(app: &mut App) {
-    if app.window_kind == crate::app::WindowKind::Chat {
-        app.actions.push(Action::ReturnToCall);
-    }
-    app.actions.push(Action::ToggleCallFullscreen);
 }
 
 /// One round control of the floating window, smaller than the full screen's.
@@ -2054,17 +2035,22 @@ fn call_texture(
     match kept {
         Some(kept) if std::sync::Arc::ptr_eq(&kept.frame, image) => kept.texture.id(),
         Some(kept) => {
+            // The frame is shared, not copied: a 720p picture is 3.6 MB, and
+            // copying it for every frame of every picture on screen is what
+            // made the app stutter while a call window was up.
             kept.texture.set(
-                egui::ImageData::from((**image).clone()),
+                egui::ImageData::from(std::sync::Arc::clone(image)),
                 TextureOptions::LINEAR,
             );
             kept.frame = std::sync::Arc::clone(image);
             kept.texture.id()
         }
         None => {
-            let texture = ui
-                .ctx()
-                .load_texture(name, (**image).clone(), TextureOptions::LINEAR);
+            let texture = ui.ctx().load_texture(
+                name,
+                egui::ImageData::from(std::sync::Arc::clone(image)),
+                TextureOptions::LINEAR,
+            );
             let id = texture.id();
             *kept = Some(crate::app::CallTexture {
                 texture,
@@ -2087,20 +2073,34 @@ mod tests {
         (app, root)
     }
 
+    /// One way back to the call, whichever window the controls are in, and
+    /// never a second button doing the same thing.
     #[test]
-    fn full_screen_in_the_call_window_keeps_the_chat_closed() {
-        let (mut app, _root) = app();
-        app.window_kind = crate::app::WindowKind::Call;
-        push_fullscreen_actions(&mut app);
-        assert_eq!(app.actions, [Action::ToggleCallFullscreen]);
-
-        app.actions.clear();
-        app.window_kind = crate::app::WindowKind::Chat;
-        push_fullscreen_actions(&mut app);
-        assert_eq!(
-            app.actions,
-            [Action::ReturnToCall, Action::ToggleCallFullscreen]
-        );
+    fn the_floating_window_has_one_way_back_in_either_window() {
+        assert_eq!(pip_button_count(true), 4.0);
+        assert_eq!(pip_button_count(false), 3.0);
+        for kind in [crate::app::WindowKind::Chat, crate::app::WindowKind::Call] {
+            let (mut app, _root) = app();
+            app.window_kind = kind;
+            let ctx = egui::Context::default();
+            let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), PIP_DEFAULT);
+            let palette = app.palette;
+            app.attach(&ctx);
+            let call = CallUpdate::placing(1, "Ada".to_owned(), true);
+            // Both the radius a window over the app has and the square one
+            // of a window of its own draw without a panic.
+            for radius in [0, PIP_RADIUS] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(rect),
+                        ..Default::default()
+                    },
+                    |ui| pip_controls(ui, &mut app, &call, &palette, rect, radius),
+                );
+                output.textures_delta.clear();
+            }
+            assert!(app.actions.is_empty(), "drawing pushes nothing: {kind:?}");
+        }
     }
 
     #[test]

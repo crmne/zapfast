@@ -7253,6 +7253,10 @@ impl App {
     /// window at once (`Closed::Reopen`), so the call gets a real window of
     /// its own and the chat is gone until the tray asks for it back.
     pub(crate) fn open_call_window(&mut self, ctx: &egui::Context) {
+        // The call window opens where the floating window was last seen, at
+        // the size it had. Without this it opened at the place the floating
+        // window first appeared, however far the reader had dragged it since.
+        self.close_call_pip_window();
         self.window_kind = WindowKind::Call;
         self.ignore_window_close = true;
         self.call_surface_hidden = true;

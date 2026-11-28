@@ -831,6 +831,22 @@ mod tests {
         assert!(app.call_pip_level_until.is_none());
     }
 
+    /// Closing the chat while a video call floats hands the screen to the
+    /// call's own window, which opens where the floating window was left.
+    #[test]
+    fn the_call_window_opens_where_the_floating_window_was_left() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(root.path());
+        let ctx = egui::Context::default();
+        app.call_pip_screen_pos = Some(egui::pos2(10.0, 10.0));
+        app.call_pip_size = egui::vec2(320.0, 180.0);
+        app.call_pip_last_pos = Some(egui::pos2(700.0, 300.0));
+        app.call_pip_last_size = Some(egui::vec2(410.0, 260.0));
+        app.open_call_window(&ctx);
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(700.0, 300.0)));
+        assert_eq!(app.call_pip_size, egui::vec2(410.0, 260.0));
+    }
+
     /// A window with one account whose commands a test can read.
     fn app(directory: &std::path::Path) -> (App, tokio::sync::mpsc::UnboundedReceiver<Command>) {
         let mut app = App::headless(AppDirs::under(directory), Settings::default()).0;
