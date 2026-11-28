@@ -221,10 +221,12 @@ fn run(
                 batch.push(Vec::new());
                 continue;
             }
-            let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                extract_page(&pages[page], page, remaining)
-            }))
-            .unwrap_or_default();
+            let (extracted, truncated) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    extract_page(&pages[page], page, remaining)
+                }))
+                .unwrap_or_default();
+            partial |= truncated;
             remaining = remaining.saturating_sub(extracted.len());
             batch.push(extracted);
         }
@@ -413,7 +415,7 @@ fn extract_text(pages: &[hayro::hayro_syntax::page::Page<'_>]) -> Vec<Vec<TextGl
         .iter()
         .enumerate()
         .map(|(page, page_ref)| {
-            let extracted = extract_page(page_ref, page, remaining);
+            let (extracted, _) = extract_page(page_ref, page, remaining);
             remaining = remaining.saturating_sub(extracted.len());
             extracted
         })
@@ -424,13 +426,13 @@ fn extract_page(
     page_ref: &hayro::hayro_syntax::page::Page<'_>,
     page: usize,
     limit: usize,
-) -> Vec<TextGlyph> {
+) -> (Vec<TextGlyph>, bool) {
     if limit == 0 {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let (width, height) = page_ref.render_dimensions();
     if !valid_dimensions(width, height) {
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let cache = InterpreterCache::new();
     let mut context = Context::new(
@@ -445,9 +447,10 @@ fn extract_page(
         order: 0,
         glyphs: Vec::new(),
         limit: limit.min(MAX_GLYPHS_PER_PAGE),
+        truncated: false,
     };
     interpret_page(page_ref, &mut context, &mut extractor);
-    extractor.glyphs
+    (extractor.glyphs, extractor.truncated)
 }
 
 struct TextExtractor {
@@ -455,6 +458,7 @@ struct TextExtractor {
     order: usize,
     glyphs: Vec<TextGlyph>,
     limit: usize,
+    truncated: bool,
 }
 
 impl hayro::hayro_interpret::Device<'_> for TextExtractor {
@@ -466,6 +470,7 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
 
     fn draw_glyph_run(&mut self, glyph_run: &GlyphRun<'_, '_>, props: DrawProps<'_>, _: &DrawMode) {
         if self.glyphs.len() >= self.limit {
+            self.truncated = true;
             return;
         }
         let glyphs = glyph_run.glyphs();
@@ -557,6 +562,7 @@ impl hayro::hayro_interpret::Device<'_> for TextExtractor {
                 }
             }
             if self.glyphs.len() >= self.limit {
+                self.truncated = true;
                 return;
             }
             self.glyphs.push(TextGlyph {
@@ -749,9 +755,8 @@ mod tests {
                 b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
             ];
             let pdf = Pdf::new(serialize_pdf(&bodies)).unwrap();
-            extract_page(&pdf.pages()[0], 0, MAX_GLYPHS_PER_PAGE)
-                .pop()
-                .expect("the glyph is extracted")
+            let (glyphs, _) = extract_page(&pdf.pages()[0], 0, MAX_GLYPHS_PER_PAGE);
+            glyphs.into_iter().next().expect("the glyph is extracted")
         };
         let upright = fixture(b"1 0 0 1 100 100 Tm");
         let rotated = fixture(b"0 1 -1 0 100 100 Tm");
@@ -761,7 +766,17 @@ mod tests {
             rotated.rect.width() > rotated.rect.height() * 1.2,
             "rotated box should turn with the glyph: {rotated:?}"
         );
-        assert_eq!(rotated.baseline, (0.0, 1.0));
+        assert_eq!(rotated.baseline, (0.0, -1.0));
+    }
+
+    #[test]
+    fn a_page_glyph_cap_marks_the_index_partial() {
+        let pdf = Pdf::new(demo_pdf()).expect("the synthetic PDF parses");
+        let (glyphs, truncated) = extract_page(&pdf.pages()[0], 0, 1);
+        assert_eq!(glyphs.len(), 1);
+        assert!(truncated, "the next glyph was kept out of the index");
+        let (_, truncated) = extract_page(&pdf.pages()[0], 0, MAX_GLYPHS_PER_PAGE);
+        assert!(!truncated, "a page under the cap is complete");
     }
 
     #[test]

@@ -19,10 +19,13 @@ pub struct TextCursor {
     glyph: usize,
 }
 
-/// One contiguous, non-overlapping result of the current query.
+/// One contiguous, non-overlapping result of the current query. `start` is
+/// its byte offset in the folded page text, so two occurrences in one glyph
+/// stay distinct when a later batch rebuilds the matches.
 #[derive(Clone, Copy, Debug)]
 struct SearchMatch {
     page: usize,
+    start: usize,
     first: usize,
     last: usize,
 }
@@ -421,6 +424,7 @@ impl PreviewState {
         if let Some(active) = active
             && let Some(index) = self.matches.iter().position(|found| {
                 found.page == active.page
+                    && found.start == active.start
                     && found.first == active.first
                     && found.last == active.last
             })
@@ -715,7 +719,12 @@ impl PreviewState {
                 let (Some(&first), Some(&last)) = (owners.get(start), owners.get(end - 1)) else {
                     break;
                 };
-                self.matches.push(SearchMatch { page, first, last });
+                self.matches.push(SearchMatch {
+                    page,
+                    start,
+                    first,
+                    last,
+                });
                 from = end;
             }
         }
@@ -1020,6 +1029,23 @@ mod tests {
         assert!(
             !state.has_selection(),
             "replacing a selected glyph clears it"
+        );
+    }
+
+    #[test]
+    fn appended_batches_keep_the_active_occurrence_in_one_glyph() {
+        let mut state = test_state();
+        state.set_text(vec![vec![glyph(0, 0, "ff", 0.0)]]);
+        state.set_query("f".into());
+        assert_eq!(state.match_count(), 2);
+        state.step_match(1);
+        assert_eq!(state.active_match(), 2);
+
+        state.add_text(1, vec![vec![glyph(1, 0, "f", 0.0)]], false, false);
+        assert_eq!(
+            state.active_match(),
+            2,
+            "the second occurrence stays active when matches are rebuilt"
         );
     }
 
