@@ -45,7 +45,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // A call window is its own eframe session. It paints only the call, so a
     // full screen or a close in it cannot reach the chat window.
     if app.window_kind == crate::app::WindowKind::Call {
-        call::pip_root(app, ui);
+        if app.app_lock.is_locked() {
+            call::pip_locked(app, ui);
+        } else {
+            call::pip_root(app, ui);
+        }
         return;
     }
     track_keyboard_focus(ctx);
@@ -56,6 +60,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
     // no toasts, and no shortcut reaches them.
     if app.app_lock.is_locked() {
+        // The floating window is not drawn behind the lock; keep its place.
+        app.close_call_pip_window();
         titlebar_strip(app, ui);
         lock::show(app, ui);
         focus_ring(app, ctx);

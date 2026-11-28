@@ -327,14 +327,53 @@ pub(crate) fn pip_root(app: &mut App, ui: &mut egui::Ui) {
     pip_window_content(ui, app);
 }
 
+/// The call's own window behind the app lock: nothing of the call, only that
+/// ZapFast is locked and the way to the lock screen. The call goes on.
+pub(crate) fn pip_locked(app: &mut App, ui: &mut egui::Ui) {
+    if app.call.is_none() {
+        return;
+    }
+    let palette = app.palette;
+    let locale = app.locale;
+    let rect = ui.ctx().content_rect();
+    remember_pip_window(ui, app, rect);
+    ui.painter().rect_filled(rect, 0.0, palette.window);
+    pip_window_drag(ui, app, rect);
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(PADDING))
+            .layout(Layout::top_down(Align::Center)),
+        |ui| {
+            ui.add_space((ui.available_height() - 110.0).max(0.0) / 2.0);
+            theme::icon(ui, Icon::Lock, 28.0, palette.secondary);
+            ui.add_space(8.0);
+            let locked = gettext(locale, "ZapFast is locked").into_owned();
+            theme::text(ui, locked, theme::semibold(15.0), palette.text);
+            ui.add_space(12.0);
+            let unlock = gettext(locale, "Unlock").into_owned();
+            if theme::pill_button(ui, &palette, &unlock, true).clicked() {
+                app.actions.push(Action::ReturnToCall);
+            }
+        },
+    );
+    pip_window_grip(ui, app, rect);
+}
+
+/// Remembered for the next window; this one keeps what it was opened with.
+fn remember_pip_window(ui: &egui::Ui, app: &mut App, rect: Rect) {
+    app.call_pip_last_size = Some(rect.size());
+    if let Some(pos) = ui.input(|input| input.viewport().outer_rect) {
+        app.call_pip_last_pos = Some(pos.min);
+    }
+}
+
 /// Draws the floating window inside the window of its own: square corners,
 /// because the window itself is opaque.
 fn pip_window(ui: &mut egui::Ui, app: &mut App) {
     // Closing the child window puts the call back in the chat; it does not
     // touch the chat window itself.
     if ui.input(|input| input.viewport().close_requested()) {
-        app.call_surface_hidden = false;
-        app.close_call_pip_window();
+        app.actions.push(Action::ReturnToCall);
         return;
     }
     pip_window_content(ui, app);
@@ -364,11 +403,7 @@ fn pip_window_content(ui: &mut egui::Ui, app: &mut App) {
     // the child window floating over the chat. `max_rect` depends on what
     // the host wrapped the ui in, so the two could disagree.
     let rect = ui.ctx().content_rect();
-    // Remembered for the next window; this one keeps what it was opened with.
-    app.call_pip_last_size = Some(rect.size());
-    if let Some(pos) = ui.input(|input| input.viewport().outer_rect) {
-        app.call_pip_last_pos = Some(pos.min);
-    }
+    remember_pip_window(ui, app, rect);
     pip_window_drag(ui, app, rect);
     pip_surface(ui, app, rect, true);
     pip_window_grip(ui, app, rect);
@@ -667,7 +702,11 @@ fn pip_overlay_grip(ui: &mut egui::Ui, app: &mut App, size: egui::Vec2, bounds: 
         egui::pos2(rect.right() - PIP_GRIP, rect.bottom() - PIP_GRIP),
         egui::Vec2::splat(PIP_GRIP),
     );
-    let response = ui.interact(grip, egui::Id::new(PIP).with("resize"), egui::Sense::drag());
+    let response = ui.interact(
+        grip,
+        egui::Id::new(PIP).with("resize"),
+        egui::Sense::click_and_drag(),
+    );
     if response.dragged() {
         let mut next = size + response.drag_delta();
         if ui.input(|input| input.modifiers.shift) {
@@ -2127,6 +2166,57 @@ mod tests {
             pip_window_level(app.call_pip_on_top),
             egui::viewport::WindowLevel::AlwaysOnTop
         );
+    }
+
+    #[test]
+    fn a_double_click_on_the_overlay_corner_restores_the_size() {
+        let (mut app, _root) = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 800.0));
+        let size = vec2(500.0, 360.0);
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, size);
+        let corner = rect.max - Vec2::splat(PIP_GRIP / 2.0);
+        app.call_pip_size = size;
+        let frame = |app: &mut App, time: f64, pressed: Option<bool>| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(bounds),
+                time: Some(time),
+                ..Default::default()
+            };
+            input.events.push(egui::Event::PointerMoved(corner));
+            if let Some(pressed) = pressed {
+                input.events.push(egui::Event::PointerButton {
+                    pos: corner,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(input, |ui| {
+                pip_overlay_grip(ui, app, size, bounds, rect);
+            });
+            output.textures_delta.clear();
+        };
+        frame(&mut app, 0.00, None);
+        frame(&mut app, 0.02, None);
+        for (time, pressed) in [(0.04, true), (0.06, false), (0.08, true), (0.10, false)] {
+            frame(&mut app, time, Some(pressed));
+        }
+        assert_eq!(app.call_pip_size, PIP_DEFAULT);
+    }
+
+    /// Closing the child window takes the same way back as its button.
+    #[test]
+    fn closing_the_floating_window_returns_to_the_call() {
+        let (mut app, _root) = app();
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| pip_window(ui, &mut app));
+        output.textures_delta.clear();
+        assert!(matches!(app.actions.as_slice(), [Action::ReturnToCall]));
     }
 
     #[test]
