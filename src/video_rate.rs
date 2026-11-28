@@ -847,6 +847,22 @@ impl FrameClock {
         }
     }
 
+    /// The same timeline, carried on after a frame `us` microseconds from its start: the next
+    /// timestamp comes after it. A camera started mid-call continues where the last one stopped;
+    /// `None` means nothing was sent yet, so the timeline starts afresh.
+    pub fn after(mut self, us: Option<u64>) -> Self {
+        if let Some(us) = us {
+            self.last = Some((us as f64 / self.period_us).ceil() as u64);
+        }
+        self
+    }
+
+    /// The newest frame's time, in microseconds from the timeline's start.
+    pub fn last_us(&self) -> Option<u64> {
+        self.last
+            .map(|slot| (slot as f64 * self.period_us).round() as u64)
+    }
+
     /// A new spacing from here on, keeping the timeline continuous.
     pub fn respace(&mut self, sent_fps: f64) {
         let last_us = self.last.map(|slot| slot as f64 * self.period_us);
@@ -876,6 +892,40 @@ mod tests {
     fn control() -> (RateControl, Arc<RateShare>) {
         let share = Arc::new(RateShare::default());
         (RateControl::new(Arc::clone(&share)), share)
+    }
+
+    #[test]
+    fn a_camera_started_mid_call_carries_on_the_timeline() {
+        let origin = Instant::now();
+        // The first camera, at 30 fps, sends for two seconds.
+        let mut first = FrameClock::new(origin, 30.0);
+        let last = first.stamp(origin + std::time::Duration::from_secs(2));
+        let carried = first.last_us().expect("a frame was stamped");
+
+        // The next one, at 25 fps, starts at once: its first frame still comes after.
+        let mut second = FrameClock::new(origin, 25.0).after(Some(carried));
+        let next = second.stamp(origin + std::time::Duration::from_secs(2));
+        assert!(
+            next > last,
+            "the new camera's first timestamp {next} follows the last one sent, {last}"
+        );
+
+        // Started from its own instant instead, as each camera used to be, it went back to zero.
+        let mut restarted = FrameClock::new(origin + std::time::Duration::from_secs(2), 25.0);
+        assert!(restarted.stamp(origin + std::time::Duration::from_secs(2)) < last);
+    }
+
+    #[test]
+    fn a_frame_at_the_very_origin_is_carried_on_from_too() {
+        let origin = Instant::now();
+        let mut first = FrameClock::new(origin, 25.0);
+        let last = first.stamp(origin);
+        assert_eq!(first.last_us(), Some(0));
+        let mut second = FrameClock::new(origin, 25.0).after(first.last_us());
+        assert!(
+            second.stamp(origin) > last,
+            "the next camera does not reuse slot zero"
+        );
     }
 
     #[test]
