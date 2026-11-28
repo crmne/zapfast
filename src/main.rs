@@ -401,6 +401,8 @@ fn run() -> eframe::Result<()> {
         }
     }
     #[cfg(feature = "demo")]
+    let single_window = demo && (cli.demo_shot.is_some() || cli.demo_tour);
+    #[cfg(feature = "demo")]
     let shot = cli.demo_shot.clone().map(|path| Shot {
         path,
         due: std::time::Instant::now() + std::time::Duration::from_millis(cli.demo_shot_delay),
@@ -439,14 +441,23 @@ fn run() -> eframe::Result<()> {
             // with. Demo runs keep their fixed screenshot size.
             // Decided as each window is made: it cannot become transparent
             // later.
-            let transparent = lease.peek(|app: &app::App| {
-                zapfast::backdrop::transparent_window(
-                    app.palette.vibrant(),
-                    app.palette.window.a() < 255,
-                )
-            });
+            let call_window =
+                lease.peek(|app: &app::App| app.window_kind == zapfast::app::WindowKind::Call);
+            let transparent = if call_window {
+                false
+            } else {
+                lease.peek(|app: &app::App| {
+                    zapfast::backdrop::transparent_window(
+                        app.palette.vibrant(),
+                        app.palette.window.a() < 255,
+                    )
+                })
+            };
             zapfast::backdrop::set_window_transparent(transparent);
-            let geometry = if demo_persistence.is_some() {
+            let call_size = lease.peek(|app: &app::App| app.call_pip_size);
+            let call_position = lease.peek(|app: &app::App| app.call_pip_screen_pos);
+            let call_on_top = lease.peek(|app: &app::App| app.call_pip_on_top);
+            let geometry = if demo_persistence.is_some() || call_window {
                 fastframe_shell::window::Geometry::default()
             } else {
                 lease.peek(|app: &app::App| app.settings.window_geometry())
@@ -467,10 +478,28 @@ fn run() -> eframe::Result<()> {
                         }),
                 )
             });
+            let options = if call_window {
+                call_native_options(call_size, call_position, call_on_top)
+            } else {
+                native_options(demo_persistence.clone(), geometry, transparent)
+            };
+            let unpaced = cfg!(target_os = "linux") && !options.glow_options.vsync;
             eframe::run_native(
-                "ZapFast",
-                native_options(demo_persistence.clone(), geometry, transparent),
+                if call_window {
+                    "ZapFast call"
+                } else {
+                    "ZapFast"
+                },
+                options,
                 Box::new(move |cc| {
+                    // A screenshot and the tour photograph one window. Draw
+                    // the floating call window over it, as a backend without
+                    // viewports would, rather than in a window the frame
+                    // cannot hold.
+                    #[cfg(feature = "demo")]
+                    if single_window {
+                        cc.egui_ctx.set_embed_viewports(true);
+                    }
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
                     #[cfg(target_os = "linux")]
@@ -490,6 +519,9 @@ fn run() -> eframe::Result<()> {
                     }
                     Ok(Box::new(Shell {
                         app,
+                        call_window,
+                        unpaced,
+                        last_frame: None,
                         window_recovery_checked: false,
                         stalls: Default::default(),
                         transparent,
@@ -606,6 +638,89 @@ fn tour_script(name: &str) -> zapfast::demo::tour::Script {
     zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
+/// Whether Linux has an X server to use. Wayland is kept when there is none,
+/// since forcing X11 without a display would stop the window from opening.
+#[cfg(target_os = "linux")]
+fn x11_display(display: Option<&std::ffi::OsStr>) -> bool {
+    display.is_some_and(|value| !value.is_empty())
+}
+
+/// Whether windows must be swapped without vsync: X11 windows on a Wayland
+/// session. XWayland holds a vsync swap of a window the compositor is not
+/// showing, such as a floating call opened behind the chat, and both windows
+/// are painted on one thread, so the whole app waits with it. The compositor
+/// still presents complete frames.
+#[cfg(target_os = "linux")]
+fn swaps_without_vsync(
+    display: Option<&std::ffi::OsStr>,
+    wayland_display: Option<&std::ffi::OsStr>,
+) -> bool {
+    x11_display(display) && wayland_display.is_some_and(|value| !value.is_empty())
+}
+
+/// The shortest time between two frames where vsync does not pace them, so an
+/// animation does not draw as fast as the machine can.
+const UNPACED_FRAME: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// Linux uses XWayland when an X server is there. The call window's pin asks
+/// X11 for the always-on-top state, which a Wayland compositor may ignore.
+/// The hook applies to every window the shell opens, chat and call alike.
+#[cfg(target_os = "linux")]
+fn prefer_x11(options: &mut eframe::NativeOptions) {
+    let display = std::env::var_os("DISPLAY");
+    if swaps_without_vsync(
+        display.as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+    ) {
+        options.glow_options.vsync = false;
+    }
+    if x11_display(display.as_deref()) {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        options.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prefer_x11(_options: &mut eframe::NativeOptions) {}
+
+/// The floating call gets a window of its own. It is deliberately not the
+/// chat window: full screen, resizing and closing it cannot reach the chat,
+/// which opens again from the tray when asked.
+fn call_native_options(
+    size: egui::Vec2,
+    position: Option<egui::Pos2>,
+    on_top: bool,
+) -> eframe::NativeOptions {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("ZapFast call")
+        .with_app_id(fastframe_desktop::desktop_entry("zapfast"))
+        .with_decorations(false)
+        // The call window opens beside the chat, not over its keyboard.
+        .with_active(false)
+        .with_resizable(true)
+        .with_min_inner_size(zapfast::ui::call::PIP_MIN)
+        .with_inner_size(size.max(zapfast::ui::call::PIP_MIN))
+        .with_icon(app_icon())
+        .with_window_level(if on_top {
+            egui::viewport::WindowLevel::AlwaysOnTop
+        } else {
+            egui::viewport::WindowLevel::Normal
+        });
+    if let Some(position) = position {
+        viewport = viewport.with_position(position);
+    }
+    let mut options = eframe::NativeOptions {
+        viewport,
+        persistence_path: None,
+        persist_window: false,
+        ..Default::default()
+    };
+    prefer_x11(&mut options);
+    options
+}
+
 fn native_options(
     demo_persistence: Option<std::path::PathBuf>,
     geometry: fastframe_shell::window::Geometry,
@@ -644,7 +759,7 @@ fn native_options(
         // Windows and Linux: no frame when ZapFast draws its own title bar.
         // Fixed for the window's life; a new choice replaces the window.
         .with_decorations(!fastframe_titlebar::enabled());
-    eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         persistence_path: demo_persistence,
         // The settings remember the window (fastframe_shell::window::Geometry),
@@ -653,12 +768,20 @@ fn native_options(
         // since its zoom comes back only once the window exists.
         persist_window: false,
         ..Default::default()
-    }
+    };
+    prefer_x11(&mut options);
+    options
 }
 
 /// eframe adapter holding the long-lived [`app::App`] for one window; it goes
 /// back to the shell when the window closes.
 struct Shell {
+    /// Whether this window is the call's own window rather than the chat.
+    call_window: bool,
+    /// Whether this window swaps without vsync and paces its own frames.
+    unpaced: bool,
+    /// When the last frame started, for that pacing.
+    last_frame: Option<std::time::Instant>,
     /// Whether this window's first frame checked that a monitor shows it.
     window_recovery_checked: bool,
     /// Logs an update that froze the window for a moment.
@@ -731,7 +854,9 @@ impl eframe::App for Shell {
     /// What shows where the interface paints nothing: the window colour, or
     /// nothing while the window has a material, so it shows.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if zapfast::backdrop::active() {
+        if self.call_window {
+            [0.0, 0.0, 0.0, 1.0]
+        } else if zapfast::backdrop::active() {
             [0.0; 4]
         } else {
             zapfast::backdrop::clear_color(self.app.palette.window).to_normalized_gamma_f32()
@@ -767,6 +892,12 @@ impl eframe::App for Shell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.unpaced {
+            if let Some(last) = self.last_frame {
+                std::thread::sleep(UNPACED_FRAME.saturating_sub(last.elapsed()));
+            }
+            self.last_frame = Some(std::time::Instant::now());
+        }
         let mut stalls = std::mem::take(&mut self.stalls);
         stalls.ui(|| self.window_ui(ui));
         self.stalls = stalls;
@@ -780,16 +911,21 @@ impl eframe::App for Shell {
 
 impl Shell {
     fn window_logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !std::mem::replace(&mut self.window_recovery_checked, true) {
+        if !self.call_window && !std::mem::replace(&mut self.window_recovery_checked, true) {
             fastframe_shell::window::recover_offscreen(ctx, frame);
         }
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
-        if let Some(tour) = self.tour.as_mut() {
+        if !self.call_window
+            && let Some(tour) = self.tour.as_mut()
+        {
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);
         app.window_logic(ctx);
+        if self.call_window {
+            return;
+        }
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
             && let Some(at) = self.taskbar.show(
@@ -830,12 +966,14 @@ impl Shell {
     fn window_ui(&mut self, ui: &mut egui::Ui) {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
-        if std::mem::take(&mut self.open_phone_menu) {
+        if !self.call_window && std::mem::take(&mut self.open_phone_menu) {
             egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
         #[cfg(target_os = "macos")]
-        app.match_window_transparency(ui.ctx(), self.transparent);
+        if !self.call_window {
+            app.match_window_transparency(ui.ctx(), self.transparent);
+        }
         let startups: Vec<_> = app
             .accounts
             .iter_mut()
@@ -995,6 +1133,31 @@ mod target_cli_tests {
         let cli = Cli::try_parse_from(["zapfast", "--start-hidden"]).unwrap();
         assert!(cli.start_hidden);
         assert!(cli.target.is_none());
+    }
+
+    /// X11 is used only when there is a display to open it on. A Wayland-only
+    /// session must keep its native backend.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_is_chosen_only_with_a_display() {
+        use std::ffi::OsStr;
+        assert!(x11_display(Some(OsStr::new(":0"))));
+        assert!(!x11_display(None));
+        assert!(!x11_display(Some(OsStr::new(""))));
+    }
+
+    /// Only X11 windows on a Wayland session give up vsync: native X11 and
+    /// native Wayland keep the pacing they had.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_xwayland_swaps_without_vsync() {
+        use std::ffi::OsStr;
+        let x = Some(OsStr::new(":0"));
+        let wayland = Some(OsStr::new("wayland-0"));
+        assert!(swaps_without_vsync(x, wayland));
+        assert!(!swaps_without_vsync(x, None));
+        assert!(!swaps_without_vsync(x, Some(OsStr::new(""))));
+        assert!(!swaps_without_vsync(None, wayland));
     }
 
     /// A link asked to be seen: `--start-hidden` with a chat to open must not

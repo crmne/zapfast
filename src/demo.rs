@@ -2745,6 +2745,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 call_sample(app, false, false);
                 app.call_surface_hidden = true;
             }
+            "call-pip" => {
+                call_sample(app, false, true);
+                app.call_surface_hidden = true;
+            }
+            "call-pip-group" => {
+                group_call_sample(app, false, true);
+                app.call_surface_hidden = true;
+            }
             "call-entries" => {
                 // Calls among the open chat's messages, as WhatsApp files them.
                 let open = app.open_chat.clone().unwrap_or_default();
@@ -9856,6 +9864,8 @@ mod tests {
             "call-devices",
             "call-ended",
             "call-strip",
+            "call-pip",
+            "call-pip-group",
             "call-group",
             "call-group-active",
             "call-group-video",
@@ -25224,6 +25234,51 @@ mod call_surface_tests {
             !after.contains(&"Return to the call".to_owned()),
             "a call that is over has no way back: {after:?}"
         );
+    }
+
+    /// The picture and the corner are the window's own handles: a drag on the
+    /// picture moves it, and a drag on the corner resizes it.
+    #[test]
+    fn the_floating_window_moves_and_resizes_by_dragging() {
+        let mut app = app();
+        apply_flags(&mut app, Some("call-pip"));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // The first frame settles the window where it opens.
+        frame_with(&mut app, &ctx, Vec::new());
+        let size = app.call_pip_size;
+        let start = app.call_pip_pos.expect("a video call opens its window");
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // A drag on the picture takes the window along.
+        let at = start + egui::vec2(size.x / 2.0, size.y / 2.0);
+        let moved = egui::vec2(-100.0, -50.0);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), press(at, true)],
+        );
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(at + moved)]);
+        frame_with(&mut app, &ctx, vec![press(at + moved, false)]);
+        assert_eq!(app.call_pip_pos, Some(start + moved));
+        // A drag on the corner grows it, from where it now is.
+        let grip = start + moved + size - egui::vec2(6.0, 6.0);
+        let grown = egui::vec2(40.0, 20.0);
+        // The pointer comes to rest on the corner before the press, as a hand
+        // does, so the frame of the press carries no movement.
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(grip)]);
+        frame_with(&mut app, &ctx, vec![press(grip, true)]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grip + grown)],
+        );
+        frame_with(&mut app, &ctx, vec![press(grip + grown, false)]);
+        assert_eq!(app.call_pip_size, size + grown);
     }
 
     /// A locked chat's farewell, and any call the reader put aside, still ends behind the bar.

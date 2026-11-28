@@ -577,13 +577,41 @@ you open the locked chats with their code.
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
 microphone and speaker pickers, and hang up. Mute tells the other side, as on
-the phone. The arrow in the top corner puts the call screen aside: the call
+the phone. The arrow in the top corner puts the call screen aside. A voice call
 keeps running in a strip at the bottom of the window with **Return to the
-call** and a hang-up button, and you can read and write in any chat meanwhile.
-Escape does the same, and leaves full screen first. Only hanging up ends a
-call; closing the window to the tray keeps it running. A call you hang up or
-decline leaves the screen at once; one the other side ends, declines, or
-misses, or one that could not connect, says so for a second and a half.
+call** and a hang-up button; a video call becomes a small floating window of
+its own that looks like the call screen, without the full screen button, or
+shows a group's grid. The button that minimizes the call also brings that window
+forward. Opening another chat, from the list, a notification or a new chat,
+floats a video call too, and leaves the keyboard in the chat. A locked chat's
+call never floats while its folder is closed. The window opens at the bottom
+right of the app where the desktop lets an app place it. Drag its picture or
+background to move it anywhere on the screen, and drag its bottom right corner
+to resize it; a double click on the corner puts the size back to its default.
+The first button in its top left corner, or a double click on the window, goes
+back to the call screen and brings the app's window forward. The pin beside it
+keeps the window above the others where the desktop allows that, and a second
+click lets it go behind them. On Linux, ZapFast uses X11 when an X server is
+available, so the pin works through XWayland on desktops such as GNOME. On a
+Wayland-only session, the compositor decides where windows go and what stays on
+top, so it may ignore those requests. Escape works as the arrow does, and
+leaves full screen first. Where a desktop cannot make a second window, the
+floating call stays over the chat instead; there Shift keeps the picture at
+16:9 while it is resized. Only hanging up ends a call. Where separate windows
+are possible, closing the chat window during a floating video call opens a
+separate call window instead: the chat and its frame go away, and the call
+stays on screen. It can be resized and closed without changing the chat's size
+or opening the chat. Its first corner button, or a double click on it, brings
+the chat. Closing the call window, or waiting for the call to end, leaves
+ZapFast in the tray with the chat still closed; the tray opens the chat again.
+The in-app floating call leaves with the chat window. Closing the chat window
+also closes the locked chats, so a locked chat's call opens no window of its
+own. If the app lock comes on, the call window shows only that ZapFast is
+locked, and **Unlock** brings the chat window to its lock screen while the call
+goes on. While a floating call is on screen, its account stays online even when
+another app has the keyboard. A call you hang up or decline leaves the screen
+at once; one the other side ends, declines, or misses, or one that could not
+connect, says so for a second and a half.
 
 In a video call the other side's picture fills the window and yours sits in the
 top corner. The camera button turns your camera off and on; in a voice call it

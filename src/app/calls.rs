@@ -57,6 +57,33 @@ impl App {
             && !self.call_surface_hidden
     }
 
+    /// Whether the call is drawn as the small floating window over the chats:
+    /// a video call the reader stepped away from. An audio call keeps the bar
+    /// along the bottom instead, and a locked chat draws nothing.
+    pub fn call_pip_open(&self) -> bool {
+        self.call_surface_hidden
+            && self
+                .call
+                .as_ref()
+                .is_some_and(|call| call.phase.is_live() && call.video)
+            && !self.call_is_private()
+    }
+
+    /// Keeps the size and place the native floating window last reported, so
+    /// the next one opens there. The window drawn over the app has none, and
+    /// keeps the size and place it was dragged to itself.
+    pub(crate) fn close_call_pip_window(&mut self) {
+        if let Some(size) = self.call_pip_last_size.take() {
+            self.call_pip_size = size;
+        }
+        if let Some(pos) = self.call_pip_last_pos.take() {
+            self.call_pip_screen_pos = Some(pos);
+        }
+        self.call_pip_level_until = None;
+        self.call_pip_focus_until = None;
+        self.call_pip_opening = None;
+    }
+
     /// Whether this chat of the account on screen has the live call, which is
     /// what the chat header's call button reflects. A finished call keeps its
     /// snapshot for the farewell, but that is no call to hang up.
@@ -665,7 +692,12 @@ impl App {
         }
         // Full screen belongs to the call surface while the reader is looking
         // at it: however the surface was put aside, the window comes back.
-        if self.call_fullscreen && !self.call_surface_open() {
+        // The call's own window is already the call, so its full screen stays
+        // while the chat's call surface is aside.
+        if self.call_fullscreen
+            && !self.call_surface_open()
+            && self.window_kind != crate::app::WindowKind::Call
+        {
             self.set_call_fullscreen(ctx, false);
         }
         self.sync_call_tone();
@@ -723,12 +755,33 @@ impl App {
             Action::SetCallSpeaker(device) => {
                 self.send_call_command(Command::SetCallSpeaker(device));
             }
-            Action::LeaveCallSurface => self.call_surface_hidden = true,
+            Action::LeaveCallSurface => {
+                self.call_surface_hidden = true;
+                // The button minimizes into a window the reader is looking
+                // at: bring it forward, or it opens behind this one.
+                if self.call_pip_open() {
+                    self.call_pip_focus_until =
+                        Some(Instant::now() + crate::ui::call::PIP_FOCUS_FOR);
+                }
+            }
             // Returning to a locked chat's call cannot lift the lock on its
             // own: it asks for the code instead.
             Action::ReturnToCall if self.call.is_some() => {
-                if !self.call_is_private() {
+                if self.window_kind == crate::app::WindowKind::Call {
+                    // Returning from the call's own window opens the chat
+                    // window; it does not resurrect the chat inside the call.
                     self.call_surface_hidden = false;
+                    self.close_call_window(ctx, true);
+                } else if !self.call_is_private() {
+                    self.call_surface_hidden = false;
+                    // The floating window's button was clicked in that window:
+                    // the app's own comes forward with the call.
+                    for command in [
+                        egui::ViewportCommand::Minimized(false),
+                        egui::ViewportCommand::Focus,
+                    ] {
+                        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, command);
+                    }
                 } else if self.call_account.as_ref() == Some(&self.account().id) {
                     self.apply(Action::OpenLockedFolder, ctx);
                 }
@@ -779,6 +832,38 @@ mod tests {
     use crate::settings::Settings;
 
     const ADA: &str = "15550001111@s.whatsapp.net";
+
+    #[test]
+    fn closing_the_floating_window_keeps_its_size_and_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(root.path());
+        app.call_pip_size = egui::vec2(320.0, 180.0);
+        app.call_pip_last_size = Some(egui::vec2(410.0, 260.0));
+        app.call_pip_last_pos = Some(egui::pos2(700.0, 300.0));
+        app.call_pip_level_until = Some(Instant::now());
+        app.close_call_pip_window();
+        assert_eq!(app.call_pip_size, egui::vec2(410.0, 260.0));
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(700.0, 300.0)));
+        assert!(app.call_pip_last_size.is_none());
+        assert!(app.call_pip_last_pos.is_none());
+        assert!(app.call_pip_level_until.is_none());
+    }
+
+    /// Closing the chat while a video call floats hands the screen to the
+    /// call's own window, which opens where the floating window was left.
+    #[test]
+    fn the_call_window_opens_where_the_floating_window_was_left() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(root.path());
+        let ctx = egui::Context::default();
+        app.call_pip_screen_pos = Some(egui::pos2(10.0, 10.0));
+        app.call_pip_size = egui::vec2(320.0, 180.0);
+        app.call_pip_last_pos = Some(egui::pos2(700.0, 300.0));
+        app.call_pip_last_size = Some(egui::vec2(410.0, 260.0));
+        app.open_call_window(&ctx);
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(700.0, 300.0)));
+        assert_eq!(app.call_pip_size, egui::vec2(410.0, 260.0));
+    }
 
     /// A window with one account whose commands a test can read.
     fn app(directory: &std::path::Path) -> (App, tokio::sync::mpsc::UnboundedReceiver<Command>) {
@@ -863,6 +948,43 @@ mod tests {
     }
 
     #[test]
+    fn opening_another_chat_steps_a_video_call_into_its_floating_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        let other = "15550002222@s.whatsapp.net";
+        app.chats.push(Chat::new(other.into(), "Grace".into()));
+        let mut video = update(1, CallPhase::Active);
+        video.video = true;
+        app.handle_call_update(video);
+        assert!(app.call_surface_open());
+        assert!(!app.call_pip_open(), "the full screen has it");
+        // The chat the call is with leaves the screen alone.
+        app.apply(Action::OpenChat(ADA.into()), &ctx);
+        assert!(app.call_surface_open());
+        // Another chat steps it aside into the floating window.
+        app.apply(Action::OpenChat(other.into()), &ctx);
+        assert!(app.call_surface_hidden);
+        assert!(app.call_pip_open());
+        app.apply(Action::LeaveCallSurface, &ctx);
+        assert!(app.call_pip_open(), "the floating window stays");
+        app.apply(Action::ReturnToCall, &ctx);
+        assert!(app.call_surface_open());
+        assert!(!app.call_pip_open());
+    }
+
+    #[test]
+    fn an_audio_call_keeps_its_bar_rather_than_a_floating_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.handle_call_update(update(1, CallPhase::Active));
+        app.apply(Action::LeaveCallSurface, &ctx);
+        assert!(app.call_surface_hidden);
+        assert!(!app.call_pip_open(), "a voice call keeps the strip");
+    }
+
+    #[test]
     fn a_call_that_ends_says_how_then_goes() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _) = app(directory.path());
@@ -931,6 +1053,35 @@ mod tests {
         app.handle_call_update(ended(1, CallOutcome::Answered));
         app.tick_call(&ctx);
         assert!(!app.call_fullscreen);
+    }
+
+    #[test]
+    fn full_screen_in_the_call_window_keeps_the_chat_window_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = app(directory.path());
+        let ctx = egui::Context::default();
+        let mut video = update(1, CallPhase::Active);
+        video.video = true;
+        app.handle_call_update(video);
+        app.call_surface_hidden = true;
+        app.window_kind = crate::app::WindowKind::Call;
+        assert!(app.call_pip_open());
+
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(app.call_fullscreen);
+        app.tick_call(&ctx);
+        assert!(
+            app.call_fullscreen,
+            "the call window is the full screen, not the chat's surface"
+        );
+        assert!(app.window_kind == crate::app::WindowKind::Call && app.call_surface_hidden);
+
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(!app.call_fullscreen);
+        assert!(
+            app.window_kind == crate::app::WindowKind::Call,
+            "windowed again, the call is still its own window"
+        );
     }
 
     #[test]

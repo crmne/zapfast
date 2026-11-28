@@ -58,6 +58,18 @@ pub struct CallTexture {
     pub frame: std::sync::Arc<egui::ColorImage>,
 }
 
+/// What an eframe window session draws. A floating call gets a window of its
+/// own when the chat window closes, so its full screen and its close belong
+/// only to that window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowKind {
+    /// The ordinary chat window.
+    #[default]
+    Chat,
+    /// A frameless window holding only a floating video call.
+    Call,
+}
+
 /// A pane that scrolls on its own, which a scroll gesture stays with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollPane {
@@ -867,6 +879,36 @@ pub struct App {
     /// Whether the full call screen is put aside so a chat can be read while
     /// the call runs. The call itself is untouched; a bar offers the way back.
     pub call_surface_hidden: bool,
+    /// How big the small floating window a video call keeps while its screen
+    /// is put aside is. The reader resizes it from its corner; the window
+    /// stays inside the app's own, and the size lasts for the session.
+    pub call_pip_size: egui::Vec2,
+    /// Where that floating window was left, in the app's own points. `None`
+    /// opens it in the bottom right corner of the app.
+    pub call_pip_pos: Option<egui::Pos2>,
+    /// Whether the floating window asks to stay above the app's other
+    /// windows. It keeps the place it is dragged to either way; Wayland
+    /// leaves stacking to the compositor, which may ignore the request.
+    pub call_pip_on_top: bool,
+    /// How long a pin change keeps reasserting the window's level, for desktops
+    /// that miss a request made before the window is mapped.
+    pub(crate) call_pip_level_until: Option<Instant>,
+    /// How long the floating window just minimized into keeps asking for the
+    /// keyboard.
+    pub(crate) call_pip_focus_until: Option<Instant>,
+    /// What the native floating window on screen was opened with.
+    pub(crate) call_pip_opening: Option<crate::ui::call::PipOpening>,
+    /// Where the floating window was last left on the screen, in points, for
+    /// the windowing systems that let an app place a window. `None` opens it
+    /// at the bottom right of the app's own window, where that is allowed.
+    pub call_pip_screen_pos: Option<egui::Pos2>,
+    /// The size the native floating window last reported, kept until it
+    /// closes. The values the window is asked for stay fixed while it is
+    /// open, or the app would fight a window being dragged or resized.
+    pub(crate) call_pip_last_size: Option<egui::Vec2>,
+    /// The place the native floating window last reported, as above. Wayland
+    /// never reports one.
+    pub(crate) call_pip_last_pos: Option<egui::Pos2>,
     /// Whether the call surface has taken the whole screen. A window state:
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
@@ -947,6 +989,13 @@ pub struct App {
     tray_lockable: bool,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
+    /// What the current eframe session draws. A floating call gets its own
+    /// window session when the chat window closes, so what happens in it,
+    /// full screen included, cannot change the chat window.
+    pub window_kind: WindowKind,
+    /// The close request that replaced the chat must not also close the new
+    /// call window on the old window's last frame.
+    ignore_window_close: bool,
     /// Whether window close should keep the process running.
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
@@ -1763,6 +1812,18 @@ impl App {
             call_devices: crate::calls::DeviceList::default(),
             call_devices_open: false,
             call_surface_hidden: false,
+            call_pip_size: egui::vec2(
+                crate::ui::call::PIP_DEFAULT.x,
+                crate::ui::call::PIP_DEFAULT.y,
+            ),
+            call_pip_pos: None,
+            call_pip_on_top: false,
+            call_pip_level_until: None,
+            call_pip_focus_until: None,
+            call_pip_opening: None,
+            call_pip_screen_pos: None,
+            call_pip_last_size: None,
+            call_pip_last_pos: None,
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,
@@ -1797,6 +1858,8 @@ impl App {
             test_raised: false,
             tray_lockable,
             window_hidden: false,
+            window_kind: WindowKind::Chat,
+            ignore_window_close: false,
             hide_intent: false,
             wants_show: false,
             tray_wait: None,
@@ -2184,8 +2247,9 @@ impl App {
         }
     }
 
-    /// Updates the linked app while no window exists.
-    pub fn window_gone(&mut self) {
+    /// What leaving the chat window forgets: a half-typed code, and the open
+    /// folder of locked chats. The open draft is kept first.
+    fn leave_chat_view(&mut self) {
         self.flush_open_draft();
         self.clear_chat_lock_entry();
         if self.dialog == Some(Dialog::UnlockLockedChats) {
@@ -2196,6 +2260,11 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+    }
+
+    /// Updates the linked app while no window exists.
+    pub fn window_gone(&mut self) {
+        self.leave_chat_view();
         self.window_hidden = true;
         self.window_focused = false;
         self.hide_intent = false;
@@ -2751,14 +2820,18 @@ impl App {
         self.theme_transition = fastframe_theme::Transition::default();
         self.zoom_applied = false;
         self.window_hidden = false;
+        self.ignore_window_close = false;
         self.paste_keys = PasteKeys::default();
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
-        // A new window starts with nothing focused: a message list that had
-        // focus in the last one does not hold it back from the composer.
-        self.messages_focused = false;
-        self.refocus_composer(ctx);
+        self.call_pip_level_until = None;
+        if self.window_kind == WindowKind::Chat {
+            // A new chat window starts with nothing focused: a message list
+            // that had focus in the last one does not hold the composer back.
+            self.messages_focused = false;
+            self.refocus_composer(ctx);
+        }
         // Before the tray: muda keeps the first menu handler it is given, and
         // the tray installs one when it makes its item on the first window.
         // Ours hands the tray its own events (#215).
@@ -6261,6 +6334,16 @@ impl App {
         if self.chat(&id).is_some_and(|chat| chat.locked) && !self.locked_folder_open() {
             return;
         }
+        // A video call that fills the window steps aside into its small
+        // floating one when another chat is opened, by any route, as a phone
+        // does; an audio call only ever kept its bar. The same chat id on
+        // another account is another chat.
+        if self.call_surface_open()
+            && self.call.as_ref().is_some_and(|call| call.video)
+            && !self.call_live_here(&id)
+        {
+            self.call_surface_hidden = true;
+        }
         if self.locked_folder && self.chat(&id).is_some_and(|chat| !chat.locked) {
             self.close_locked_folder();
             self.search.clear();
@@ -7156,16 +7239,97 @@ impl App {
     /// passes eframe runs without `ui` for a minimized or covered one. Call it
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
-        self.sync_window_state(ctx);
-        // Close the window and continue headless when background mode is
-        // enabled. Decided here rather than in `frame_ui`, which eframe skips
-        // for a minimized window: closing one from the taskbar quit instead.
-        if ctx.input(|input| input.viewport().close_requested())
-            && !self.quit_requested
-            && self.keeps_running_on_close()
-        {
-            self.hide_intent = true;
+        // The chat's size belongs to the chat. A call window writing its own
+        // size here would reopen the chat at the size of the last call.
+        if self.window_kind == WindowKind::Chat {
+            self.sync_window_state(ctx);
         }
+        // A call that is no longer floating has nothing to show in its own
+        // window. Close it and leave ZapFast in the tray.
+        if self.window_kind == WindowKind::Call && !self.call_pip_open() {
+            self.close_call_window(ctx, false);
+            return;
+        }
+        // Close decisions live here rather than in `frame_ui`, which eframe
+        // skips for a minimized window: closing one from the taskbar quit
+        // instead of hiding the app.
+        let close_requested = ctx.input(|input| input.viewport().close_requested());
+        // The request that closed the chat has already opened the call
+        // window. eframe keeps giving the old window the same request until
+        // it exits; acting on it again would close the new call at once.
+        // `attach` clears this when the call window takes the app.
+        if close_requested && self.ignore_window_close {
+            // Handled by the close that replaced this window.
+        } else if close_requested && !self.quit_requested {
+            match self.window_kind {
+                WindowKind::Call => self.close_call_window(ctx, false),
+                WindowKind::Chat if self.call_pip_open() && !ctx.embed_viewports() => {
+                    self.open_call_window(ctx);
+                }
+                WindowKind::Chat if self.keeps_running_on_close() => self.hide_intent = true,
+                WindowKind::Chat => {}
+            }
+        }
+    }
+
+    /// Hands the chat window to a live floating call. Shell replaces the
+    /// window at once (`Closed::Reopen`), so the call gets a real window of
+    /// its own and the chat is gone until the tray asks for it back.
+    pub(crate) fn open_call_window(&mut self, ctx: &egui::Context) {
+        // The call window opens where the floating window was last seen, at
+        // the size it had. Without this it opened at the place the floating
+        // window first appeared, however far the reader had dragged it since.
+        self.close_call_pip_window();
+        // The shell replaces this window without reporting it gone, so the
+        // chat is left here as it is when the window closes to the tray.
+        self.leave_chat_view();
+        self.ignore_window_close = true;
+        self.call_surface_hidden = true;
+        self.wants_show = false;
+        // With the locked folder closed, a locked chat's call has nothing to
+        // show: the window closes as it would without a floating call.
+        if self.call_pip_open() {
+            self.window_kind = WindowKind::Call;
+            self.reopen = true;
+            self.hide_intent = false;
+        } else {
+            self.ignore_window_close = false;
+            self.hide_intent = self.keeps_running_on_close();
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Closes the call's own window. With `reopen_chat`, the next window is
+    /// the chat; otherwise ZapFast stays in the tray until it is asked to
+    /// show the chat.
+    pub(crate) fn close_call_window(&mut self, ctx: &egui::Context, reopen_chat: bool) {
+        if self.window_kind != WindowKind::Call {
+            return;
+        }
+        let fullscreen = ctx.input(|input| input.viewport().fullscreen == Some(true));
+        let size = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
+        // A full screen window's place and size are the monitor's.
+        if fullscreen {
+            self.call_pip_last_size = None;
+            self.call_pip_last_pos = None;
+        }
+        self.close_call_pip_window();
+        if let Some(size) = size.filter(|_| !fullscreen) {
+            self.call_pip_size = size.max(crate::ui::call::PIP_MIN);
+        }
+        // The close request stays in this window's input until it exits.
+        // Ignore it while the shell replaces the window, or the chat close
+        // path would turn the next call window straight back into a chat.
+        self.ignore_window_close = true;
+        self.window_kind = WindowKind::Chat;
+        if reopen_chat {
+            self.reopen = true;
+            self.hide_intent = false;
+        } else {
+            self.hide_intent = true;
+            self.reopen = false;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     pub fn load_custom_themes(&mut self) {
@@ -7328,7 +7492,10 @@ impl App {
 
     /// Applies one model action after drawing the views, respecting the app lock and account state.
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
-        if self.app_lock.is_locked() && !allowed_while_locked(&action) {
+        // The locked call window's one button leads to the lock screen.
+        let to_lock_screen =
+            self.window_kind == WindowKind::Call && matches!(action, Action::ReturnToCall);
+        if self.app_lock.is_locked() && !to_lock_screen && !allowed_while_locked(&action) {
             // A clicked notification opens its message once unlocked, and a
             // link opens the chat it named; the rest would show or change
             // what the lock hides.
@@ -9647,6 +9814,7 @@ impl App {
                     // the window, keeping the chat, the link and any call:
                     // the shell opens the next one at once.
                     if cfg!(any(windows, target_os = "linux")) && !self.window_hidden {
+                        self.window_kind = WindowKind::Chat;
                         self.reopen = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -10051,8 +10219,14 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Action::ShowWindow => {
-                if self.window_hidden {
+                if self.window_kind == WindowKind::Call {
+                    // The tray opens the chat, not another call window. The
+                    // live call comes back into it rather than floating again.
+                    self.call_surface_hidden = false;
+                    self.close_call_window(ctx, true);
+                } else if self.window_hidden {
                     // The headless loop in `main` will create the window.
+                    self.window_kind = WindowKind::Chat;
                     self.wants_show = true;
                 } else if self.wayland && self.raise_on_compositor() {
                     // The compositor (niri) focused the existing window and
@@ -10063,23 +10237,43 @@ impl App {
                     // forward that way. Close it and let the shell open a
                     // fresh one at once: the compositor raises a new toplevel,
                     // and a notification click lands on a visible window.
+                    self.window_kind = WindowKind::Chat;
                     self.reopen = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
                     // Focus alone leaves a minimized window where it is on
                     // Windows, so restore it first.
+                    self.window_kind = WindowKind::Chat;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             }
             Action::HideWindow => {
-                if self.tray_shown() {
-                    self.hide_intent = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if self.window_kind == WindowKind::Call {
+                    // Hiding from the tray closes the call window; the call
+                    // itself carries on, and opening the tray shows the chat.
+                    self.close_call_window(ctx, false);
+                } else if self.tray_shown() {
+                    if self.call_pip_open() && !ctx.embed_viewports() {
+                        self.open_call_window(ctx);
+                        // Asked to hide, so hide, if no call window took over.
+                        self.hide_intent = self.window_kind != WindowKind::Call;
+                    } else {
+                        self.hide_intent = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 }
             }
-            // Route through the configured window-close behavior.
-            Action::CloseWindow => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            // Route through the configured window-close behavior. Closing a
+            // chat with a floating video call hands the screen to that call's
+            // own window; closing the call window leaves the chat closed.
+            Action::CloseWindow => match self.window_kind {
+                WindowKind::Call => self.close_call_window(ctx, false),
+                WindowKind::Chat if self.call_pip_open() && !ctx.embed_viewports() => {
+                    self.open_call_window(ctx);
+                }
+                WindowKind::Chat => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            },
             Action::SwitchAccount(id) => self.switch_account(&id),
             Action::CycleAccount(step) => self.cycle_account(step, Instant::now()),
             Action::AddAccount => self.add_account(),
@@ -10438,11 +10632,25 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        let looking =
-            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
+        let awake = !self.power.conditions().display_off;
+        let reading =
+            self.window_kind == WindowKind::Chat && self.window_focused && !self.window_hidden;
+        // A floating call is on screen even when the reader is using another
+        // app. Announcing its account as away would make the phone end the
+        // call ten seconds later. The app lock covers the one drawn by the
+        // chat window, but not a window of the call's own.
+        let floating = (self.window_kind == WindowKind::Call
+            || !self.window_hidden && !self.app_lock.is_locked())
+            && self.call_pip_open();
         let active = self.active;
+        let calling = floating.then(|| {
+            self.call_account
+                .as_ref()
+                .and_then(|id| self.accounts.iter().position(|account| &account.id == id))
+                .unwrap_or(active)
+        });
         for (index, account) in self.accounts.iter_mut().enumerate() {
-            let online = looking && index == active;
+            let online = awake && (reading && index == active || calling == Some(index));
             if account.reported_online != Some(online) {
                 account.reported_online = Some(online);
                 account.backend.send(Command::SetOnline(online));
@@ -11407,7 +11615,11 @@ impl App {
             self.palette.vibrant(),
             self.palette.window.a() < 255,
         );
-        if wanted != transparent && !self.reopen && !self.window_hidden {
+        if wanted != transparent
+            && self.window_kind == WindowKind::Chat
+            && !self.reopen
+            && !self.window_hidden
+        {
             self.reopen = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -11438,7 +11650,10 @@ impl App {
         let locked = self.app_lock.is_locked();
         // Behind the lock screen nobody is reading; unlocking counts as
         // coming back to the window.
-        let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true)) && !locked;
+        // A call window shows no chat either, so focusing it reads nothing.
+        let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true))
+            && !locked
+            && self.window_kind == WindowKind::Chat;
         let regained_focus = focused && !self.window_focused;
         // Mark messages received while hidden as read on window return.
         if regained_focus
@@ -12431,6 +12646,7 @@ fn composer_format_spans(
 mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
+    use fastframe_shell::Resident;
 
     fn composer_undo_boundary_frame(
         app: &mut App,
@@ -12457,6 +12673,30 @@ mod tests {
             |ui| app.frame_ui(ui),
         );
         output.textures_delta.clear();
+    }
+
+    /// A live video call the reader stepped away from, which is what opens
+    /// the floating window.
+    fn pip_call() -> crate::calls::CallUpdate {
+        crate::calls::CallUpdate {
+            generation: 1,
+            chat: "1@s.whatsapp.net".into(),
+            direction: crate::model::CallDirection::Incoming,
+            video: true,
+            phase: crate::calls::CallPhase::Active,
+            started: None,
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        }
     }
 
     fn composer_undo_key() -> egui::Event {
@@ -18153,6 +18393,399 @@ mod tests {
         assert_eq!(app.closed(), Closed::Quit);
     }
 
+    /// Closing the chat window while a native call floats replaces that
+    /// window with a separate call window. The call keeps running in the
+    /// same app state, while the chat is gone until the tray asks for it.
+    #[test]
+    fn a_floating_call_gets_a_window_of_its_own() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        assert!(app.call_pip_open());
+
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
+        output.textures_delta.clear();
+        assert_eq!(app.window_kind, WindowKind::Call);
+        assert_eq!(app.closed(), fastframe_shell::Closed::Reopen);
+        assert!(
+            !app.hide_intent,
+            "the call must not go to the headless loop"
+        );
+        assert!(app.call_pip_open(), "the call survives the new window");
+
+        // eframe keeps the old close request in its input while it exits.
+        // The new call window must not inherit it and close at once.
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        assert_eq!(app.window_kind, WindowKind::Call);
+        assert_eq!(app.closed(), fastframe_shell::Closed::Reopen);
+        assert!(!app.hide_intent);
+        output.textures_delta.clear();
+
+        // Closing the call's own window leaves the chat closed, and the call
+        // itself keeps running. `attach` is what the shell does when that
+        // window takes the app.
+        app.attach(&ctx);
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        output.textures_delta.clear();
+        assert_eq!(app.window_kind, WindowKind::Chat);
+        assert!(app.hide_intent);
+        assert!(app.call_live());
+    }
+
+    /// The close shortcut takes the same route as the window's close button:
+    /// the chat gives way to a separate call window.
+    #[test]
+    fn the_close_shortcut_opens_a_separate_call_window() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+
+        app.apply(Action::CloseWindow, &ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
+        output.textures_delta.clear();
+        assert_eq!(app.window_kind, WindowKind::Call);
+    }
+
+    /// An embedded floating window cannot outlive the only window that draws
+    /// it, so closing that window keeps the ordinary hide-to-tray path.
+    #[test]
+    fn an_embedded_call_uses_the_normal_close_path() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(true);
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        assert!(app.call_pip_open());
+
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(!commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(!commands.contains(&egui::ViewportCommand::Decorations(false)));
+        output.textures_delta.clear();
+        assert!(app.hide_intent && app.window_kind == WindowKind::Chat);
+    }
+
+    /// Ending a call closes only its own window. The chat stays closed until
+    /// the tray asks for it; the app keeps running in the background.
+    #[test]
+    fn ending_a_video_call_closes_only_the_call_window() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.call = None;
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.window_logic(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        output.textures_delta.clear();
+        assert_eq!(app.window_kind, WindowKind::Chat);
+        assert!(app.hide_intent);
+        assert!(!app.reopen);
+        assert_eq!(app.closed(), fastframe_shell::Closed::Hide);
+    }
+
+    /// The tray always brings back the chat, not another call window. A live
+    /// call returns to the chat screen when that happens.
+    #[test]
+    fn the_tray_opens_the_chat_from_the_call_window() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+
+        app.apply(Action::ShowWindow, &ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::Close));
+        output.textures_delta.clear();
+        assert_eq!(app.window_kind, WindowKind::Chat);
+        assert!(!app.call_surface_hidden, "the call is back in the chat");
+        assert!(app.call_live());
+        assert_eq!(app.closed(), fastframe_shell::Closed::Reopen);
+    }
+
+    /// Full screen in the call's own window cannot write the chat's size or
+    /// maximized state. Those belong to the chat window that is closed.
+    #[test]
+    fn call_window_full_screen_leaves_the_chat_geometry_alone() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let mut geometry = app.settings.window_geometry();
+        geometry.size = Some([1180.0, 780.0]);
+        geometry.position = Some([40.0, 60.0]);
+        geometry.maximized = true;
+        app.settings.set_window_geometry(geometry);
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+
+        app.apply(Action::ToggleCallFullscreen, &ctx);
+        assert!(app.call_fullscreen);
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(480.0, 270.0),
+            )),
+            ..Default::default()
+        };
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.inner_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(480.0, 270.0),
+        ));
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        output.textures_delta.clear();
+        assert_eq!(app.settings.window_geometry(), geometry);
+        assert!(app.call_fullscreen);
+        assert_eq!(app.window_kind, WindowKind::Call);
+    }
+
+    /// Every route into another chat floats the video call, and the same chat
+    /// id on another account is another chat.
+    #[test]
+    fn opening_another_chat_by_any_route_floats_the_video_call() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let first = app.account().id.clone();
+        app.call = Some(pip_call());
+        app.call_account = Some(first.clone());
+        app.call_surface_hidden = false;
+        app.open_chat("1@s.whatsapp.net".into());
+        assert!(app.call_surface_open(), "the call's own chat keeps it");
+
+        app.apply(
+            Action::StartChat {
+                id: "2@s.whatsapp.net".into(),
+                name: "Bo".into(),
+                dismiss_dialog: false,
+            },
+            &ctx,
+        );
+        assert!(app.call_surface_hidden);
+
+        app.call_surface_hidden = false;
+        app.call_account = Some(AccountId::parse("2").unwrap());
+        assert_ne!(first, AccountId::parse("2").unwrap());
+        app.open_chat("1@s.whatsapp.net".into());
+        assert!(app.call_surface_hidden);
+    }
+
+    /// The shell does not report a replaced window as gone, so handing it to
+    /// the call leaves the chat the same way hiding it does.
+    #[test]
+    fn opening_the_call_window_closes_the_locked_chats() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = app();
+        app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
+        app.enter_locked_folder();
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.open_call_window(&ctx);
+        assert!(!app.locked_folder_open());
+        assert_eq!(app.window_kind, WindowKind::Call);
+    }
+
+    #[test]
+    fn a_locked_chats_call_gets_no_window_once_its_folder_closes() {
+        let directory = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        app.test_tray_shown = Some(true);
+        let mut locked = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        locked.locked = true;
+        app.chats.push(locked);
+        app.settings.chat_lock_code_hash = Some("synthetic authenticated verifier".into());
+        app.enter_locked_folder();
+        app.call_account = Some(app.account().id.clone());
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        assert!(app.call_pip_open());
+
+        app.apply(Action::HideWindow, &ctx);
+        assert_eq!(app.window_kind, WindowKind::Chat);
+        assert!(!app.locked_folder_open());
+        assert!(!app.reopen);
+        assert!(app.hide_intent);
+        assert!(app.call_live());
+    }
+
+    #[test]
+    fn closing_the_call_window_remembers_where_it_was() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.call_pip_screen_pos = Some(egui::pos2(10.0, 10.0));
+        app.call_pip_last_pos = Some(egui::pos2(300.0, 200.0));
+        app.close_call_window(&ctx, false);
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(300.0, 200.0)));
+    }
+
+    /// A floating call beside the chat stays on screen while another app has
+    /// the keyboard, and it is the call's account that is there.
+    #[test]
+    fn a_floating_call_keeps_its_own_account_online() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut second) = two_accounts(directory.path());
+        let (backend, mut first) = Backend::recording();
+        app.backend = backend;
+        app.window_focused = false;
+        app.call = Some(pip_call());
+        app.call_account = Some(AccountId::parse("2").unwrap());
+        app.call_surface_hidden = true;
+        app.report_presence();
+        let online = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SetOnline(online) => Some(online),
+                    _ => None,
+                })
+                .last()
+        };
+        assert_eq!(online(&mut second), Some(true));
+        assert_eq!(online(&mut first), Some(false));
+
+        // Hidden with the chat window, the in-app floating call is not seen.
+        app.window_hidden = true;
+        app.report_presence();
+        assert_eq!(online(&mut second), Some(false));
+    }
+
+    #[test]
+    fn focusing_the_call_window_reads_nothing() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.attach(&ctx);
+        app.window_focused = true;
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.frame_ui(ui));
+        output.textures_delta.clear();
+        assert!(!app.window_focused);
+    }
+
+    /// Behind the app lock the call window says only that, and its button
+    /// leads to the lock screen with the call still up.
+    #[test]
+    fn a_locked_call_window_shows_nothing_of_the_call() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        app.attach(&ctx);
+        app.settings.app_lock_hash = Some("synthetic authenticated verifier".into());
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.lock_app();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                crate::ui::call::PIP_DEFAULT,
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| crate::ui::show(&mut app, ui));
+        output.textures_delta.clear();
+        let labels: Vec<String> = output
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree")
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().or(node.value()).map(str::to_owned))
+            .collect();
+        assert!(labels.iter().any(|label| label == "Unlock"), "{labels:?}");
+        for absent in ["Hang up", "Mute", "Return to the call"] {
+            assert!(!labels.iter().any(|label| label == absent), "{labels:?}");
+        }
+
+        app.apply(Action::HangupCall, &ctx);
+        assert!(app.call_live());
+        app.apply(Action::ReturnToCall, &ctx);
+        assert_eq!(app.window_kind, WindowKind::Chat);
+        assert!(app.reopen);
+        assert!(app.app_lock.is_locked());
+    }
+
+    #[test]
+    fn locking_the_app_keeps_the_floating_windows_place() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.attach(&ctx);
+        app.settings.app_lock_hash = Some("synthetic authenticated verifier".into());
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.call_pip_last_pos = Some(egui::pos2(300.0, 200.0));
+        app.lock_app();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::show(&mut app, ui)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(300.0, 200.0)));
+    }
+
+    /// Closing a call window that is full screen must not remember the
+    /// monitor as the size of the little window that opens next time.
+    #[test]
+    fn closing_a_full_screen_call_keeps_its_normal_size() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.window_kind = WindowKind::Call;
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.call_fullscreen = true;
+        let size = crate::ui::call::PIP_DEFAULT;
+
+        let mut input = egui::RawInput::default();
+        let info = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        info.events.push(egui::ViewportEvent::Close);
+        info.fullscreen = Some(true);
+        info.inner_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1920.0, 1080.0),
+        ));
+        let mut output = ctx.run_ui(input, |ui| app.window_logic(ui.ctx()));
+        output.textures_delta.clear();
+        assert_eq!(app.call_pip_size, size);
+        assert_eq!(app.window_kind, WindowKind::Chat);
+    }
+
     /// A Wayland compositor ignores an app's focus and unminimize requests, so
     /// a notification click or a second launch closes the window and asks the
     /// shell for a fresh one, which the compositor raises, unless the
@@ -20034,6 +20667,33 @@ mod tests {
         app.window_focused = true;
         app.report_presence();
         assert!(reported().is_empty());
+    }
+
+    #[test]
+    fn a_floating_call_keeps_presence_online_in_its_own_window() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.window_focused = true;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+
+        app.call_surface_hidden = true;
+        app.call = Some(pip_call());
+        app.window_kind = WindowKind::Call;
+        app.window_focused = false;
+        app.report_presence();
+        assert!(
+            commands.try_recv().is_err(),
+            "the call window is still on screen"
+        );
+
+        // Once the chat has its window back, the usual tray presence takes
+        // over.
+        app.window_kind = WindowKind::Chat;
+        app.call = None;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(false))));
     }
 
     #[test]
