@@ -2546,12 +2546,12 @@ mod tests {
             },
         );
         output.textures_delta.clear();
-        let body = output.shapes.iter().find_map(|shape| match shape {
+        let body = output.shapes.iter().find_map(|shape| match &shape.shape {
             egui::Shape::Text(text) if text.galley.text().trim() == "Fixture words" => Some(text),
             _ => None,
         });
         let body = body.expect("the starred bubble's words are painted");
-        assert_eq!(body.galley.spans[0].color, ink.text);
+        assert_eq!(body.galley.job.sections[0].format.color, ink.text);
         assert!(actions.is_empty(), "a drawn row does not act");
     }
 
