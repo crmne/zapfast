@@ -2285,6 +2285,100 @@ pub enum PictureSource {
     Pasted(Arc<Vec<u8>>),
 }
 
+/// Markup coordinates refer to the turned, uncropped image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PictureShape {
+    Rectangle,
+    Ellipse,
+    Arrow,
+    Line,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PictureStamp {
+    Smile,
+    Heart,
+    Star,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PictureMark {
+    Stroke {
+        points: Vec<(f32, f32)>,
+        color: [u8; 3],
+        radius: f32,
+    },
+    Redact(PictureCrop),
+    Mosaic(PictureCrop),
+    Shape {
+        kind: PictureShape,
+        from: (f32, f32),
+        to: (f32, f32),
+        color: [u8; 3],
+        width: f32,
+        filled: bool,
+    },
+    Text {
+        at: (f32, f32),
+        text: String,
+        color: [u8; 3],
+        background: bool,
+        size: f32,
+    },
+    Stamp {
+        at: (f32, f32),
+        kind: PictureStamp,
+        color: [u8; 3],
+        size: f32,
+    },
+    Emoji {
+        at: (f32, f32),
+        emoji: String,
+        size: f32,
+    },
+}
+
+impl PictureMark {
+    fn turned(&mut self, clockwise: bool, width: u32, height: u32) {
+        match self {
+            Self::Stroke { points, .. } => {
+                for (x, y) in points {
+                    (*x, *y) = if clockwise {
+                        (height as f32 - *y, *x)
+                    } else {
+                        (*y, width as f32 - *x)
+                    };
+                }
+            }
+            Self::Redact(rect) | Self::Mosaic(rect) => {
+                *rect = if clockwise {
+                    rect.turned_clockwise(height)
+                } else {
+                    rect.turned_counter_clockwise(width)
+                };
+            }
+            Self::Shape { from, to, .. } => {
+                for (x, y) in [from, to] {
+                    (*x, *y) = if clockwise {
+                        (height as f32 - *y, *x)
+                    } else {
+                        (*y, width as f32 - *x)
+                    };
+                }
+            }
+            Self::Text { at: (x, y), .. }
+            | Self::Stamp { at: (x, y), .. }
+            | Self::Emoji { at: (x, y), .. } => {
+                (*x, *y) = if clockwise {
+                    (height as f32 - *y, *x)
+                } else {
+                    (*y, width as f32 - *x)
+                };
+            }
+        }
+    }
+}
+
 /// A staged picture on its way to being cropped and sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PictureEdit {
@@ -2298,6 +2392,8 @@ pub struct PictureEdit {
     pub crop: PictureCrop,
     /// Quarter turns clockwise already applied to the source.
     pub turns: u8,
+    pub marks: Vec<PictureMark>,
+    pub hd: bool,
 }
 
 impl PictureEdit {
@@ -2315,6 +2411,8 @@ impl PictureEdit {
             height: height.max(1),
             crop: PictureCrop::full(width, height),
             turns: 0,
+            marks: Vec::new(),
+            hd: true,
         }
     }
 
@@ -2328,8 +2426,11 @@ impl PictureEdit {
     }
 
     /// Turns the picture, carrying the selection round with it.
-    pub fn turned(self, clockwise: bool) -> Self {
+    pub fn turned(mut self, clockwise: bool) -> Self {
         let (width, height) = self.displayed_size();
+        for mark in &mut self.marks {
+            mark.turned(clockwise, width, height);
+        }
         let crop = if clockwise {
             self.crop.turned_clockwise(height)
         } else {
@@ -2353,8 +2454,59 @@ impl PictureEdit {
         Self {
             crop: PictureCrop::full(self.width, self.height),
             turns: 0,
+            marks: Vec::new(),
+            hd: true,
             ..self
         }
+    }
+}
+
+#[cfg(test)]
+mod picture_mark_tests {
+    use super::*;
+
+    #[test]
+    fn turning_and_resetting_carry_and_clear_marks() {
+        let mut edit = PictureEdit::new(
+            1,
+            PictureSource::Pasted(Arc::new(vec![255; 8 * 6 * 4])),
+            8,
+            6,
+        );
+        edit.marks.push(PictureMark::Stroke {
+            points: vec![(0.0, 0.0), (7.0, 5.0)],
+            color: [255, 0, 0],
+            radius: 2.0,
+        });
+        edit.marks.push(PictureMark::Redact(PictureCrop {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 2,
+        }));
+        let turned = edit.turned(true);
+        assert_eq!(turned.displayed_size(), (6, 8));
+        assert_eq!(
+            turned.marks[0],
+            PictureMark::Stroke {
+                points: vec![(6.0, 0.0), (1.0, 7.0)],
+                color: [255, 0, 0],
+                radius: 2.0,
+            }
+        );
+        assert_eq!(
+            turned.marks[1],
+            PictureMark::Redact(PictureCrop {
+                x: 2,
+                y: 1,
+                width: 2,
+                height: 3,
+            })
+        );
+        let reset = turned.reset();
+        assert_eq!(reset.turns, 0);
+        assert!(reset.marks.is_empty());
+        assert_eq!(reset.crop, PictureCrop::full(8, 6));
     }
 }
 
@@ -2368,6 +2520,8 @@ pub struct PictureOrigin {
     pub height: u32,
     pub crop: PictureCrop,
     pub turns: u8,
+    pub marks: Vec<PictureMark>,
+    pub hd: bool,
 }
 
 /// A picture on its way to becoming a sticker.
@@ -3297,6 +3451,8 @@ pub enum Action {
     SetTheme(crate::settings::ThemeChoice),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
+    SetMessageDensity(crate::settings::MessageDensity),
+    SetAlbumSaveAll(bool),
     /// Windows and Linux: draws ZapFast's own title bar and window buttons
     /// (`true`) or the desktop's. Decorations are fixed when a window is
     /// made, so the window is replaced.

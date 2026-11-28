@@ -8870,6 +8870,7 @@ dependencies = [
 name = "zapfast"
 version = "0.21.3"
 dependencies = [
+ "ab_glyph",
  "aes 0.9.3",
  "anyhow",
  "apple-native-keyring-store",

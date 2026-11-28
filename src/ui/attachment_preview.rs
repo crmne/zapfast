@@ -7,6 +7,7 @@ use crate::model::Action;
 use crate::theme::{self, Icon};
 
 use super::focus::{Stop, TabStop};
+use super::image_editor;
 use super::widgets;
 
 const TILE: f32 = 56.0;
@@ -291,6 +292,15 @@ fn tile(
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let selected = selected(app, ui.ctx());
+    let active = app.pending.get(selected).map(|item| item.id);
+    if active.is_some_and(|target| {
+        app.picture_edit
+            .as_ref()
+            .is_some_and(|edit| edit.target == target)
+    }) {
+        image_editor::show_in_ui(app, ui);
+        return;
+    }
     let Some(item) = app.pending.get_mut(selected) else {
         return;
     };
@@ -301,35 +311,54 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let mut close = false;
     ui.painter()
         .rect_filled(ui.available_rect_before_wrap(), 0.0, palette.surface);
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(8.0);
+    let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), 54.0), Sense::hover());
+    ui.painter().rect_filled(header, 0.0, palette.surface);
+    ui.painter().line_segment(
+        [header.left_bottom(), header.right_bottom()],
+        Stroke::new(1.0, palette.outline),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_min_size(
+                header.min + vec2(12.0, 0.0),
+                vec2(40.0, 54.0),
+            ))
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
             close = theme::icon_button(
                 ui,
                 Icon::X,
-                20.0,
+                22.0,
                 palette.secondary,
                 palette.text,
                 &crate::i18n::gettext(app.locale, "Discard attachments"),
             )
             .tab_stop(Stop::ReviewClose)
             .clicked();
-            if can_edit {
+        },
+    );
+    if can_edit {
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_center_size(header.center(), vec2(44.0, 46.0)))
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
                 edit = theme::icon_button(
                     ui,
                     Icon::Pencil,
-                    20.0,
+                    22.0,
                     palette.secondary,
                     palette.text,
                     &crate::i18n::gettext(app.locale, "Edit picture"),
                 )
                 .tab_stop(Stop::ReviewEdit)
                 .clicked();
-            }
-        });
-    });
-    let rect = ui.available_rect_before_wrap().shrink(20.0);
+            },
+        );
+    }
+    // Keep room at the sides without leaving a large band between the
+    // toolbar and the picture (or between the picture and its caption).
+    let rect = ui.available_rect_before_wrap().shrink2(vec2(20.0, 8.0));
     if rect.is_positive() {
         if let Some(image) = image(ui, item) {
             if let Ok(egui::load::TexturePoll::Ready { texture }) =

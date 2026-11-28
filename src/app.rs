@@ -1557,6 +1557,7 @@ impl App {
             .cached_palette()
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
+                ThemeChoice::StockWhatsApp => Palette::stock_whatsapp(),
                 ThemeChoice::Messages => Palette::messages(),
                 _ => Palette::dark(),
             });
@@ -7215,7 +7216,7 @@ impl App {
     fn apply_theme(&mut self, ctx: &egui::Context) {
         let preference = self.settings.cached_palette().map_or_else(
             || match self.settings.theme {
-                ThemeChoice::Dark => egui::ThemePreference::Dark,
+                ThemeChoice::Dark | ThemeChoice::StockWhatsApp => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
@@ -7262,7 +7263,9 @@ impl App {
             }
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::Messages {
+            if self.settings.theme == ThemeChoice::StockWhatsApp {
+                Palette::stock_whatsapp()
+            } else if self.settings.theme == ThemeChoice::Messages {
                 if dark {
                     Palette::messages()
                 } else {
@@ -8546,6 +8549,8 @@ impl App {
                             height: origin.height,
                             crop: origin.crop,
                             turns: origin.turns,
+                            marks: origin.marks,
+                            hd: origin.hd,
                         });
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
@@ -8567,6 +8572,8 @@ impl App {
                             height: edit.height,
                             crop: edit.crop,
                             turns: edit.turns,
+                            marks: edit.marks.clone(),
+                            hd: edit.hd,
                         },
                     );
                     self.backend.send(Command::ApplyPictureEdit {
@@ -8576,6 +8583,8 @@ impl App {
                         height: edit.height,
                         crop: edit.crop,
                         turns: edit.turns,
+                        marks: edit.marks,
+                        hd: edit.hd,
                     });
                 }
             }
@@ -9632,6 +9641,16 @@ impl App {
                 self.settings.font = choice;
                 self.mark_settings_dirty();
                 crate::theme::set_font(ctx, choice);
+                ctx.request_repaint();
+            }
+            Action::SetMessageDensity(density) => {
+                self.settings.message_density = density;
+                self.mark_settings_dirty();
+                ctx.request_repaint();
+            }
+            Action::SetAlbumSaveAll(show) => {
+                self.settings.show_album_save_all = show;
+                self.mark_settings_dirty();
                 ctx.request_repaint();
             }
             Action::SetCustomTitlebar(custom) => {
@@ -13355,6 +13374,8 @@ mod tests {
                 height: 6,
                 crop: crate::model::PictureCrop::full(8, 6),
                 turns: 0,
+                marks: Vec::new(),
+                hd: true,
             },
         );
         let first_id = app.account().id.clone();
@@ -13383,10 +13404,10 @@ mod tests {
         let (backend, mut commands, _) = Backend::recording_with_events();
         let mut app = App::headless(AppDirs::under(root.path()), Settings::default()).0;
         app.account_mut().backend = backend;
-        let rgba = std::sync::Arc::new([80, 120, 180, 255].repeat(2048 * 2));
+        let rgba = std::sync::Arc::new([80, 120, 180, 255].repeat(4096 * 4));
         let picture = || Pending::Picture {
-            width: 2048,
-            height: 2,
+            width: 4096,
+            height: 4,
             rgba: rgba.clone(),
             texture: None,
         };
@@ -13414,7 +13435,7 @@ mod tests {
             },
             true,
         );
-        assert_eq!(app.pending[0].preview.as_ref().unwrap().size, [1024, 1]);
+        assert_eq!(app.pending[0].preview.as_ref().unwrap().size, [2048, 2]);
         app.apply_backend_event(
             Event::PictureEdited {
                 target,
@@ -22493,6 +22514,8 @@ mod tests {
                 height: 4,
                 crop: crate::model::PictureCrop::full(4, 4),
                 turns: 0,
+                marks: Vec::new(),
+                hd: true,
             },
         );
         // Unstaged while its crop is still being written.
