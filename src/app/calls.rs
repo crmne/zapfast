@@ -80,6 +80,8 @@ impl App {
             self.call_pip_screen_pos = Some(pos);
         }
         self.call_pip_level_until = None;
+        self.call_pip_focus_until = None;
+        self.call_pip_opening = None;
     }
 
     /// Whether this chat of the account on screen has the live call, which is
@@ -753,7 +755,15 @@ impl App {
             Action::SetCallSpeaker(device) => {
                 self.send_call_command(Command::SetCallSpeaker(device));
             }
-            Action::LeaveCallSurface => self.call_surface_hidden = true,
+            Action::LeaveCallSurface => {
+                self.call_surface_hidden = true;
+                // The button minimizes into a window the reader is looking
+                // at: bring it forward, or it opens behind this one.
+                if self.call_pip_open() {
+                    self.call_pip_focus_until =
+                        Some(Instant::now() + crate::ui::call::PIP_FOCUS_FOR);
+                }
+            }
             // Returning to a locked chat's call cannot lift the lock on its
             // own: it asks for the code instead.
             Action::ReturnToCall if self.call.is_some() => {
@@ -764,6 +774,14 @@ impl App {
                     self.close_call_window(ctx, true);
                 } else if !self.call_is_private() {
                     self.call_surface_hidden = false;
+                    // The floating window's button was clicked in that window:
+                    // the app's own comes forward with the call.
+                    for command in [
+                        egui::ViewportCommand::Minimized(false),
+                        egui::ViewportCommand::Focus,
+                    ] {
+                        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, command);
+                    }
                 } else if self.call_account.as_ref() == Some(&self.account().id) {
                     self.apply(Action::OpenLockedFolder, ctx);
                 }

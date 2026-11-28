@@ -893,6 +893,11 @@ pub struct App {
     /// How long a pin change keeps reasserting the window's level, for desktops
     /// that miss a request made before the window is mapped.
     pub(crate) call_pip_level_until: Option<Instant>,
+    /// How long the floating window just minimized into keeps asking for the
+    /// keyboard.
+    pub(crate) call_pip_focus_until: Option<Instant>,
+    /// What the native floating window on screen was opened with.
+    pub(crate) call_pip_opening: Option<crate::ui::call::PipOpening>,
     /// Where the floating window was last left on the screen, in points, for
     /// the windowing systems that let an app place a window. `None` opens it
     /// at the bottom right of the app's own window, where that is allowed.
@@ -1814,6 +1819,8 @@ impl App {
             call_pip_pos: None,
             call_pip_on_top: false,
             call_pip_level_until: None,
+            call_pip_focus_until: None,
+            call_pip_opening: None,
             call_pip_screen_pos: None,
             call_pip_last_size: None,
             call_pip_last_pos: None,

@@ -530,6 +530,9 @@ protocol. These notes are for coding agents and new contributors.
   without a blocking swap on Wayland, paces frames by frame callbacks, and
   runs only `App::logic` when a redraw is 250 ms overdue; the winit fork
   (apps-0.30, rust-windowing/winit#4709) reports `suspended` as `Occluded`.
+  X11 windows on a Wayland session also swap without vsync, paced by
+  `UNPACED_FRAME` in `main`: XWayland holds the swap of a window the
+  compositor is not showing, and the floating call shares the chat's thread.
   Vsync stays on elsewhere. Spotifast, RekordFlash and TonePush pin the same
   two revisions; move them together. Repaints are event-driven, so nothing
   spins.

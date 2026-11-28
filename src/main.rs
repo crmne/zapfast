@@ -483,6 +483,7 @@ fn run() -> eframe::Result<()> {
             } else {
                 native_options(demo_persistence.clone(), geometry, transparent)
             };
+            let unpaced = cfg!(target_os = "linux") && !options.glow_options.vsync;
             eframe::run_native(
                 if call_window {
                     "ZapFast call"
@@ -519,6 +520,8 @@ fn run() -> eframe::Result<()> {
                     Ok(Box::new(Shell {
                         app,
                         call_window,
+                        unpaced,
+                        last_frame: None,
                         window_recovery_checked: false,
                         stalls: Default::default(),
                         transparent,
@@ -642,12 +645,36 @@ fn x11_display(display: Option<&std::ffi::OsStr>) -> bool {
     display.is_some_and(|value| !value.is_empty())
 }
 
+/// Whether windows must be swapped without vsync: X11 windows on a Wayland
+/// session. XWayland holds a vsync swap of a window the compositor is not
+/// showing, such as a floating call opened behind the chat, and both windows
+/// are painted on one thread, so the whole app waits with it. The compositor
+/// still presents complete frames.
+#[cfg(target_os = "linux")]
+fn swaps_without_vsync(
+    display: Option<&std::ffi::OsStr>,
+    wayland_display: Option<&std::ffi::OsStr>,
+) -> bool {
+    x11_display(display) && wayland_display.is_some_and(|value| !value.is_empty())
+}
+
+/// The shortest time between two frames where vsync does not pace them, so an
+/// animation does not draw as fast as the machine can.
+const UNPACED_FRAME: std::time::Duration = std::time::Duration::from_millis(8);
+
 /// Linux uses XWayland when an X server is there. The call window's pin asks
 /// X11 for the always-on-top state, which a Wayland compositor may ignore.
 /// The hook applies to every window the shell opens, chat and call alike.
 #[cfg(target_os = "linux")]
 fn prefer_x11(options: &mut eframe::NativeOptions) {
-    if x11_display(std::env::var_os("DISPLAY").as_deref()) {
+    let display = std::env::var_os("DISPLAY");
+    if swaps_without_vsync(
+        display.as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+    ) {
+        options.glow_options.vsync = false;
+    }
+    if x11_display(display.as_deref()) {
         use winit::platform::x11::EventLoopBuilderExtX11;
         options.event_loop_builder = Some(Box::new(|builder| {
             builder.with_x11();
@@ -751,6 +778,10 @@ fn native_options(
 struct Shell {
     /// Whether this window is the call's own window rather than the chat.
     call_window: bool,
+    /// Whether this window swaps without vsync and paces its own frames.
+    unpaced: bool,
+    /// When the last frame started, for that pacing.
+    last_frame: Option<std::time::Instant>,
     /// Whether this window's first frame checked that a monitor shows it.
     window_recovery_checked: bool,
     /// Logs an update that froze the window for a moment.
@@ -861,6 +892,12 @@ impl eframe::App for Shell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.unpaced {
+            if let Some(last) = self.last_frame {
+                std::thread::sleep(UNPACED_FRAME.saturating_sub(last.elapsed()));
+            }
+            self.last_frame = Some(std::time::Instant::now());
+        }
         let mut stalls = std::mem::take(&mut self.stalls);
         stalls.ui(|| self.window_ui(ui));
         self.stalls = stalls;
@@ -1107,6 +1144,20 @@ mod target_cli_tests {
         assert!(x11_display(Some(OsStr::new(":0"))));
         assert!(!x11_display(None));
         assert!(!x11_display(Some(OsStr::new(""))));
+    }
+
+    /// Only X11 windows on a Wayland session give up vsync: native X11 and
+    /// native Wayland keep the pacing they had.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_xwayland_swaps_without_vsync() {
+        use std::ffi::OsStr;
+        let x = Some(OsStr::new(":0"));
+        let wayland = Some(OsStr::new("wayland-0"));
+        assert!(swaps_without_vsync(x, wayland));
+        assert!(!swaps_without_vsync(x, None));
+        assert!(!swaps_without_vsync(x, Some(OsStr::new(""))));
+        assert!(!swaps_without_vsync(None, wayland));
     }
 
     /// A link asked to be seen: `--start-hidden` with a chat to open must not
