@@ -6821,6 +6821,23 @@ impl App {
         caption: String,
         selected: Vec<ComposerMention>,
     ) {
+        let pending_edit = self
+            .picture_edit
+            .as_ref()
+            .is_some_and(|edit| self.pending.iter().any(|staged| staged.id == edit.target))
+            || self
+                .picture_applying
+                .keys()
+                .any(|id| self.pending.iter().any(|staged| staged.id == *id));
+        if pending_edit {
+            let restore_mentions = self.composer.trim().is_empty() && self.editing.is_none();
+            self.restore_text(&chat, caption);
+            if restore_mentions {
+                self.composer_mentions = selected;
+            }
+            self.toast_error("Finish editing the picture before sending");
+            return;
+        }
         // A queued action cannot consume another chat's or account's draft.
         let active = self.account().id.clone();
         let Some(target) = self.accounts.iter_mut().find(|known| known.id == account) else {
@@ -8546,6 +8563,8 @@ impl App {
                             height: origin.height,
                             crop: origin.crop,
                             turns: origin.turns,
+                            marks: origin.marks,
+                            hd: origin.hd,
                         });
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
@@ -8567,6 +8586,8 @@ impl App {
                             height: edit.height,
                             crop: edit.crop,
                             turns: edit.turns,
+                            marks: edit.marks.clone(),
+                            hd: edit.hd,
                         },
                     );
                     self.backend.send(Command::ApplyPictureEdit {
@@ -8576,6 +8597,8 @@ impl App {
                         height: edit.height,
                         crop: edit.crop,
                         turns: edit.turns,
+                        marks: edit.marks,
+                        hd: edit.hd,
                     });
                 }
             }
@@ -13355,6 +13378,8 @@ mod tests {
                 height: 6,
                 crop: crate::model::PictureCrop::full(8, 6),
                 turns: 0,
+                marks: Vec::new(),
+                hd: true,
             },
         );
         let first_id = app.account().id.clone();
@@ -13383,10 +13408,10 @@ mod tests {
         let (backend, mut commands, _) = Backend::recording_with_events();
         let mut app = App::headless(AppDirs::under(root.path()), Settings::default()).0;
         app.account_mut().backend = backend;
-        let rgba = std::sync::Arc::new([80, 120, 180, 255].repeat(2048 * 2));
+        let rgba = std::sync::Arc::new([80, 120, 180, 255].repeat(4096 * 4));
         let picture = || Pending::Picture {
-            width: 2048,
-            height: 2,
+            width: 4096,
+            height: 4,
             rgba: rgba.clone(),
             texture: None,
         };
@@ -13414,7 +13439,7 @@ mod tests {
             },
             true,
         );
-        assert_eq!(app.pending[0].preview.as_ref().unwrap().size, [1024, 1]);
+        assert_eq!(app.pending[0].preview.as_ref().unwrap().size, [2048, 2]);
         app.apply_backend_event(
             Event::PictureEdited {
                 target,
@@ -22493,6 +22518,8 @@ mod tests {
                 height: 4,
                 crop: crate::model::PictureCrop::full(4, 4),
                 turns: 0,
+                marks: Vec::new(),
+                hd: true,
             },
         );
         // Unstaged while its crop is still being written.

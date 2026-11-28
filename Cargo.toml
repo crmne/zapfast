@@ -104,6 +104,8 @@ qrcode = { version = "0.14", default-features = false }
 # and TLS stack.
 ureq = { version = "3", default-features = false, features = ["rustls", "socks-proxy"] }
 jiff = "0.2"
+# Rasterize annotations with egui's already bundled default font.
+ab_glyph = "0.2"
 # Treats joined emoji as one grapheme. Already included through egui.
 unicode-segmentation = "1"
 # Unicode bidi properties; already included through URL/IDNA handling.

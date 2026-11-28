@@ -273,6 +273,96 @@ fn rows_for(
     rows
 }
 
+/// Small, self-contained emoji grid for the picture editor. It deliberately
+/// shares the app's offered emoji catalogue and category definitions.
+pub(crate) fn editor_emoji_grid(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    _locale: crate::i18n::Locale,
+    query: &mut String,
+    recent: &[String],
+    category: &mut Option<emojis::Group>,
+) -> Option<String> {
+    let search = search_box(
+        ui,
+        palette,
+        "picture-editor-emoji-search",
+        query,
+        "Search emoji",
+    );
+    let _ = search;
+    let width = ui.available_width().max(CELL);
+    let columns = (width / CELL).floor().max(1.0) as usize;
+    let cell = width / columns as f32;
+    let mut emojis: Vec<&'static str> = if query.trim().is_empty() {
+        if let Some(group) = category {
+            group
+                .emojis()
+                .filter(|item| emoji::offered(item))
+                .map(|item| item.as_str())
+                .collect()
+        } else {
+            usable_recent(recent)
+                .into_iter()
+                .chain(emoji::catalogue().map(|item| item.as_str()))
+                .collect()
+        }
+    } else {
+        let needle = query.trim().to_lowercase();
+        emoji::catalogue()
+            .filter(|item| {
+                item.name().to_lowercase().contains(&needle)
+                    || item
+                        .shortcodes()
+                        .any(|code| code.to_lowercase().contains(&needle))
+            })
+            .map(|item| item.as_str())
+            .collect()
+    };
+    emojis.dedup();
+    let mut selected = None;
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for glyph in emojis {
+                let response = ui.add_sized(
+                    [cell, CELL],
+                    egui::Button::new(glyph)
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE),
+                );
+                if response.clicked() {
+                    selected = Some(glyph.to_owned());
+                }
+            }
+        });
+    });
+    selected
+}
+
+pub(crate) fn editor_emoji_categories(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    category: &mut Option<emojis::Group>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        if ui.selectable_label(category.is_none(), "Recent").clicked() {
+            *category = None;
+        }
+        for (group, glyph, label) in CATEGORIES
+            .iter()
+            .filter_map(|(group, glyph, label)| group.map(|g| (g, *glyph, *label)))
+        {
+            let response = ui
+                .selectable_label(*category == Some(group), glyph)
+                .on_hover_text(label);
+            if response.clicked() {
+                *category = Some(group);
+            }
+        }
+    });
+    let _ = palette;
+}
+
 fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> egui::Pos2 {
     let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
     let x = match anchor {

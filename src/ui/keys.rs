@@ -897,6 +897,9 @@ fn editor_keys(app: &mut App, ctx: &egui::Context) {
         })
     });
     let cropper = egui::LayerId::new(egui::Order::Foreground, super::image_editor::area_id());
+    let embedded_layer = ctx.data(|data| {
+        data.get_temp::<egui::LayerId>(super::image_editor::area_id().with("embedded-layer"))
+    });
     let on_button = focused.is_some_and(|(layer, clicks)| {
         clicks
             && ctx.memory(|memory| {
@@ -906,6 +909,7 @@ fn editor_keys(app: &mut App, ctx: &egui::Context) {
                 // drawn above every Foreground one is surely above it.
                 memory.allows_interaction(layer)
                     && (memory.top_modal_layer() == Some(cropper)
+                        || embedded_layer == Some(layer)
                         || layer.order > egui::Order::Foreground)
             })
     });
