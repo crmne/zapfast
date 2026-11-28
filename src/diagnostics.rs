@@ -18,6 +18,8 @@ pub fn protocol_summary(message: &str) -> Cow<'static, str> {
         summary
     } else if let Some(summary) = receive_summary(message) {
         summary
+    } else if let Some(summary) = mlow_summary(message) {
+        summary
     } else {
         "protocol diagnostic (private details omitted)".into()
     }
@@ -170,6 +172,33 @@ fn receive_summary(message: &str) -> Option<Cow<'static, str>> {
     .map(|(_, summary)| summary.into())
 }
 
+/// Names what the peer's voice codec changed to when the MLow decoder starts dropping its frames:
+/// the frame's count, which of the decoder's three limits it broke, the value, and its TOC byte.
+/// The peer's audio is silent from there on, and that dimension is what an upstream report needs.
+fn mlow_summary(message: &str) -> Option<Cow<'static, str>> {
+    let rest = message.strip_prefix("mlow: dropping out-of-operating-point frame #")?;
+    let (count, rest) = leading_number(rest)?;
+    let rest = rest.strip_prefix(" (")?;
+    let (dimension, rest) = ["rate", "low_rate", "frame_ms"]
+        .into_iter()
+        .find_map(|name| Some((name, rest.strip_prefix(name)?.strip_prefix('=')?)))?;
+    let (value, rest) = leading_number(rest)?;
+    // Exactly two hex digits closing the parenthesis, or the line is not the one recognised.
+    let rest = rest.strip_prefix(", TOC 0x")?;
+    let (toc, rest) = (rest.get(..2)?, rest.get(2..)?);
+    if !toc.bytes().all(|byte| byte.is_ascii_hexdigit()) || !rest.starts_with(')') {
+        return None;
+    }
+    let toc = u8::from_str_radix(toc, 16).ok()?;
+    Some(
+        format!(
+            "MLow frame #{count} dropped outside the decoder's operating point \
+             ({dimension}={value}, TOC 0x{toc:02x}); the peer's audio is silent while this lasts"
+        )
+        .into(),
+    )
+}
+
 /// The decimal number `text` starts with, rebuilt from its digits, and what
 /// follows it.
 fn leading_number(text: &str) -> Option<(u64, &str)> {
@@ -289,6 +318,31 @@ pub fn is_protocol_target(target: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_mlow_frame_outside_the_operating_point_keeps_only_what_names_it() {
+        let message = "mlow: dropping out-of-operating-point frame #100 (low_rate=1, TOC 0x5c); \
+                       the decoder runs 16kHz / low_rate=0 / 20-120ms";
+        assert_eq!(
+            protocol_summary(message),
+            "MLow frame #100 dropped outside the decoder's operating point (low_rate=1, \
+             TOC 0x5c); the peer's audio is silent while this lasts"
+        );
+        for unknown in [
+            "mlow: dropping out-of-operating-point frame #1 (jid=12345, TOC 0x5c)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=abc, TOC 0x5c)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0xzz)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x5c0)",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x5c",
+            "mlow: dropping out-of-operating-point frame #1 (rate=32, TOC 0x+5)",
+        ] {
+            assert_eq!(
+                protocol_summary(unknown),
+                "protocol diagnostic (private details omitted)",
+                "{unknown}"
+            );
+        }
+    }
 
     const SW: &str = "https://web.whatsapp.com/sw.js";
 
