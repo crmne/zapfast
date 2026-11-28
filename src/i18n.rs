@@ -36,13 +36,15 @@ pub enum Locale {
     Turkish,
     #[serde(rename = "id")]
     Indonesian,
+    #[serde(rename = "ms")]
+    Malay,
     #[serde(rename = "nl")]
     Dutch,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
-    pub const ALL: [Locale; 12] = [
+    pub const ALL: [Locale; 13] = [
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -54,6 +56,7 @@ impl Locale {
         Self::ChineseTraditional,
         Self::Turkish,
         Self::Indonesian,
+        Self::Malay,
         Self::Dutch,
     ];
 
@@ -71,6 +74,7 @@ impl Locale {
             Self::ChineseTraditional => "繁體中文",
             Self::Turkish => "Türkçe",
             Self::Indonesian => "Bahasa Indonesia",
+            Self::Malay => "Bahasa Melayu",
             Self::Dutch => "Nederlands",
         }
     }
@@ -97,6 +101,7 @@ impl Locale {
             "ru" => Self::Russian,
             "tr" => Self::Turkish,
             "id" => Self::Indonesian,
+            "ms" => Self::Malay,
             "nl" => Self::Dutch,
             "zh" => match (tag.script.as_deref(), tag.region.as_deref()) {
                 // An explicit script decides on its own: a tag that asks for
@@ -130,6 +135,7 @@ impl fastframe_i18n::Locale for Locale {
             Self::ChineseTraditional => Some(&zh_hant::Translator),
             Self::Turkish => Some(&tr::Translator),
             Self::Indonesian => Some(&id::Translator),
+            Self::Malay => Some(&ms::Translator),
             Self::Dutch => Some(&nl::Translator),
             Self::English => None,
         }
@@ -160,6 +166,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn malay_is_detected_and_preserved_as_a_language_choice() {
+        for identifier in ["ms", "ms-MY", "ms_MY.UTF-8"] {
+            assert_eq!(Locale::from_system(identifier), Some(Locale::Malay));
+        }
+        assert!(Locale::ALL.contains(&Locale::Malay));
+        assert_eq!(Locale::Malay.label(), "Bahasa Melayu");
+        assert_eq!(serde_json::to_string(&Locale::Malay).unwrap(), "\"ms\"");
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"ms\"").unwrap(),
+            Locale::Malay
+        );
+        assert_eq!(resolve(Some(Locale::Malay)), Locale::Malay);
+    }
+
+    #[test]
     fn dutch_is_detected_and_preserved_as_a_language_choice() {
         for identifier in ["nl", "nl-NL", "nl-BE", "nl_NL.UTF-8", "nl_BE.UTF-8"] {
             assert_eq!(Locale::from_system(identifier), Some(Locale::Dutch));
@@ -172,6 +193,29 @@ mod tests {
             Locale::Dutch
         );
         assert_eq!(resolve(Some(Locale::Dutch)), Locale::Dutch);
+    }
+
+    #[test]
+    fn malay_catalog_translates() {
+        assert_eq!(gettext(Locale::Malay, "Chats"), "Sembang");
+        assert_eq!(gettext(Locale::Malay, "Search"), "Cari");
+        assert_eq!(gettext(Locale::Malay, "Settings"), "Tetapan");
+        assert_eq!(gettext(Locale::Malay, "Type a message"), "Taip mesej");
+        assert_eq!(gettext(Locale::Malay, "Monday"), "Isnin");
+        assert_eq!(gettext(Locale::Malay, "Yesterday"), "Semalam");
+        let missing = "A string nobody has translated";
+        assert_eq!(gettext(Locale::Malay, missing), missing);
+    }
+
+    /// Malay has a single plural form, so one text covers every count.
+    #[test]
+    fn malay_plural_rules_use_one_form() {
+        for count in [0, 1, 2, 21] {
+            assert_eq!(
+                ngettext(Locale::Malay, "{} member", "{} members", count),
+                "{} ahli"
+            );
+        }
     }
 
     #[test]
@@ -261,6 +305,9 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("id-ID"), Some(Locale::Indonesian));
         assert_eq!(Locale::from_system("id"), Some(Locale::Indonesian));
+        assert_eq!(Locale::from_system("ms-MY"), Some(Locale::Malay));
+        assert_eq!(Locale::from_system("ms"), Some(Locale::Malay));
+        assert_eq!(Locale::from_system("ms_MY.UTF-8"), Some(Locale::Malay));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
         assert_eq!(Locale::default(), Locale::English);
