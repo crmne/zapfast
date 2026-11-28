@@ -670,6 +670,8 @@ fn call_native_options(
         .with_title("ZapFast call")
         .with_app_id(fastframe_desktop::desktop_entry("zapfast"))
         .with_decorations(false)
+        // The call window opens beside the chat, not over its keyboard.
+        .with_active(false)
         .with_resizable(true)
         .with_min_inner_size(zapfast::ui::call::PIP_MIN)
         .with_inner_size(size.max(zapfast::ui::call::PIP_MIN))

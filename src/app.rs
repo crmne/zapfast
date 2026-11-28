@@ -890,6 +890,9 @@ pub struct App {
     /// windows. It keeps the place it is dragged to either way; Wayland
     /// leaves stacking to the compositor, which may ignore the request.
     pub call_pip_on_top: bool,
+    /// How long a pin change keeps reasserting the window's level, for desktops
+    /// that miss a request made before the window is mapped.
+    pub(crate) call_pip_level_until: Option<Instant>,
     /// Where the floating window was last left on the screen, in points, for
     /// the windowing systems that let an app place a window. `None` opens it
     /// at the bottom right of the app's own window, where that is allowed.
@@ -901,11 +904,6 @@ pub struct App {
     /// The place the native floating window last reported, as above. Wayland
     /// never reports one.
     pub(crate) call_pip_last_pos: Option<egui::Pos2>,
-    /// How long a new native floating window may ask for the focus. A window
-    /// is not always mapped on its first frame, so the request is repeated
-    /// until it is seen or this time is out. Once done, clicking the app takes
-    /// the focus back as usual.
-    pub(crate) call_pip_focus_until: Option<Instant>,
     /// Whether the call surface has taken the whole screen. A window state:
     /// leaving it never touches the call, and a call that ends puts the
     /// window back itself.
@@ -1815,10 +1813,10 @@ impl App {
             ),
             call_pip_pos: None,
             call_pip_on_top: false,
+            call_pip_level_until: None,
             call_pip_screen_pos: None,
             call_pip_last_size: None,
             call_pip_last_pos: None,
-            call_pip_focus_until: None,
             call_fullscreen: false,
             call_notified: None,
             call_rings: None,
@@ -2814,17 +2812,12 @@ impl App {
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen = false;
+        self.call_pip_level_until = None;
         if self.window_kind == WindowKind::Chat {
             // A new chat window starts with nothing focused: a message list
             // that had focus in the last one does not hold the composer back.
             self.messages_focused = false;
             self.refocus_composer(ctx);
-        } else {
-            // A new call window may not be mapped on its first frame. Keep
-            // asking for the focus until it is, or until the short grace is
-            // out; clicking the app takes the focus back as usual.
-            self.call_pip_focus_until
-                .get_or_insert_with(|| Instant::now() + crate::ui::call::PIP_FOCUS_FOR);
         }
         // Before the tray: muda keeps the first menu handler it is given, and
         // the tray installs one when it makes its item on the first window.

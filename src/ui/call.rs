@@ -41,9 +41,9 @@ const PIP_BUTTON: f32 = 28.0;
 const PIP_PIN: f32 = 24.0;
 const PIP_GAP: f32 = 8.0;
 const PIP_GRIP: f32 = 16.0;
-/// A new window may not be mapped on the frame it is asked to open, so asking
-/// it to take the focus is retried for a moment before giving up.
-pub(crate) const PIP_FOCUS_FOR: Duration = Duration::from_secs(5);
+/// A window may be mapped after the first level request reaches it, so a pin
+/// change keeps asking for the same level briefly instead of asking once.
+const PIP_LEVEL_FOR: Duration = Duration::from_secs(2);
 /// Padding between the window edge and everything the surface draws.
 const PADDING: f32 = 24.0;
 /// The round controls along the bottom.
@@ -222,9 +222,6 @@ pub fn pip(app: &mut App, ctx: &egui::Context) {
 /// the reader can move and resize, with the size and place it was last left
 /// at and the level the pin asks for.
 fn pip_viewport_builder(app: &mut App, ctx: &egui::Context) -> egui::ViewportBuilder {
-    // `None` only between windows: a new one gets its own moment to open.
-    app.call_pip_focus_until
-        .get_or_insert_with(|| Instant::now() + PIP_FOCUS_FOR);
     let size = app.call_pip_size.max(PIP_MIN);
     if app.call_pip_screen_pos.is_none() {
         app.call_pip_screen_pos = pip_screen_pos(ctx, size);
@@ -233,6 +230,9 @@ fn pip_viewport_builder(app: &mut App, ctx: &egui::Context) -> egui::ViewportBui
         .with_title("ZapFast")
         .with_app_id(fastframe_desktop::desktop_entry("zapfast"))
         .with_decorations(false)
+        // The chat keeps the keyboard. A floating call is there to watch
+        // while the reader keeps typing, not a window that takes over.
+        .with_active(false)
         .with_resizable(true)
         .with_min_inner_size(PIP_MIN)
         .with_inner_size(size)
@@ -248,6 +248,16 @@ fn pip_viewport_builder(app: &mut App, ctx: &egui::Context) -> egui::ViewportBui
 /// floating over the chat.
 fn toggle_call_pip_on_top(app: &mut App, ctx: &egui::Context) {
     app.call_pip_on_top = !app.call_pip_on_top;
+    // A desktop may not have mapped the window when the first request
+    // reaches it. Keep asking for a moment so both directions of the pin,
+    // including taking a window out of always-on-top, take effect.
+    app.call_pip_level_until = Some(Instant::now() + PIP_LEVEL_FOR);
+    send_call_pip_level(app, ctx);
+}
+
+/// Sends the pin's level to whichever window is on screen: the call session's
+/// own window, or the child viewport floating over the chat.
+fn send_call_pip_level(app: &mut App, ctx: &egui::Context) {
     let command = egui::ViewportCommand::WindowLevel(pip_window_level(app.call_pip_on_top));
     if app.window_kind == crate::app::WindowKind::Call {
         ctx.send_viewport_cmd(command);
@@ -302,14 +312,11 @@ fn pip_window_content(ui: &mut egui::Ui, app: &mut App) {
     let Some(call) = app.call.clone() else {
         return;
     };
-    // A window of its own must be seen the moment it opens, above the call
-    // screen it left. Keep asking until it is seen, then stop: clicking the
-    // app takes the focus back as usual.
-    if let Some(until) = app.call_pip_focus_until {
-        if ui.input(|input| input.viewport().focused == Some(true)) || Instant::now() >= until {
-            app.call_pip_focus_until = None;
+    if let Some(until) = app.call_pip_level_until {
+        if Instant::now() >= until {
+            app.call_pip_level_until = None;
         } else {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+            send_call_pip_level(app, ui.ctx());
         }
     }
     let rect = ui.max_rect();
@@ -2118,8 +2125,9 @@ mod tests {
             builder.window_level,
             Some(egui::viewport::WindowLevel::Normal)
         );
-        // The first frame gives the new window a moment to come to the front.
-        assert!(app.call_pip_focus_until.is_some());
+        // The floating window opens without taking the keyboard from the
+        // chat, so the reader can keep typing while it is up.
+        assert_eq!(builder.active, Some(false));
     }
 
     #[test]
@@ -2167,6 +2175,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_pin_change_never_takes_the_keyboard() {
+        for kind in [crate::app::WindowKind::Chat, crate::app::WindowKind::Call] {
+            let (mut app, _root) = app();
+            app.window_kind = kind;
+            let ctx = egui::Context::default();
+            let output = ctx.run_logic(&egui::RawInput::default(), |_| {
+                toggle_call_pip_on_top(&mut app, &ctx);
+            });
+            let target = if kind == crate::app::WindowKind::Call {
+                egui::ViewportId::ROOT
+            } else {
+                egui::ViewportId::from_hash_of(PIP_VIEWPORT)
+            };
+            let commands = output
+                .viewport_commands
+                .get(&target)
+                .expect("the pin did not reach its window");
+            assert!(
+                commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::WindowLevel(_))),
+                "the pin did not reach the window: {kind:?}"
+            );
+            assert!(
+                !commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::Focus)),
+                "a pin change stole the keyboard: {kind:?}"
+            );
+        }
+    }
+
     /// In a call session the pin applies to the call window itself. Changing
     /// the saved level alone would leave that window where it was until it
     /// opened again.
@@ -2192,35 +2233,48 @@ mod tests {
             );
             output.textures_delta.clear();
         }
-        let mut asked = None;
-        for pressed in [true, false] {
-            let mut input = egui::RawInput {
-                screen_rect: Some(rect),
-                ..Default::default()
-            };
-            input.events.push(egui::Event::PointerMoved(pin));
-            input.events.push(egui::Event::PointerButton {
-                pos: pin,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            let mut output = ctx.run_ui(input, |ui| {
-                pip_header(ui, &mut app, "Ada", "00:10", rect, true, &palette);
-            });
-            if !pressed {
-                asked = output.viewport_output[&egui::ViewportId::ROOT]
-                    .commands
-                    .iter()
-                    .find_map(|command| match command {
-                        egui::ViewportCommand::WindowLevel(level) => Some(*level),
-                        _ => None,
-                    });
+        let click = |app: &mut App| {
+            let mut asked = None;
+            for pressed in [true, false] {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(rect),
+                    ..Default::default()
+                };
+                input.events.push(egui::Event::PointerMoved(pin));
+                input.events.push(egui::Event::PointerButton {
+                    pos: pin,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                let mut output = ctx.run_ui(input, |ui| {
+                    pip_header(ui, &mut *app, "Ada", "00:10", rect, true, &palette);
+                });
+                if !pressed {
+                    asked = output.viewport_output[&egui::ViewportId::ROOT]
+                        .commands
+                        .iter()
+                        .find_map(|command| match command {
+                            egui::ViewportCommand::WindowLevel(level) => Some(*level),
+                            _ => None,
+                        });
+                }
+                output.textures_delta.clear();
             }
-            output.textures_delta.clear();
-        }
+            asked
+        };
+        assert_eq!(
+            click(&mut app),
+            Some(egui::viewport::WindowLevel::AlwaysOnTop)
+        );
         assert!(app.call_pip_on_top);
-        assert_eq!(asked, Some(egui::viewport::WindowLevel::AlwaysOnTop));
+        // The same click turns it off again: the pin is what decides the
+        // level, so an unpinned call window is not left above the others.
+        assert_eq!(click(&mut app), Some(egui::viewport::WindowLevel::Normal));
+        assert!(!app.call_pip_on_top);
+        // A pinned window keeps asking briefly, including when the click
+        // takes it out of always-on-top.
+        assert!(app.call_pip_level_until.is_some());
     }
 
     #[test]

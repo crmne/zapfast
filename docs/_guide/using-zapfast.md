@@ -581,6 +581,7 @@ the phone. The arrow in the top corner puts the call screen aside. A voice call
 keeps running in a strip at the bottom of the window with **Return to the
 call** and a hang-up button; a video call becomes a small floating window of
 its own with the same controls and the other side's picture, or a group's grid.
+It opens without taking the keyboard, so the chat you were typing in keeps it.
 Opening another chat from the list does the same for a video call. The window
 opens at the bottom right of the app where the desktop lets an app place it.
 Drag its header or its picture to move it anywhere on the screen, and drag its

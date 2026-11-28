@@ -79,7 +79,7 @@ impl App {
         if let Some(pos) = self.call_pip_last_pos.take() {
             self.call_pip_screen_pos = Some(pos);
         }
-        self.call_pip_focus_until = None;
+        self.call_pip_level_until = None;
     }
 
     /// Whether this chat of the account on screen has the live call, which is
@@ -822,13 +822,13 @@ mod tests {
         app.call_pip_size = egui::vec2(320.0, 180.0);
         app.call_pip_last_size = Some(egui::vec2(410.0, 260.0));
         app.call_pip_last_pos = Some(egui::pos2(700.0, 300.0));
-        app.call_pip_focus_until = Some(Instant::now());
+        app.call_pip_level_until = Some(Instant::now());
         app.close_call_pip_window();
         assert_eq!(app.call_pip_size, egui::vec2(410.0, 260.0));
         assert_eq!(app.call_pip_screen_pos, Some(egui::pos2(700.0, 300.0)));
         assert!(app.call_pip_last_size.is_none());
         assert!(app.call_pip_last_pos.is_none());
-        assert!(app.call_pip_focus_until.is_none());
+        assert!(app.call_pip_level_until.is_none());
     }
 
     /// A window with one account whose commands a test can read.
