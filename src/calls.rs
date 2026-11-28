@@ -599,7 +599,7 @@ impl CameraCapture {
         rate: Arc<RateShare>,
         diag: Arc<crate::call_diag::CallVideo>,
     ) -> Result<Self> {
-        let id = line.next_camera();
+        let (id, carried_us) = line.next_camera();
         let running = Arc::new(AtomicBool::new(true));
         let keyframe = Arc::new(AtomicBool::new(false));
         let (ready, came_up) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -618,6 +618,7 @@ impl CameraCapture {
                     diag: &diag,
                     line: &line,
                     id,
+                    carried_us,
                 };
                 capture(device, ticks, controls, ready);
                 let _ = done.send(());
@@ -675,12 +676,30 @@ struct FrameLine {
     tx: async_channel::Sender<TimedVideoFrame>,
     rx: async_channel::Receiver<TimedVideoFrame>,
     origin: Instant,
+    /// Which camera may send and the newest frame's time. One lock covers handing the line to a
+    /// new camera, letting go of what the old one queued, and each checked send, so a camera
+    /// whose thread outlived its stop can never queue a frame behind the new camera's keyframe.
+    gate: Arc<std::sync::Mutex<Gate>>,
+}
+
+#[derive(Default)]
+struct Gate {
+    /// The camera that may send: each start takes the next.
+    current: u64,
     /// The newest frame's time, in microseconds from `origin`, so a new camera's first timestamp
-    /// comes after the last one sent even when its frame rate rounds differently.
-    latest_us: Arc<AtomicU64>,
-    /// Which camera may send: each start takes the next, and a camera whose thread outlived its
-    /// stop sends nothing more once another has started.
-    current: Arc<AtomicU64>,
+    /// comes after the last one sent even when its frame rate rounds differently. `None` until a
+    /// frame is stamped, which tells "nothing sent" from a frame at the very origin.
+    latest_us: Option<u64>,
+}
+
+/// What became of a frame handed to [`FrameLine::send`].
+#[derive(Debug, PartialEq, Eq)]
+enum Sent {
+    Queued,
+    /// The queue is full: the wire is behind.
+    Full,
+    /// Another camera has started.
+    Stopped,
 }
 
 impl FrameLine {
@@ -690,25 +709,39 @@ impl FrameLine {
             tx,
             rx,
             origin: Instant::now(),
-            latest_us: Arc::new(AtomicU64::new(0)),
-            current: Arc::new(AtomicU64::new(0)),
+            gate: Arc::default(),
         }
     }
 
-    /// Makes the next camera the only one that may send, and returns its number.
-    fn next_camera(&self) -> u64 {
-        self.current.fetch_add(1, Ordering::AcqRel) + 1
+    fn gate(&self) -> std::sync::MutexGuard<'_, Gate> {
+        self.gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Whether camera `id` is still the one that may send.
-    fn sends(&self, id: u64) -> bool {
-        self.current.load(Ordering::Acquire) == id
-    }
-
-    /// Lets go of frames a stopped camera left queued, so the next camera's first frame, a
-    /// keyframe, is the next the engine sends.
-    fn drain(&self) {
+    /// Makes the next camera the only one that may send, lets go of frames the one before left
+    /// queued (so the new camera's first frame, a keyframe, is the next the engine sends), and
+    /// returns the new camera's number and the time of the last frame stamped.
+    fn next_camera(&self) -> (u64, Option<u64>) {
+        let mut gate = self.gate();
+        gate.current += 1;
         while self.rx.try_recv().is_ok() {}
+        (gate.current, gate.latest_us)
+    }
+
+    /// Queues `frame`, stamped `us` from the origin, if camera `id` is still the one that may send.
+    fn send(&self, id: u64, frame: TimedVideoFrame, us: Option<u64>) -> Sent {
+        let mut gate = self.gate();
+        if gate.current != id {
+            return Sent::Stopped;
+        }
+        if let Some(us) = us {
+            gate.latest_us = Some(gate.latest_us.map_or(us, |latest| latest.max(us)));
+        }
+        match self.tx.try_send(frame) {
+            Ok(()) => Sent::Queued,
+            Err(_) => Sent::Full,
+        }
     }
 }
 
@@ -914,7 +947,6 @@ impl VideoPipeline {
         // races it for the device.
         let camera = tokio::task::spawn_blocking(move || {
             drop(previous);
-            line.drain();
             CameraCapture::start(device, line, ticks, rate, diag)
         })
         .await
@@ -993,8 +1025,10 @@ struct CaptureControls<'a> {
     keyframe: &'a AtomicBool,
     /// Where the frames go, and the timeline they continue.
     line: &'a FrameLine,
-    /// This camera's number on the line ([`FrameLine::sends`]).
+    /// This camera's number on the line ([`FrameLine::send`]).
     id: u64,
+    /// When the last frame on the line was stamped, which this camera's timeline carries on from.
+    carried_us: Option<u64>,
     /// The rate and the picture size the call's rate control last chose.
     rate: &'a RateShare,
     /// Where what is sent is counted, and dumped when asked.
@@ -1173,8 +1207,7 @@ fn capture_frames(
     // From the call's own origin, not this camera's start: a camera switched or turned on again
     // carries on the timeline where the last one left it.
     let line = controls.line;
-    let mut clock =
-        FrameClock::new(line.origin, plan.sent_fps()).after(line.latest_us.load(Ordering::Acquire));
+    let mut clock = FrameClock::new(line.origin, plan.sent_fps()).after(controls.carried_us);
     let mut cadence = Cadence::new(plan.camera_fps);
     // Camera frames since the last one sent; the next is sent when this reaches zero.
     let mut countdown = 0u32;
@@ -1292,23 +1325,21 @@ fn capture_frames(
                         .timestamp(clock.stamp(captured))
                         .captured_at(captured_at)
                         .build();
-                    if let Some(us) = clock.last_us() {
-                        line.latest_us.fetch_max(us, Ordering::AcqRel);
-                    }
-                    if !line.sends(controls.id) {
+                    match line.send(controls.id, frame, clock.last_us()) {
                         // Another camera has started: this one's thread outlived its stop.
-                        break;
-                    }
-                    // A full queue means the wire is behind. The frame is dropped, which leaves the
-                    // peer's decoder without its reference, so the next frame sent starts afresh,
-                    // and the rate control hears that the path carries less than is sent.
-                    if line.tx.try_send(frame).is_err() {
-                        resync = true;
-                        controls.rate.note_queue_drop();
-                    } else {
-                        controls.rate.note_sent(len);
-                        if keyframe {
-                            resync = false;
+                        Sent::Stopped => break,
+                        // A full queue means the wire is behind. The frame is dropped, which leaves
+                        // the peer's decoder without its reference, so the next frame sent starts
+                        // afresh, and the rate control hears that the path carries less than is sent.
+                        Sent::Full => {
+                            resync = true;
+                            controls.rate.note_queue_drop();
+                        }
+                        Sent::Queued => {
+                            controls.rate.note_sent(len);
+                            if keyframe {
+                                resync = false;
+                            }
                         }
                     }
                 }
@@ -3831,12 +3862,15 @@ mod tests {
                 .build()
         };
 
-        let first = pipe.line.next_camera();
-        pipe.line.tx.try_send(frame(1)).expect("room");
+        let (first, carried) = pipe.line.next_camera();
+        assert_eq!(carried, None, "nothing has been sent yet");
+        assert_eq!(pipe.line.send(first, frame(1), Some(0)), Sent::Queued);
         // The switch: whatever the first camera left queued goes, and a second one takes over.
-        pipe.line.drain();
-        let second = pipe.line.next_camera();
-        pipe.line.tx.try_send(frame(2)).expect("room");
+        let (second, carried) = pipe.line.next_camera();
+        assert_eq!(carried, Some(0), "a frame at the very origin still counts");
+        // The first camera's thread outlived its stop: its frame never reaches the queue.
+        assert_eq!(pipe.line.send(first, frame(9), Some(40_000)), Sent::Stopped);
+        assert_eq!(pipe.line.send(second, frame(2), Some(80_000)), Sent::Queued);
 
         let got = engine
             .try_recv()
@@ -3844,13 +3878,42 @@ mod tests {
         assert_eq!(got.data, vec![2]);
         assert!(
             engine.try_recv().is_err(),
-            "the old camera's frame was let go"
+            "the old camera's frames were let go"
         );
-        assert!(pipe.line.sends(second));
-        assert!(
-            !pipe.line.sends(first),
-            "a camera whose thread outlived its stop sends nothing more"
-        );
+        assert_eq!(pipe.line.next_camera().1, Some(80_000));
+    }
+
+    /// The old camera's check and send, and the new camera's handoff and drain, never interleave:
+    /// a stale frame is either queued before the drain (and let go) or refused.
+    #[test]
+    fn an_old_camera_racing_a_switch_never_queues_behind_the_new_one() {
+        let frame = |byte: u8| {
+            TimedVideoFrame::builder()
+                .data(vec![byte])
+                .timestamp(u32::from(byte))
+                .build()
+        };
+        for _ in 0..200 {
+            let line = FrameLine::new();
+            let (old, _) = line.next_camera();
+            let racer = {
+                let line = line.clone();
+                std::thread::spawn(
+                    move || {
+                        while line.send(old, frame(1), Some(1)) != Sent::Stopped {}
+                    },
+                )
+            };
+            std::thread::yield_now();
+            let (new, _) = line.next_camera();
+            racer.join().expect("the old camera's thread");
+            assert_eq!(line.send(new, frame(2), Some(2)), Sent::Queued);
+            assert_eq!(
+                line.rx.try_recv().expect("a frame").data,
+                vec![2],
+                "the new camera's frame is the first the engine reads"
+            );
+        }
     }
 
     /// Opening or closing a camera tells the speaker the audio graph is relinking.
