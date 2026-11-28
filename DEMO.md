@@ -167,3 +167,8 @@ python3 scripts/render-demo.py raw.mp4 tour.json whats-new.mp4 --scale 1.5
 
 `--demo-page export-chat` shows the synthetic export dialog;
 `--demo-page export-chat-progress` shows its saved-message and attachment counts.
+`--demo-page aurora`, `aurora-green`, and `aurora-alternative` select those
+themes following the system appearance; `-dark` and `-light` suffixes (such as
+`aurora-dark`, `aurora-light`, `aurora-green-dark`, `aurora-green-light`,
+`aurora-alternative-dark`, and `aurora-alternative-light`) force that
+appearance for deterministic screenshots.

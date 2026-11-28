@@ -3321,6 +3321,42 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "messages" => {
                 app.settings.theme = ThemeChoice::Messages;
             }
+            "aurora" => {
+                app.settings.theme = ThemeChoice::Aurora;
+            }
+            "aurora-green" => {
+                app.settings.theme = ThemeChoice::AuroraGreen;
+            }
+            "aurora-alternative" => {
+                app.settings.theme = ThemeChoice::AuroraAlternative;
+            }
+            // Force either appearance for synthetic previews on every desktop.
+            "aurora-dark" | "aurora-light" => {
+                let filename = format!("{part}.json");
+                app.settings.custom_theme = Some(filename.clone());
+                app.settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+                    filename,
+                    palette: crate::theme::Palette::aurora(part == "aurora-dark"),
+                });
+            }
+            "aurora-green-dark" | "aurora-green-light" => {
+                let filename = format!("{part}.json");
+                app.settings.custom_theme = Some(filename.clone());
+                app.settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+                    filename,
+                    palette: crate::theme::Palette::aurora_green(part == "aurora-green-dark"),
+                });
+            }
+            "aurora-alternative-dark" | "aurora-alternative-light" => {
+                let filename = format!("{part}.json");
+                app.settings.custom_theme = Some(filename.clone());
+                app.settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+                    filename,
+                    palette: crate::theme::Palette::aurora_alternative(
+                        part == "aurora-alternative-dark",
+                    ),
+                });
+            }
             // Messages follows the system; this shows its light side anywhere.
             "messages-light" => {
                 app.settings.custom_theme = Some("Messages light.json".into());
@@ -9695,6 +9731,20 @@ mod tests {
             "disappearing-saving-group",
             "disappearing-readonly-group",
             "settings",
+            "aurora-dark",
+            "aurora-light",
+            "aurora-green-dark",
+            "aurora-green-light",
+            "aurora-alternative-dark",
+            "aurora-alternative-light",
+            "settings,aurora-dark",
+            "settings,aurora-light",
+            "settings,aurora-green-dark",
+            "settings,aurora-green-light",
+            "settings,aurora-alternative-dark",
+            "settings,aurora-alternative-light",
+            "wallpaper-image,aurora-dark",
+            "wallpaper-image,aurora-light",
             "settings-search=Notifications",
             "settings-search=System",
             "settings-search=Storage",
@@ -9910,25 +9960,39 @@ mod tests {
 
     /// The clickable widgets of the last frame that lie under `rects`,
     /// leaving out what catches clicks across a whole screen or panel (the
-    /// call screen's and the viewer's backdrops).
-    fn widgets_under(ctx: &egui::Context, rects: &[egui::Rect]) -> Vec<(egui::Id, egui::Rect)> {
+    /// call screen's and the viewer's backdrops). On a vibrant theme,
+    /// `frosted` is the chat header's rect: messages scroll on under it on
+    /// the window's own layer, so those message rows are behind the frost,
+    /// not header controls. The header's controls are drawn on the layer
+    /// above it and are still checked.
+    fn widgets_under(
+        ctx: &egui::Context,
+        rects: &[egui::Rect],
+        frosted: Option<egui::Rect>,
+    ) -> Vec<(egui::Id, egui::Rect)> {
         let window = ctx.content_rect();
         ctx.viewport(|viewport| {
             viewport
                 .prev_pass
                 .widgets
                 .layers()
-                .flat_map(|(_, widgets)| widgets.iter())
-                .filter(|widget| {
-                    widget.enabled
-                        && widget.visible
-                        && widget.sense.senses_click()
-                        && widget.interact_rect.is_positive()
-                        && widget.interact_rect.height() < window.height() / 2.0
-                        && widget.interact_rect.width() < window.width() * 0.9
-                        && rects
-                            .iter()
-                            .any(|rect| rect.intersects(widget.interact_rect.shrink(0.5)))
+                .flat_map(|(layer, widgets)| {
+                    widgets.iter().filter(move |widget| {
+                        let under_frost = frosted.is_some_and(|frosted| {
+                            layer.order == egui::Order::Background
+                                && frosted.intersects(widget.interact_rect)
+                        });
+                        !under_frost
+                            && widget.enabled
+                            && widget.visible
+                            && widget.sense.senses_click()
+                            && widget.interact_rect.is_positive()
+                            && widget.interact_rect.height() < window.height() / 2.0
+                            && widget.interact_rect.width() < window.width() * 0.9
+                            && rects
+                                .iter()
+                                .any(|rect| rect.intersects(widget.interact_rect.shrink(0.5)))
+                    })
                 })
                 .map(|widget| (widget.id, widget.interact_rect))
                 .collect()
@@ -10042,7 +10106,14 @@ mod tests {
                 app.attach(&ctx);
                 crate::theme::preview_titlebar(&ctx, footprint);
                 render_sized(&mut app, &ctx, size);
-                let under = widgets_under(&ctx, &caption_rects(footprint, size.x));
+                let frosted = if app.palette.vibrant() {
+                    ctx.data(|data| {
+                        data.get_temp::<egui::Rect>(crate::ui::conversation::header_rect_id())
+                    })
+                } else {
+                    None
+                };
+                let under = widgets_under(&ctx, &caption_rects(footprint, size.x), frosted);
                 assert!(
                     under.is_empty(),
                     "{page} at {size:?} with {footprint:?}: {under:?} under the caption buttons"
@@ -10055,7 +10126,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render_sized(&mut app, &ctx, wide);
-        assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x)).is_empty());
+        assert!(!widgets_under(&ctx, &caption_rects(footprints[0], wide.x), None).is_empty());
     }
 
     /// A header shares the caption row only at a corner it reaches: beside
@@ -24554,7 +24625,7 @@ mod bubble_detail_tests {
         ctx.data(|data| data.get_temp::<egui::Rect>(id))
     }
 
-    /// The `bubbles` page in both Messages palettes: every message of the
+    /// The `bubbles` page in every built-in glass palette: every message of the
     /// sample is drawn, and only each run's last balloon curls a tail out of
     /// its side, as far as Apple's reaches at ZapFast's text size; a lone
     /// photo leaves the tail to the balloon after it. All of it fits a 1280
@@ -24571,7 +24642,12 @@ mod bubble_detail_tests {
         });
         const SIZE: egui::Vec2 = egui::vec2(1280.0, 800.0);
         let reach = crate::ui::widgets::balloon::TIP[0] * crate::ui::widgets::MESSAGES_SCALE;
-        for page in ["bubbles,messages", "bubbles,messages-light"] {
+        for page in [
+            "bubbles,messages",
+            "bubbles,messages-light",
+            "bubbles,aurora-dark",
+            "bubbles,aurora-light",
+        ] {
             let mut app = app();
             let ctx = egui::Context::default();
             app.attach(&ctx);

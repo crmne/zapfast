@@ -33,8 +33,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         app.settings.sidebar_width = width;
         app.actions.push(Action::SettingsChanged);
     }
-    // Separate the panel from the conversation, as the header's line does.
-    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    // Aurora's panes share one ambient sheet; a hairline would split it.
+    if !palette.ambient {
+        // Separate the panel from the conversation, as the header's line does.
+        widgets::paint_edge_beside(ui, &palette, response.response.rect);
+    }
 }
 
 /// The chat list across the whole window, when the window is too narrow to
@@ -728,6 +731,12 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     app.actions.append(&mut actions);
 }
 
+/// The ink inside a starred bubble: the same palette a conversation uses for
+/// that side's bubble, so a saturated outgoing fill keeps its white words.
+fn starred_ink(palette: &Palette, from_me: bool) -> Palette {
+    palette.on_bubble(from_me)
+}
+
 /// One starred message: where it is, when it was starred, and the message's own
 /// words inside a bubble drawn from its side and fill. Clicking opens its chat
 /// at the message; right-clicking the bubble opens the chat's own menu.
@@ -745,7 +754,7 @@ fn starred_row(
         ui,
         &crate::util::clock(message.timestamp),
         theme::regular(11.0),
-        palette.secondary,
+        starred_ink(palette, message.from_me).secondary,
         80.0,
         1,
     );
@@ -759,7 +768,7 @@ fn starred_row(
         ui,
         &words,
         theme::regular(13.0),
-        palette.text,
+        starred_ink(palette, message.from_me).text,
         body_width,
         12,
     );
@@ -831,7 +840,7 @@ fn starred_row(
     body.paint(
         ui,
         pos2(bubble.left() + 10.0, bubble.top() + 6.0),
-        palette.text,
+        starred_ink(palette, message.from_me).text,
     );
     clock.paint(
         ui,
@@ -839,7 +848,7 @@ fn starred_row(
             bubble.right() - 10.0 - clock.size().x,
             bubble.bottom() - 6.0 - clock.size().y,
         ),
-        palette.secondary,
+        starred_ink(palette, message.from_me).secondary,
     );
     // The bubble's rect is what the menu is anchored to, and what a test reads
     // to click it.
@@ -2406,6 +2415,16 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 mod tests {
     use super::*;
 
+    /// A starred outgoing bubble takes its words from the bubble's ink, not
+    /// from the page foreground: light Aurora's blue fill needs white.
+    #[test]
+    fn starred_bubble_uses_the_ink_for_its_bubble() {
+        let palette = Palette::aurora(false);
+        let ink = starred_ink(&palette, true);
+        assert_eq!(ink.text, palette.on_bubble(true).text);
+        assert_ne!(ink.text, palette.text, "the fixture tells the two apart");
+    }
+
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
     #[test]
@@ -2472,6 +2491,72 @@ mod tests {
 
     use crate::paths::AppDirs;
     use crate::settings::Settings;
+
+    /// A starred outgoing message is inked for its bubble, not with the
+    /// page's foreground, so light Aurora's saturated blue stays readable.
+    #[test]
+    fn a_starred_bubble_uses_the_ink_for_its_bubble() {
+        let palette = Palette::aurora(false);
+        let ink = palette.on_bubble(true);
+        assert_ne!(palette.text, ink.text, "the fixture tells the two apart");
+
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let chat = "fixture-chat".to_owned();
+        app.chats.push(Chat::new(chat.clone(), "Fixture".into()));
+        let message = Message {
+            id: "starred-1".into(),
+            chat: chat.clone(),
+            sender: "fixture-me".into(),
+            sender_name: None,
+            from_me: true,
+            timestamp: 1_700_000_000,
+            history_order: None,
+            content: crate::model::Content::text("Fixture words"),
+            status: crate::model::Delivery::Read,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        };
+        let ctx = egui::Context::default();
+        // The starred row asks for the named medium family, so the test
+        // context needs the app's font setup like the other layout tests.
+        ctx.set_fonts(fastframe_fonts::FontSetup::default().definitions());
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(1000.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                starred_row(
+                    &app,
+                    ui,
+                    &palette,
+                    &message,
+                    message.timestamp,
+                    conversation::Marks { starred: true },
+                    &mut actions,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let body = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text().trim() == "Fixture words" => Some(text),
+            _ => None,
+        });
+        let body = body.expect("the starred bubble's words are painted");
+        assert_eq!(body.galley.job.sections[0].format.color, ink.text);
+        assert!(actions.is_empty(), "a drawn row does not act");
+    }
 
     #[test]
     fn chat_context_menu_stays_compact_in_wide_windows() {

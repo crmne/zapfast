@@ -365,19 +365,24 @@ fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
 /// leaving room around the text, rather than a capsule.
 const NAME_GLASS_RADIUS: f32 = 12.0;
 /// The room around the name and status on their glass: wide at the sides,
-/// and little above, so the glass keeps clear of the window's top edge.
-const NAME_GLASS_PADDING: Vec2 = vec2(14.0, 3.5);
+/// and enough above and below so two lines stay clear of the glass edge.
+const NAME_GLASS_PADDING: Vec2 = vec2(14.0, 4.5);
 /// The room above and below a name alone on its glass.
-const NAME_GLASS_SINGLE: f32 = 7.0;
-/// How tall the name and status stand together on glass: less than the
-/// avatar, so the two lines sit a little closer around its middle.
-const NAME_GLASS_LINES: f32 = 32.0;
+const NAME_GLASS_SINGLE: f32 = 8.0;
+/// How tall the name and status stand together on glass: sized so the pill
+/// matches the avatar around its middle.
+const NAME_GLASS_LINES: f32 = 31.0;
 /// How wide the round glass under each of a vibrant header's buttons is.
 const BUTTON_GLASS: f32 = 36.0;
+/// Visible gap between the avatar, name pill, and circular glass buttons.
+const PILL_GAP: f32 = 12.0;
 /// How wide `buttons` of the chat header are together.
 fn controls_width(buttons: f32, vibrant: bool) -> f32 {
     if vibrant {
-        buttons * 36.0 + (buttons - 0.5) * BUTTON_GAP + (BUTTON_GLASS - 30.0)
+        // Each 30px icon_button sits in a 36px glass circle (3px overhang each
+        // side), separated by 18px (12px between circles), plus 5px + 3px at
+        // the right margin and a clear gap before the name pill.
+        38.0 + (buttons - 1.0).max(0.0) * 48.0 + PILL_GAP
     } else {
         // Each button and the spacing beside it.
         buttons * 44.0
@@ -387,9 +392,17 @@ fn controls_width(buttons: f32, vibrant: bool) -> f32 {
 /// Whether a header `width` wide holds the avatar, a readable name and
 /// `buttons` and `extra` more on their right.
 fn header_fits(width: f32, buttons: f32, extra: f32, vibrant: bool) -> bool {
-    const AVATAR: f32 = 40.0 + 14.0;
-    const NAME: f32 = 140.0;
-    width >= AVATAR + NAME + controls_width(buttons, vibrant) + extra
+    let avatar = if vibrant {
+        40.0 + PILL_GAP + NAME_GLASS_PADDING.x
+    } else {
+        40.0 + 14.0
+    };
+    let name = if vibrant {
+        140.0 + NAME_GLASS_PADDING.x
+    } else {
+        140.0
+    };
+    width >= avatar + name + controls_width(buttons, vibrant) + extra
 }
 
 /// Space between the header's last button and caption buttons `room` wide.
@@ -528,9 +541,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                     );
                                 }
                                 // Room for the name's glass pill to clear the avatar.
-                                ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
+                                ui.add_space(if palette.vibrant() {
+                                    NAME_GLASS_PADDING.x
+                                        + (PILL_GAP - ui.spacing().item_spacing.x).max(0.0)
+                                } else {
+                                    4.0
+                                });
                                 ui.vertical(|ui| {
-                                    let width = ui.available_width().max(80.0);
+                                    let pill_right = if palette.vibrant() {
+                                        NAME_GLASS_PADDING.x
+                                    } else {
+                                        0.0
+                                    };
+                                    let width = (ui.available_width() - pill_right).max(40.0);
                                     ui.set_max_width(width);
                                     // On glass the lines centre on the avatar: the
                                     // column starts at the row's top otherwise.

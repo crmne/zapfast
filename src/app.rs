@@ -1558,6 +1558,9 @@ impl App {
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
                 ThemeChoice::Messages => Palette::messages(),
+                ThemeChoice::Aurora => Palette::aurora(true),
+                ThemeChoice::AuroraGreen => Palette::aurora_green(true),
+                ThemeChoice::AuroraAlternative => Palette::aurora_alternative(true),
                 _ => Palette::dark(),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -7217,8 +7220,12 @@ impl App {
             || match self.settings.theme {
                 ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
-                // Messages follows the system's appearance, as Messages does.
-                ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
+                // Glass themes follow the system's appearance.
+                ThemeChoice::System
+                | ThemeChoice::Messages
+                | ThemeChoice::Aurora
+                | ThemeChoice::AuroraGreen
+                | ThemeChoice::AuroraAlternative => egui::ThemePreference::System,
             },
             |palette| {
                 if palette.dark {
@@ -7262,7 +7269,13 @@ impl App {
             }
         };
         let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::Messages {
+            if self.settings.theme == ThemeChoice::Aurora {
+                Palette::aurora(dark)
+            } else if self.settings.theme == ThemeChoice::AuroraGreen {
+                Palette::aurora_green(dark)
+            } else if self.settings.theme == ThemeChoice::AuroraAlternative {
+                Palette::aurora_alternative(dark)
+            } else if self.settings.theme == ThemeChoice::Messages {
                 if dark {
                     Palette::messages()
                 } else {
@@ -11400,8 +11413,7 @@ impl App {
         self.toast_error(format!("Could not record: {error}"));
     }
 
-    /// Replace a macOS window when the selected theme needs a different surface.
-    #[cfg(target_os = "macos")]
+    /// Replace the window when the selected theme needs a different surface.
     pub fn match_window_transparency(&mut self, ctx: &egui::Context, transparent: bool) {
         let wanted = crate::backdrop::transparent_window(
             self.palette.vibrant(),
@@ -18268,15 +18280,20 @@ mod tests {
         let mut app = app();
         app.open_chat = Some("test-chat".into());
         app.palette = crate::theme::Palette::messages();
-        app.match_window_transparency(&ctx, false);
-        assert_eq!(app.closed(), Closed::Reopen);
+        let wanted = crate::backdrop::transparent_window(
+            app.palette.vibrant(),
+            app.palette.window.a() < 255,
+        );
+        app.match_window_transparency(&ctx, !wanted);
+        assert!(app.reopen, "a mismatched window is replaced");
         assert_eq!(app.open_chat.as_deref(), Some("test-chat"));
 
         app.reopen = false;
-        app.match_window_transparency(&ctx, true);
+        app.match_window_transparency(&ctx, wanted);
         assert!(!app.reopen, "a matching window stays open");
         app.palette = crate::theme::Palette::dark();
         app.match_window_transparency(&ctx, true);
+        assert!(app.reopen, "switching back to an opaque theme replaces it");
         assert_eq!(app.closed(), Closed::Reopen);
         assert_eq!(app.open_chat.as_deref(), Some("test-chat"));
 
@@ -18829,6 +18846,45 @@ mod tests {
                 assert_eq!(ctx.theme(), theme);
             }
         }
+    }
+
+    #[test]
+    fn aurora_follows_system_without_changing_the_chat_or_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.open_chat = Some("theme-test@s.whatsapp.net".into());
+        app.composer = "An unfinished draft".into();
+        let chat = app.open_chat.clone();
+        for choice in [
+            ThemeChoice::Aurora,
+            ThemeChoice::AuroraGreen,
+            ThemeChoice::AuroraAlternative,
+        ] {
+            for system in [egui::Theme::Light, egui::Theme::Dark] {
+                let dark = system == egui::Theme::Dark;
+                let expected = match choice {
+                    ThemeChoice::Aurora => Palette::aurora(dark),
+                    ThemeChoice::AuroraGreen => Palette::aurora_green(dark),
+                    ThemeChoice::AuroraAlternative => Palette::aurora_alternative(dark),
+                    _ => unreachable!(),
+                };
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        system_theme: Some(system),
+                        ..Default::default()
+                    },
+                    |_| app.apply(Action::SetTheme(choice), &ctx),
+                );
+                output.textures_delta.clear();
+                assert_eq!(app.palette, expected);
+                assert_eq!(ctx.theme(), system);
+                assert_eq!(app.open_chat, chat);
+                assert_eq!(app.composer, "An unfinished draft");
+            }
+        }
+        app.apply(Action::SetTheme(ThemeChoice::Dark), &ctx);
+        assert_eq!(app.palette, Palette::dark());
+        assert!(!app.palette.ambient);
     }
 
     #[test]
