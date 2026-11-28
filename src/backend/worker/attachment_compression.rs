@@ -39,7 +39,7 @@ pub(crate) fn compress(
     let mut writer = zip::ZipWriter::new(std::fs::File::create(&staging).map_err(|_| ())?);
     writer
         .start_file(
-            entry,
+            &entry,
             zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .large_file(before >= u64::from(u32::MAX)),
