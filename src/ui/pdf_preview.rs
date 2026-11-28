@@ -102,7 +102,17 @@ fn header(
                 ui.allocate_ui_with_layout(
                     vec2(ui.available_width(), content - main),
                     Layout::left_to_right(Align::Center),
-                    |ui| search_widgets(ui, preview, palette, locale, actions, true),
+                    |ui| {
+                        search_widgets(
+                            ui,
+                            preview,
+                            palette,
+                            locale,
+                            actions,
+                            ui.available_width(),
+                            preview.has_selection(),
+                        )
+                    },
                 );
             } else {
                 ui.allocate_ui_with_layout(
